@@ -278,6 +278,7 @@ impl<'a> Lexer<'a> {
                         "from" => TokenKind::Keyword(Keyword::From),
                         "global" => TokenKind::Keyword(Keyword::Global),
                         "as" => TokenKind::Keyword(Keyword::As),
+                        "lambda" => TokenKind::Keyword(Keyword::Lambda),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

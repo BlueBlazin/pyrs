@@ -227,6 +227,15 @@ impl Compiler {
             Expr::IfExpr { test, body, orelse } => {
                 self.compile_if_expr(test, body, orelse)
             }
+            Expr::Lambda { params, body } => {
+                let return_stmt = Stmt::Return {
+                    value: Some((**body).clone()),
+                };
+                let func_code = self.compile_function("<lambda>", params, &[return_stmt])?;
+                let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
+                self.emit(Opcode::MakeFunction, Some(const_idx));
+                Ok(())
+            }
             Expr::Call { func, args } => {
                 self.compile_expr(func)?;
                 for arg in args {

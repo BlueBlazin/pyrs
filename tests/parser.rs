@@ -175,6 +175,21 @@ fn parses_unary_minus() {
 }
 
 #[test]
+fn parses_lambda_expression() {
+    let module = parser::parse_module("lambda x: x + 1").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Lambda { params, body }) => {
+            assert_eq!(params, &vec!["x".to_string()]);
+            match &**body {
+                Expr::Binary { .. } => {}
+                other => panic!("unexpected body: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_boolean_and_none_literals() {
     let module = parser::parse_module("True\nFalse\nNone").expect("parse should succeed");
     assert_eq!(

@@ -21,6 +21,7 @@ pub enum Keyword {
     From,
     Global,
     As,
+    Lambda,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

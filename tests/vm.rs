@@ -290,6 +290,28 @@ e = str(3)\n";
 }
 
 #[test]
+fn executes_lambda_expression() {
+    let source = "f = lambda x: x + 1\nx = f(2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_lambda_multiple_args() {
+    let source = "g = lambda a, b: a * b\nx = g(3, 4)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(12)));
+}
+
+#[test]
 fn executes_module_attribute_access() {
     let module = parser::parse_module("y = mod.x").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

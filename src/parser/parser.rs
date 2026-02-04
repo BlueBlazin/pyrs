@@ -179,7 +179,43 @@ impl Parser {
     }
 
     fn parse_expr_uncached(&mut self, pos: usize) -> ParseResult<Expr> {
-        self.parse_if_expr(pos)
+        if self.match_keyword(pos, Keyword::Lambda) {
+            self.parse_lambda(pos)
+        } else {
+            self.parse_if_expr(pos)
+        }
+    }
+
+    fn parse_lambda(&mut self, pos: usize) -> ParseResult<Expr> {
+        let mut pos = pos + 1;
+        let mut params = Vec::new();
+
+        if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
+            loop {
+                let token = self.token_at(pos);
+                if token.kind != TokenKind::Name {
+                    return Err(self.error_at(pos, "expected parameter name"));
+                }
+                params.push(token.lexeme.clone());
+                pos += 1;
+
+                if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                    pos += 1;
+                    continue;
+                }
+                break;
+            }
+        }
+
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        let (body, next) = self.parse_expr_at(pos)?;
+        Ok((
+            Expr::Lambda {
+                params,
+                body: Box::new(body),
+            },
+            next,
+        ))
     }
 
     fn parse_if_expr(&mut self, pos: usize) -> ParseResult<Expr> {
