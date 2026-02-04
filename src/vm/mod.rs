@@ -805,6 +805,8 @@ impl Vm {
             .insert("list".to_string(), Value::Builtin(BuiltinFunction::List));
         self.builtins
             .insert("tuple".to_string(), Value::Builtin(BuiltinFunction::Tuple));
+        self.builtins
+            .insert("divmod".to_string(), Value::Builtin(BuiltinFunction::DivMod));
     }
 }
 

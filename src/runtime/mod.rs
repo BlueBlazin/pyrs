@@ -107,6 +107,7 @@ pub enum BuiltinFunction {
     Pow,
     List,
     Tuple,
+    DivMod,
 }
 
 impl BuiltinFunction {
@@ -313,6 +314,19 @@ impl BuiltinFunction {
                     )),
                     _ => Err(RuntimeError::new("tuple() unsupported type")),
                 }
+            }
+            BuiltinFunction::DivMod => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("divmod() expects two arguments"));
+                }
+                let left = value_to_int(args[0].clone())?;
+                let right = value_to_int(args[1].clone())?;
+                if right == 0 {
+                    return Err(RuntimeError::new("divmod() division by zero"));
+                }
+                let div = left.div_euclid(right);
+                let rem = left.rem_euclid(right);
+                Ok(Value::Tuple(vec![Value::Int(div), Value::Int(rem)]))
             }
         }
     }

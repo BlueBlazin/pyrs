@@ -399,6 +399,25 @@ d = list('ab')\n";
 }
 
 #[test]
+fn executes_divmod_builtin() {
+    let source = "a = divmod(7, 3)\n\
+b = divmod(-7, 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("a"),
+        Some(Value::Tuple(vec![Value::Int(2), Value::Int(1)]))
+    );
+    assert_eq!(
+        vm.get_global("b"),
+        Some(Value::Tuple(vec![Value::Int(-3), Value::Int(2)]))
+    );
+}
+
+#[test]
 fn executes_lambda_expression() {
     let source = "f = lambda x: x + 1\nx = f(2)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
