@@ -65,6 +65,7 @@ impl Compiler {
                 Ok(())
             }
             Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
+            Stmt::While { test, body } => self.compile_while(test, body),
         }
     }
 
@@ -87,6 +88,8 @@ impl Compiler {
                     crate::ast::BinaryOp::Add => Opcode::BinaryAdd,
                     crate::ast::BinaryOp::Sub => Opcode::BinarySub,
                     crate::ast::BinaryOp::Mul => Opcode::BinaryMul,
+                    crate::ast::BinaryOp::Eq => Opcode::CompareEq,
+                    crate::ast::BinaryOp::Lt => Opcode::CompareLt,
                 };
                 self.emit(opcode, None);
                 Ok(())
@@ -152,6 +155,21 @@ impl Compiler {
             }
         }
 
+        Ok(())
+    }
+
+    fn compile_while(&mut self, test: &Expr, body: &[Stmt]) -> Result<(), CompileError> {
+        let loop_start = self.current_ip();
+        self.compile_expr(test)?;
+        let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
+
+        for stmt in body {
+            self.compile_stmt(stmt)?;
+        }
+
+        self.emit(Opcode::Jump, Some(loop_start as u32));
+        let loop_end = self.current_ip();
+        self.patch_jump(jump_if_false, loop_end)?;
         Ok(())
     }
 }

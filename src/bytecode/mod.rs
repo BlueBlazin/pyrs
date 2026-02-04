@@ -12,6 +12,8 @@ pub enum Opcode {
     BinaryAdd,
     BinarySub,
     BinaryMul,
+    CompareEq,
+    CompareLt,
     JumpIfFalse,
     Jump,
     PopTop,

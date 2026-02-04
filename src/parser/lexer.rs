@@ -114,7 +114,22 @@ impl<'a> Lexer<'a> {
                 }
                 '=' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::Equal, "=", offset, line, column));
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(
+                            TokenKind::DoubleEqual,
+                            "==",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Equal, "=", offset, line, column));
+                    }
+                }
+                '<' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::Less, "<", offset, line, column));
                 }
                 '+' => {
                     self.advance();
@@ -142,6 +157,7 @@ impl<'a> Lexer<'a> {
                         "pass" => TokenKind::Keyword(Keyword::Pass),
                         "if" => TokenKind::Keyword(Keyword::If),
                         "else" => TokenKind::Keyword(Keyword::Else),
+                        "while" => TokenKind::Keyword(Keyword::While),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

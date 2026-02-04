@@ -44,6 +44,21 @@ fn parses_binary_expression_with_precedence() {
 }
 
 #[test]
+fn parses_comparison_expression() {
+    let module = parser::parse_module("1 < 2 + 3").expect("parse should succeed");
+    let expected = Stmt::Expr(Expr::Binary {
+        left: Box::new(Expr::Constant(Constant::Int(1))),
+        op: pyrs::ast::BinaryOp::Lt,
+        right: Box::new(Expr::Binary {
+            left: Box::new(Expr::Constant(Constant::Int(2))),
+            op: pyrs::ast::BinaryOp::Add,
+            right: Box::new(Expr::Constant(Constant::Int(3))),
+        }),
+    });
+    assert_eq!(module.body, vec![expected]);
+}
+
+#[test]
 fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(

@@ -3,6 +3,7 @@ pub enum Keyword {
     Pass,
     If,
     Else,
+    While,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +18,8 @@ pub enum TokenKind {
     RParen,
     Colon,
     Equal,
+    DoubleEqual,
+    Less,
     Plus,
     Minus,
     Star,

@@ -120,6 +120,7 @@ impl Parser {
         }
         match token.kind {
             TokenKind::Keyword(Keyword::If) => self.parse_if_stmt(pos),
+            TokenKind::Keyword(Keyword::While) => self.parse_while_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
@@ -140,7 +141,28 @@ impl Parser {
     }
 
     fn parse_expr_uncached(&mut self, pos: usize) -> ParseResult<Expr> {
-        self.parse_add_sub(pos)
+        self.parse_comparison(pos)
+    }
+
+    fn parse_comparison(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (left, mut pos) = self.parse_add_sub(pos)?;
+
+        let op = match self.token_at(pos).kind {
+            TokenKind::DoubleEqual => BinaryOp::Eq,
+            TokenKind::Less => BinaryOp::Lt,
+            _ => return Ok((left, pos)),
+        };
+
+        pos += 1;
+        let (right, next) = self.parse_add_sub(pos)?;
+        Ok((
+            Expr::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            },
+            next,
+        ))
     }
 
     fn parse_add_sub(&mut self, pos: usize) -> ParseResult<Expr> {
@@ -232,6 +254,16 @@ impl Parser {
             },
             pos,
         ))
+    }
+
+    fn parse_while_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let (test, next) = self.parse_expr_at(pos)?;
+        pos = next;
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        let (body, next) = self.parse_suite(pos)?;
+        pos = next;
+        Ok((Stmt::While { test, body }, pos))
     }
 
     fn parse_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
@@ -368,5 +400,5 @@ impl Parser {
 }
 
 fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
-    matches!(stmt, Stmt::If { .. })
+    matches!(stmt, Stmt::If { .. } | Stmt::While { .. })
 }

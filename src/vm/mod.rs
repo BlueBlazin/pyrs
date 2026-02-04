@@ -87,6 +87,21 @@ impl Vm {
                     let (left, right) = self.pop_int_pair()?;
                     self.stack.push(Value::Int(left * right));
                 }
+                Opcode::CompareEq => {
+                    let right = self
+                        .stack
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+                    let left = self
+                        .stack
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+                    self.stack.push(Value::Bool(left == right));
+                }
+                Opcode::CompareLt => {
+                    let (left, right) = self.pop_int_pair()?;
+                    self.stack.push(Value::Bool(left < right));
+                }
                 Opcode::JumpIfFalse => {
                     let target = instr
                         .arg

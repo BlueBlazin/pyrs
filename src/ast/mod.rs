@@ -24,6 +24,10 @@ pub enum Stmt {
         target: String,
         value: Expr,
     },
+    While {
+        test: Expr,
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +46,8 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mul,
+    Eq,
+    Lt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
