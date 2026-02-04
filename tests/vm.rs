@@ -481,6 +481,29 @@ fn executes_try_except_runtime_error() {
 }
 
 #[test]
+fn executes_class_definition_and_methods() {
+    let source = "class Foo:\n    def __init__(self, x):\n        self.x = x\n    def get(self):\n        return self.x\n\nf = Foo(3)\ny = f.get()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_class_attribute_lookup() {
+    let source = "class Bar:\n    kind = 'bar'\n\nb = Bar()\nx = b.kind\ny = Bar.kind\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Str("bar".to_string())));
+    assert_eq!(vm.get_global("y"), Some(Value::Str("bar".to_string())));
+}
+
+#[test]
 fn executes_assert_statement() {
     let source = "assert 1\nx = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");

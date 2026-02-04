@@ -253,6 +253,19 @@ fn parses_try_except_statement() {
 }
 
 #[test]
+fn parses_class_definition() {
+    let source = "class Foo:\n  pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::ClassDef { name, body } => {
+            assert_eq!(name, "Foo");
+            assert_eq!(body, &vec![Stmt::Pass]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_assert_statement() {
     let module = parser::parse_module("assert x, 'bad'").expect("parse should succeed");
     match &module.body[0] {
