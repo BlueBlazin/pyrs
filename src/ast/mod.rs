@@ -102,7 +102,11 @@ pub enum BinaryOp {
     Mul,
     Mod,
     Eq,
+    Ne,
     Lt,
+    Le,
+    Gt,
+    Ge,
     In,
     NotIn,
 }

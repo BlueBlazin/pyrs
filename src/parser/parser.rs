@@ -236,7 +236,11 @@ impl Parser {
 
         let (op, consumed) = match self.token_at(pos).kind {
             TokenKind::DoubleEqual => (BinaryOp::Eq, 1),
+            TokenKind::NotEqual => (BinaryOp::Ne, 1),
             TokenKind::Less => (BinaryOp::Lt, 1),
+            TokenKind::LessEqual => (BinaryOp::Le, 1),
+            TokenKind::Greater => (BinaryOp::Gt, 1),
+            TokenKind::GreaterEqual => (BinaryOp::Ge, 1),
             TokenKind::Keyword(Keyword::In) => (BinaryOp::In, 1),
             TokenKind::Keyword(Keyword::Not) => {
                 if self.match_keyword(pos + 1, Keyword::In) {

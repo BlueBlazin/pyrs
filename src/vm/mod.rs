@@ -1,5 +1,6 @@
 //! Bytecode virtual machine (minimal subset).
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -183,10 +184,30 @@ impl Vm {
                     let left = self.pop_value()?;
                     self.push_value(Value::Bool(left == right));
                 }
+                Opcode::CompareNe => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(Value::Bool(left != right));
+                }
                 Opcode::CompareLt => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     self.push_value(compare_lt(left, right)?);
+                }
+                Opcode::CompareLe => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(compare_le(left, right)?);
+                }
+                Opcode::CompareGt => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(compare_gt(left, right)?);
+                }
+                Opcode::CompareGe => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(compare_ge(left, right)?);
                 }
                 Opcode::CompareIn => {
                     let right = self.pop_value()?;
@@ -580,13 +601,37 @@ fn add_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
     }
 }
 
-fn compare_lt(left: Value, right: Value) -> Result<Value, RuntimeError> {
+fn compare_order(left: Value, right: Value) -> Result<Ordering, RuntimeError> {
     match (left, right) {
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
-        (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a < b)),
-        (Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a < b)),
-        _ => Err(RuntimeError::new("unsupported operand type for <")),
+        (Value::Int(a), Value::Int(b)) => Ok(a.cmp(&b)),
+        (Value::Bool(a), Value::Bool(b)) => Ok(a.cmp(&b)),
+        (Value::Str(a), Value::Str(b)) => Ok(a.cmp(&b)),
+        _ => Err(RuntimeError::new("unsupported operand type for comparison")),
     }
+}
+
+fn compare_lt(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    Ok(Value::Bool(
+        compare_order(left, right)? == Ordering::Less,
+    ))
+}
+
+fn compare_le(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    Ok(Value::Bool(
+        compare_order(left, right)? != Ordering::Greater,
+    ))
+}
+
+fn compare_gt(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    Ok(Value::Bool(
+        compare_order(left, right)? == Ordering::Greater,
+    ))
+}
+
+fn compare_ge(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    Ok(Value::Bool(
+        compare_order(left, right)? != Ordering::Less,
+    ))
 }
 
 fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeError> {

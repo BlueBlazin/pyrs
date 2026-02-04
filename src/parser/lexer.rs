@@ -149,7 +149,53 @@ impl<'a> Lexer<'a> {
                 }
                 '<' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::Less, "<", offset, line, column));
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(
+                            TokenKind::LessEqual,
+                            "<=",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Less, "<", offset, line, column));
+                    }
+                }
+                '>' => {
+                    self.advance();
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(
+                            TokenKind::GreaterEqual,
+                            ">=",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Greater, ">", offset, line, column));
+                    }
+                }
+                '!' => {
+                    self.advance();
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(
+                            TokenKind::NotEqual,
+                            "!=",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    } else {
+                        return Err(LexError::new(
+                            "unexpected character: !",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    }
                 }
                 '+' => {
                     self.advance();

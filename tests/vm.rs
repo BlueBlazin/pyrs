@@ -50,6 +50,20 @@ fn executes_comparison_assignment() {
 }
 
 #[test]
+fn executes_comparison_variants() {
+    let source = "a = 1 != 2\nb = 2 <= 2\nc = 3 > 2\nd = 2 >= 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("b"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("c"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("d"), Some(&Value::Bool(false)));
+}
+
+#[test]
 fn executes_unary_minus_assignment() {
     let module = parser::parse_module("x = -1").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

@@ -88,6 +88,41 @@ fn parses_comparison_expression() {
 }
 
 #[test]
+fn parses_not_equal_expression() {
+    let module = parser::parse_module("1 != 2").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Binary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::Ne);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_relational_expressions() {
+    let module =
+        parser::parse_module("1 <= 2\n3 > 2\n4 >= 4").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Binary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::Le);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+    match &module.body[1] {
+        Stmt::Expr(Expr::Binary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::Gt);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+    match &module.body[2] {
+        Stmt::Expr(Expr::Binary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::Ge);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_in_expression() {
     let module = parser::parse_module("'a' in 'cat'").expect("parse should succeed");
     match &module.body[0] {
