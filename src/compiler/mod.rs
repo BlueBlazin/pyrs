@@ -122,7 +122,7 @@ impl Compiler {
                 }
             }
             Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
-            Stmt::While { test, body } => self.compile_while(test, body),
+            Stmt::While { test, body, orelse } => self.compile_while(test, body, orelse),
             Stmt::FunctionDef { name, params, body } => {
                 let func_code = self.compile_function(name, params, body)?;
                 let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
@@ -140,7 +140,12 @@ impl Compiler {
                 self.emit(Opcode::ReturnValue, None);
                 Ok(())
             }
-            Stmt::For { target, iter, body } => self.compile_for(target, iter, body),
+            Stmt::For {
+                target,
+                iter,
+                body,
+                orelse,
+            } => self.compile_for(target, iter, body, orelse),
             Stmt::Import { names } => {
                 for name in names {
                     let const_idx = self.code.add_const(Value::Str(name.clone()));
@@ -350,7 +355,12 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_while(&mut self, test: &Expr, body: &[Stmt]) -> Result<(), CompileError> {
+    fn compile_while(
+        &mut self,
+        test: &Expr,
+        body: &[Stmt],
+        orelse: &[Stmt],
+    ) -> Result<(), CompileError> {
         let loop_start = self.current_ip();
         self.compile_expr(test)?;
         let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
@@ -367,8 +377,14 @@ impl Compiler {
         }
 
         self.emit(Opcode::Jump, Some(loop_start as u32));
+        let else_start = self.current_ip();
+        self.patch_jump(jump_if_false, else_start)?;
+
+        for stmt in orelse {
+            self.compile_stmt(stmt)?;
+        }
+
         let loop_end = self.current_ip();
-        self.patch_jump(jump_if_false, loop_end)?;
         self.resolve_loop(loop_end)?;
         Ok(())
     }
@@ -396,6 +412,7 @@ impl Compiler {
         target: &str,
         iter: &Expr,
         body: &[Stmt],
+        orelse: &[Stmt],
     ) -> Result<(), CompileError> {
         let iter_temp = self.fresh_temp("iter");
         let index_temp = self.fresh_temp("idx");
@@ -442,8 +459,14 @@ impl Compiler {
         self.emit_store_name(&index_temp);
 
         self.emit(Opcode::Jump, Some(loop_start as u32));
+        let else_start = self.current_ip();
+        self.patch_jump(jump_if_false, else_start)?;
+
+        for stmt in orelse {
+            self.compile_stmt(stmt)?;
+        }
+
         let loop_end = self.current_ip();
-        self.patch_jump(jump_if_false, loop_end)?;
         self.resolve_loop(loop_end)?;
 
         Ok(())

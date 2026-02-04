@@ -456,7 +456,18 @@ impl Parser {
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-        Ok((Stmt::While { test, body }, pos))
+
+        let mut orelse = Vec::new();
+        let else_pos = self.skip_newlines(pos);
+        if self.match_keyword(else_pos, Keyword::Else) {
+            pos = else_pos + 1;
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (suite, next) = self.parse_suite(pos)?;
+            orelse = suite;
+            pos = next;
+        }
+
+        Ok((Stmt::While { test, body, orelse }, pos))
     }
 
     fn parse_for_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -476,7 +487,18 @@ impl Parser {
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-        Ok((Stmt::For { target, iter, body }, pos))
+
+        let mut orelse = Vec::new();
+        let else_pos = self.skip_newlines(pos);
+        if self.match_keyword(else_pos, Keyword::Else) {
+            pos = else_pos + 1;
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (suite, next) = self.parse_suite(pos)?;
+            orelse = suite;
+            pos = next;
+        }
+
+        Ok((Stmt::For { target, iter, body, orelse }, pos))
     }
 
     fn parse_import_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {

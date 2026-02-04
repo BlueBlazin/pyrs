@@ -566,3 +566,26 @@ fn executes_while_loop() {
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(Value::Int(0)));
 }
+
+#[test]
+fn executes_while_else_clause() {
+    let source = "x = 0\nwhile x < 2:\n    x += 1\nelse:\n    y = 5\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(5)));
+}
+
+#[test]
+fn executes_for_else_clause() {
+    let source = "y = 0\nfor i in [1, 2]:\n    pass\nelse:\n    y = 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(Value::Int(3)));
+}

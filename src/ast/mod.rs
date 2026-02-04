@@ -49,11 +49,13 @@ pub enum Stmt {
     While {
         test: Expr,
         body: Vec<Stmt>,
+        orelse: Vec<Stmt>,
     },
     For {
         target: String,
         iter: Expr,
         body: Vec<Stmt>,
+        orelse: Vec<Stmt>,
     },
     Import {
         names: Vec<String>,

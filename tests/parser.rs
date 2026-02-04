@@ -343,7 +343,12 @@ fn parses_for_loop() {
     let source = "for i in [1, 2]:\n    pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &module.body[0] {
-        Stmt::For { target, iter, body } => {
+        Stmt::For {
+            target,
+            iter,
+            body,
+            orelse,
+        } => {
             assert_eq!(target, "i");
             assert_eq!(
                 *iter,
@@ -353,6 +358,7 @@ fn parses_for_loop() {
                 ])
             );
             assert_eq!(body, &vec![Stmt::Pass]);
+            assert!(orelse.is_empty());
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
@@ -363,8 +369,33 @@ fn parses_break_and_continue() {
     let source = "while 1:\n    break\n    continue\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &module.body[0] {
-        Stmt::While { body, .. } => {
+        Stmt::While { body, orelse, .. } => {
             assert_eq!(body, &vec![Stmt::Break, Stmt::Continue]);
+            assert!(orelse.is_empty());
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_while_else_clause() {
+    let source = "while 0:\n    pass\nelse:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::While { orelse, .. } => {
+            assert_eq!(orelse, &vec![Stmt::Pass]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_for_else_clause() {
+    let source = "for i in [1]:\n    pass\nelse:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::For { orelse, .. } => {
+            assert_eq!(orelse, &vec![Stmt::Pass]);
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
