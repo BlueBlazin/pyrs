@@ -407,6 +407,16 @@ impl Vm {
                     let left = self.pop_value()?;
                     self.push_value(Value::Bool(!compare_in(&left, &right)?));
                 }
+                Opcode::CompareIs => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(Value::Bool(left == right));
+                }
+                Opcode::CompareIsNot => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(Value::Bool(left != right));
+                }
                 Opcode::UnaryNeg => {
                     let value = self.pop_value()?;
                     let value = value_to_int(value)?;

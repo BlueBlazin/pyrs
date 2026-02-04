@@ -25,6 +25,8 @@ pub enum Opcode {
     CompareGe,
     CompareIn,
     CompareNotIn,
+    CompareIs,
+    CompareIsNot,
     UnaryNeg,
     UnaryNot,
     UnaryPos,

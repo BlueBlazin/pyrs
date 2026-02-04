@@ -16,6 +16,7 @@ pub enum Keyword {
     Return,
     For,
     In,
+    Is,
     Break,
     Continue,
     And,

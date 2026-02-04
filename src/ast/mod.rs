@@ -161,6 +161,8 @@ pub enum BinaryOp {
     Ge,
     In,
     NotIn,
+    Is,
+    IsNot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

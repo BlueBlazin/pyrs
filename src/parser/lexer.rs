@@ -273,6 +273,7 @@ impl<'a> Lexer<'a> {
                         "return" => TokenKind::Keyword(Keyword::Return),
                         "for" => TokenKind::Keyword(Keyword::For),
                         "in" => TokenKind::Keyword(Keyword::In),
+                        "is" => TokenKind::Keyword(Keyword::Is),
                         "break" => TokenKind::Keyword(Keyword::Break),
                         "continue" => TokenKind::Keyword(Keyword::Continue),
                         "and" => TokenKind::Keyword(Keyword::And),

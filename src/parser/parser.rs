@@ -301,6 +301,13 @@ impl Parser {
             TokenKind::Greater => (BinaryOp::Gt, 1),
             TokenKind::GreaterEqual => (BinaryOp::Ge, 1),
             TokenKind::Keyword(Keyword::In) => (BinaryOp::In, 1),
+            TokenKind::Keyword(Keyword::Is) => {
+                if self.match_keyword(pos + 1, Keyword::Not) {
+                    (BinaryOp::IsNot, 2)
+                } else {
+                    (BinaryOp::Is, 1)
+                }
+            }
             TokenKind::Keyword(Keyword::Not) => {
                 if self.match_keyword(pos + 1, Keyword::In) {
                     (BinaryOp::NotIn, 2)

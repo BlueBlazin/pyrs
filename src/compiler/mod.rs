@@ -218,6 +218,8 @@ impl Compiler {
                     crate::ast::BinaryOp::Ge => Opcode::CompareGe,
                     crate::ast::BinaryOp::In => Opcode::CompareIn,
                     crate::ast::BinaryOp::NotIn => Opcode::CompareNotIn,
+                    crate::ast::BinaryOp::Is => Opcode::CompareIs,
+                    crate::ast::BinaryOp::IsNot => Opcode::CompareIsNot,
                 };
                 self.emit(opcode, None);
                 Ok(())
