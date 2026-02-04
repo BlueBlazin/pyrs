@@ -143,6 +143,7 @@ impl Compiler {
                 Ok(())
             }
             Stmt::Raise { value } => self.compile_raise(value.as_ref()),
+            Stmt::Assert { test, message } => self.compile_assert(test, message.as_ref()),
             Stmt::Try {
                 body,
                 handlers,
@@ -515,6 +516,28 @@ impl Compiler {
         } else {
             self.emit(Opcode::Raise, Some(0));
         }
+        Ok(())
+    }
+
+    fn compile_assert(
+        &mut self,
+        test: &Expr,
+        message: Option<&Expr>,
+    ) -> Result<(), CompileError> {
+        self.compile_expr(test)?;
+        let jump_if_true = self.emit_jump(Opcode::JumpIfTrue);
+
+        self.emit_load_name("AssertionError");
+        if let Some(expr) = message {
+            self.compile_expr(expr)?;
+            self.emit(Opcode::CallFunction, Some(1));
+        } else {
+            self.emit(Opcode::CallFunction, Some(0));
+        }
+        self.emit(Opcode::Raise, Some(1));
+
+        let end_target = self.current_ip();
+        self.patch_jump(jump_if_true, end_target)?;
         Ok(())
     }
 

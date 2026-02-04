@@ -8,6 +8,7 @@ pub enum Keyword {
     Except,
     Finally,
     Raise,
+    Assert,
     TrueLiteral,
     FalseLiteral,
     NoneLiteral,

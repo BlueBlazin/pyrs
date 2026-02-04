@@ -49,6 +49,10 @@ pub enum Stmt {
     Raise {
         value: Option<Expr>,
     },
+    Assert {
+        test: Expr,
+        message: Option<Expr>,
+    },
     Try {
         body: Vec<Stmt>,
         handlers: Vec<ExceptHandler>,

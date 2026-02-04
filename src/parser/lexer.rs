@@ -265,6 +265,7 @@ impl<'a> Lexer<'a> {
                         "except" => TokenKind::Keyword(Keyword::Except),
                         "finally" => TokenKind::Keyword(Keyword::Finally),
                         "raise" => TokenKind::Keyword(Keyword::Raise),
+                        "assert" => TokenKind::Keyword(Keyword::Assert),
                         "True" => TokenKind::Keyword(Keyword::TrueLiteral),
                         "False" => TokenKind::Keyword(Keyword::FalseLiteral),
                         "None" => TokenKind::Keyword(Keyword::NoneLiteral),

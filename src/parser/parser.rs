@@ -163,6 +163,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::From) => self.parse_from_import_stmt(pos),
             TokenKind::Keyword(Keyword::Global) => self.parse_global_stmt(pos),
             TokenKind::Keyword(Keyword::Raise) => self.parse_raise_stmt(pos),
+            TokenKind::Keyword(Keyword::Assert) => self.parse_assert_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
@@ -711,6 +712,22 @@ impl Parser {
         let (expr, next) = self.parse_expr_at(pos)?;
         pos = next;
         Ok((Stmt::Raise { value: Some(expr) }, pos))
+    }
+
+    fn parse_assert_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let (test, next) = self.parse_expr_at(pos)?;
+        pos = next;
+
+        let mut message = None;
+        if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            pos += 1;
+            let (expr, next) = self.parse_expr_at(pos)?;
+            message = Some(expr);
+            pos = next;
+        }
+
+        Ok((Stmt::Assert { test, message }, pos))
     }
 
     fn parse_import_alias(&mut self, pos: usize) -> Result<(ImportAlias, usize), ParseError> {
