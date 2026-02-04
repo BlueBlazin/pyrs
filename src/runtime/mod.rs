@@ -12,6 +12,7 @@ pub enum Value {
     Str(String),
     Code(Rc<CodeObject>),
     Function(Rc<CodeObject>),
+    Builtin(BuiltinFunction),
 }
 
 impl PartialEq for Value {
@@ -23,12 +24,55 @@ impl PartialEq for Value {
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Code(a), Value::Code(b)) => Rc::ptr_eq(a, b),
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
+            (Value::Builtin(a), Value::Builtin(b)) => a == b,
             _ => false,
         }
     }
 }
 
 impl Eq for Value {}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum BuiltinFunction {
+    Print,
+    Len,
+}
+
+impl BuiltinFunction {
+    pub fn call(self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        match self {
+            BuiltinFunction::Print => {
+                let mut parts = Vec::new();
+                for value in args {
+                    parts.push(format_value(&value));
+                }
+                println!("{}", parts.join(" "));
+                Ok(Value::None)
+            }
+            BuiltinFunction::Len => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("len() expects one argument"));
+                }
+                match &args[0] {
+                    Value::Str(value) => Ok(Value::Int(value.chars().count() as i64)),
+                    _ => Err(RuntimeError::new("len() unsupported type")),
+                }
+            }
+        }
+    }
+}
+
+fn format_value(value: &Value) -> String {
+    match value {
+        Value::None => "None".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Int(value) => value.to_string(),
+        Value::Str(value) => value.clone(),
+        Value::Code(_) => "<code>".to_string(),
+        Value::Function(_) => "<function>".to_string(),
+        Value::Builtin(_) => "<builtin>".to_string(),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeError {

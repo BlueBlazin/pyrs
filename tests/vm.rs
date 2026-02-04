@@ -103,6 +103,17 @@ fn function_locals_do_not_override_globals() {
 }
 
 #[test]
+fn executes_builtin_len() {
+    let source = "x = len('hello')";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(5)));
+}
+
+#[test]
 fn executes_if_else_statement() {
     let source = "if 0:\n    x = 1\nelse:\n    x = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::bytecode::{CodeObject, Opcode};
-use crate::runtime::{RuntimeError, Value};
+use crate::runtime::{BuiltinFunction, RuntimeError, Value};
 
 struct Frame {
     code: Rc<CodeObject>,
@@ -34,10 +34,12 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Self {
+        let mut vm = Self {
             frames: Vec::new(),
             globals: HashMap::new(),
-        }
+        };
+        vm.install_builtins();
+        vm
     }
 
     pub fn set_global(&mut self, name: impl Into<String>, value: Value) {
@@ -214,21 +216,25 @@ impl Vm {
                     }
                     args.reverse();
                     let func = self.pop_value()?;
-                    let code = match func {
-                        Value::Function(code) => code,
+                    match func {
+                        Value::Function(code) => {
+                            if code.params.len() != args.len() {
+                                return Err(RuntimeError::new("argument count mismatch"));
+                            }
+
+                            let params = code.params.clone();
+                            let mut frame = Frame::new(code, false);
+                            for (name, value) in params.into_iter().zip(args.into_iter()) {
+                                frame.locals.insert(name, value);
+                            }
+                            self.frames.push(frame);
+                        }
+                        Value::Builtin(builtin) => {
+                            let result = builtin.call(args)?;
+                            self.push_value(result);
+                        }
                         _ => return Err(RuntimeError::new("attempted to call non-function")),
-                    };
-
-                    if code.params.len() != args.len() {
-                        return Err(RuntimeError::new("argument count mismatch"));
                     }
-
-                    let params = code.params.clone();
-                    let mut frame = Frame::new(code, false);
-                    for (name, value) in params.into_iter().zip(args.into_iter()) {
-                        frame.locals.insert(name, value);
-                    }
-                    self.frames.push(frame);
                 }
                 Opcode::JumpIfFalse => {
                     let target = instr
@@ -305,6 +311,13 @@ impl Vm {
             }
         }
     }
+
+    fn install_builtins(&mut self) {
+        self.globals
+            .insert("print".to_string(), Value::Builtin(BuiltinFunction::Print));
+        self.globals
+            .insert("len".to_string(), Value::Builtin(BuiltinFunction::Len));
+    }
 }
 
 fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
@@ -321,6 +334,6 @@ fn is_truthy(value: &Value) -> bool {
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
         Value::Str(value) => !value.is_empty(),
-        Value::Code(_) | Value::Function(_) => true,
+        Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
     }
 }
