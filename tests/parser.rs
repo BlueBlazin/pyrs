@@ -68,6 +68,17 @@ fn parses_comparison_expression() {
 }
 
 #[test]
+fn parses_in_expression() {
+    let module = parser::parse_module("'a' in 'cat'").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Binary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::In);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_unary_minus() {
     let module = parser::parse_module("-1").expect("parse should succeed");
     let expected = Stmt::Expr(Expr::Unary {

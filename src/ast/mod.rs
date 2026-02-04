@@ -87,6 +87,8 @@ pub enum BinaryOp {
     Mul,
     Eq,
     Lt,
+    In,
+    NotIn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

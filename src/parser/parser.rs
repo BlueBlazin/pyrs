@@ -198,13 +198,21 @@ impl Parser {
     fn parse_comparison(&mut self, pos: usize) -> ParseResult<Expr> {
         let (left, mut pos) = self.parse_add_sub(pos)?;
 
-        let op = match self.token_at(pos).kind {
-            TokenKind::DoubleEqual => BinaryOp::Eq,
-            TokenKind::Less => BinaryOp::Lt,
+        let (op, consumed) = match self.token_at(pos).kind {
+            TokenKind::DoubleEqual => (BinaryOp::Eq, 1),
+            TokenKind::Less => (BinaryOp::Lt, 1),
+            TokenKind::Keyword(Keyword::In) => (BinaryOp::In, 1),
+            TokenKind::Keyword(Keyword::Not) => {
+                if self.match_keyword(pos + 1, Keyword::In) {
+                    (BinaryOp::NotIn, 2)
+                } else {
+                    return Ok((left, pos));
+                }
+            }
             _ => return Ok((left, pos)),
         };
 
-        pos += 1;
+        pos += consumed;
         let (right, next) = self.parse_add_sub(pos)?;
         Ok((
             Expr::Binary {

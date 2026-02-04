@@ -290,6 +290,19 @@ fn executes_boolean_operators() {
 }
 
 #[test]
+fn executes_in_operator() {
+    let source = "a = 2 in [1, 2, 3]\nb = 'a' in 'cat'\nc = 'b' not in 'cat'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("b"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("c"), Some(&Value::Bool(true)));
+}
+
+#[test]
 fn executes_if_elif_else_statement() {
     let source = "x = 0\nif 0:\n    x = 1\nelif 1:\n    x = 2\nelse:\n    x = 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");

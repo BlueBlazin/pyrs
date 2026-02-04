@@ -14,6 +14,8 @@ pub enum Opcode {
     BinaryMul,
     CompareEq,
     CompareLt,
+    CompareIn,
+    CompareNotIn,
     UnaryNeg,
     UnaryNot,
     MakeFunction,

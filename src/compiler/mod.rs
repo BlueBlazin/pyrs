@@ -142,6 +142,8 @@ impl Compiler {
                     crate::ast::BinaryOp::Mul => Opcode::BinaryMul,
                     crate::ast::BinaryOp::Eq => Opcode::CompareEq,
                     crate::ast::BinaryOp::Lt => Opcode::CompareLt,
+                    crate::ast::BinaryOp::In => Opcode::CompareIn,
+                    crate::ast::BinaryOp::NotIn => Opcode::CompareNotIn,
                 };
                 self.emit(opcode, None);
                 Ok(())

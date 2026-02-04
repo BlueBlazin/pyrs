@@ -179,6 +179,16 @@ impl Vm {
                     let left = self.pop_value()?;
                     self.push_value(compare_lt(left, right)?);
                 }
+                Opcode::CompareIn => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(Value::Bool(compare_in(&left, &right)?));
+                }
+                Opcode::CompareNotIn => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(Value::Bool(!compare_in(&left, &right)?));
+                }
                 Opcode::UnaryNeg => {
                     let value = self.pop_value()?;
                     let value = value_to_int(value)?;
@@ -501,6 +511,19 @@ fn compare_lt(left: Value, right: Value) -> Result<Value, RuntimeError> {
         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a < b)),
         (Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a < b)),
         _ => Err(RuntimeError::new("unsupported operand type for <")),
+    }
+}
+
+fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeError> {
+    match right {
+        Value::List(values) => Ok(values.iter().any(|value| value == left)),
+        Value::Tuple(values) => Ok(values.iter().any(|value| value == left)),
+        Value::Dict(entries) => Ok(entries.iter().any(|(key, _)| key == left)),
+        Value::Str(haystack) => match left {
+            Value::Str(needle) => Ok(haystack.contains(needle)),
+            _ => Err(RuntimeError::new("in expects string on left")),
+        },
+        _ => Err(RuntimeError::new("unsupported operand type for in")),
     }
 }
 
