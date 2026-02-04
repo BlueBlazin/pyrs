@@ -216,6 +216,13 @@ impl Compiler {
                 self.emit(Opcode::Subscript, None);
                 Ok(())
             }
+            Expr::Slice { lower, upper, step } => {
+                self.compile_slice_part(lower)?;
+                self.compile_slice_part(upper)?;
+                self.compile_slice_part(step)?;
+                self.emit(Opcode::BuildSlice, None);
+                Ok(())
+            }
         }
     }
 
@@ -226,6 +233,15 @@ impl Compiler {
     fn emit_const(&mut self, value: Value) {
         let idx = self.code.add_const(value);
         self.emit(Opcode::LoadConst, Some(idx));
+    }
+
+    fn compile_slice_part(&mut self, part: &Option<Box<Expr>>) -> Result<(), CompileError> {
+        if let Some(expr) = part {
+            self.compile_expr(expr)?;
+        } else {
+            self.emit(Opcode::LoadConst, Some(0));
+        }
+        Ok(())
     }
 
     fn emit_load_name(&mut self, name: &str) {

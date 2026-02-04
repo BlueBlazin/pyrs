@@ -88,6 +88,11 @@ pub enum Expr {
         body: Box<Expr>,
         orelse: Box<Expr>,
     },
+    Slice {
+        lower: Option<Box<Expr>>,
+        upper: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

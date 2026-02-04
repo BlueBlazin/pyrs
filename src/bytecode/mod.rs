@@ -24,6 +24,7 @@ pub enum Opcode {
     BuildList,
     BuildTuple,
     BuildDict,
+    BuildSlice,
     Subscript,
     StoreSubscript,
     DupTop,

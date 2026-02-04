@@ -186,6 +186,50 @@ fn parses_list_literal_and_subscript() {
 }
 
 #[test]
+fn parses_slice_subscript() {
+    let module = parser::parse_module("x[1:3]").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Subscript { value, index }) => {
+            assert_eq!(**value, Expr::Name("x".to_string()));
+            match &**index {
+                Expr::Slice { lower, upper, step } => {
+                    assert_eq!(
+                        lower.as_deref(),
+                        Some(&Expr::Constant(Constant::Int(1)))
+                    );
+                    assert_eq!(
+                        upper.as_deref(),
+                        Some(&Expr::Constant(Constant::Int(3)))
+                    );
+                    assert!(step.is_none());
+                }
+                other => panic!("unexpected index: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_slice_with_step() {
+    let module = parser::parse_module("x[::2]").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Subscript { index, .. }) => match &**index {
+            Expr::Slice { lower, upper, step } => {
+                assert!(lower.is_none());
+                assert!(upper.is_none());
+                assert_eq!(
+                    step.as_deref(),
+                    Some(&Expr::Constant(Constant::Int(2)))
+                );
+            }
+            other => panic!("unexpected index: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_tuple_literal() {
     let module = parser::parse_module("(1, 2)").expect("parse should succeed");
     match &module.body[0] {

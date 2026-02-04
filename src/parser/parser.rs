@@ -625,9 +625,51 @@ impl Parser {
     }
 
     fn parse_subscript(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        let mut pos = pos;
+        if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+            return self.parse_slice(None, pos);
+        }
+
         let (expr, next) = self.parse_expr_at(pos)?;
-        let next = self.expect_kind(next, TokenKind::RBracket)?;
-        Ok((expr, next))
+        pos = next;
+        if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+            return self.parse_slice(Some(expr), pos);
+        }
+
+        pos = self.expect_kind(pos, TokenKind::RBracket)?;
+        Ok((expr, pos))
+    }
+
+    fn parse_slice(&mut self, lower: Option<Expr>, pos: usize) -> Result<(Expr, usize), ParseError> {
+        let mut pos = pos;
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+
+        let mut upper = None;
+        if !matches!(self.token_at(pos).kind, TokenKind::Colon | TokenKind::RBracket) {
+            let (expr, next) = self.parse_expr_at(pos)?;
+            upper = Some(expr);
+            pos = next;
+        }
+
+        let mut step = None;
+        if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+            pos += 1;
+            if !matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+                let (expr, next) = self.parse_expr_at(pos)?;
+                step = Some(expr);
+                pos = next;
+            }
+        }
+
+        pos = self.expect_kind(pos, TokenKind::RBracket)?;
+        Ok((
+            Expr::Slice {
+                lower: lower.map(Box::new),
+                upper: upper.map(Box::new),
+                step: step.map(Box::new),
+            },
+            pos,
+        ))
     }
 
     fn parse_parameters(&mut self, pos: usize) -> Result<(Vec<String>, usize), ParseError> {

@@ -137,6 +137,57 @@ fn executes_negative_indexing() {
 }
 
 #[test]
+fn executes_slicing() {
+    let source = "x = [1, 2, 3, 4]\n\
+a = x[1:3]\n\
+b = x[:2]\n\
+c = x[::2]\n\
+d = x[::-1]\n\
+t = (1, 2, 3, 4)\n\
+u = t[1:]\n\
+s = 'abcd'\n\
+v = s[1:3]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("a"),
+        Some(&Value::List(vec![Value::Int(2), Value::Int(3)]))
+    );
+    assert_eq!(
+        vm.get_global("b"),
+        Some(&Value::List(vec![Value::Int(1), Value::Int(2)]))
+    );
+    assert_eq!(
+        vm.get_global("c"),
+        Some(&Value::List(vec![Value::Int(1), Value::Int(3)]))
+    );
+    assert_eq!(
+        vm.get_global("d"),
+        Some(&Value::List(vec![
+            Value::Int(4),
+            Value::Int(3),
+            Value::Int(2),
+            Value::Int(1)
+        ]))
+    );
+    assert_eq!(
+        vm.get_global("u"),
+        Some(&Value::Tuple(vec![
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4)
+        ]))
+    );
+    assert_eq!(
+        vm.get_global("v"),
+        Some(&Value::Str("bc".to_string()))
+    );
+}
+
+#[test]
 fn executes_len_on_list() {
     let source = "x = len([1, 2, 3])";
     let module = parser::parse_module(source).expect("parse should succeed");

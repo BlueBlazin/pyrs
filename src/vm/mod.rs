@@ -245,86 +245,133 @@ impl Vm {
                     values.reverse();
                     self.push_value(Value::Dict(values));
                 }
+                Opcode::BuildSlice => {
+                    let step = self.pop_value()?;
+                    let upper = self.pop_value()?;
+                    let lower = self.pop_value()?;
+                    let lower = value_to_optional_index(lower)?;
+                    let upper = value_to_optional_index(upper)?;
+                    let step = value_to_optional_index(step)?;
+                    self.push_value(Value::Slice { lower, upper, step });
+                }
                 Opcode::Subscript => {
                     let index = self.pop_value()?;
                     let value = self.pop_value()?;
-                    match value {
-                        Value::List(values) => {
-                            let mut index_int = value_to_int(index)? as isize;
-                            if index_int < 0 {
-                                index_int += values.len() as isize;
+                    match index {
+                        Value::Slice { lower, upper, step } => match value {
+                            Value::List(values) => {
+                                let indices = slice_indices(values.len(), lower, upper, step)?;
+                                let mut result = Vec::with_capacity(indices.len());
+                                for idx in indices {
+                                    result.push(values[idx].clone());
+                                }
+                                self.push_value(Value::List(result));
                             }
-                            if index_int < 0 || index_int as usize >= values.len() {
-                                return Err(RuntimeError::new("list index out of range"));
+                            Value::Tuple(values) => {
+                                let indices = slice_indices(values.len(), lower, upper, step)?;
+                                let mut result = Vec::with_capacity(indices.len());
+                                for idx in indices {
+                                    result.push(values[idx].clone());
+                                }
+                                self.push_value(Value::Tuple(result));
                             }
-                            self.push_value(values[index_int as usize].clone());
-                        }
-                        Value::Tuple(values) => {
-                            let mut index_int = value_to_int(index)? as isize;
-                            if index_int < 0 {
-                                index_int += values.len() as isize;
+                            Value::Str(value) => {
+                                let chars: Vec<char> = value.chars().collect();
+                                let indices = slice_indices(chars.len(), lower, upper, step)?;
+                                let mut result = String::new();
+                                for idx in indices {
+                                    result.push(chars[idx]);
+                                }
+                                self.push_value(Value::Str(result));
                             }
-                            if index_int < 0 || index_int as usize >= values.len() {
-                                return Err(RuntimeError::new("tuple index out of range"));
+                            Value::Dict(_) => {
+                                return Err(RuntimeError::new("slicing unsupported for dict"));
                             }
-                            self.push_value(values[index_int as usize].clone());
-                        }
-                        Value::Str(value) => {
-                            let mut index_int = value_to_int(index)? as isize;
-                            let chars: Vec<char> = value.chars().collect();
-                            if index_int < 0 {
-                                index_int += chars.len() as isize;
+                            _ => return Err(RuntimeError::new("subscript unsupported type")),
+                        },
+                        index => match value {
+                            Value::List(values) => {
+                                let mut index_int = value_to_int(index)? as isize;
+                                if index_int < 0 {
+                                    index_int += values.len() as isize;
+                                }
+                                if index_int < 0 || index_int as usize >= values.len() {
+                                    return Err(RuntimeError::new("list index out of range"));
+                                }
+                                self.push_value(values[index_int as usize].clone());
                             }
-                            if index_int < 0 || index_int as usize >= chars.len() {
-                                return Err(RuntimeError::new("string index out of range"));
+                            Value::Tuple(values) => {
+                                let mut index_int = value_to_int(index)? as isize;
+                                if index_int < 0 {
+                                    index_int += values.len() as isize;
+                                }
+                                if index_int < 0 || index_int as usize >= values.len() {
+                                    return Err(RuntimeError::new("tuple index out of range"));
+                                }
+                                self.push_value(values[index_int as usize].clone());
                             }
-                            self.push_value(Value::Str(chars[index_int as usize].to_string()));
-                        }
-                        Value::Dict(entries) => {
-                            let mut found = None;
-                            for (key, value) in entries {
-                                if key == index {
-                                    found = Some(value);
-                                    break;
+                            Value::Str(value) => {
+                                let mut index_int = value_to_int(index)? as isize;
+                                let chars: Vec<char> = value.chars().collect();
+                                if index_int < 0 {
+                                    index_int += chars.len() as isize;
+                                }
+                                if index_int < 0 || index_int as usize >= chars.len() {
+                                    return Err(RuntimeError::new("string index out of range"));
+                                }
+                                self.push_value(Value::Str(chars[index_int as usize].to_string()));
+                            }
+                            Value::Dict(entries) => {
+                                let mut found = None;
+                                for (key, value) in entries {
+                                    if key == index {
+                                        found = Some(value);
+                                        break;
+                                    }
+                                }
+                                if let Some(value) = found {
+                                    self.push_value(value);
+                                } else {
+                                    return Err(RuntimeError::new("key not found"));
                                 }
                             }
-                            if let Some(value) = found {
-                                self.push_value(value);
-                            } else {
-                                return Err(RuntimeError::new("key not found"));
-                            }
-                        }
-                        _ => return Err(RuntimeError::new("subscript unsupported type")),
+                            _ => return Err(RuntimeError::new("subscript unsupported type")),
+                        },
                     }
                 }
                 Opcode::StoreSubscript => {
                     let value = self.pop_value()?;
                     let index = self.pop_value()?;
                     let target = self.pop_value()?;
-                    match target {
-                        Value::List(mut values) => {
-                            let idx = value_to_int(index)? as isize;
-                            if idx < 0 || idx as usize >= values.len() {
-                                return Err(RuntimeError::new("list index out of range"));
-                            }
-                            values[idx as usize] = value;
-                            self.push_value(Value::List(values));
+                    match index {
+                        Value::Slice { .. } => {
+                            return Err(RuntimeError::new("slice assignment not supported"))
                         }
-                        Value::Dict(mut entries) => {
-                            let mut found = false;
-                            for (key, stored) in entries.iter_mut() {
-                                if *key == index {
-                                    *stored = value.clone();
-                                    found = true;
-                                    break;
+                        index => match target {
+                            Value::List(mut values) => {
+                                let idx = value_to_int(index)? as isize;
+                                if idx < 0 || idx as usize >= values.len() {
+                                    return Err(RuntimeError::new("list index out of range"));
                                 }
+                                values[idx as usize] = value;
+                                self.push_value(Value::List(values));
                             }
-                            if !found {
-                                entries.push((index, value));
+                            Value::Dict(mut entries) => {
+                                let mut found = false;
+                                for (key, stored) in entries.iter_mut() {
+                                    if *key == index {
+                                        *stored = value.clone();
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if !found {
+                                    entries.push((index, value));
+                                }
+                                self.push_value(Value::Dict(entries));
                             }
-                            self.push_value(Value::Dict(entries));
-                        }
-                        _ => return Err(RuntimeError::new("store subscript unsupported type")),
+                            _ => return Err(RuntimeError::new("store subscript unsupported type")),
+                        },
                     }
                 }
                 Opcode::MakeFunction => {
@@ -496,6 +543,13 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
     }
 }
 
+fn value_to_optional_index(value: Value) -> Result<Option<i64>, RuntimeError> {
+    match value {
+        Value::None => Ok(None),
+        other => Ok(Some(value_to_int(other)?)),
+    }
+}
+
 fn is_truthy(value: &Value) -> bool {
     match value {
         Value::None => false,
@@ -505,6 +559,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::List(values) => !values.is_empty(),
         Value::Tuple(values) => !values.is_empty(),
         Value::Dict(values) => !values.is_empty(),
+        Value::Slice { .. } => true,
         Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
     }
 }
@@ -582,4 +637,81 @@ fn mul_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
         }
         _ => Err(RuntimeError::new("unsupported operand type for *")),
     }
+}
+
+fn slice_indices(
+    len: usize,
+    lower: Option<i64>,
+    upper: Option<i64>,
+    step: Option<i64>,
+) -> Result<Vec<usize>, RuntimeError> {
+    let len_isize = len as isize;
+    let step = step.unwrap_or(1);
+    if step == 0 {
+        return Err(RuntimeError::new("slice step cannot be zero"));
+    }
+    let step = step as isize;
+
+    let (start, stop) = if step > 0 {
+        let mut start = lower.unwrap_or(0) as isize;
+        if start < 0 {
+            start += len_isize;
+        }
+        if start < 0 {
+            start = 0;
+        } else if start > len_isize {
+            start = len_isize;
+        }
+
+        let mut stop = upper.unwrap_or(len as i64) as isize;
+        if stop < 0 {
+            stop += len_isize;
+        }
+        if stop < 0 {
+            stop = 0;
+        } else if stop > len_isize {
+            stop = len_isize;
+        }
+        (start, stop)
+    } else {
+        let mut start = lower.unwrap_or(len as i64 - 1) as isize;
+        if start < 0 {
+            start += len_isize;
+        }
+        if start < -1 {
+            start = -1;
+        } else if start >= len_isize {
+            start = len_isize - 1;
+        }
+
+        let mut stop = upper.unwrap_or(-1) as isize;
+        if upper.is_some() && stop < 0 {
+            stop += len_isize;
+        }
+        if stop < -1 {
+            stop = -1;
+        } else if stop >= len_isize {
+            stop = len_isize - 1;
+        }
+        (start, stop)
+    };
+
+    let mut indices = Vec::new();
+    let mut i = start;
+    if step > 0 {
+        while i < stop {
+            if i >= 0 && i < len_isize {
+                indices.push(i as usize);
+            }
+            i += step;
+        }
+    } else {
+        while i > stop {
+            if i >= 0 && i < len_isize {
+                indices.push(i as usize);
+            }
+            i += step;
+        }
+    }
+    Ok(indices)
 }

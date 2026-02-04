@@ -13,6 +13,11 @@ pub enum Value {
     List(Vec<Value>),
     Tuple(Vec<Value>),
     Dict(Vec<(Value, Value)>),
+    Slice {
+        lower: Option<i64>,
+        upper: Option<i64>,
+        step: Option<i64>,
+    },
     Code(Rc<CodeObject>),
     Function(Rc<CodeObject>),
     Builtin(BuiltinFunction),
@@ -28,6 +33,18 @@ impl PartialEq for Value {
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Dict(a), Value::Dict(b)) => a == b,
+            (
+                Value::Slice {
+                    lower: a_lower,
+                    upper: a_upper,
+                    step: a_step,
+                },
+                Value::Slice {
+                    lower: b_lower,
+                    upper: b_upper,
+                    step: b_step,
+                },
+            ) => a_lower == b_lower && a_upper == b_upper && a_step == b_step,
             (Value::Code(a), Value::Code(b)) => Rc::ptr_eq(a, b),
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
@@ -148,6 +165,12 @@ fn format_value(value: &Value) -> String {
                 parts.push(format!("{}: {}", format_value(key), format_value(value)));
             }
             format!("{{{}}}", parts.join(", "))
+        }
+        Value::Slice { lower, upper, step } => {
+            let lower = lower.map_or("None".to_string(), |value| value.to_string());
+            let upper = upper.map_or("None".to_string(), |value| value.to_string());
+            let step = step.map_or("None".to_string(), |value| value.to_string());
+            format!("slice({lower}, {upper}, {step})")
         }
         Value::Code(_) => "<code>".to_string(),
         Value::Function(_) => "<function>".to_string(),
