@@ -3,26 +3,32 @@
 This document tracks progress toward source and bytecode compatibility with CPython 3.14.
 
 ## Parser & Grammar
-- [ ] Vendored `Grammar/python.gram` and `Grammar/Tokens`
-- [ ] Tokenizer parity (indentation, string prefixes, numeric literals, f-strings)
-- [ ] Statement coverage (simple, compound, pattern matching)
-- [ ] Expression coverage (operators, comprehensions, lambdas)
+- [ ] Vendored `Grammar/python.gram` and `Grammar/Tokens` (placeholders only; not synced)
+- [x] Indentation + basic tokenization (names, ints, strings, operators, keywords for implemented subset)
+- [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
+- [x] Statements subset: pass, expr, assign/augassign, if/elif/else, while/for/else, break/continue, def/return, import/from, global, raise, assert, try/except/else, class (no bases)
+- [x] Expressions subset: arithmetic, comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda
+- [ ] Comprehensions, generators, pattern matching, async/await, with, etc.
 
 ## Bytecode
 - [ ] Opcode table synced from CPython 3.14
+- [x] Internal bytecode IR + compiler for subset (non-CPython)
 - [x] `.pyc` header parsing
-- [ ] Bytecode decoder/encoder
+- [ ] CPython bytecode decoder/encoder
 - [ ] Opcode execution parity
 
 ## Runtime & Object Model
-- [ ] Core types (None, bool, int, str, bytes, tuple, list, dict, set)
-- [ ] Function + frame model
-- [ ] Exceptions + tracebacks
-- [ ] Module/import system
+- [x] Core types subset (None, bool, int, str, tuple, list, dict)
+- [ ] bytes, set, frozenset, memoryview, complex, etc.
+- [x] Function + frame model (positional params only; no closures/defaults)
+- [x] Exceptions subset (raise/try/except/else; simple exception types)
+- [ ] Tracebacks + exception chaining
+- [x] Module/import system (simple module names, file-based)
+- [x] Classes subset (no inheritance; instance attrs + bound methods)
 - [ ] Reference counting + cycle handling
 
 ## Stdlib Coverage
-- [ ] `builtins`
+- [x] `builtins` subset (print, len, range, slice, bool/int/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted)
 - [ ] `sys`, `types`, `inspect`
 - [ ] `os`, `pathlib`, `io`
 - [ ] `math`, `random`, `itertools`
