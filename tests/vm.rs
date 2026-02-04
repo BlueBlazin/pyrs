@@ -1,7 +1,7 @@
 use pyrs::{
     compiler,
     parser,
-    runtime::{ModuleObject, Value},
+    runtime::{ExceptionObject, ModuleObject, Value},
     vm::Vm,
 };
 use std::rc::Rc;
@@ -437,6 +437,36 @@ b = sorted(('b', 'a'))\n";
             Value::Str("b".to_string())
         ]))
     );
+}
+
+#[test]
+fn executes_try_except_statement() {
+    let source =
+        "try:\n    raise ValueError('bad')\nexcept ValueError as err:\n    x = 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
+    assert_eq!(
+        vm.get_global("err"),
+        Some(Value::Exception(ExceptionObject {
+            name: "ValueError".to_string(),
+            message: Some("bad".to_string()),
+        }))
+    );
+}
+
+#[test]
+fn executes_try_except_else_statement() {
+    let source = "try:\n    x = 1\nexcept Exception:\n    x = 2\nelse:\n    x = 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
 }
 
 #[test]

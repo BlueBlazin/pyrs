@@ -200,6 +200,42 @@ fn parses_lambda_expression() {
 }
 
 #[test]
+fn parses_raise_statement() {
+    let module = parser::parse_module("raise ValueError").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Raise { value: Some(Expr::Name(name)) } => {
+            assert_eq!(name, "ValueError");
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_try_except_statement() {
+    let source = "try:\n  pass\nexcept ValueError as err:\n  pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Try {
+            handlers,
+            orelse,
+            finalbody,
+            ..
+        } => {
+            assert!(orelse.is_empty());
+            assert!(finalbody.is_empty());
+            assert_eq!(handlers.len(), 1);
+            let handler = &handlers[0];
+            match &handler.type_expr {
+                Some(Expr::Name(name)) => assert_eq!(name, "ValueError"),
+                other => panic!("unexpected handler type: {other:?}"),
+            }
+            assert_eq!(handler.name.as_deref(), Some("err"));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_boolean_and_none_literals() {
     let module = parser::parse_module("True\nFalse\nNone").expect("parse should succeed");
     assert_eq!(
