@@ -326,6 +326,18 @@ fn executes_in_operator() {
 }
 
 #[test]
+fn executes_if_expression() {
+    let source = "x = 1 if 0 else 2\ny = 3 if 1 else 4\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(2)));
+    assert_eq!(vm.get_global("y"), Some(&Value::Int(3)));
+}
+
+#[test]
 fn executes_if_elif_else_statement() {
     let source = "x = 0\nif 0:\n    x = 1\nelif 1:\n    x = 2\nelse:\n    x = 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");

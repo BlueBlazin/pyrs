@@ -83,6 +83,11 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    IfExpr {
+        test: Box<Expr>,
+        body: Box<Expr>,
+        orelse: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

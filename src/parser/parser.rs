@@ -161,7 +161,30 @@ impl Parser {
     }
 
     fn parse_expr_uncached(&mut self, pos: usize) -> ParseResult<Expr> {
-        self.parse_or(pos)
+        self.parse_if_expr(pos)
+    }
+
+    fn parse_if_expr(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (body, mut pos) = self.parse_or(pos)?;
+        if self.match_keyword(pos, Keyword::If) {
+            pos += 1;
+            let (test, next) = self.parse_or(pos)?;
+            pos = next;
+            if !self.match_keyword(pos, Keyword::Else) {
+                return Err(self.error_at(pos, "expected else"));
+            }
+            pos += 1;
+            let (orelse, next) = self.parse_if_expr(pos)?;
+            return Ok((
+                Expr::IfExpr {
+                    test: Box::new(test),
+                    body: Box::new(body),
+                    orelse: Box::new(orelse),
+                },
+                next,
+            ));
+        }
+        Ok((body, pos))
     }
 
     fn parse_or(&mut self, pos: usize) -> ParseResult<Expr> {

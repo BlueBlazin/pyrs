@@ -176,6 +176,9 @@ impl Compiler {
                 Ok(())
             }
             Expr::BoolOp { op, left, right } => self.compile_bool_op(op, left, right),
+            Expr::IfExpr { test, body, orelse } => {
+                self.compile_if_expr(test, body, orelse)
+            }
             Expr::Call { func, args } => {
                 self.compile_expr(func)?;
                 for arg in args {
@@ -416,6 +419,24 @@ impl Compiler {
             }
         }
 
+        Ok(())
+    }
+
+    fn compile_if_expr(
+        &mut self,
+        test: &Expr,
+        body: &Expr,
+        orelse: &Expr,
+    ) -> Result<(), CompileError> {
+        self.compile_expr(test)?;
+        let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
+        self.compile_expr(body)?;
+        let jump_to_end = self.emit_jump(Opcode::Jump);
+        let else_target = self.current_ip();
+        self.patch_jump(jump_if_false, else_target)?;
+        self.compile_expr(orelse)?;
+        let end_target = self.current_ip();
+        self.patch_jump(jump_to_end, end_target)?;
         Ok(())
     }
 
