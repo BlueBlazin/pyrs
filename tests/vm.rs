@@ -128,6 +128,29 @@ fn executes_function_definition_and_call() {
 }
 
 #[test]
+fn executes_function_defaults() {
+    let source = "def add(a, b=2):\n    return a + b\nx = add(3)\ny = add(3, 4)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(7)));
+}
+
+#[test]
+fn executes_default_from_global() {
+    let source = "x = 5\n\ndef f(a=x):\n    return a\n\ny = f()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(Value::Int(5)));
+}
+
+#[test]
 fn executes_global_assignment() {
     let source = "x = 1\ndef f():\n    global x\n    x = 3\nf()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -613,6 +636,18 @@ fn executes_lambda_expression() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_lambda_defaults() {
+    let source = "f = lambda x=2: x + 1\na = f()\nb = f(3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(4)));
 }
 
 #[test]

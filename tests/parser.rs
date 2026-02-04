@@ -206,7 +206,9 @@ fn parses_lambda_expression() {
     let module = parser::parse_module("lambda x: x + 1").expect("parse should succeed");
     match &module.body[0] {
         Stmt::Expr(Expr::Lambda { params, body }) => {
-            assert_eq!(params, &vec!["x".to_string()]);
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "x");
+            assert!(params[0].default.is_none());
             match &**body {
                 Expr::Binary { .. } => {}
                 other => panic!("unexpected body: {other:?}"),
@@ -356,12 +358,48 @@ fn parses_function_definition_and_return() {
     match &module.body[0] {
         Stmt::FunctionDef { name, params, body } => {
             assert_eq!(name, "add");
-            assert_eq!(params, &vec!["a".to_string(), "b".to_string()]);
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].name, "a");
+            assert!(params[0].default.is_none());
+            assert_eq!(params[1].name, "b");
+            assert!(params[1].default.is_none());
             match &body[0] {
                 Stmt::Return { value } => {
                     assert!(value.is_some());
                 }
                 other => panic!("unexpected stmt: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_function_definition_with_defaults() {
+    let source = "def add(a, b=1):\n    return a + b\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::FunctionDef { params, .. } => {
+            assert_eq!(params.len(), 2);
+            assert!(params[0].default.is_none());
+            match &params[1].default {
+                Some(Expr::Constant(Constant::Int(value))) => assert_eq!(*value, 1),
+                other => panic!("unexpected default: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_lambda_with_default() {
+    let module = parser::parse_module("lambda x=1: x").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Lambda { params, .. }) => {
+            assert_eq!(params.len(), 1);
+            match &params[0].default {
+                Some(Expr::Constant(Constant::Int(value))) => assert_eq!(*value, 1),
+                other => panic!("unexpected default: {other:?}"),
             }
         }
         other => panic!("unexpected stmt: {other:?}"),
