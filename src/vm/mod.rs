@@ -231,14 +231,20 @@ impl Vm {
                     let value = self.pop_value()?;
                     match value {
                         Value::List(values) => {
-                            let index_int = value_to_int(index)? as isize;
+                            let mut index_int = value_to_int(index)? as isize;
+                            if index_int < 0 {
+                                index_int += values.len() as isize;
+                            }
                             if index_int < 0 || index_int as usize >= values.len() {
                                 return Err(RuntimeError::new("list index out of range"));
                             }
                             self.push_value(values[index_int as usize].clone());
                         }
                         Value::Tuple(values) => {
-                            let index_int = value_to_int(index)? as isize;
+                            let mut index_int = value_to_int(index)? as isize;
+                            if index_int < 0 {
+                                index_int += values.len() as isize;
+                            }
                             if index_int < 0 || index_int as usize >= values.len() {
                                 return Err(RuntimeError::new("tuple index out of range"));
                             }

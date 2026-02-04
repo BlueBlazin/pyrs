@@ -125,6 +125,18 @@ fn executes_list_literal_and_subscript() {
 }
 
 #[test]
+fn executes_negative_indexing() {
+    let source = "x = [1, 2, 3]\ny = x[-1]\nz = (1, 2, 3)[-2]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(&Value::Int(3)));
+    assert_eq!(vm.get_global("z"), Some(&Value::Int(2)));
+}
+
+#[test]
 fn executes_len_on_list() {
     let source = "x = len([1, 2, 3])";
     let module = parser::parse_module(source).expect("parse should succeed");
