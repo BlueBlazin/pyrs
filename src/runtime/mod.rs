@@ -115,7 +115,13 @@ impl BuiltinFunction {
 fn format_value(value: &Value) -> String {
     match value {
         Value::None => "None".to_string(),
-        Value::Bool(value) => value.to_string(),
+        Value::Bool(value) => {
+            if *value {
+                "True".to_string()
+            } else {
+                "False".to_string()
+            }
+        }
         Value::Int(value) => value.to_string(),
         Value::Str(value) => value.clone(),
         Value::List(values) => {
