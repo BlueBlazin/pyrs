@@ -179,6 +179,9 @@ impl<'a> Lexer<'a> {
                         "in" => TokenKind::Keyword(Keyword::In),
                         "break" => TokenKind::Keyword(Keyword::Break),
                         "continue" => TokenKind::Keyword(Keyword::Continue),
+                        "and" => TokenKind::Keyword(Keyword::And),
+                        "or" => TokenKind::Keyword(Keyword::Or),
+                        "not" => TokenKind::Keyword(Keyword::Not),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

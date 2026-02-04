@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{BinaryOp, Constant, Expr, Module, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, BoolOp, Constant, Expr, Module, Stmt, UnaryOp};
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
 
@@ -146,6 +146,50 @@ impl Parser {
     }
 
     fn parse_expr_uncached(&mut self, pos: usize) -> ParseResult<Expr> {
+        self.parse_or(pos)
+    }
+
+    fn parse_or(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (mut left, mut pos) = self.parse_and(pos)?;
+        while self.match_keyword(pos, Keyword::Or) {
+            pos += 1;
+            let (right, next) = self.parse_and(pos)?;
+            left = Expr::BoolOp {
+                op: BoolOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+            pos = next;
+        }
+        Ok((left, pos))
+    }
+
+    fn parse_and(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (mut left, mut pos) = self.parse_not(pos)?;
+        while self.match_keyword(pos, Keyword::And) {
+            pos += 1;
+            let (right, next) = self.parse_not(pos)?;
+            left = Expr::BoolOp {
+                op: BoolOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+            pos = next;
+        }
+        Ok((left, pos))
+    }
+
+    fn parse_not(&mut self, pos: usize) -> ParseResult<Expr> {
+        if self.match_keyword(pos, Keyword::Not) {
+            let (expr, next) = self.parse_not(pos + 1)?;
+            return Ok((
+                Expr::Unary {
+                    op: UnaryOp::Not,
+                    operand: Box::new(expr),
+                },
+                next,
+            ));
+        }
         self.parse_comparison(pos)
     }
 

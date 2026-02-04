@@ -13,6 +13,9 @@ pub enum Keyword {
     In,
     Break,
     Continue,
+    And,
+    Or,
+    Not,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

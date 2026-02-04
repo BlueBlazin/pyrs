@@ -169,6 +169,33 @@ fn parses_break_and_continue() {
 }
 
 #[test]
+fn parses_boolean_operators() {
+    let module = parser::parse_module("a or b and c").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::BoolOp { op, left, right }) => {
+            assert_eq!(*op, pyrs::ast::BoolOp::Or);
+            assert_eq!(**left, Expr::Name("a".to_string()));
+            match &**right {
+                Expr::BoolOp { op, .. } => assert_eq!(*op, pyrs::ast::BoolOp::And),
+                _ => panic!("expected nested and"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_not_operator() {
+    let module = parser::parse_module("not False").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Unary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::UnaryOp::Not);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(

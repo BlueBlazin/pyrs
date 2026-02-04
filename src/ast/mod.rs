@@ -67,6 +67,11 @@ pub enum Expr {
         value: Box<Expr>,
         index: Box<Expr>,
     },
+    BoolOp {
+        op: BoolOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +86,13 @@ pub enum BinaryOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnaryOp {
     Neg,
+    Not,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoolOp {
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

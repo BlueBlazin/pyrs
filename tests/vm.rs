@@ -180,6 +180,20 @@ fn executes_continue_in_while_loop() {
 }
 
 #[test]
+fn executes_boolean_operators() {
+    let source = "x = not False\ny = 0 or 5\nz = 1 and 2\nw = 0 and 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("y"), Some(&Value::Int(5)));
+    assert_eq!(vm.get_global("z"), Some(&Value::Int(2)));
+    assert_eq!(vm.get_global("w"), Some(&Value::Int(0)));
+}
+
+#[test]
 fn executes_if_else_statement() {
     let source = "if 0:\n    x = 1\nelse:\n    x = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");

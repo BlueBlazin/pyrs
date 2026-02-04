@@ -181,6 +181,10 @@ impl Vm {
                     let value = value_to_int(value)?;
                     self.push_value(Value::Int(-value));
                 }
+                Opcode::UnaryNot => {
+                    let value = self.pop_value()?;
+                    self.push_value(Value::Bool(!is_truthy(&value)));
+                }
                 Opcode::BuildList => {
                     let count = instr
                         .arg
@@ -272,6 +276,26 @@ impl Vm {
                         let frame = self.frames.last_mut().expect("frame exists");
                         frame.ip = target;
                     }
+                }
+                Opcode::JumpIfTrue => {
+                    let target = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing jump target"))?
+                        as usize;
+                    let value = self.pop_value()?;
+                    if is_truthy(&value) {
+                        let frame = self.frames.last_mut().expect("frame exists");
+                        frame.ip = target;
+                    }
+                }
+                Opcode::DupTop => {
+                    let value = self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.stack.last())
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+                    self.push_value(value);
                 }
                 Opcode::Jump => {
                     let target = instr

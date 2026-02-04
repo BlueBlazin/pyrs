@@ -131,10 +131,12 @@ impl Compiler {
                 self.compile_expr(operand)?;
                 let opcode = match op {
                     crate::ast::UnaryOp::Neg => Opcode::UnaryNeg,
+                    crate::ast::UnaryOp::Not => Opcode::UnaryNot,
                 };
                 self.emit(opcode, None);
                 Ok(())
             }
+            Expr::BoolOp { op, left, right } => self.compile_bool_op(op, left, right),
             Expr::Call { func, args } => {
                 self.compile_expr(func)?;
                 for arg in args {
@@ -330,6 +332,35 @@ impl Compiler {
         let loop_end = self.current_ip();
         self.patch_jump(jump_if_false, loop_end)?;
         self.resolve_loop(loop_end)?;
+
+        Ok(())
+    }
+
+    fn compile_bool_op(
+        &mut self,
+        op: &crate::ast::BoolOp,
+        left: &Expr,
+        right: &Expr,
+    ) -> Result<(), CompileError> {
+        self.compile_expr(left)?;
+        self.emit(Opcode::DupTop, None);
+
+        match op {
+            crate::ast::BoolOp::And => {
+                let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
+                self.emit(Opcode::PopTop, None);
+                self.compile_expr(right)?;
+                let end = self.current_ip();
+                self.patch_jump(jump_if_false, end)?;
+            }
+            crate::ast::BoolOp::Or => {
+                let jump_if_true = self.emit_jump(Opcode::JumpIfTrue);
+                self.emit(Opcode::PopTop, None);
+                self.compile_expr(right)?;
+                let end = self.current_ip();
+                self.patch_jump(jump_if_true, end)?;
+            }
+        }
 
         Ok(())
     }
