@@ -153,15 +153,30 @@ impl<'a> Lexer<'a> {
                 }
                 '+' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::Plus, "+", offset, line, column));
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::PlusEqual, "+=", offset, line, column));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Plus, "+", offset, line, column));
+                    }
                 }
                 '-' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::Minus, "-", offset, line, column));
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::MinusEqual, "-=", offset, line, column));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Minus, "-", offset, line, column));
+                    }
                 }
                 '*' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::Star, "*", offset, line, column));
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::StarEqual, "*=", offset, line, column));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Star, "*", offset, line, column));
+                    }
                 }
                 '\'' | '"' => {
                     let lexeme = self.consume_string(ch)?;

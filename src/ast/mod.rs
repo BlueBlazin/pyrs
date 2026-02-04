@@ -28,6 +28,11 @@ pub enum Stmt {
         target: Expr,
         value: Expr,
     },
+    AugAssign {
+        target: Expr,
+        op: AugOp,
+        value: Expr,
+    },
     FunctionDef {
         name: String,
         params: Vec<String>,
@@ -101,6 +106,13 @@ pub enum UnaryOp {
 pub enum BoolOp {
     And,
     Or,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AugOp {
+    Add,
+    Sub,
+    Mul,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

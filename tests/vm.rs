@@ -190,6 +190,17 @@ fn executes_subscript_assignment() {
 }
 
 #[test]
+fn executes_augmented_assignment() {
+    let source = "x = 1\nx += 2\nx *= 3\nx -= 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(8)));
+}
+
+#[test]
 fn executes_multiplication_and_concat() {
     let source = "a = 'hi' * 3\nb = [1] * 2\nc = (1,) * 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");

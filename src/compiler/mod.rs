@@ -96,6 +96,24 @@ impl Compiler {
                     Err(CompileError::new("invalid assignment target"))
                 }
             }
+            Stmt::AugAssign { target, op, value } => {
+                if let Expr::Name(name) = target {
+                    self.emit_load_name(name);
+                    self.compile_expr(value)?;
+                    let opcode = match op {
+                        crate::ast::AugOp::Add => Opcode::BinaryAdd,
+                        crate::ast::AugOp::Sub => Opcode::BinarySub,
+                        crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                    };
+                    self.emit(opcode, None);
+                    self.emit_store_name(name);
+                    Ok(())
+                } else {
+                    Err(CompileError::new(
+                        "only name-based augmented assignments supported",
+                    ))
+                }
+            }
             Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
             Stmt::While { test, body } => self.compile_while(test, body),
             Stmt::FunctionDef { name, params, body } => {

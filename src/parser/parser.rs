@@ -111,12 +111,25 @@ impl Parser {
 
     fn parse_stmt_uncached(&mut self, pos: usize) -> ParseResult<Stmt> {
         if let Some((target_expr, next_pos)) = self.parse_assignment_target(pos) {
-            if matches!(self.token_at(next_pos).kind, TokenKind::Equal) {
+            let kind = self.token_at(next_pos).kind.clone();
+            if kind == TokenKind::Equal {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;
                 return match target_expr {
                     Expr::Name(name) => Ok((Stmt::Assign { target: name, value }, next)),
                     _ => Ok((Stmt::AssignSubscript { target: target_expr, value }, next)),
                 };
+            }
+
+            let aug_op = match kind {
+                TokenKind::PlusEqual => Some(crate::ast::AugOp::Add),
+                TokenKind::MinusEqual => Some(crate::ast::AugOp::Sub),
+                TokenKind::StarEqual => Some(crate::ast::AugOp::Mul),
+                _ => None,
+            };
+
+            if let Some(op) = aug_op {
+                let (value, next) = self.parse_expr_at(next_pos + 1)?;
+                return Ok((Stmt::AugAssign { target: target_expr, op, value }, next));
             }
         }
         let token = self.token_at(pos);
