@@ -276,6 +276,33 @@ impl Vm {
                     };
                     self.store_name(name, value);
                 }
+                Opcode::StoreAttr => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing attribute argument"))?
+                        as usize;
+                    let attr_name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = self.pop_value()?;
+                    let target = self.pop_value()?;
+                    match target {
+                        Value::Module(module) => {
+                            module.globals.borrow_mut().insert(attr_name, value);
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "attribute assignment unsupported type",
+                            ))
+                        }
+                    }
+                }
                 Opcode::BinaryAdd => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;

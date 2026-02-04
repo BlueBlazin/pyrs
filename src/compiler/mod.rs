@@ -96,6 +96,13 @@ impl Compiler {
                     Err(CompileError::new("invalid assignment target"))
                 }
             }
+            Stmt::AssignAttr { object, name, value } => {
+                self.compile_expr(object)?;
+                self.compile_expr(value)?;
+                let idx = self.code.add_name(name.clone());
+                self.emit(Opcode::StoreAttr, Some(idx));
+                Ok(())
+            }
             Stmt::AugAssign { target, op, value } => {
                 if let Expr::Name(name) = target {
                     self.emit_load_name(name);

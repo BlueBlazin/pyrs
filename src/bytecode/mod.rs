@@ -10,6 +10,7 @@ pub enum Opcode {
     LoadName,
     LoadAttr,
     StoreName,
+    StoreAttr,
     BinaryAdd,
     BinarySub,
     BinaryMul,

@@ -38,6 +38,17 @@ fn parses_subscript_assignment_statement() {
 }
 
 #[test]
+fn parses_attribute_assignment_statement() {
+    let module = parser::parse_module("mod.x = 1").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::AssignAttr { name, .. } => {
+            assert_eq!(name, "x");
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_augmented_assignment() {
     let module = parser::parse_module("x += 1").expect("parse should succeed");
     match &module.body[0] {

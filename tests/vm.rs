@@ -225,6 +225,26 @@ fn executes_module_attribute_access() {
 }
 
 #[test]
+fn executes_module_attribute_assignment() {
+    let module = parser::parse_module("mod.x = 7").expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let module_obj = Rc::new(ModuleObject::new("mod"));
+    vm.set_global("mod", Value::Module(module_obj.clone()));
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+
+    let stored = vm.get_global("mod").expect("module exists");
+    match stored {
+        Value::Module(module) => {
+            let globals = module.globals.borrow();
+            assert_eq!(globals.get("x"), Some(&Value::Int(7)));
+        }
+        other => panic!("expected module, got {other:?}"),
+    }
+}
+
+#[test]
 fn executes_import_statement() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

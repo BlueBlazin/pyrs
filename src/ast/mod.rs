@@ -28,6 +28,11 @@ pub enum Stmt {
         target: Expr,
         value: Expr,
     },
+    AssignAttr {
+        object: Expr,
+        name: String,
+        value: Expr,
+    },
     AugAssign {
         target: Expr,
         op: AugOp,

@@ -116,7 +116,22 @@ impl Parser {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;
                 return match target_expr {
                     Expr::Name(name) => Ok((Stmt::Assign { target: name, value }, next)),
-                    _ => Ok((Stmt::AssignSubscript { target: target_expr, value }, next)),
+                    Expr::Subscript { .. } => Ok((
+                        Stmt::AssignSubscript {
+                            target: target_expr,
+                            value,
+                        },
+                        next,
+                    )),
+                    Expr::Attribute { value: object, name } => Ok((
+                        Stmt::AssignAttr {
+                            object: *object,
+                            name,
+                            value,
+                        },
+                        next,
+                    )),
+                    _ => Err(self.error_at(pos, "invalid assignment target")),
                 };
             }
 
@@ -538,15 +553,29 @@ impl Parser {
         let mut pos = pos + 1;
 
         loop {
-            if !matches!(self.token_at(pos).kind, TokenKind::LBracket) {
-                break;
+            match self.token_at(pos).kind {
+                TokenKind::LBracket => {
+                    let (index, next) = self.parse_subscript(pos + 1).ok()?;
+                    expr = Expr::Subscript {
+                        value: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                    pos = next;
+                }
+                TokenKind::Dot => {
+                    pos += 1;
+                    let token = self.token_at(pos);
+                    if token.kind != TokenKind::Name {
+                        return None;
+                    }
+                    expr = Expr::Attribute {
+                        value: Box::new(expr),
+                        name: token.lexeme.clone(),
+                    };
+                    pos += 1;
+                }
+                _ => break,
             }
-            let (index, next) = self.parse_subscript(pos + 1).ok()?;
-            expr = Expr::Subscript {
-                value: Box::new(expr),
-                index: Box::new(index),
-            };
-            pos = next;
         }
 
         Some((expr, pos))
