@@ -257,8 +257,27 @@ fn parses_class_definition() {
     let source = "class Foo:\n  pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &module.body[0] {
-        Stmt::ClassDef { name, body } => {
+        Stmt::ClassDef { name, bases, body } => {
             assert_eq!(name, "Foo");
+            assert!(bases.is_empty());
+            assert_eq!(body, &vec![Stmt::Pass]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_class_definition_with_base() {
+    let source = "class Child(Base):\n  pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::ClassDef { name, bases, body } => {
+            assert_eq!(name, "Child");
+            assert_eq!(bases.len(), 1);
+            match &bases[0] {
+                Expr::Name(name) => assert_eq!(name, "Base"),
+                other => panic!("unexpected base: {other:?}"),
+            }
             assert_eq!(body, &vec![Stmt::Pass]);
         }
         other => panic!("unexpected stmt: {other:?}"),

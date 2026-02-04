@@ -516,6 +516,17 @@ fn class_body_can_access_module_globals() {
 }
 
 #[test]
+fn executes_class_inheritance() {
+    let source = "class Base:\n    def __init__(self, x):\n        self.x = x\n    def get(self):\n        return self.x\n\nclass Child(Base):\n    pass\n\nc = Child(7)\nval = c.get()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("val"), Some(Value::Int(7)));
+}
+
+#[test]
 fn executes_assert_statement() {
     let source = "assert 1\nx = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");
