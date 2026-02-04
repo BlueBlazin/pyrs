@@ -374,6 +374,16 @@ impl Parser {
                 next,
             ));
         }
+        if matches!(self.token_at(pos).kind, TokenKind::Plus) {
+            let (expr, next) = self.parse_unary(pos + 1)?;
+            return Ok((
+                Expr::Unary {
+                    op: UnaryOp::Pos,
+                    operand: Box::new(expr),
+                },
+                next,
+            ));
+        }
         self.parse_atom(pos)
     }
 

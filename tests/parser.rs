@@ -175,6 +175,16 @@ fn parses_unary_minus() {
 }
 
 #[test]
+fn parses_unary_plus() {
+    let module = parser::parse_module("+1").expect("parse should succeed");
+    let expected = Stmt::Expr(Expr::Unary {
+        op: pyrs::ast::UnaryOp::Pos,
+        operand: Box::new(Expr::Constant(Constant::Int(1))),
+    });
+    assert_eq!(module.body, vec![expected]);
+}
+
+#[test]
 fn parses_lambda_expression() {
     let module = parser::parse_module("lambda x: x + 1").expect("parse should succeed");
     match &module.body[0] {

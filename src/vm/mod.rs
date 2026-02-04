@@ -403,6 +403,14 @@ impl Vm {
                     let value = self.pop_value()?;
                     self.push_value(Value::Bool(!is_truthy(&value)));
                 }
+                Opcode::UnaryPos => {
+                    let value = self.pop_value()?;
+                    match value {
+                        Value::Int(value) => self.push_value(Value::Int(value)),
+                        Value::Bool(value) => self.push_value(Value::Int(if value { 1 } else { 0 })),
+                        _ => return Err(RuntimeError::new("unsupported operand type for +")),
+                    }
+                }
                 Opcode::BuildList => {
                     let count = instr
                         .arg

@@ -219,6 +219,7 @@ impl Compiler {
                 let opcode = match op {
                     crate::ast::UnaryOp::Neg => Opcode::UnaryNeg,
                     crate::ast::UnaryOp::Not => Opcode::UnaryNot,
+                    crate::ast::UnaryOp::Pos => Opcode::UnaryPos,
                 };
                 self.emit(opcode, None);
                 Ok(())

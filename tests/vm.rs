@@ -96,6 +96,17 @@ fn executes_unary_minus_assignment() {
 }
 
 #[test]
+fn executes_unary_plus_assignment() {
+    let module = parser::parse_module("x = +1\ny = +True").expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(1)));
+}
+
+#[test]
 fn executes_boolean_literal_assignment() {
     let module = parser::parse_module("x = True").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

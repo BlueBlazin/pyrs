@@ -27,6 +27,7 @@ pub enum Opcode {
     CompareNotIn,
     UnaryNeg,
     UnaryNot,
+    UnaryPos,
     MakeFunction,
     CallFunction,
     ImportName,
