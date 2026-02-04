@@ -105,6 +105,8 @@ pub enum BuiltinFunction {
     All,
     Any,
     Pow,
+    List,
+    Tuple,
 }
 
 impl BuiltinFunction {
@@ -273,6 +275,44 @@ impl BuiltinFunction {
                     value = value.rem_euclid(modu);
                 }
                 Ok(Value::Int(value))
+            }
+            BuiltinFunction::List => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("list() expects at most one argument"));
+                }
+                if args.is_empty() {
+                    return Ok(Value::List(Vec::new()));
+                }
+                match &args[0] {
+                    Value::List(values) => Ok(Value::List(values.clone())),
+                    Value::Tuple(values) => Ok(Value::List(values.clone())),
+                    Value::Str(value) => Ok(Value::List(
+                        value
+                            .chars()
+                            .map(|ch| Value::Str(ch.to_string()))
+                            .collect(),
+                    )),
+                    _ => Err(RuntimeError::new("list() unsupported type")),
+                }
+            }
+            BuiltinFunction::Tuple => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("tuple() expects at most one argument"));
+                }
+                if args.is_empty() {
+                    return Ok(Value::Tuple(Vec::new()));
+                }
+                match &args[0] {
+                    Value::Tuple(values) => Ok(Value::Tuple(values.clone())),
+                    Value::List(values) => Ok(Value::Tuple(values.clone())),
+                    Value::Str(value) => Ok(Value::Tuple(
+                        value
+                            .chars()
+                            .map(|ch| Value::Str(ch.to_string()))
+                            .collect(),
+                    )),
+                    _ => Err(RuntimeError::new("tuple() unsupported type")),
+                }
             }
         }
     }

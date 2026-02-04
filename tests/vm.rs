@@ -370,6 +370,35 @@ b = pow(2, 3, 5)\n";
 }
 
 #[test]
+fn executes_list_tuple_builtins() {
+    let source = "a = list()\n\
+b = list((1, 2))\n\
+c = tuple([1, 2])\n\
+d = list('ab')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::List(vec![])));
+    assert_eq!(
+        vm.get_global("b"),
+        Some(Value::List(vec![Value::Int(1), Value::Int(2)]))
+    );
+    assert_eq!(
+        vm.get_global("c"),
+        Some(Value::Tuple(vec![Value::Int(1), Value::Int(2)]))
+    );
+    assert_eq!(
+        vm.get_global("d"),
+        Some(Value::List(vec![
+            Value::Str("a".to_string()),
+            Value::Str("b".to_string())
+        ]))
+    );
+}
+
+#[test]
 fn executes_lambda_expression() {
     let source = "f = lambda x: x + 1\nx = f(2)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

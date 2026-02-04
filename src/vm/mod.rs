@@ -801,6 +801,10 @@ impl Vm {
             .insert("any".to_string(), Value::Builtin(BuiltinFunction::Any));
         self.builtins
             .insert("pow".to_string(), Value::Builtin(BuiltinFunction::Pow));
+        self.builtins
+            .insert("list".to_string(), Value::Builtin(BuiltinFunction::List));
+        self.builtins
+            .insert("tuple".to_string(), Value::Builtin(BuiltinFunction::Tuple));
     }
 }
 
