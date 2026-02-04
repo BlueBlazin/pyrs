@@ -19,6 +19,8 @@ pub enum Opcode {
     MakeFunction,
     CallFunction,
     BuildList,
+    BuildTuple,
+    BuildDict,
     Subscript,
     DupTop,
     JumpIfFalse,

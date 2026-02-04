@@ -63,6 +63,8 @@ pub enum Expr {
         args: Vec<Expr>,
     },
     List(Vec<Expr>),
+    Tuple(Vec<Expr>),
+    Dict(Vec<(Expr, Expr)>),
     Subscript {
         value: Box<Expr>,
         index: Box<Expr>,

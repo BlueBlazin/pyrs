@@ -156,8 +156,9 @@ impl Vm {
                     self.store_name(name, value);
                 }
                 Opcode::BinaryAdd => {
-                    let (left, right) = self.pop_int_pair()?;
-                    self.push_value(Value::Int(left + right));
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(add_values(left, right)?);
                 }
                 Opcode::BinarySub => {
                     let (left, right) = self.pop_int_pair()?;
@@ -173,8 +174,9 @@ impl Vm {
                     self.push_value(Value::Bool(left == right));
                 }
                 Opcode::CompareLt => {
-                    let (left, right) = self.pop_int_pair()?;
-                    self.push_value(Value::Bool(left < right));
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(compare_lt(left, right)?);
                 }
                 Opcode::UnaryNeg => {
                     let value = self.pop_value()?;
@@ -197,16 +199,63 @@ impl Vm {
                     values.reverse();
                     self.push_value(Value::List(values));
                 }
+                Opcode::BuildTuple => {
+                    let count = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing tuple size"))?
+                        as usize;
+                    let mut values = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        values.push(self.pop_value()?);
+                    }
+                    values.reverse();
+                    self.push_value(Value::Tuple(values));
+                }
+                Opcode::BuildDict => {
+                    let count = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing dict size"))?
+                        as usize;
+                    let mut values = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let value = self.pop_value()?;
+                        let key = self.pop_value()?;
+                        values.push((key, value));
+                    }
+                    values.reverse();
+                    self.push_value(Value::Dict(values));
+                }
                 Opcode::Subscript => {
                     let index = self.pop_value()?;
                     let value = self.pop_value()?;
-                    let index = value_to_int(index)? as isize;
                     match value {
                         Value::List(values) => {
-                            if index < 0 || index as usize >= values.len() {
+                            let index_int = value_to_int(index)? as isize;
+                            if index_int < 0 || index_int as usize >= values.len() {
                                 return Err(RuntimeError::new("list index out of range"));
                             }
-                            self.push_value(values[index as usize].clone());
+                            self.push_value(values[index_int as usize].clone());
+                        }
+                        Value::Tuple(values) => {
+                            let index_int = value_to_int(index)? as isize;
+                            if index_int < 0 || index_int as usize >= values.len() {
+                                return Err(RuntimeError::new("tuple index out of range"));
+                            }
+                            self.push_value(values[index_int as usize].clone());
+                        }
+                        Value::Dict(entries) => {
+                            let mut found = None;
+                            for (key, value) in entries {
+                                if key == index {
+                                    found = Some(value);
+                                    break;
+                                }
+                            }
+                            if let Some(value) = found {
+                                self.push_value(value);
+                            } else {
+                                return Err(RuntimeError::new("key not found"));
+                            }
                         }
                         _ => return Err(RuntimeError::new("subscript unsupported type")),
                     }
@@ -387,6 +436,33 @@ fn is_truthy(value: &Value) -> bool {
         Value::Int(value) => *value != 0,
         Value::Str(value) => !value.is_empty(),
         Value::List(values) => !values.is_empty(),
+        Value::Tuple(values) => !values.is_empty(),
+        Value::Dict(values) => !values.is_empty(),
         Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
+    }
+}
+
+fn add_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
+        (Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{a}{b}"))),
+        (Value::List(mut a), Value::List(b)) => {
+            a.extend(b);
+            Ok(Value::List(a))
+        }
+        (Value::Tuple(mut a), Value::Tuple(b)) => {
+            a.extend(b);
+            Ok(Value::Tuple(a))
+        }
+        _ => Err(RuntimeError::new("unsupported operand type for +")),
+    }
+}
+
+fn compare_lt(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
+        (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a < b)),
+        (Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a < b)),
+        _ => Err(RuntimeError::new("unsupported operand type for <")),
     }
 }

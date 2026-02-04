@@ -293,13 +293,16 @@ impl Parser {
             }
             TokenKind::Keyword(Keyword::NoneLiteral) => (Expr::Constant(Constant::None), pos + 1),
             TokenKind::LParen => {
-                let (inner, next) = self.parse_expr_at(pos + 1)?;
-                let next = self.expect_kind(next, TokenKind::RParen)?;
-                (inner, next)
+                let (expr, next) = self.parse_paren_expr(pos + 1)?;
+                (expr, next)
             }
             TokenKind::LBracket => {
                 let (elements, next) = self.parse_list_elements(pos + 1)?;
                 (Expr::List(elements), next)
+            }
+            TokenKind::LBrace => {
+                let (entries, next) = self.parse_dict_entries(pos + 1)?;
+                (Expr::Dict(entries), next)
             }
             _ => return Err(self.error_at(pos, "expected expression")),
         };
@@ -491,6 +494,62 @@ impl Parser {
 
         pos = self.expect_kind(pos, TokenKind::RBracket)?;
         Ok((elements, pos))
+    }
+
+    fn parse_paren_expr(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        if matches!(self.token_at(pos).kind, TokenKind::RParen) {
+            return Ok((Expr::Tuple(Vec::new()), pos + 1));
+        }
+
+        let (first, mut pos) = self.parse_expr_at(pos)?;
+        if !matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            let pos = self.expect_kind(pos, TokenKind::RParen)?;
+            return Ok((first, pos));
+        }
+
+        let mut elements = vec![first];
+        while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            pos += 1;
+            if matches!(self.token_at(pos).kind, TokenKind::RParen) {
+                break;
+            }
+            let (expr, next) = self.parse_expr_at(pos)?;
+            elements.push(expr);
+            pos = next;
+        }
+
+        pos = self.expect_kind(pos, TokenKind::RParen)?;
+        Ok((Expr::Tuple(elements), pos))
+    }
+
+    fn parse_dict_entries(&mut self, pos: usize) -> Result<(Vec<(Expr, Expr)>, usize), ParseError> {
+        let mut pos = pos;
+        let mut entries = Vec::new();
+
+        if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
+            return Ok((entries, pos + 1));
+        }
+
+        loop {
+            let (key, next) = self.parse_expr_at(pos)?;
+            pos = next;
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (value, next) = self.parse_expr_at(pos)?;
+            entries.push((key, value));
+            pos = next;
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        pos = self.expect_kind(pos, TokenKind::RBrace)?;
+        Ok((entries, pos))
     }
 
     fn parse_subscript(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {

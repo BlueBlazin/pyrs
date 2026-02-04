@@ -137,6 +137,34 @@ fn parses_list_literal_and_subscript() {
 }
 
 #[test]
+fn parses_tuple_literal() {
+    let module = parser::parse_module("(1, 2)").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Tuple(values)) => {
+            assert_eq!(
+                values,
+                &vec![
+                    Expr::Constant(Constant::Int(1)),
+                    Expr::Constant(Constant::Int(2)),
+                ]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_dict_literal() {
+    let module = parser::parse_module("{'a': 1, 'b': 2}").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Dict(entries)) => {
+            assert_eq!(entries.len(), 2);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_for_loop() {
     let source = "for i in [1, 2]:\n    pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");

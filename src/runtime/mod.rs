@@ -11,6 +11,8 @@ pub enum Value {
     Int(i64),
     Str(String),
     List(Vec<Value>),
+    Tuple(Vec<Value>),
+    Dict(Vec<(Value, Value)>),
     Code(Rc<CodeObject>),
     Function(Rc<CodeObject>),
     Builtin(BuiltinFunction),
@@ -24,6 +26,8 @@ impl PartialEq for Value {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::Tuple(a), Value::Tuple(b)) => a == b,
+            (Value::Dict(a), Value::Dict(b)) => a == b,
             (Value::Code(a), Value::Code(b)) => Rc::ptr_eq(a, b),
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
@@ -59,6 +63,8 @@ impl BuiltinFunction {
                 match &args[0] {
                     Value::Str(value) => Ok(Value::Int(value.chars().count() as i64)),
                     Value::List(values) => Ok(Value::Int(values.len() as i64)),
+                    Value::Tuple(values) => Ok(Value::Int(values.len() as i64)),
+                    Value::Dict(values) => Ok(Value::Int(values.len() as i64)),
                     _ => Err(RuntimeError::new("len() unsupported type")),
                 }
             }
@@ -96,6 +102,24 @@ fn format_value(value: &Value) -> String {
                 parts.push(format_value(value));
             }
             format!("[{}]", parts.join(", "))
+        }
+        Value::Tuple(values) => {
+            let mut parts = Vec::new();
+            for value in values {
+                parts.push(format_value(value));
+            }
+            if parts.len() == 1 {
+                format!("({},)", parts[0])
+            } else {
+                format!("({})", parts.join(", "))
+            }
+        }
+        Value::Dict(values) => {
+            let mut parts = Vec::new();
+            for (key, value) in values {
+                parts.push(format!("{}: {}", format_value(key), format_value(value)));
+            }
+            format!("{{{}}}", parts.join(", "))
         }
         Value::Code(_) => "<code>".to_string(),
         Value::Function(_) => "<function>".to_string(),
