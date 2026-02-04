@@ -98,6 +98,7 @@ pub enum BuiltinFunction {
     Int,
     Str,
     Abs,
+    Sum,
 }
 
 impl BuiltinFunction {
@@ -222,6 +223,27 @@ impl BuiltinFunction {
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
                     _ => Err(RuntimeError::new("abs() unsupported type")),
                 }
+            }
+            BuiltinFunction::Sum => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("sum() expects 1-2 arguments"));
+                }
+                let mut total = if args.len() == 2 {
+                    value_to_int(args[1].clone())?
+                } else {
+                    0
+                };
+
+                match &args[0] {
+                    Value::List(values) | Value::Tuple(values) => {
+                        for value in values {
+                            total += value_to_int(value.clone())?;
+                        }
+                    }
+                    _ => return Err(RuntimeError::new("sum() expects list or tuple")),
+                }
+
+                Ok(Value::Int(total))
             }
         }
     }
