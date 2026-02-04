@@ -471,7 +471,7 @@ fn executes_try_except_else_statement() {
 
 #[test]
 fn executes_try_except_runtime_error() {
-    let source = "try:\n    x = 1 // 0\nexcept RuntimeError:\n    x = 1\n";
+    let source = "try:\n    x = 1 // 0\nexcept ZeroDivisionError:\n    x = 1\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
