@@ -71,6 +71,21 @@ fn executes_comparison_variants() {
 }
 
 #[test]
+fn executes_bool_int_numeric_ops() {
+    let source = "a = True + 1\nb = False + 2\nc = True * 3\nd = True == 1\ne = True < 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("c"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("d"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("e"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_unary_minus_assignment() {
     let module = parser::parse_module("x = -1").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

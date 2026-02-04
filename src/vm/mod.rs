@@ -758,6 +758,34 @@ fn value_to_optional_index(value: Value) -> Result<Option<i64>, RuntimeError> {
     }
 }
 
+fn numeric_pair(left: &Value, right: &Value) -> Option<(i64, i64)> {
+    let left = match left {
+        Value::Int(value) => *value,
+        Value::Bool(value) => {
+            if *value {
+                1
+            } else {
+                0
+            }
+        }
+        _ => return None,
+    };
+
+    let right = match right {
+        Value::Int(value) => *value,
+        Value::Bool(value) => {
+            if *value {
+                1
+            } else {
+                0
+            }
+        }
+        _ => return None,
+    };
+
+    Some((left, right))
+}
+
 fn is_truthy(value: &Value) -> bool {
     match value {
         Value::None => false,
@@ -773,8 +801,11 @@ fn is_truthy(value: &Value) -> bool {
 }
 
 fn add_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = numeric_pair(&left, &right) {
+        return Ok(Value::Int(left + right));
+    }
+
     match (left, right) {
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
         (Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{a}{b}"))),
         (Value::List(mut a), Value::List(b)) => {
             a.extend(b);
@@ -789,9 +820,11 @@ fn add_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
 }
 
 fn compare_order(left: Value, right: Value) -> Result<Ordering, RuntimeError> {
+    if let Some((left, right)) = numeric_pair(&left, &right) {
+        return Ok(left.cmp(&right));
+    }
+
     match (left, right) {
-        (Value::Int(a), Value::Int(b)) => Ok(a.cmp(&b)),
-        (Value::Bool(a), Value::Bool(b)) => Ok(a.cmp(&b)),
         (Value::Str(a), Value::Str(b)) => Ok(a.cmp(&b)),
         _ => Err(RuntimeError::new("unsupported operand type for comparison")),
     }
@@ -835,9 +868,11 @@ fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeError> {
 }
 
 fn mul_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = numeric_pair(&left, &right) {
+        return Ok(Value::Int(left * right));
+    }
+
     match (left, right) {
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
-        (Value::Bool(a), Value::Bool(b)) => Ok(Value::Int((a as i64) * (b as i64))),
         (Value::Str(s), other) | (other, Value::Str(s)) => {
             let count = value_to_int(other)?;
             if count <= 0 {

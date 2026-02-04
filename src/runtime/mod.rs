@@ -58,7 +58,9 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::None, Value::None) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Bool(a), Value::Int(b)) => (*a as i64) == *b,
             (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Int(a), Value::Bool(b)) => *a == (*b as i64),
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
