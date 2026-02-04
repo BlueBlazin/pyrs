@@ -34,6 +34,48 @@ impl FunctionObject {
     }
 }
 
+#[derive(Debug)]
+pub struct ClassObject {
+    pub name: String,
+    pub attrs: RefCell<HashMap<String, Value>>,
+}
+
+impl ClassObject {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            attrs: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct InstanceObject {
+    pub class: Rc<ClassObject>,
+    pub attrs: RefCell<HashMap<String, Value>>,
+}
+
+impl InstanceObject {
+    pub fn new(class: Rc<ClassObject>) -> Self {
+        Self {
+            class,
+            attrs: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct BoundMethod {
+    pub function: Rc<FunctionObject>,
+    pub receiver: Rc<InstanceObject>,
+}
+
+impl BoundMethod {
+    pub fn new(function: Rc<FunctionObject>, receiver: Rc<InstanceObject>) -> Self {
+        Self { function, receiver }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     None,
@@ -44,6 +86,9 @@ pub enum Value {
     Tuple(Vec<Value>),
     Dict(Vec<(Value, Value)>),
     Module(Rc<ModuleObject>),
+    Class(Rc<ClassObject>),
+    Instance(Rc<InstanceObject>),
+    BoundMethod(Rc<BoundMethod>),
     Exception(ExceptionObject),
     ExceptionType(String),
     Slice {
@@ -75,6 +120,9 @@ impl PartialEq for Value {
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Dict(a), Value::Dict(b)) => a == b,
             (Value::Module(a), Value::Module(b)) => Rc::ptr_eq(a, b),
+            (Value::Class(a), Value::Class(b)) => Rc::ptr_eq(a, b),
+            (Value::Instance(a), Value::Instance(b)) => Rc::ptr_eq(a, b),
+            (Value::BoundMethod(a), Value::BoundMethod(b)) => Rc::ptr_eq(a, b),
             (Value::Exception(a), Value::Exception(b)) => a == b,
             (Value::ExceptionType(a), Value::ExceptionType(b)) => a == b,
             (
@@ -493,6 +541,9 @@ pub fn format_value(value: &Value) -> String {
             format!("{{{}}}", parts.join(", "))
         }
         Value::Module(module) => format!("<module {}>", module.name),
+        Value::Class(class) => format!("<class {}>", class.name),
+        Value::Instance(instance) => format!("<{} instance>", instance.class.name),
+        Value::BoundMethod(method) => format!("<bound method {}>", method.function.code.name),
         Value::Exception(exception) => match &exception.message {
             Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
             _ => exception.name.clone(),
@@ -521,6 +572,9 @@ fn is_truthy_value(value: &Value) -> bool {
         Value::Dict(values) => !values.is_empty(),
         Value::Slice { .. } => true,
         Value::Module(_)
+        | Value::Class(_)
+        | Value::Instance(_)
+        | Value::BoundMethod(_)
         | Value::Exception(_)
         | Value::ExceptionType(_)
         | Value::Code(_)

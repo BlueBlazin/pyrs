@@ -9,8 +9,8 @@ use crate::bytecode::{CodeObject, Opcode};
 use crate::compiler;
 use crate::parser;
 use crate::runtime::{
-    format_value, BuiltinFunction, ExceptionObject, FunctionObject, ModuleObject, RuntimeError,
-    Value,
+    format_value, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
+    InstanceObject, ModuleObject, RuntimeError, Value,
 };
 
 #[derive(Debug, Clone)]
@@ -27,6 +27,8 @@ struct Frame {
     module: Rc<ModuleObject>,
     is_module: bool,
     return_module: bool,
+    return_instance: Option<Rc<InstanceObject>>,
+    return_class: bool,
     blocks: Vec<Block>,
     active_exception: Option<Value>,
 }
@@ -41,6 +43,8 @@ impl Frame {
             module,
             is_module,
             return_module,
+            return_instance: None,
+            return_class: false,
             blocks: Vec::new(),
             active_exception: None,
         }
@@ -171,7 +175,11 @@ impl Vm {
 
             if should_return {
                 let frame = self.frames.pop().expect("frame exists");
-                let value = if frame.return_module {
+                let value = if frame.return_class {
+                    self.class_value_from_module(&frame.module)
+                } else if let Some(instance) = frame.return_instance {
+                    Value::Instance(instance)
+                } else if frame.return_module {
                     Value::Module(frame.module.clone())
                 } else {
                     Value::None
@@ -260,6 +268,41 @@ impl Vm {
                             })?;
                             self.push_value(attr);
                         }
+                        Value::Class(class) => {
+                            let attrs = class.attrs.borrow();
+                            let attr = attrs.get(&attr_name).cloned().ok_or_else(|| {
+                                RuntimeError::new(format!(
+                                    "class '{}' has no attribute '{}'",
+                                    class.name, attr_name
+                                ))
+                            })?;
+                            self.push_value(attr);
+                        }
+                        Value::Instance(instance) => {
+                            if let Some(attr) = instance.attrs.borrow().get(&attr_name).cloned() {
+                                self.push_value(attr);
+                                return Ok(None);
+                            }
+                            if let Some(attr) = instance
+                                .class
+                                .attrs
+                                .borrow()
+                                .get(&attr_name)
+                                .cloned()
+                            {
+                                if let Value::Function(func) = attr {
+                                    let bound = BoundMethod::new(func, instance.clone());
+                                    self.push_value(Value::BoundMethod(Rc::new(bound)));
+                                } else {
+                                    self.push_value(attr);
+                                }
+                                return Ok(None);
+                            }
+                            return Err(RuntimeError::new(format!(
+                                "'{}' object has no attribute '{}'",
+                                instance.class.name, attr_name
+                            )));
+                        }
                         _ => {
                             return Err(RuntimeError::new(
                                 "attribute access unsupported type",
@@ -309,6 +352,12 @@ impl Vm {
                     match target {
                         Value::Module(module) => {
                             module.globals.borrow_mut().insert(attr_name, value);
+                        }
+                        Value::Instance(instance) => {
+                            instance.attrs.borrow_mut().insert(attr_name, value);
+                        }
+                        Value::Class(class) => {
+                            class.attrs.borrow_mut().insert(attr_name, value);
                         }
                         _ => {
                             return Err(RuntimeError::new(
@@ -636,6 +685,44 @@ impl Vm {
                     let func = FunctionObject::new(code, module);
                     self.push_value(Value::Function(Rc::new(func)));
                 }
+                Opcode::BuildClass => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing class code argument"))?
+                        as usize;
+                    let value = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .constants
+                            .get(idx)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                    };
+                    let code = match value {
+                        Value::Code(code) => code,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "expected code object for class body",
+                            ))
+                        }
+                    };
+                    let name_value = self.pop_value()?;
+                    let class_name = match name_value {
+                        Value::Str(name) => name,
+                        _ => return Err(RuntimeError::new("class name must be a string")),
+                    };
+
+                    let class_module = Rc::new(ModuleObject::new(class_name.clone()));
+                    class_module.globals.borrow_mut().insert(
+                        "__name__".to_string(),
+                        Value::Str(class_name),
+                    );
+
+                    let mut frame = Frame::new(code, class_module, true, false);
+                    frame.return_class = true;
+                    self.frames.push(frame);
+                }
                 Opcode::CallFunction => {
                     let argc = instr
                         .arg
@@ -660,6 +747,53 @@ impl Vm {
                                 frame.locals.insert(name, value);
                             }
                             self.frames.push(frame);
+                        }
+                        Value::BoundMethod(method) => {
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(Value::Instance(method.receiver.clone()));
+                            bound_args.extend(args);
+                            if method.function.code.params.len() != bound_args.len() {
+                                return Err(RuntimeError::new("argument count mismatch"));
+                            }
+
+                            let params = method.function.code.params.clone();
+                            let mut frame = Frame::new(
+                                method.function.code.clone(),
+                                method.function.module.clone(),
+                                false,
+                                false,
+                            );
+                            for (name, value) in params.into_iter().zip(bound_args.into_iter()) {
+                                frame.locals.insert(name, value);
+                            }
+                            self.frames.push(frame);
+                        }
+                        Value::Class(class) => {
+                            let instance = Rc::new(InstanceObject::new(class.clone()));
+                            let init = class.attrs.borrow().get("__init__").cloned();
+                            if let Some(Value::Function(init_func)) = init {
+                                let mut init_args = Vec::with_capacity(args.len() + 1);
+                                init_args.push(Value::Instance(instance.clone()));
+                                init_args.extend(args);
+                                if init_func.code.params.len() != init_args.len() {
+                                    return Err(RuntimeError::new("argument count mismatch"));
+                                }
+
+                                let params = init_func.code.params.clone();
+                                let mut frame = Frame::new(
+                                    init_func.code.clone(),
+                                    init_func.module.clone(),
+                                    false,
+                                    false,
+                                );
+                                frame.return_instance = Some(instance);
+                                for (name, value) in params.into_iter().zip(init_args.into_iter()) {
+                                    frame.locals.insert(name, value);
+                                }
+                                self.frames.push(frame);
+                            } else {
+                                self.push_value(Value::Instance(instance));
+                            }
                         }
                         Value::Builtin(builtin) => {
                             let result = builtin.call(args)?;
@@ -789,7 +923,11 @@ impl Vm {
                 Opcode::ReturnValue => {
                     let value = self.pop_value().unwrap_or(Value::None);
                     let frame = self.frames.pop().expect("frame exists");
-                    let value = if frame.return_module {
+                    let value = if frame.return_class {
+                        self.class_value_from_module(&frame.module)
+                    } else if let Some(instance) = frame.return_instance {
+                        Value::Instance(instance)
+                    } else if frame.return_module {
                         Value::Module(frame.module.clone())
                     } else {
                         value
@@ -846,6 +984,13 @@ impl Vm {
             message: Some(err.message),
         });
         self.raise_exception(exception)
+    }
+
+    fn class_value_from_module(&self, module: &ModuleObject) -> Value {
+        let class = Rc::new(ClassObject::new(module.name.clone()));
+        let attrs = module.globals.borrow().clone();
+        class.attrs.borrow_mut().extend(attrs);
+        Value::Class(class)
     }
 
     fn pop_value(&mut self) -> Result<Value, RuntimeError> {
@@ -1012,6 +1157,9 @@ fn is_truthy(value: &Value) -> bool {
         Value::Dict(values) => !values.is_empty(),
         Value::Slice { .. } => true,
         Value::Module(_)
+        | Value::Class(_)
+        | Value::Instance(_)
+        | Value::BoundMethod(_)
         | Value::Exception(_)
         | Value::ExceptionType(_)
         | Value::Code(_)
