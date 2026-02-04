@@ -787,6 +787,10 @@ impl Vm {
             .insert("min".to_string(), Value::Builtin(BuiltinFunction::Min));
         self.builtins
             .insert("max".to_string(), Value::Builtin(BuiltinFunction::Max));
+        self.builtins
+            .insert("all".to_string(), Value::Builtin(BuiltinFunction::All));
+        self.builtins
+            .insert("any".to_string(), Value::Builtin(BuiltinFunction::Any));
     }
 }
 

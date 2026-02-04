@@ -102,6 +102,8 @@ pub enum BuiltinFunction {
     Sum,
     Min,
     Max,
+    All,
+    Any,
 }
 
 impl BuiltinFunction {
@@ -250,7 +252,34 @@ impl BuiltinFunction {
             }
             BuiltinFunction::Min => builtin_min_max(args, Ordering::Less),
             BuiltinFunction::Max => builtin_min_max(args, Ordering::Greater),
+            BuiltinFunction::All => builtin_all_any(args, true),
+            BuiltinFunction::Any => builtin_all_any(args, false),
         }
+    }
+}
+
+fn builtin_all_any(args: Vec<Value>, expect_all: bool) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::new("all/any expects one argument"));
+    }
+    match &args[0] {
+        Value::List(values) | Value::Tuple(values) => {
+            let mut result = expect_all;
+            for value in values {
+                let truthy = is_truthy_value(value);
+                if expect_all {
+                    if !truthy {
+                        result = false;
+                        break;
+                    }
+                } else if truthy {
+                    result = true;
+                    break;
+                }
+            }
+            Ok(Value::Bool(result))
+        }
+        _ => Err(RuntimeError::new("all/any expects list or tuple")),
     }
 }
 
