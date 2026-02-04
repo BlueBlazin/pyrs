@@ -13,6 +13,7 @@ pub enum Keyword {
     FalseLiteral,
     NoneLiteral,
     Def,
+    Class,
     Return,
     For,
     In,

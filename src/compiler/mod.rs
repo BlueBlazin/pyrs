@@ -133,6 +133,7 @@ impl Compiler {
                 self.emit(Opcode::StoreName, Some(name_idx));
                 Ok(())
             }
+            Stmt::ClassDef { name, body } => self.compile_class_def(name, body),
             Stmt::Return { value } => {
                 if let Some(expr) = value {
                     self.compile_expr(expr)?;
@@ -440,6 +441,29 @@ impl Compiler {
             global_names: HashSet::new(),
         };
         compiler.code.params = params.to_vec();
+        for stmt in body {
+            compiler.compile_stmt(stmt)?;
+        }
+        Ok(compiler.finish())
+    }
+
+    fn compile_class_def(&mut self, name: &str, body: &[Stmt]) -> Result<(), CompileError> {
+        let class_code = self.compile_class(name, body)?;
+        let code_idx = self.code.add_const(Value::Code(Rc::new(class_code)));
+        let name_idx = self.code.add_const(Value::Str(name.to_string()));
+        self.emit(Opcode::LoadConst, Some(name_idx));
+        self.emit(Opcode::BuildClass, Some(code_idx));
+        self.emit_store_name_scoped(name);
+        Ok(())
+    }
+
+    fn compile_class(&mut self, name: &str, body: &[Stmt]) -> Result<CodeObject, CompileError> {
+        let mut compiler = Compiler {
+            code: CodeObject::new(format!("<class {name}>")),
+            temp_counter: 0,
+            loop_stack: Vec::new(),
+            global_names: HashSet::new(),
+        };
         for stmt in body {
             compiler.compile_stmt(stmt)?;
         }

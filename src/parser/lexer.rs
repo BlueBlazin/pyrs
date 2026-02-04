@@ -270,6 +270,7 @@ impl<'a> Lexer<'a> {
                         "False" => TokenKind::Keyword(Keyword::FalseLiteral),
                         "None" => TokenKind::Keyword(Keyword::NoneLiteral),
                         "def" => TokenKind::Keyword(Keyword::Def),
+                        "class" => TokenKind::Keyword(Keyword::Class),
                         "return" => TokenKind::Keyword(Keyword::Return),
                         "for" => TokenKind::Keyword(Keyword::For),
                         "in" => TokenKind::Keyword(Keyword::In),

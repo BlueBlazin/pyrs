@@ -43,6 +43,10 @@ pub enum Stmt {
         params: Vec<String>,
         body: Vec<Stmt>,
     },
+    ClassDef {
+        name: String,
+        body: Vec<Stmt>,
+    },
     Return {
         value: Option<Expr>,
     },

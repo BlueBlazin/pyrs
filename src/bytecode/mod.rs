@@ -31,6 +31,7 @@ pub enum Opcode {
     UnaryNot,
     UnaryPos,
     MakeFunction,
+    BuildClass,
     CallFunction,
     ImportName,
     BuildList,

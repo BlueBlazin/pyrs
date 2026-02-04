@@ -157,6 +157,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::While) => self.parse_while_stmt(pos),
             TokenKind::Keyword(Keyword::Try) => self.parse_try_stmt(pos),
             TokenKind::Keyword(Keyword::For) => self.parse_for_stmt(pos),
+            TokenKind::Keyword(Keyword::Class) => self.parse_class_def(pos),
             TokenKind::Keyword(Keyword::Break) => Ok((Stmt::Break, pos + 1)),
             TokenKind::Keyword(Keyword::Continue) => Ok((Stmt::Continue, pos + 1)),
             TokenKind::Keyword(Keyword::Import) => self.parse_import_stmt(pos),
@@ -854,6 +855,25 @@ impl Parser {
         ))
     }
 
+    fn parse_class_def(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let name_token = self.token_at(pos);
+        if name_token.kind != TokenKind::Name {
+            return Err(self.error_at(pos, "expected class name"));
+        }
+        let name = name_token.lexeme.clone();
+        pos += 1;
+
+        if matches!(self.token_at(pos).kind, TokenKind::LParen) {
+            return Err(self.error_at(pos, "class bases not supported yet"));
+        }
+
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        let (body, next) = self.parse_suite(pos)?;
+        pos = next;
+        Ok((Stmt::ClassDef { name, body }, pos))
+    }
+
     fn parse_return_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
         let mut pos = pos + 1;
         if matches!(
@@ -1072,8 +1092,19 @@ impl Parser {
 
         while !matches!(self.token_at(pos).kind, TokenKind::Dedent | TokenKind::EndMarker) {
             let (stmt, next) = self.parse_stmt_at(pos)?;
+            let allows_missing = stmt_allows_missing_terminator(&stmt);
             body.push(stmt);
-            pos = self.consume_terminators(next)?;
+            let next_kind = &self.token_at(next).kind;
+            if matches!(
+                next_kind,
+                TokenKind::Newline | TokenKind::Semicolon | TokenKind::EndMarker
+            ) {
+                pos = self.consume_terminators(next)?;
+            } else if matches!(next_kind, TokenKind::Dedent) || allows_missing {
+                pos = next;
+            } else {
+                return Err(self.error_at(next, "expected statement terminator"));
+            }
             pos = self.consume_separators(pos);
         }
 
@@ -1195,6 +1226,7 @@ fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
             | Stmt::While { .. }
             | Stmt::For { .. }
             | Stmt::FunctionDef { .. }
+            | Stmt::ClassDef { .. }
             | Stmt::Try { .. }
     )
 }
