@@ -93,6 +93,7 @@ pub enum BuiltinFunction {
     Print,
     Len,
     Range,
+    Slice,
 }
 
 impl BuiltinFunction {
@@ -158,7 +159,36 @@ impl BuiltinFunction {
 
                 Ok(Value::List(values))
             }
+            BuiltinFunction::Slice => {
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new("slice() expects 1-3 arguments"));
+                }
+
+                let mut parts = Vec::with_capacity(3);
+                for arg in args {
+                    match arg {
+                        Value::None => parts.push(None),
+                        other => parts.push(Some(value_to_int(other)?)),
+                    }
+                }
+
+                let (lower, upper, step) = match parts.len() {
+                    1 => (None, parts[0], None),
+                    2 => (parts[0], parts[1], None),
+                    _ => (parts[0], parts[1], parts[2]),
+                };
+
+                Ok(Value::Slice { lower, upper, step })
+            }
         }
+    }
+}
+
+fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
+    match value {
+        Value::Int(value) => Ok(value),
+        Value::Bool(value) => Ok(if value { 1 } else { 0 }),
+        _ => Err(RuntimeError::new("expected integer")),
     }
 }
 

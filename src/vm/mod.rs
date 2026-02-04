@@ -771,6 +771,8 @@ impl Vm {
             .insert("len".to_string(), Value::Builtin(BuiltinFunction::Len));
         self.builtins
             .insert("range".to_string(), Value::Builtin(BuiltinFunction::Range));
+        self.builtins
+            .insert("slice".to_string(), Value::Builtin(BuiltinFunction::Slice));
     }
 }
 

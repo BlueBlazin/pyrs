@@ -246,6 +246,31 @@ v = s[1:3]\n";
 }
 
 #[test]
+fn executes_slice_builtin() {
+    let source = "x = [1, 2, 3, 4]\n\
+y = x[slice(1, 3)]\n\
+z = x[slice(None, None, -1)]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("y"),
+        Some(Value::List(vec![Value::Int(2), Value::Int(3)]))
+    );
+    assert_eq!(
+        vm.get_global("z"),
+        Some(Value::List(vec![
+            Value::Int(4),
+            Value::Int(3),
+            Value::Int(2),
+            Value::Int(1)
+        ]))
+    );
+}
+
+#[test]
 fn executes_module_attribute_access() {
     let module = parser::parse_module("y = mod.x").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
