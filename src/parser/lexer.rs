@@ -124,6 +124,10 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     tokens.push(Token::new(TokenKind::RBrace, "}", offset, line, column));
                 }
+                '.' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::Dot, ".", offset, line, column));
+                }
                 ':' => {
                     self.advance();
                     tokens.push(Token::new(TokenKind::Colon, ":", offset, line, column));
@@ -256,6 +260,7 @@ impl<'a> Lexer<'a> {
                         "or" => TokenKind::Keyword(Keyword::Or),
                         "not" => TokenKind::Keyword(Keyword::Not),
                         "elif" => TokenKind::Keyword(Keyword::Elif),
+                        "import" => TokenKind::Keyword(Keyword::Import),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

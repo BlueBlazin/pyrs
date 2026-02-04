@@ -50,6 +50,9 @@ pub enum Stmt {
         iter: Expr,
         body: Vec<Stmt>,
     },
+    Import {
+        names: Vec<String>,
+    },
     Break,
     Continue,
 }
@@ -77,6 +80,10 @@ pub enum Expr {
     Subscript {
         value: Box<Expr>,
         index: Box<Expr>,
+    },
+    Attribute {
+        value: Box<Expr>,
+        name: String,
     },
     BoolOp {
         op: BoolOp,

@@ -1,4 +1,11 @@
-use pyrs::{compiler, parser, runtime::Value, vm::Vm};
+use pyrs::{
+    compiler,
+    parser,
+    runtime::{ModuleObject, Value},
+    vm::Vm,
+};
+use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn executes_constant_expression() {
@@ -26,7 +33,7 @@ fn executes_assignment_statement() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(5)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(5)));
 }
 
 #[test]
@@ -36,7 +43,7 @@ fn executes_binary_expression_assignment() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(7)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(7)));
 }
 
 #[test]
@@ -46,7 +53,7 @@ fn executes_comparison_assignment() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("x"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -57,10 +64,10 @@ fn executes_comparison_variants() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("a"), Some(&Value::Bool(true)));
-    assert_eq!(vm.get_global("b"), Some(&Value::Bool(true)));
-    assert_eq!(vm.get_global("c"), Some(&Value::Bool(true)));
-    assert_eq!(vm.get_global("d"), Some(&Value::Bool(false)));
+    assert_eq!(vm.get_global("a"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("b"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("c"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("d"), Some(Value::Bool(false)));
 }
 
 #[test]
@@ -70,7 +77,7 @@ fn executes_unary_minus_assignment() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(-1)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(-1)));
 }
 
 #[test]
@@ -80,7 +87,7 @@ fn executes_boolean_literal_assignment() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("x"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -91,7 +98,7 @@ fn executes_function_definition_and_call() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(5)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(5)));
 }
 
 #[test]
@@ -102,7 +109,7 @@ fn executes_function_without_return() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("y"), Some(&Value::None));
+    assert_eq!(vm.get_global("y"), Some(Value::None));
 }
 
 #[test]
@@ -113,7 +120,7 @@ fn function_locals_do_not_override_globals() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(1)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
 }
 
 #[test]
@@ -124,7 +131,7 @@ fn executes_builtin_len() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(5)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(5)));
 }
 
 #[test]
@@ -135,7 +142,7 @@ fn executes_list_literal_and_subscript() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("y"), Some(&Value::Int(2)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(2)));
 }
 
 #[test]
@@ -146,8 +153,8 @@ fn executes_negative_indexing() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("y"), Some(&Value::Int(3)));
-    assert_eq!(vm.get_global("z"), Some(&Value::Int(2)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("z"), Some(Value::Int(2)));
 }
 
 #[test]
@@ -168,19 +175,19 @@ v = s[1:3]\n";
     assert_eq!(value, Value::None);
     assert_eq!(
         vm.get_global("a"),
-        Some(&Value::List(vec![Value::Int(2), Value::Int(3)]))
+        Some(Value::List(vec![Value::Int(2), Value::Int(3)]))
     );
     assert_eq!(
         vm.get_global("b"),
-        Some(&Value::List(vec![Value::Int(1), Value::Int(2)]))
+        Some(Value::List(vec![Value::Int(1), Value::Int(2)]))
     );
     assert_eq!(
         vm.get_global("c"),
-        Some(&Value::List(vec![Value::Int(1), Value::Int(3)]))
+        Some(Value::List(vec![Value::Int(1), Value::Int(3)]))
     );
     assert_eq!(
         vm.get_global("d"),
-        Some(&Value::List(vec![
+        Some(Value::List(vec![
             Value::Int(4),
             Value::Int(3),
             Value::Int(2),
@@ -189,7 +196,7 @@ v = s[1:3]\n";
     );
     assert_eq!(
         vm.get_global("u"),
-        Some(&Value::Tuple(vec![
+        Some(Value::Tuple(vec![
             Value::Int(2),
             Value::Int(3),
             Value::Int(4)
@@ -197,8 +204,49 @@ v = s[1:3]\n";
     );
     assert_eq!(
         vm.get_global("v"),
-        Some(&Value::Str("bc".to_string()))
+        Some(Value::Str("bc".to_string()))
     );
+}
+
+#[test]
+fn executes_module_attribute_access() {
+    let module = parser::parse_module("y = mod.x").expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let module_obj = Rc::new(ModuleObject::new("mod"));
+    module_obj
+        .globals
+        .borrow_mut()
+        .insert("x".to_string(), Value::Int(42));
+    vm.set_global("mod", Value::Module(module_obj));
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(Value::Int(42)));
+}
+
+#[test]
+fn executes_import_statement() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_import_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let module_path = temp_dir.join("mod.py");
+    std::fs::write(&module_path, "value = 10\n").expect("write module");
+
+    let source = "import mod\ny = mod.value\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(Value::Int(10)));
+
+    let _ = std::fs::remove_file(&module_path);
+    let _ = std::fs::remove_dir(&temp_dir);
 }
 
 #[test]
@@ -209,7 +257,7 @@ fn executes_len_on_list() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(3)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
 }
 
 #[test]
@@ -220,8 +268,8 @@ fn executes_tuple_and_dict() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("first"), Some(&Value::Int(1)));
-    assert_eq!(vm.get_global("val"), Some(&Value::Int(2)));
+    assert_eq!(vm.get_global("first"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("val"), Some(Value::Int(2)));
 }
 
 #[test]
@@ -232,8 +280,8 @@ fn executes_string_indexing() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("y"), Some(&Value::Str("a".to_string())));
-    assert_eq!(vm.get_global("z"), Some(&Value::Str("t".to_string())));
+    assert_eq!(vm.get_global("y"), Some(Value::Str("a".to_string())));
+    assert_eq!(vm.get_global("z"), Some(Value::Str("t".to_string())));
 }
 
 #[test]
@@ -244,10 +292,10 @@ fn executes_subscript_assignment() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::List(vec![Value::Int(5), Value::Int(2)])));
+    assert_eq!(vm.get_global("x"), Some(Value::List(vec![Value::Int(5), Value::Int(2)])));
     assert_eq!(
         vm.get_global("d"),
-        Some(&Value::Dict(vec![(
+        Some(Value::Dict(vec![(
             Value::Str("a".to_string()),
             Value::Int(3)
         )]))
@@ -262,7 +310,7 @@ fn executes_augmented_assignment() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(8)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(8)));
 }
 
 #[test]
@@ -273,8 +321,8 @@ fn executes_modulo() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(1)));
-    assert_eq!(vm.get_global("y"), Some(&Value::Int(1)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(1)));
 }
 
 #[test]
@@ -285,11 +333,11 @@ fn executes_multiplication_and_concat() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("a"), Some(&Value::Str("hihihi".to_string())));
-    assert_eq!(vm.get_global("b"), Some(&Value::List(vec![Value::Int(1), Value::Int(1)])));
+    assert_eq!(vm.get_global("a"), Some(Value::Str("hihihi".to_string())));
+    assert_eq!(vm.get_global("b"), Some(Value::List(vec![Value::Int(1), Value::Int(1)])));
     assert_eq!(
         vm.get_global("c"),
-        Some(&Value::Tuple(vec![
+        Some(Value::Tuple(vec![
             Value::Int(1),
             Value::Int(1),
             Value::Int(1)
@@ -307,15 +355,15 @@ fn executes_range_variants() {
     assert_eq!(value, Value::None);
     assert_eq!(
         vm.get_global("a"),
-        Some(&Value::List(vec![Value::Int(0), Value::Int(1), Value::Int(2)]))
+        Some(Value::List(vec![Value::Int(0), Value::Int(1), Value::Int(2)]))
     );
     assert_eq!(
         vm.get_global("b"),
-        Some(&Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        Some(Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
     );
     assert_eq!(
         vm.get_global("c"),
-        Some(&Value::List(vec![Value::Int(5), Value::Int(3), Value::Int(1)]))
+        Some(Value::List(vec![Value::Int(5), Value::Int(3), Value::Int(1)]))
     );
 }
 
@@ -327,8 +375,8 @@ fn executes_len_on_tuple_dict() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(3)));
-    assert_eq!(vm.get_global("y"), Some(&Value::Int(1)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(1)));
 }
 
 #[test]
@@ -339,7 +387,7 @@ fn executes_for_loop_over_list() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(6)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(6)));
 }
 
 #[test]
@@ -350,7 +398,7 @@ fn executes_for_loop_over_range() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(3)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
 }
 
 #[test]
@@ -361,7 +409,7 @@ fn executes_break_in_while_loop() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(1)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
 }
 
 #[test]
@@ -372,7 +420,7 @@ fn executes_continue_in_while_loop() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(3)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
 }
 
 #[test]
@@ -383,10 +431,10 @@ fn executes_boolean_operators() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Bool(true)));
-    assert_eq!(vm.get_global("y"), Some(&Value::Int(5)));
-    assert_eq!(vm.get_global("z"), Some(&Value::Int(2)));
-    assert_eq!(vm.get_global("w"), Some(&Value::Int(0)));
+    assert_eq!(vm.get_global("x"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("z"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("w"), Some(Value::Int(0)));
 }
 
 #[test]
@@ -397,9 +445,9 @@ fn executes_in_operator() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("a"), Some(&Value::Bool(true)));
-    assert_eq!(vm.get_global("b"), Some(&Value::Bool(true)));
-    assert_eq!(vm.get_global("c"), Some(&Value::Bool(true)));
+    assert_eq!(vm.get_global("a"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("b"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("c"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -410,8 +458,8 @@ fn executes_if_expression() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(2)));
-    assert_eq!(vm.get_global("y"), Some(&Value::Int(3)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(3)));
 }
 
 #[test]
@@ -422,7 +470,7 @@ fn executes_if_elif_else_statement() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(2)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
 }
 
 #[test]
@@ -433,7 +481,7 @@ fn executes_if_else_statement() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(2)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
 }
 
 #[test]
@@ -444,7 +492,7 @@ fn executes_if_true_statement() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(3)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
 }
 
 #[test]
@@ -455,5 +503,5 @@ fn executes_while_loop() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(&Value::Int(0)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(0)));
 }

@@ -134,6 +134,15 @@ impl Compiler {
                 Ok(())
             }
             Stmt::For { target, iter, body } => self.compile_for(target, iter, body),
+            Stmt::Import { names } => {
+                for name in names {
+                    let const_idx = self.code.add_const(Value::Str(name.clone()));
+                    self.emit(Opcode::ImportName, Some(const_idx));
+                    let name_idx = self.code.add_name(name.clone());
+                    self.emit(Opcode::StoreName, Some(name_idx));
+                }
+                Ok(())
+            }
             Stmt::Break => self.compile_break(),
             Stmt::Continue => self.compile_continue(),
         }
@@ -218,6 +227,12 @@ impl Compiler {
                 self.compile_expr(value)?;
                 self.compile_expr(index)?;
                 self.emit(Opcode::Subscript, None);
+                Ok(())
+            }
+            Expr::Attribute { value, name } => {
+                self.compile_expr(value)?;
+                let idx = self.code.add_name(name.clone());
+                self.emit(Opcode::LoadAttr, Some(idx));
                 Ok(())
             }
             Expr::Slice { lower, upper, step } => {

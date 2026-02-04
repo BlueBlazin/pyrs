@@ -221,6 +221,29 @@ fn parses_list_literal_and_subscript() {
 }
 
 #[test]
+fn parses_attribute_expression() {
+    let module = parser::parse_module("mod.value").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Attribute { value, name }) => {
+            assert_eq!(**value, Expr::Name("mod".to_string()));
+            assert_eq!(name, "value");
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_import_statement() {
+    let module = parser::parse_module("import math, sys").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Import { names } => {
+            assert_eq!(names, &vec!["math".to_string(), "sys".to_string()]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_slice_subscript() {
     let module = parser::parse_module("x[1:3]").expect("parse should succeed");
     match &module.body[0] {

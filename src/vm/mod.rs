@@ -2,60 +2,147 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::bytecode::{CodeObject, Opcode};
-use crate::runtime::{BuiltinFunction, RuntimeError, Value};
+use crate::compiler;
+use crate::parser;
+use crate::runtime::{BuiltinFunction, FunctionObject, ModuleObject, RuntimeError, Value};
 
 struct Frame {
     code: Rc<CodeObject>,
     ip: usize,
     stack: Vec<Value>,
     locals: HashMap<String, Value>,
+    module: Rc<ModuleObject>,
     is_module: bool,
+    return_module: bool,
 }
 
 impl Frame {
-    fn new(code: Rc<CodeObject>, is_module: bool) -> Self {
+    fn new(code: Rc<CodeObject>, module: Rc<ModuleObject>, is_module: bool, return_module: bool) -> Self {
         Self {
             code,
             ip: 0,
             stack: Vec::new(),
             locals: HashMap::new(),
+            module,
             is_module,
+            return_module,
         }
     }
 }
 
-#[derive(Default)]
 pub struct Vm {
     frames: Vec<Frame>,
-    globals: HashMap<String, Value>,
+    builtins: HashMap<String, Value>,
+    modules: HashMap<String, Rc<ModuleObject>>,
+    main_module: Rc<ModuleObject>,
+    module_paths: Vec<PathBuf>,
 }
 
 impl Vm {
     pub fn new() -> Self {
+        let main_module = Rc::new(ModuleObject::new("__main__"));
+        main_module.globals.borrow_mut().insert(
+            "__name__".to_string(),
+            Value::Str("__main__".to_string()),
+        );
+
+        let mut modules = HashMap::new();
+        modules.insert("__main__".to_string(), main_module.clone());
+
+        let module_paths =
+            vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
+
         let mut vm = Self {
             frames: Vec::new(),
-            globals: HashMap::new(),
+            builtins: HashMap::new(),
+            modules,
+            main_module,
+            module_paths,
         };
         vm.install_builtins();
         vm
     }
 
     pub fn set_global(&mut self, name: impl Into<String>, value: Value) {
-        self.globals.insert(name.into(), value);
+        self.main_module
+            .globals
+            .borrow_mut()
+            .insert(name.into(), value);
     }
 
-    pub fn get_global(&self, name: &str) -> Option<&Value> {
-        self.globals.get(name)
+    pub fn get_global(&self, name: &str) -> Option<Value> {
+        let globals = self.main_module.globals.borrow();
+        globals.get(name).cloned()
+    }
+
+    pub fn add_module_path(&mut self, path: impl Into<PathBuf>) {
+        self.module_paths.push(path.into());
     }
 
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {
         self.frames.clear();
         let code = Rc::new(code.clone());
-        self.frames.push(Frame::new(code, true));
+        self.frames.push(Frame::new(
+            code,
+            self.main_module.clone(),
+            true,
+            false,
+        ));
         self.run()
+    }
+
+    fn load_module(&mut self, name: &str) -> Result<Rc<ModuleObject>, RuntimeError> {
+        if let Some(module) = self.modules.get(name).cloned() {
+            return Ok(module);
+        }
+
+        let path = self
+            .find_module_file(name)
+            .ok_or_else(|| RuntimeError::new(format!("module '{name}' not found")))?;
+
+        let source = std::fs::read_to_string(&path).map_err(|err| {
+            RuntimeError::new(format!("failed to read module '{name}': {err}"))
+        })?;
+
+        let module = Rc::new(ModuleObject::new(name));
+        {
+            let mut globals = module.globals.borrow_mut();
+            globals.insert("__name__".to_string(), Value::Str(name.to_string()));
+            globals.insert(
+                "__file__".to_string(),
+                Value::Str(path.to_string_lossy().to_string()),
+            );
+        }
+
+        self.modules.insert(name.to_string(), module.clone());
+
+        let module_ast = parser::parse_module(&source).map_err(|err| {
+            RuntimeError::new(format!(
+                "parse error in module '{name}' at {}: {}",
+                err.offset, err.message
+            ))
+        })?;
+        let code = compiler::compile_module(&module_ast).map_err(|err| {
+            RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
+        })?;
+        let frame = Frame::new(Rc::new(code), module.clone(), true, true);
+        self.frames.push(frame);
+        Ok(module)
+    }
+
+    fn find_module_file(&self, name: &str) -> Option<PathBuf> {
+        let filename = format!("{name}.py");
+        for base in &self.module_paths {
+            let candidate = base.join(&filename);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+        None
     }
 
     fn run(&mut self) -> Result<Value, RuntimeError> {
@@ -64,18 +151,18 @@ impl Vm {
                 return Ok(Value::None);
             }
 
-            let should_return_none = {
-                let frame = self.frames.last_mut().expect("frame exists");
-                if frame.ip >= frame.code.instructions.len() {
-                    true
-                } else {
-                    false
-                }
+            let should_return = {
+                let frame = self.frames.last().expect("frame exists");
+                frame.ip >= frame.code.instructions.len()
             };
 
-            if should_return_none {
-                let value = Value::None;
-                self.frames.pop();
+            if should_return {
+                let frame = self.frames.pop().expect("frame exists");
+                let value = if frame.return_module {
+                    Value::Module(frame.module.clone())
+                } else {
+                    Value::None
+                };
                 if let Some(caller) = self.frames.last_mut() {
                     caller.stack.push(value);
                     continue;
@@ -132,6 +219,39 @@ impl Vm {
                         .expect("frame exists")
                         .stack
                         .push(value);
+                }
+                Opcode::LoadAttr => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing attribute argument"))?
+                        as usize;
+                    let attr_name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = self.pop_value()?;
+                    match value {
+                        Value::Module(module) => {
+                            let globals = module.globals.borrow();
+                            let attr = globals.get(&attr_name).cloned().ok_or_else(|| {
+                                RuntimeError::new(format!(
+                                    "module '{}' has no attribute '{}'",
+                                    module.name, attr_name
+                                ))
+                            })?;
+                            self.push_value(attr);
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "attribute access unsupported type",
+                            ))
+                        }
+                    }
                 }
                 Opcode::StoreName => {
                     let idx = instr
@@ -417,7 +537,14 @@ impl Vm {
                             ))
                         }
                     };
-                    self.push_value(Value::Function(code));
+                    let module = self
+                        .frames
+                        .last()
+                        .expect("frame exists")
+                        .module
+                        .clone();
+                    let func = FunctionObject::new(code, module);
+                    self.push_value(Value::Function(Rc::new(func)));
                 }
                 Opcode::CallFunction => {
                     let argc = instr
@@ -431,13 +558,14 @@ impl Vm {
                     args.reverse();
                     let func = self.pop_value()?;
                     match func {
-                        Value::Function(code) => {
-                            if code.params.len() != args.len() {
+                        Value::Function(func) => {
+                            if func.code.params.len() != args.len() {
                                 return Err(RuntimeError::new("argument count mismatch"));
                             }
 
-                            let params = code.params.clone();
-                            let mut frame = Frame::new(code, false);
+                            let params = func.code.params.clone();
+                            let mut frame =
+                                Frame::new(func.code.clone(), func.module.clone(), false, false);
                             for (name, value) in params.into_iter().zip(args.into_iter()) {
                                 frame.locals.insert(name, value);
                             }
@@ -448,6 +576,30 @@ impl Vm {
                             self.push_value(result);
                         }
                         _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    }
+                }
+                Opcode::ImportName => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing import argument"))?
+                        as usize;
+                    let name_value = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .constants
+                            .get(idx)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                    };
+                    let name = match name_value {
+                        Value::Str(name) => name,
+                        _ => return Err(RuntimeError::new("import expects string name")),
+                    };
+                    if let Some(module) = self.modules.get(&name).cloned() {
+                        self.push_value(Value::Module(module));
+                    } else {
+                        self.load_module(&name)?;
                     }
                 }
                 Opcode::JumpIfFalse => {
@@ -494,7 +646,12 @@ impl Vm {
                 }
                 Opcode::ReturnValue => {
                     let value = self.pop_value().unwrap_or(Value::None);
-                    self.frames.pop();
+                    let frame = self.frames.pop().expect("frame exists");
+                    let value = if frame.return_module {
+                        Value::Module(frame.module.clone())
+                    } else {
+                        value
+                    };
                     if let Some(caller) = self.frames.last_mut() {
                         caller.stack.push(value);
                         continue;
@@ -529,8 +686,11 @@ impl Vm {
             if let Some(value) = frame.locals.get(name) {
                 return Ok(value.clone());
             }
+            if let Some(value) = frame.module.globals.borrow().get(name) {
+                return Ok(value.clone());
+            }
         }
-        self.globals
+        self.builtins
             .get(name)
             .cloned()
             .ok_or_else(|| RuntimeError::new(format!("name '{name}' is not defined")))
@@ -539,7 +699,7 @@ impl Vm {
     fn store_name(&mut self, name: String, value: Value) {
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
-                self.globals.insert(name, value);
+                frame.module.globals.borrow_mut().insert(name, value);
             } else {
                 frame.locals.insert(name, value);
             }
@@ -547,11 +707,11 @@ impl Vm {
     }
 
     fn install_builtins(&mut self) {
-        self.globals
+        self.builtins
             .insert("print".to_string(), Value::Builtin(BuiltinFunction::Print));
-        self.globals
+        self.builtins
             .insert("len".to_string(), Value::Builtin(BuiltinFunction::Len));
-        self.globals
+        self.builtins
             .insert("range".to_string(), Value::Builtin(BuiltinFunction::Range));
     }
 }
@@ -581,7 +741,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::Tuple(values) => !values.is_empty(),
         Value::Dict(values) => !values.is_empty(),
         Value::Slice { .. } => true,
-        Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
+        Value::Module(_) | Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
     }
 }
 

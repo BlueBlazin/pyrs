@@ -141,6 +141,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::For) => self.parse_for_stmt(pos),
             TokenKind::Keyword(Keyword::Break) => Ok((Stmt::Break, pos + 1)),
             TokenKind::Keyword(Keyword::Continue) => Ok((Stmt::Continue, pos + 1)),
+            TokenKind::Keyword(Keyword::Import) => self.parse_import_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
@@ -377,6 +378,18 @@ impl Parser {
                     };
                     pos = next;
                 }
+                TokenKind::Dot => {
+                    pos += 1;
+                    let token = self.token_at(pos);
+                    if token.kind != TokenKind::Name {
+                        return Err(self.error_at(pos, "expected attribute name"));
+                    }
+                    expr = Expr::Attribute {
+                        value: Box::new(expr),
+                        name: token.lexeme.clone(),
+                    };
+                    pos += 1;
+                }
                 _ => break,
             }
         }
@@ -448,6 +461,41 @@ impl Parser {
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
         Ok((Stmt::For { target, iter, body }, pos))
+    }
+
+    fn parse_import_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let mut names = Vec::new();
+
+        loop {
+            let (name, next) = self.parse_import_name(pos)?;
+            names.push(name);
+            pos = next;
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+
+        Ok((Stmt::Import { names }, pos))
+    }
+
+    fn parse_import_name(&mut self, pos: usize) -> Result<(String, usize), ParseError> {
+        let mut pos = pos;
+        let token = self.token_at(pos);
+        if token.kind != TokenKind::Name {
+            return Err(self.error_at(pos, "expected module name"));
+        }
+        let name = token.lexeme.clone();
+        pos += 1;
+
+        if matches!(self.token_at(pos).kind, TokenKind::Dot) {
+            return Err(self.error_at(pos, "dotted imports are not supported yet"));
+        }
+
+        Ok((name, pos))
     }
 
     fn parse_assignment_target(&mut self, pos: usize) -> Option<(Expr, usize)> {

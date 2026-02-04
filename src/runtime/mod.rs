@@ -1,8 +1,37 @@
 //! Runtime object model (stubbed).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::bytecode::CodeObject;
+
+#[derive(Debug)]
+pub struct ModuleObject {
+    pub name: String,
+    pub globals: RefCell<HashMap<String, Value>>,
+}
+
+impl ModuleObject {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            globals: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct FunctionObject {
+    pub code: Rc<CodeObject>,
+    pub module: Rc<ModuleObject>,
+}
+
+impl FunctionObject {
+    pub fn new(code: Rc<CodeObject>, module: Rc<ModuleObject>) -> Self {
+        Self { code, module }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -13,13 +42,14 @@ pub enum Value {
     List(Vec<Value>),
     Tuple(Vec<Value>),
     Dict(Vec<(Value, Value)>),
+    Module(Rc<ModuleObject>),
     Slice {
         lower: Option<i64>,
         upper: Option<i64>,
         step: Option<i64>,
     },
     Code(Rc<CodeObject>),
-    Function(Rc<CodeObject>),
+    Function(Rc<FunctionObject>),
     Builtin(BuiltinFunction),
 }
 
@@ -33,6 +63,7 @@ impl PartialEq for Value {
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Dict(a), Value::Dict(b)) => a == b,
+            (Value::Module(a), Value::Module(b)) => Rc::ptr_eq(a, b),
             (
                 Value::Slice {
                     lower: a_lower,
@@ -166,6 +197,7 @@ fn format_value(value: &Value) -> String {
             }
             format!("{{{}}}", parts.join(", "))
         }
+        Value::Module(module) => format!("<module {}>", module.name),
         Value::Slice { lower, upper, step } => {
             let lower = lower.map_or("None".to_string(), |value| value.to_string());
             let upper = upper.map_or("None".to_string(), |value| value.to_string());

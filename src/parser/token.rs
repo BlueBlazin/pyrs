@@ -17,6 +17,7 @@ pub enum Keyword {
     Or,
     Not,
     Elif,
+    Import,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub enum TokenKind {
     RBracket,
     LBrace,
     RBrace,
+    Dot,
     Colon,
     Equal,
     DoubleEqual,
