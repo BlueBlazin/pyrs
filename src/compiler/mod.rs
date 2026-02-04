@@ -590,10 +590,19 @@ impl Compiler {
             return self.compile_try_finally(body, finalbody);
         }
 
-        if !finalbody.is_empty() {
-            return Err(CompileError::new("try/except/finally not supported yet"));
+        if finalbody.is_empty() {
+            return self.compile_try_except(body, handlers, orelse);
         }
 
+        self.compile_try_except_finally(body, handlers, orelse, finalbody)
+    }
+
+    fn compile_try_except(
+        &mut self,
+        body: &[Stmt],
+        handlers: &[ExceptHandler],
+        orelse: &[Stmt],
+    ) -> Result<(), CompileError> {
         let setup_except = self.emit_jump(Opcode::SetupExcept);
         for stmt in body {
             self.compile_stmt(stmt)?;
@@ -643,6 +652,34 @@ impl Compiler {
             self.patch_jump(jump, end_target)?;
         }
 
+        Ok(())
+    }
+
+    fn compile_try_except_finally(
+        &mut self,
+        body: &[Stmt],
+        handlers: &[ExceptHandler],
+        orelse: &[Stmt],
+        finalbody: &[Stmt],
+    ) -> Result<(), CompileError> {
+        let setup_finally = self.emit_jump(Opcode::SetupExcept);
+        self.compile_try_except(body, handlers, orelse)?;
+        self.emit(Opcode::PopBlock, None);
+        for stmt in finalbody {
+            self.compile_stmt(stmt)?;
+        }
+        let jump_to_end = self.emit_jump(Opcode::Jump);
+
+        let handler_start = self.current_ip();
+        self.patch_jump(setup_finally, handler_start)?;
+        self.emit(Opcode::PopTop, None);
+        for stmt in finalbody {
+            self.compile_stmt(stmt)?;
+        }
+        self.emit(Opcode::Raise, Some(0));
+
+        let end_target = self.current_ip();
+        self.patch_jump(jump_to_end, end_target)?;
         Ok(())
     }
 
