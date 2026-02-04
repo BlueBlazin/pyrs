@@ -94,6 +94,9 @@ pub enum BuiltinFunction {
     Len,
     Range,
     Slice,
+    Bool,
+    Int,
+    Str,
 }
 
 impl BuiltinFunction {
@@ -180,6 +183,35 @@ impl BuiltinFunction {
 
                 Ok(Value::Slice { lower, upper, step })
             }
+            BuiltinFunction::Bool => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("bool() expects one argument"));
+                }
+                Ok(Value::Bool(is_truthy_value(&args[0])))
+            }
+            BuiltinFunction::Int => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("int() expects one argument"));
+                }
+                match &args[0] {
+                    Value::Int(value) => Ok(Value::Int(*value)),
+                    Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
+                    Value::Str(value) => {
+                        let trimmed = value.trim();
+                        let parsed = trimmed.parse::<i64>().map_err(|_| {
+                            RuntimeError::new("int() invalid literal")
+                        })?;
+                        Ok(Value::Int(parsed))
+                    }
+                    _ => Err(RuntimeError::new("int() unsupported type")),
+                }
+            }
+            BuiltinFunction::Str => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("str() expects one argument"));
+                }
+                Ok(Value::Str(format_value(&args[0])))
+            }
         }
     }
 }
@@ -239,6 +271,20 @@ fn format_value(value: &Value) -> String {
         Value::Code(_) => "<code>".to_string(),
         Value::Function(_) => "<function>".to_string(),
         Value::Builtin(_) => "<builtin>".to_string(),
+    }
+}
+
+fn is_truthy_value(value: &Value) -> bool {
+    match value {
+        Value::None => false,
+        Value::Bool(value) => *value,
+        Value::Int(value) => *value != 0,
+        Value::Str(value) => !value.is_empty(),
+        Value::List(values) => !values.is_empty(),
+        Value::Tuple(values) => !values.is_empty(),
+        Value::Dict(values) => !values.is_empty(),
+        Value::Slice { .. } => true,
+        Value::Module(_) | Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
     }
 }
 

@@ -271,6 +271,25 @@ z = x[slice(None, None, -1)]\n";
 }
 
 #[test]
+fn executes_bool_int_str_builtins() {
+    let source = "a = bool([])\n\
+b = bool(1)\n\
+c = int(True)\n\
+d = int('5')\n\
+e = str(3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("b"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("c"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("d"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("e"), Some(Value::Str("3".to_string())));
+}
+
+#[test]
 fn executes_module_attribute_access() {
     let module = parser::parse_module("y = mod.x").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

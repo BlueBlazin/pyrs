@@ -773,6 +773,12 @@ impl Vm {
             .insert("range".to_string(), Value::Builtin(BuiltinFunction::Range));
         self.builtins
             .insert("slice".to_string(), Value::Builtin(BuiltinFunction::Slice));
+        self.builtins
+            .insert("bool".to_string(), Value::Builtin(BuiltinFunction::Bool));
+        self.builtins
+            .insert("int".to_string(), Value::Builtin(BuiltinFunction::Int));
+        self.builtins
+            .insert("str".to_string(), Value::Builtin(BuiltinFunction::Str));
     }
 }
 
