@@ -64,3 +64,4 @@ We measure success by:
 - Compiler/VM: emits and executes bytecode for `pass`, assignments, literals (`True`, `False`, `None`), unary minus, basic binary expressions (`+`, `-`, `*`), comparisons (`==`, `<`), `if/else`, and `while`.
 - `.pyc` header parser stub (hash-based and timestamp-based variants).
 - Tests: parser smoke tests, bytecode metadata loader test, and pyc header tests.
+- CLI: `--ast` and `--bytecode` flags to inspect parsed AST and bytecode.

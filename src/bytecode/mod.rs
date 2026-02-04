@@ -69,4 +69,16 @@ impl CodeObject {
         self.names.push(name);
         (self.names.len() - 1) as u32
     }
+
+    pub fn disassemble(&self) -> String {
+        let mut output = String::new();
+        for (idx, instr) in self.instructions.iter().enumerate() {
+            if let Some(arg) = instr.arg {
+                output.push_str(&format!("{idx:04} {:?} {arg}\n", instr.opcode));
+            } else {
+                output.push_str(&format!("{idx:04} {:?}\n", instr.opcode));
+            }
+        }
+        output
+    }
 }
