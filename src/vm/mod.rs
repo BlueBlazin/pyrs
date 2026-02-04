@@ -190,7 +190,8 @@ impl Vm {
                 instr
             };
 
-            match instr.opcode {
+            let step_result = (|| -> Result<Option<Value>, RuntimeError> {
+                match instr.opcode {
                 Opcode::Nop => {}
                 Opcode::LoadConst => {
                     let idx = instr
@@ -795,9 +796,22 @@ impl Vm {
                     };
                     if let Some(caller) = self.frames.last_mut() {
                         caller.stack.push(value);
-                        continue;
+                        return Ok(None);
                     }
-                    return Ok(value);
+                    return Ok(Some(value));
+                }
+                }
+                Ok(None)
+            })();
+
+            match step_result {
+                Ok(Some(value)) => return Ok(value),
+                Ok(None) => {}
+                Err(err) => {
+                    if err.message.starts_with("unhandled exception:") {
+                        return Err(err);
+                    }
+                    self.handle_runtime_error(err)?;
                 }
             }
         }
@@ -823,6 +837,14 @@ impl Vm {
 
             self.frames.pop();
         }
+    }
+
+    fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
+        let exception = Value::Exception(ExceptionObject {
+            name: "RuntimeError".to_string(),
+            message: Some(err.message),
+        });
+        self.raise_exception(exception)
     }
 
     fn pop_value(&mut self) -> Result<Value, RuntimeError> {
