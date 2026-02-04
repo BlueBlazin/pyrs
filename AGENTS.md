@@ -52,3 +52,14 @@ We measure success by:
 - Maintain correctness first, then performance.
 - Keep dependencies minimal and well‑justified.
 - Prefer clear architecture boundaries: parser, AST, compiler/IR, VM, runtime, stdlib.
+
+## Project Artifacts
+- Roadmap: `docs/ROADMAP.md`
+- Compatibility tracker: `docs/COMPATIBILITY.md`
+- CPython vendor sync script: `scripts/sync_cpython.py`
+
+## Current Scaffolding (Early Stage)
+- Parser: packrat-style memoization with a minimal lexer and statement/expression subset.
+- Bytecode: placeholder opcode representation plus metadata loader (`opcode_table.csv`).
+- `.pyc` header parser stub (hash-based and timestamp-based variants).
+- Tests: parser smoke tests, bytecode metadata loader test, and pyc header tests.

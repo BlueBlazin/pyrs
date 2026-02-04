@@ -1,5 +1,8 @@
 //! Bytecode representation and metadata (stubbed).
 
+pub mod metadata;
+pub mod pyc;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     Nop,
