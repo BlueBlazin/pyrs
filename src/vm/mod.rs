@@ -840,8 +840,9 @@ impl Vm {
     }
 
     fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
+        let exception_type = classify_runtime_error(&err.message);
         let exception = Value::Exception(ExceptionObject {
-            name: "RuntimeError".to_string(),
+            name: exception_type.to_string(),
             message: Some(err.message),
         });
         self.raise_exception(exception)
@@ -943,6 +944,16 @@ impl Vm {
             Value::ExceptionType("AssertionError".to_string()),
         );
         self.builtins
+            .insert("NameError".to_string(), Value::ExceptionType("NameError".to_string()));
+        self.builtins.insert(
+            "AttributeError".to_string(),
+            Value::ExceptionType("AttributeError".to_string()),
+        );
+        self.builtins.insert(
+            "ZeroDivisionError".to_string(),
+            Value::ExceptionType("ZeroDivisionError".to_string()),
+        );
+        self.builtins
             .insert("RuntimeError".to_string(), Value::ExceptionType("RuntimeError".to_string()));
     }
 }
@@ -1034,6 +1045,28 @@ fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, Ru
     }
 
     Ok(exception_name == handler_name)
+}
+
+fn classify_runtime_error(message: &str) -> &'static str {
+    if message.contains("index out of range") {
+        return "IndexError";
+    }
+    if message.contains("key not found") {
+        return "KeyError";
+    }
+    if message.contains("division by zero") || message.contains("modulo by zero") {
+        return "ZeroDivisionError";
+    }
+    if message.starts_with("name '") && message.ends_with("is not defined") {
+        return "NameError";
+    }
+    if message.contains("has no attribute") {
+        return "AttributeError";
+    }
+    if message.contains("unsupported operand type") || message.contains("expects") {
+        return "TypeError";
+    }
+    "RuntimeError"
 }
 
 fn add_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
