@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{BinaryOp, BoolOp, Constant, Expr, Module, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, BoolOp, Constant, Expr, ImportAlias, Module, Stmt, UnaryOp};
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
 
@@ -507,8 +507,8 @@ impl Parser {
         let mut names = Vec::new();
 
         loop {
-            let (name, next) = self.parse_import_name(pos)?;
-            names.push(name);
+            let (alias, next) = self.parse_import_alias(pos)?;
+            names.push(alias);
             pos = next;
 
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
@@ -533,12 +533,9 @@ impl Parser {
 
         let mut names = Vec::new();
         loop {
-            let token = self.token_at(pos);
-            if token.kind != TokenKind::Name {
-                return Err(self.error_at(pos, "expected imported name"));
-            }
-            names.push(token.lexeme.clone());
-            pos += 1;
+            let (alias, next) = self.parse_import_alias_name(pos)?;
+            names.push(alias);
+            pos = next;
 
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
                 pos += 1;
@@ -570,6 +567,45 @@ impl Parser {
         }
 
         Ok((Stmt::Global { names }, pos))
+    }
+
+    fn parse_import_alias(&mut self, pos: usize) -> Result<(ImportAlias, usize), ParseError> {
+        let (name, mut pos) = self.parse_import_name(pos)?;
+        let mut asname = None;
+        if self.match_keyword(pos, Keyword::As) {
+            pos += 1;
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected alias name"));
+            }
+            asname = Some(token.lexeme.clone());
+            pos += 1;
+        }
+
+        Ok((ImportAlias { name, asname }, pos))
+    }
+
+    fn parse_import_alias_name(&mut self, pos: usize) -> Result<(ImportAlias, usize), ParseError> {
+        let mut pos = pos;
+        let token = self.token_at(pos);
+        if token.kind != TokenKind::Name {
+            return Err(self.error_at(pos, "expected imported name"));
+        }
+        let name = token.lexeme.clone();
+        pos += 1;
+
+        let mut asname = None;
+        if self.match_keyword(pos, Keyword::As) {
+            pos += 1;
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected alias name"));
+            }
+            asname = Some(token.lexeme.clone());
+            pos += 1;
+        }
+
+        Ok((ImportAlias { name, asname }, pos))
     }
 
     fn parse_import_name(&mut self, pos: usize) -> Result<(String, usize), ParseError> {

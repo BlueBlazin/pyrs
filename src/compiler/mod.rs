@@ -149,22 +149,23 @@ impl Compiler {
                 orelse,
             } => self.compile_for(target, iter, body, orelse),
             Stmt::Import { names } => {
-                for name in names {
-                    let const_idx = self.code.add_const(Value::Str(name.clone()));
+                for alias in names {
+                    let const_idx = self.code.add_const(Value::Str(alias.name.clone()));
                     self.emit(Opcode::ImportName, Some(const_idx));
-                    let name_idx = self.code.add_name(name.clone());
-                    self.emit(Opcode::StoreName, Some(name_idx));
+                    let target = alias.asname.as_deref().unwrap_or(&alias.name);
+                    self.emit_store_name_scoped(target);
                 }
                 Ok(())
             }
             Stmt::ImportFrom { module, names } => {
                 let const_idx = self.code.add_const(Value::Str(module.clone()));
                 self.emit(Opcode::ImportName, Some(const_idx));
-                for name in names {
+                for alias in names {
                     self.emit(Opcode::DupTop, None);
-                    let attr_idx = self.code.add_name(name.clone());
+                    let attr_idx = self.code.add_name(alias.name.clone());
                     self.emit(Opcode::LoadAttr, Some(attr_idx));
-                    self.emit_store_name_scoped(name);
+                    let target = alias.asname.as_deref().unwrap_or(&alias.name);
+                    self.emit_store_name_scoped(target);
                 }
                 self.emit(Opcode::PopTop, None);
                 Ok(())

@@ -248,7 +248,19 @@ fn parses_import_statement() {
     let module = parser::parse_module("import math, sys").expect("parse should succeed");
     match &module.body[0] {
         Stmt::Import { names } => {
-            assert_eq!(names, &vec!["math".to_string(), "sys".to_string()]);
+            assert_eq!(
+                names,
+                &vec![
+                    pyrs::ast::ImportAlias {
+                        name: "math".to_string(),
+                        asname: None
+                    },
+                    pyrs::ast::ImportAlias {
+                        name: "sys".to_string(),
+                        asname: None
+                    }
+                ]
+            );
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
@@ -271,7 +283,54 @@ fn parses_from_import_statement() {
     match &module.body[0] {
         Stmt::ImportFrom { module, names } => {
             assert_eq!(module, "mod");
-            assert_eq!(names, &vec!["a".to_string(), "b".to_string()]);
+            assert_eq!(
+                names,
+                &vec![
+                    pyrs::ast::ImportAlias {
+                        name: "a".to_string(),
+                        asname: None
+                    },
+                    pyrs::ast::ImportAlias {
+                        name: "b".to_string(),
+                        asname: None
+                    }
+                ]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_import_alias() {
+    let module = parser::parse_module("import math as m").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Import { names } => {
+            assert_eq!(
+                names,
+                &vec![pyrs::ast::ImportAlias {
+                    name: "math".to_string(),
+                    asname: Some("m".to_string())
+                }]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_from_import_alias() {
+    let module = parser::parse_module("from mod import value as v")
+        .expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::ImportFrom { names, .. } => {
+            assert_eq!(
+                names,
+                &vec![pyrs::ast::ImportAlias {
+                    name: "value".to_string(),
+                    asname: Some("v".to_string())
+                }]
+            );
         }
         other => panic!("unexpected stmt: {other:?}"),
     }

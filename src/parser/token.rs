@@ -20,6 +20,7 @@ pub enum Keyword {
     Import,
     From,
     Global,
+    As,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

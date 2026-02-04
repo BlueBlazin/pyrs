@@ -58,17 +58,23 @@ pub enum Stmt {
         orelse: Vec<Stmt>,
     },
     Import {
-        names: Vec<String>,
+        names: Vec<ImportAlias>,
     },
     ImportFrom {
         module: String,
-        names: Vec<String>,
+        names: Vec<ImportAlias>,
     },
     Global {
         names: Vec<String>,
     },
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportAlias {
+    pub name: String,
+    pub asname: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
