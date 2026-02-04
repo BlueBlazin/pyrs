@@ -87,6 +87,26 @@ impl Vm {
                     let (left, right) = self.pop_int_pair()?;
                     self.stack.push(Value::Int(left * right));
                 }
+                Opcode::JumpIfFalse => {
+                    let target = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing jump target"))? as usize;
+                    let value = self
+                        .stack
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+                    if !is_truthy(&value) {
+                        ip = target;
+                        continue;
+                    }
+                }
+                Opcode::Jump => {
+                    let target = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing jump target"))? as usize;
+                    ip = target;
+                    continue;
+                }
                 Opcode::PopTop => {
                     self.stack.pop();
                 }
@@ -119,5 +139,14 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
         Value::Int(value) => Ok(value),
         Value::Bool(value) => Ok(if value { 1 } else { 0 }),
         _ => Err(RuntimeError::new("unsupported operand type")),
+    }
+}
+
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::None => false,
+        Value::Bool(value) => *value,
+        Value::Int(value) => *value != 0,
+        Value::Str(value) => !value.is_empty(),
     }
 }

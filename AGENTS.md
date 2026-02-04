@@ -61,6 +61,6 @@ We measure success by:
 ## Current Scaffolding (Early Stage)
 - Parser: packrat-style memoization with a minimal lexer, indentation tokens, and basic `if`/`else` suites.
 - Bytecode: minimal opcodes for constants/names + metadata loader (`opcode_table.csv`).
-- Compiler/VM: emits and executes bytecode for `pass`, assignments, and basic binary expressions (`+`, `-`, `*`).
+- Compiler/VM: emits and executes bytecode for `pass`, assignments, basic binary expressions (`+`, `-`, `*`), and `if/else` control flow.
 - `.pyc` header parser stub (hash-based and timestamp-based variants).
 - Tests: parser smoke tests, bytecode metadata loader test, and pyc header tests.

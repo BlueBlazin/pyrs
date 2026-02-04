@@ -64,7 +64,7 @@ impl Compiler {
                 self.emit(Opcode::StoreName, Some(idx));
                 Ok(())
             }
-            Stmt::If { .. } => Err(CompileError::new("if statements not supported yet")),
+            Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
         }
     }
 
@@ -96,6 +96,63 @@ impl Compiler {
 
     fn emit(&mut self, opcode: Opcode, arg: Option<u32>) {
         self.code.instructions.push(Instruction::new(opcode, arg));
+    }
+
+    fn emit_jump(&mut self, opcode: Opcode) -> usize {
+        let index = self.code.instructions.len();
+        self.code
+            .instructions
+            .push(Instruction::new(opcode, Some(0)));
+        index
+    }
+
+    fn patch_jump(&mut self, index: usize, target: usize) -> Result<(), CompileError> {
+        let instr = self
+            .code
+            .instructions
+            .get_mut(index)
+            .ok_or_else(|| CompileError::new("invalid jump patch"))?;
+        instr.arg = Some(target as u32);
+        Ok(())
+    }
+
+    fn current_ip(&self) -> usize {
+        self.code.instructions.len()
+    }
+
+    fn compile_if(
+        &mut self,
+        test: &Expr,
+        body: &[Stmt],
+        orelse: &[Stmt],
+    ) -> Result<(), CompileError> {
+        self.compile_expr(test)?;
+        let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
+
+        for stmt in body {
+            self.compile_stmt(stmt)?;
+        }
+
+        let jump_to_end = if !orelse.is_empty() {
+            Some(self.emit_jump(Opcode::Jump))
+        } else {
+            None
+        };
+
+        let else_target = self.current_ip();
+        self.patch_jump(jump_if_false, else_target)?;
+
+        if !orelse.is_empty() {
+            for stmt in orelse {
+                self.compile_stmt(stmt)?;
+            }
+            let end_target = self.current_ip();
+            if let Some(jump_to_end) = jump_to_end {
+                self.patch_jump(jump_to_end, end_target)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
