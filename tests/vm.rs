@@ -160,6 +160,18 @@ fn executes_tuple_and_dict() {
 }
 
 #[test]
+fn executes_string_indexing() {
+    let source = "x = 'cat'\ny = x[1]\nz = x[-1]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(&Value::Str("a".to_string())));
+    assert_eq!(vm.get_global("z"), Some(&Value::Str("t".to_string())));
+}
+
+#[test]
 fn executes_subscript_assignment() {
     let source = "x = [1, 2]\nx[0] = 5\nd = {'a': 1}\nd['a'] = 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");

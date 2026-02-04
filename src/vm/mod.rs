@@ -260,6 +260,17 @@ impl Vm {
                             }
                             self.push_value(values[index_int as usize].clone());
                         }
+                        Value::Str(value) => {
+                            let mut index_int = value_to_int(index)? as isize;
+                            let chars: Vec<char> = value.chars().collect();
+                            if index_int < 0 {
+                                index_int += chars.len() as isize;
+                            }
+                            if index_int < 0 || index_int as usize >= chars.len() {
+                                return Err(RuntimeError::new("string index out of range"));
+                            }
+                            self.push_value(Value::Str(chars[index_int as usize].to_string()));
+                        }
                         Value::Dict(entries) => {
                             let mut found = None;
                             for (key, value) in entries {
