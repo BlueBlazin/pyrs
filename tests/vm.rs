@@ -470,6 +470,27 @@ fn executes_try_except_else_statement() {
 }
 
 #[test]
+fn executes_assert_statement() {
+    let source = "assert 1\nx = 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+}
+
+#[test]
+fn assert_raises_on_false() {
+    let source = "assert 0, 'nope'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("assert should raise");
+    assert!(err.message.contains("AssertionError"));
+}
+
+#[test]
 fn executes_lambda_expression() {
     let source = "f = lambda x: x + 1\nx = f(2)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

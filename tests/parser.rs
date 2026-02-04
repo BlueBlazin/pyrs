@@ -236,6 +236,24 @@ fn parses_try_except_statement() {
 }
 
 #[test]
+fn parses_assert_statement() {
+    let module = parser::parse_module("assert x, 'bad'").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Assert { test, message } => {
+            match test {
+                Expr::Name(name) => assert_eq!(name, "x"),
+                other => panic!("unexpected test: {other:?}"),
+            }
+            match message {
+                Some(Expr::Constant(Constant::Str(value))) => assert_eq!(value, "bad"),
+                other => panic!("unexpected message: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_boolean_and_none_literals() {
     let module = parser::parse_module("True\nFalse\nNone").expect("parse should succeed");
     assert_eq!(
