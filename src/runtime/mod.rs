@@ -44,6 +44,8 @@ pub enum Value {
     Tuple(Vec<Value>),
     Dict(Vec<(Value, Value)>),
     Module(Rc<ModuleObject>),
+    Exception(ExceptionObject),
+    ExceptionType(String),
     Slice {
         lower: Option<i64>,
         upper: Option<i64>,
@@ -52,6 +54,12 @@ pub enum Value {
     Code(Rc<CodeObject>),
     Function(Rc<FunctionObject>),
     Builtin(BuiltinFunction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExceptionObject {
+    pub name: String,
+    pub message: Option<String>,
 }
 
 impl PartialEq for Value {
@@ -67,6 +75,8 @@ impl PartialEq for Value {
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Dict(a), Value::Dict(b)) => a == b,
             (Value::Module(a), Value::Module(b)) => Rc::ptr_eq(a, b),
+            (Value::Exception(a), Value::Exception(b)) => a == b,
+            (Value::ExceptionType(a), Value::ExceptionType(b)) => a == b,
             (
                 Value::Slice {
                     lower: a_lower,
@@ -445,7 +455,7 @@ fn compare_values(left: &Value, right: &Value) -> Result<Ordering, RuntimeError>
     }
 }
 
-fn format_value(value: &Value) -> String {
+pub fn format_value(value: &Value) -> String {
     match value {
         Value::None => "None".to_string(),
         Value::Bool(value) => {
@@ -483,6 +493,11 @@ fn format_value(value: &Value) -> String {
             format!("{{{}}}", parts.join(", "))
         }
         Value::Module(module) => format!("<module {}>", module.name),
+        Value::Exception(exception) => match &exception.message {
+            Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
+            _ => exception.name.clone(),
+        },
+        Value::ExceptionType(name) => format!("<class '{}'>", name),
         Value::Slice { lower, upper, step } => {
             let lower = lower.map_or("None".to_string(), |value| value.to_string());
             let upper = upper.map_or("None".to_string(), |value| value.to_string());
@@ -505,7 +520,12 @@ fn is_truthy_value(value: &Value) -> bool {
         Value::Tuple(values) => !values.is_empty(),
         Value::Dict(values) => !values.is_empty(),
         Value::Slice { .. } => true,
-        Value::Module(_) | Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
+        Value::Module(_)
+        | Value::Exception(_)
+        | Value::ExceptionType(_)
+        | Value::Code(_)
+        | Value::Function(_)
+        | Value::Builtin(_) => true,
     }
 }
 

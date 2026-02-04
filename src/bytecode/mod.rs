@@ -41,6 +41,11 @@ pub enum Opcode {
     JumpIfFalse,
     JumpIfTrue,
     Jump,
+    SetupExcept,
+    PopBlock,
+    Raise,
+    MatchException,
+    ClearException,
     PopTop,
     ReturnValue,
 }

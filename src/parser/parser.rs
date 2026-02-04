@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::ast::{BinaryOp, BoolOp, Constant, Expr, ImportAlias, Module, Stmt, UnaryOp};
+use crate::ast::{
+    BinaryOp, BoolOp, Constant, ExceptHandler, Expr, ImportAlias, Module, Stmt, UnaryOp,
+};
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
 
@@ -153,12 +155,14 @@ impl Parser {
             TokenKind::Keyword(Keyword::Return) => self.parse_return_stmt(pos),
             TokenKind::Keyword(Keyword::If) => self.parse_if_stmt(pos),
             TokenKind::Keyword(Keyword::While) => self.parse_while_stmt(pos),
+            TokenKind::Keyword(Keyword::Try) => self.parse_try_stmt(pos),
             TokenKind::Keyword(Keyword::For) => self.parse_for_stmt(pos),
             TokenKind::Keyword(Keyword::Break) => Ok((Stmt::Break, pos + 1)),
             TokenKind::Keyword(Keyword::Continue) => Ok((Stmt::Continue, pos + 1)),
             TokenKind::Keyword(Keyword::Import) => self.parse_import_stmt(pos),
             TokenKind::Keyword(Keyword::From) => self.parse_from_import_stmt(pos),
             TokenKind::Keyword(Keyword::Global) => self.parse_global_stmt(pos),
+            TokenKind::Keyword(Keyword::Raise) => self.parse_raise_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
@@ -549,6 +553,86 @@ impl Parser {
         Ok((Stmt::For { target, iter, body, orelse }, pos))
     }
 
+    fn parse_try_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        let (body, next) = self.parse_suite(pos)?;
+        pos = next;
+
+        let mut handlers = Vec::new();
+        let mut orelse = Vec::new();
+        let mut finalbody = Vec::new();
+
+        loop {
+            let except_pos = self.skip_newlines(pos);
+            if !self.match_keyword(except_pos, Keyword::Except) {
+                break;
+            }
+            pos = except_pos + 1;
+
+            let mut type_expr = None;
+            let mut name = None;
+            if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
+                let (expr, next) = self.parse_expr_at(pos)?;
+                type_expr = Some(expr);
+                pos = next;
+                if self.match_keyword(pos, Keyword::As) {
+                    pos += 1;
+                    let token = self.token_at(pos);
+                    if token.kind != TokenKind::Name {
+                        return Err(self.error_at(pos, "expected exception name"));
+                    }
+                    name = Some(token.lexeme.clone());
+                    pos += 1;
+                }
+            }
+
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (suite, next) = self.parse_suite(pos)?;
+            pos = next;
+            handlers.push(ExceptHandler {
+                type_expr,
+                name,
+                body: suite,
+            });
+        }
+
+        let else_pos = self.skip_newlines(pos);
+        if self.match_keyword(else_pos, Keyword::Else) {
+            if handlers.is_empty() {
+                return Err(self.error_at(else_pos, "else requires except"));
+            }
+            pos = else_pos + 1;
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (suite, next) = self.parse_suite(pos)?;
+            orelse = suite;
+            pos = next;
+        }
+
+        let finally_pos = self.skip_newlines(pos);
+        if self.match_keyword(finally_pos, Keyword::Finally) {
+            pos = finally_pos + 1;
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (suite, next) = self.parse_suite(pos)?;
+            finalbody = suite;
+            pos = next;
+        }
+
+        if handlers.is_empty() && finalbody.is_empty() {
+            return Err(self.error_at(pos, "try requires except or finally"));
+        }
+
+        Ok((
+            Stmt::Try {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+            },
+            pos,
+        ))
+    }
+
     fn parse_import_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
         let mut pos = pos + 1;
         let mut names = Vec::new();
@@ -614,6 +698,19 @@ impl Parser {
         }
 
         Ok((Stmt::Global { names }, pos))
+    }
+
+    fn parse_raise_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        if matches!(
+            self.token_at(pos).kind,
+            TokenKind::Newline | TokenKind::Semicolon | TokenKind::Dedent | TokenKind::EndMarker
+        ) {
+            return Ok((Stmt::Raise { value: None }, pos));
+        }
+        let (expr, next) = self.parse_expr_at(pos)?;
+        pos = next;
+        Ok((Stmt::Raise { value: Some(expr) }, pos))
     }
 
     fn parse_import_alias(&mut self, pos: usize) -> Result<(ImportAlias, usize), ParseError> {
@@ -1074,5 +1171,6 @@ fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
             | Stmt::While { .. }
             | Stmt::For { .. }
             | Stmt::FunctionDef { .. }
+            | Stmt::Try { .. }
     )
 }

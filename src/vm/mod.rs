@@ -8,7 +8,16 @@ use std::rc::Rc;
 use crate::bytecode::{CodeObject, Opcode};
 use crate::compiler;
 use crate::parser;
-use crate::runtime::{BuiltinFunction, FunctionObject, ModuleObject, RuntimeError, Value};
+use crate::runtime::{
+    format_value, BuiltinFunction, ExceptionObject, FunctionObject, ModuleObject, RuntimeError,
+    Value,
+};
+
+#[derive(Debug, Clone)]
+struct Block {
+    handler: usize,
+    stack_len: usize,
+}
 
 struct Frame {
     code: Rc<CodeObject>,
@@ -18,6 +27,8 @@ struct Frame {
     module: Rc<ModuleObject>,
     is_module: bool,
     return_module: bool,
+    blocks: Vec<Block>,
+    active_exception: Option<Value>,
 }
 
 impl Frame {
@@ -30,6 +41,8 @@ impl Frame {
             module,
             is_module,
             return_module,
+            blocks: Vec::new(),
+            active_exception: None,
         }
     }
 }
@@ -641,6 +654,18 @@ impl Vm {
                             let result = builtin.call(args)?;
                             self.push_value(result);
                         }
+                        Value::ExceptionType(name) => {
+                            let message = match args.as_slice() {
+                                [] => None,
+                                [value] => Some(format_value(value)),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "exception constructor expects at most one argument",
+                                    ))
+                                }
+                            };
+                            self.push_value(Value::Exception(ExceptionObject { name, message }));
+                        }
                         _ => return Err(RuntimeError::new("attempted to call non-function")),
                     }
                 }
@@ -707,6 +732,46 @@ impl Vm {
                     let frame = self.frames.last_mut().expect("frame exists");
                     frame.ip = target;
                 }
+                Opcode::SetupExcept => {
+                    let handler = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing handler target"))?
+                        as usize;
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    let stack_len = frame.stack.len();
+                    frame.blocks.push(Block { handler, stack_len });
+                }
+                Opcode::PopBlock => {
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    frame
+                        .blocks
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("no block to pop"))?;
+                }
+                Opcode::Raise => {
+                    let mode = instr.arg.unwrap_or(1);
+                    let value = if mode == 0 {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .active_exception
+                            .clone()
+                            .ok_or_else(|| RuntimeError::new("no active exception to reraise"))?
+                    } else {
+                        self.pop_value()?
+                    };
+                    self.raise_exception(value)?;
+                }
+                Opcode::MatchException => {
+                    let handler_type = self.pop_value()?;
+                    let exception = self.pop_value()?;
+                    let matches = exception_matches(&exception, &handler_type)?;
+                    self.push_value(Value::Bool(matches));
+                }
+                Opcode::ClearException => {
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.active_exception = None;
+                    }
+                }
                 Opcode::PopTop => {
                     let _ = self.pop_value()?;
                 }
@@ -725,6 +790,28 @@ impl Vm {
                     return Ok(value);
                 }
             }
+        }
+    }
+
+    fn raise_exception(&mut self, value: Value) -> Result<(), RuntimeError> {
+        let exc = normalize_exception(value)?;
+        loop {
+            let Some(frame) = self.frames.last_mut() else {
+                return Err(RuntimeError::new(format!(
+                    "unhandled exception: {}",
+                    format_value(&exc)
+                )));
+            };
+
+            if let Some(block) = frame.blocks.pop() {
+                frame.stack.truncate(block.stack_len);
+                frame.stack.push(exc.clone());
+                frame.ip = block.handler;
+                frame.active_exception = Some(exc);
+                return Ok(());
+            }
+
+            self.frames.pop();
         }
     }
 
@@ -809,6 +896,22 @@ impl Vm {
             .insert("divmod".to_string(), Value::Builtin(BuiltinFunction::DivMod));
         self.builtins
             .insert("sorted".to_string(), Value::Builtin(BuiltinFunction::Sorted));
+        self.builtins
+            .insert("Exception".to_string(), Value::ExceptionType("Exception".to_string()));
+        self.builtins
+            .insert("ValueError".to_string(), Value::ExceptionType("ValueError".to_string()));
+        self.builtins
+            .insert("TypeError".to_string(), Value::ExceptionType("TypeError".to_string()));
+        self.builtins
+            .insert("IndexError".to_string(), Value::ExceptionType("IndexError".to_string()));
+        self.builtins
+            .insert("KeyError".to_string(), Value::ExceptionType("KeyError".to_string()));
+        self.builtins.insert(
+            "AssertionError".to_string(),
+            Value::ExceptionType("AssertionError".to_string()),
+        );
+        self.builtins
+            .insert("RuntimeError".to_string(), Value::ExceptionType("RuntimeError".to_string()));
     }
 }
 
@@ -865,8 +968,40 @@ fn is_truthy(value: &Value) -> bool {
         Value::Tuple(values) => !values.is_empty(),
         Value::Dict(values) => !values.is_empty(),
         Value::Slice { .. } => true,
-        Value::Module(_) | Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
+        Value::Module(_)
+        | Value::Exception(_)
+        | Value::ExceptionType(_)
+        | Value::Code(_)
+        | Value::Function(_)
+        | Value::Builtin(_) => true,
     }
+}
+
+fn normalize_exception(value: Value) -> Result<Value, RuntimeError> {
+    match value {
+        Value::Exception(_) => Ok(value),
+        Value::ExceptionType(name) => Ok(Value::Exception(ExceptionObject { name, message: None })),
+        _ => Err(RuntimeError::new("can only raise Exception types")),
+    }
+}
+
+fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, RuntimeError> {
+    let exception_name = match exception {
+        Value::Exception(exc) => exc.name.as_str(),
+        _ => return Err(RuntimeError::new("expected exception instance")),
+    };
+
+    let handler_name = match handler_type {
+        Value::ExceptionType(name) => name.as_str(),
+        Value::Exception(exc) => exc.name.as_str(),
+        _ => return Err(RuntimeError::new("except expects exception type")),
+    };
+
+    if handler_name == "Exception" {
+        return Ok(true);
+    }
+
+    Ok(exception_name == handler_name)
 }
 
 fn add_values(left: Value, right: Value) -> Result<Value, RuntimeError> {

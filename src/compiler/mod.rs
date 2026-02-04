@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::ast::{Constant, Expr, Module, Stmt};
+use crate::ast::{Constant, ExceptHandler, Expr, Module, Stmt};
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
 
@@ -142,6 +142,13 @@ impl Compiler {
                 self.emit(Opcode::ReturnValue, None);
                 Ok(())
             }
+            Stmt::Raise { value } => self.compile_raise(value.as_ref()),
+            Stmt::Try {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+            } => self.compile_try(body, handlers, orelse, finalbody),
             Stmt::For {
                 target,
                 iter,
@@ -497,6 +504,82 @@ impl Compiler {
 
         let loop_end = self.current_ip();
         self.resolve_loop(loop_end)?;
+
+        Ok(())
+    }
+
+    fn compile_raise(&mut self, value: Option<&Expr>) -> Result<(), CompileError> {
+        if let Some(expr) = value {
+            self.compile_expr(expr)?;
+            self.emit(Opcode::Raise, Some(1));
+        } else {
+            self.emit(Opcode::Raise, Some(0));
+        }
+        Ok(())
+    }
+
+    fn compile_try(
+        &mut self,
+        body: &[Stmt],
+        handlers: &[ExceptHandler],
+        orelse: &[Stmt],
+        finalbody: &[Stmt],
+    ) -> Result<(), CompileError> {
+        if !finalbody.is_empty() {
+            return Err(CompileError::new("try/finally not supported yet"));
+        }
+        if handlers.is_empty() {
+            return Err(CompileError::new("try requires at least one except handler"));
+        }
+
+        let setup_except = self.emit_jump(Opcode::SetupExcept);
+        for stmt in body {
+            self.compile_stmt(stmt)?;
+        }
+        self.emit(Opcode::PopBlock, None);
+
+        for stmt in orelse {
+            self.compile_stmt(stmt)?;
+        }
+
+        let jump_to_end = self.emit_jump(Opcode::Jump);
+        let handler_start = self.current_ip();
+        self.patch_jump(setup_except, handler_start)?;
+
+        let mut end_jumps = Vec::new();
+        for handler in handlers {
+            let mut next_handler_jump = None;
+            if let Some(type_expr) = &handler.type_expr {
+                self.emit(Opcode::DupTop, None);
+                self.compile_expr(type_expr)?;
+                self.emit(Opcode::MatchException, None);
+                next_handler_jump = Some(self.emit_jump(Opcode::JumpIfFalse));
+            }
+
+            if let Some(name) = &handler.name {
+                self.emit_store_name_scoped(name);
+            } else {
+                self.emit(Opcode::PopTop, None);
+            }
+
+            for stmt in &handler.body {
+                self.compile_stmt(stmt)?;
+            }
+            self.emit(Opcode::ClearException, None);
+            end_jumps.push(self.emit_jump(Opcode::Jump));
+
+            if let Some(next_handler_jump) = next_handler_jump {
+                let next_handler_start = self.current_ip();
+                self.patch_jump(next_handler_jump, next_handler_start)?;
+            }
+        }
+
+        self.emit(Opcode::Raise, Some(1));
+        let end_target = self.current_ip();
+        self.patch_jump(jump_to_end, end_target)?;
+        for jump in end_jumps {
+            self.patch_jump(jump, end_target)?;
+        }
 
         Ok(())
     }

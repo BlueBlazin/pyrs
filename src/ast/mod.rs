@@ -46,6 +46,15 @@ pub enum Stmt {
     Return {
         value: Option<Expr>,
     },
+    Raise {
+        value: Option<Expr>,
+    },
+    Try {
+        body: Vec<Stmt>,
+        handlers: Vec<ExceptHandler>,
+        orelse: Vec<Stmt>,
+        finalbody: Vec<Stmt>,
+    },
     While {
         test: Expr,
         body: Vec<Stmt>,
@@ -69,6 +78,13 @@ pub enum Stmt {
     },
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExceptHandler {
+    pub type_expr: Option<Expr>,
+    pub name: Option<String>,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
