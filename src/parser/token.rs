@@ -21,6 +21,8 @@ pub enum TokenKind {
     Dedent,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     Colon,
     Equal,
     DoubleEqual,

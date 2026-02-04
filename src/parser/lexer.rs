@@ -108,6 +108,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     tokens.push(Token::new(TokenKind::RParen, ")", offset, line, column));
                 }
+                '[' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::LBracket, "[", offset, line, column));
+                }
+                ']' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::RBracket, "]", offset, line, column));
+                }
                 ':' => {
                     self.advance();
                     tokens.push(Token::new(TokenKind::Colon, ":", offset, line, column));

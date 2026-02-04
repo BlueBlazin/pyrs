@@ -61,7 +61,7 @@ We measure success by:
 ## Current Scaffolding (Early Stage)
 - Parser: packrat-style memoization with a minimal lexer, indentation tokens, `if`/`else`/`while`, function defs, returns, and calls.
 - Bytecode: minimal opcodes for constants/names + metadata loader (`opcode_table.csv`).
-- Compiler/VM: emits and executes bytecode for `pass`, assignments, literals (`True`, `False`, `None`), unary minus, binary ops (`+`, `-`, `*`), comparisons (`==`, `<`), `if/else`, `while`, and simple functions (positional params only). Builtins: `print`, `len` (strings).
+- Compiler/VM: emits and executes bytecode for `pass`, assignments, literals (`True`, `False`, `None`), unary minus, binary ops (`+`, `-`, `*`), comparisons (`==`, `<`), `if/else`, `while`, simple functions (positional params only), list literals, and subscripts. Builtins: `print`, `len` (strings, lists).
 - `.pyc` header parser stub (hash-based and timestamp-based variants).
 - Tests: parser smoke tests, bytecode metadata loader test, and pyc header tests.
 - CLI: `--ast` and `--bytecode` flags to inspect parsed AST and bytecode.

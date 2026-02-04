@@ -129,6 +129,19 @@ impl Compiler {
                 self.emit(Opcode::CallFunction, Some(args.len() as u32));
                 Ok(())
             }
+            Expr::List(elements) => {
+                for elem in elements {
+                    self.compile_expr(elem)?;
+                }
+                self.emit(Opcode::BuildList, Some(elements.len() as u32));
+                Ok(())
+            }
+            Expr::Subscript { value, index } => {
+                self.compile_expr(value)?;
+                self.compile_expr(index)?;
+                self.emit(Opcode::Subscript, None);
+                Ok(())
+            }
         }
     }
 

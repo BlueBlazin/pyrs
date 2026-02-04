@@ -119,6 +119,24 @@ fn parses_call_expression() {
 }
 
 #[test]
+fn parses_list_literal_and_subscript() {
+    let module = parser::parse_module("[1, 2][0]").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Subscript { value, index }) => {
+            assert_eq!(
+                **value,
+                Expr::List(vec![
+                    Expr::Constant(Constant::Int(1)),
+                    Expr::Constant(Constant::Int(2))
+                ])
+            );
+            assert_eq!(**index, Expr::Constant(Constant::Int(0)));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(

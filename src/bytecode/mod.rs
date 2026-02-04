@@ -17,6 +17,8 @@ pub enum Opcode {
     UnaryNeg,
     MakeFunction,
     CallFunction,
+    BuildList,
+    Subscript,
     JumpIfFalse,
     Jump,
     PopTop,

@@ -250,19 +250,33 @@ impl Parser {
                 let next = self.expect_kind(next, TokenKind::RParen)?;
                 (inner, next)
             }
+            TokenKind::LBracket => {
+                let (elements, next) = self.parse_list_elements(pos + 1)?;
+                (Expr::List(elements), next)
+            }
             _ => return Err(self.error_at(pos, "expected expression")),
         };
 
         loop {
-            if !matches!(self.token_at(pos).kind, TokenKind::LParen) {
-                break;
+            match self.token_at(pos).kind {
+                TokenKind::LParen => {
+                    let (args, next) = self.parse_call_args(pos + 1)?;
+                    expr = Expr::Call {
+                        func: Box::new(expr),
+                        args,
+                    };
+                    pos = next;
+                }
+                TokenKind::LBracket => {
+                    let (index, next) = self.parse_subscript(pos + 1)?;
+                    expr = Expr::Subscript {
+                        value: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                    pos = next;
+                }
+                _ => break,
             }
-            let (args, next) = self.parse_call_args(pos + 1)?;
-            expr = Expr::Call {
-                func: Box::new(expr),
-                args,
-            };
-            pos = next;
         }
 
         Ok((expr, pos))
@@ -375,6 +389,39 @@ impl Parser {
 
         pos = self.expect_kind(pos, TokenKind::RParen)?;
         Ok((args, pos))
+    }
+
+    fn parse_list_elements(&mut self, pos: usize) -> Result<(Vec<Expr>, usize), ParseError> {
+        let mut pos = pos;
+        let mut elements = Vec::new();
+
+        if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+            return Ok((elements, pos + 1));
+        }
+
+        loop {
+            let (expr, next) = self.parse_expr_at(pos)?;
+            elements.push(expr);
+            pos = next;
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        pos = self.expect_kind(pos, TokenKind::RBracket)?;
+        Ok((elements, pos))
+    }
+
+    fn parse_subscript(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        let (expr, next) = self.parse_expr_at(pos)?;
+        let next = self.expect_kind(next, TokenKind::RBracket)?;
+        Ok((expr, next))
     }
 
     fn parse_parameters(&mut self, pos: usize) -> Result<(Vec<String>, usize), ParseError> {

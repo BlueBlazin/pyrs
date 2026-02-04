@@ -114,6 +114,28 @@ fn executes_builtin_len() {
 }
 
 #[test]
+fn executes_list_literal_and_subscript() {
+    let source = "x = [1, 2, 3]\ny = x[1]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(&Value::Int(2)));
+}
+
+#[test]
+fn executes_len_on_list() {
+    let source = "x = len([1, 2, 3])";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(3)));
+}
+
+#[test]
 fn executes_if_else_statement() {
     let source = "if 0:\n    x = 1\nelse:\n    x = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -55,6 +55,11 @@ pub enum Expr {
         func: Box<Expr>,
         args: Vec<Expr>,
     },
+    List(Vec<Expr>),
+    Subscript {
+        value: Box<Expr>,
+        index: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

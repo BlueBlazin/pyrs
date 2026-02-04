@@ -181,6 +181,32 @@ impl Vm {
                     let value = value_to_int(value)?;
                     self.push_value(Value::Int(-value));
                 }
+                Opcode::BuildList => {
+                    let count = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing list size"))?
+                        as usize;
+                    let mut values = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        values.push(self.pop_value()?);
+                    }
+                    values.reverse();
+                    self.push_value(Value::List(values));
+                }
+                Opcode::Subscript => {
+                    let index = self.pop_value()?;
+                    let value = self.pop_value()?;
+                    let index = value_to_int(index)? as isize;
+                    match value {
+                        Value::List(values) => {
+                            if index < 0 || index as usize >= values.len() {
+                                return Err(RuntimeError::new("list index out of range"));
+                            }
+                            self.push_value(values[index as usize].clone());
+                        }
+                        _ => return Err(RuntimeError::new("subscript unsupported type")),
+                    }
+                }
                 Opcode::MakeFunction => {
                     let idx = instr
                         .arg
@@ -334,6 +360,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
         Value::Str(value) => !value.is_empty(),
+        Value::List(values) => !values.is_empty(),
         Value::Code(_) | Value::Function(_) | Value::Builtin(_) => true,
     }
 }
