@@ -481,6 +481,28 @@ fn executes_try_except_runtime_error() {
 }
 
 #[test]
+fn executes_try_finally_statement() {
+    let source = "try:\n    x = 1\nfinally:\n    x = 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+}
+
+#[test]
+fn executes_try_finally_on_exception() {
+    let source = "try:\n    x = 1 // 0\nfinally:\n    x = 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should raise");
+    assert!(err.message.contains("ZeroDivisionError"));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
 fn executes_class_definition_and_methods() {
     let source = "class Foo:\n    def __init__(self, x):\n        self.x = x\n    def get(self):\n        return self.x\n\nf = Foo(3)\ny = f.get()\n";
     let module = parser::parse_module(source).expect("parse should succeed");

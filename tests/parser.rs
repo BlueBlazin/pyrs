@@ -253,6 +253,23 @@ fn parses_try_except_statement() {
 }
 
 #[test]
+fn parses_try_finally_statement() {
+    let source = "try:\n  pass\nfinally:\n  pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Try {
+            handlers,
+            finalbody,
+            ..
+        } => {
+            assert!(handlers.is_empty());
+            assert_eq!(finalbody, &vec![Stmt::Pass]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_class_definition() {
     let source = "class Foo:\n  pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
