@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    BinaryOp, BoolOp, Constant, ExceptHandler, Expr, ImportAlias, Module, Stmt, UnaryOp,
+    BinaryOp, BoolOp, Constant, ExceptHandler, Expr, ImportAlias, Module, Parameter, Stmt,
+    UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -195,6 +196,7 @@ impl Parser {
     fn parse_lambda(&mut self, pos: usize) -> ParseResult<Expr> {
         let mut pos = pos + 1;
         let mut params = Vec::new();
+        let mut saw_default = false;
 
         if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
             loop {
@@ -202,8 +204,21 @@ impl Parser {
                 if token.kind != TokenKind::Name {
                     return Err(self.error_at(pos, "expected parameter name"));
                 }
-                params.push(token.lexeme.clone());
+                let name = token.lexeme.clone();
                 pos += 1;
+
+                let mut default = None;
+                if matches!(self.token_at(pos).kind, TokenKind::Equal) {
+                    pos += 1;
+                    let (expr, next) = self.parse_expr_at(pos)?;
+                    default = Some(expr);
+                    pos = next;
+                    saw_default = true;
+                } else if saw_default {
+                    return Err(self.error_at(pos, "non-default parameter follows default"));
+                }
+
+                params.push(Parameter { name, default });
 
                 if matches!(self.token_at(pos).kind, TokenKind::Comma) {
                     pos += 1;
@@ -1055,9 +1070,10 @@ impl Parser {
         ))
     }
 
-    fn parse_parameters(&mut self, pos: usize) -> Result<(Vec<String>, usize), ParseError> {
+    fn parse_parameters(&mut self, pos: usize) -> Result<(Vec<Parameter>, usize), ParseError> {
         let mut pos = pos;
         let mut params = Vec::new();
+        let mut saw_default = false;
 
         if matches!(self.token_at(pos).kind, TokenKind::RParen) {
             return Ok((params, pos + 1));
@@ -1068,8 +1084,21 @@ impl Parser {
             if token.kind != TokenKind::Name {
                 return Err(self.error_at(pos, "expected parameter name"));
             }
-            params.push(token.lexeme.clone());
+            let name = token.lexeme.clone();
             pos += 1;
+
+            let mut default = None;
+            if matches!(self.token_at(pos).kind, TokenKind::Equal) {
+                pos += 1;
+                let (expr, next) = self.parse_expr_at(pos)?;
+                default = Some(expr);
+                pos = next;
+                saw_default = true;
+            } else if saw_default {
+                return Err(self.error_at(pos, "non-default parameter follows default"));
+            }
+
+            params.push(Parameter { name, default });
 
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
                 pos += 1;

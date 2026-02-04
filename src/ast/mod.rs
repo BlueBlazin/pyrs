@@ -40,7 +40,7 @@ pub enum Stmt {
     },
     FunctionDef {
         name: String,
-        params: Vec<String>,
+        params: Vec<Parameter>,
         body: Vec<Stmt>,
     },
     ClassDef {
@@ -103,6 +103,12 @@ pub struct ImportAlias {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Parameter {
+    pub name: String,
+    pub default: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Name(String),
     Constant(Constant),
@@ -141,7 +147,7 @@ pub enum Expr {
         orelse: Box<Expr>,
     },
     Lambda {
-        params: Vec<String>,
+        params: Vec<Parameter>,
         body: Box<Expr>,
     },
     Slice {

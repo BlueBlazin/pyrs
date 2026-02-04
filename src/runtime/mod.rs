@@ -26,11 +26,16 @@ impl ModuleObject {
 pub struct FunctionObject {
     pub code: Rc<CodeObject>,
     pub module: Rc<ModuleObject>,
+    pub defaults: Vec<Value>,
 }
 
 impl FunctionObject {
-    pub fn new(code: Rc<CodeObject>, module: Rc<ModuleObject>) -> Self {
-        Self { code, module }
+    pub fn new(code: Rc<CodeObject>, module: Rc<ModuleObject>, defaults: Vec<Value>) -> Self {
+        Self {
+            code,
+            module,
+            defaults,
+        }
     }
 }
 

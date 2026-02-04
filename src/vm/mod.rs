@@ -675,13 +675,22 @@ impl Vm {
                             ))
                         }
                     };
+                    let defaults_value = self.pop_value()?;
+                    let defaults = match defaults_value {
+                        Value::Tuple(values) => values,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "expected defaults tuple for function",
+                            ))
+                        }
+                    };
                     let module = self
                         .frames
                         .last()
                         .expect("frame exists")
                         .function_globals
                         .clone();
-                    let func = FunctionObject::new(code, module);
+                    let func = FunctionObject::new(code, module, defaults);
                     self.push_value(Value::Function(Rc::new(func)));
                 }
                 Opcode::BuildClass => {
@@ -759,10 +768,7 @@ impl Vm {
                     let func = self.pop_value()?;
                     match func {
                         Value::Function(func) => {
-                            if func.code.params.len() != args.len() {
-                                return Err(RuntimeError::new("argument count mismatch"));
-                            }
-
+                            let args = apply_defaults(&func, args)?;
                             let params = func.code.params.clone();
                             let mut frame =
                                 Frame::new(func.code.clone(), func.module.clone(), false, false);
@@ -775,10 +781,7 @@ impl Vm {
                             let mut bound_args = Vec::with_capacity(args.len() + 1);
                             bound_args.push(Value::Instance(method.receiver.clone()));
                             bound_args.extend(args);
-                            if method.function.code.params.len() != bound_args.len() {
-                                return Err(RuntimeError::new("argument count mismatch"));
-                            }
-
+                            let bound_args = apply_defaults(&method.function, bound_args)?;
                             let params = method.function.code.params.clone();
                             let mut frame = Frame::new(
                                 method.function.code.clone(),
@@ -798,10 +801,7 @@ impl Vm {
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
                                 init_args.extend(args);
-                                if init_func.code.params.len() != init_args.len() {
-                                    return Err(RuntimeError::new("argument count mismatch"));
-                                }
-
+                                let init_args = apply_defaults(&init_func, init_args)?;
                                 let params = init_func.code.params.clone();
                                 let mut frame = Frame::new(
                                     init_func.code.clone(),
@@ -1225,6 +1225,29 @@ fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, Ru
     }
 
     Ok(exception_name == handler_name)
+}
+
+fn apply_defaults(
+    func: &FunctionObject,
+    mut args: Vec<Value>,
+) -> Result<Vec<Value>, RuntimeError> {
+    let params_len = func.code.params.len();
+    let defaults_len = func.defaults.len();
+    if defaults_len > params_len {
+        return Err(RuntimeError::new("invalid function defaults"));
+    }
+
+    let required = params_len - defaults_len;
+    if args.len() < required || args.len() > params_len {
+        return Err(RuntimeError::new("argument count mismatch"));
+    }
+
+    let missing = params_len - args.len();
+    if missing > 0 {
+        let start = defaults_len - missing;
+        args.extend(func.defaults[start..].iter().cloned());
+    }
+    Ok(args)
 }
 
 fn class_attr_lookup(class: &Rc<ClassObject>, name: &str) -> Option<Value> {

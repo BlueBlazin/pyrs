@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::ast::{Constant, ExceptHandler, Expr, Module, Stmt};
+use crate::ast::{Constant, ExceptHandler, Expr, Module, Parameter, Stmt};
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
 
@@ -127,10 +127,8 @@ impl Compiler {
             Stmt::While { test, body, orelse } => self.compile_while(test, body, orelse),
             Stmt::FunctionDef { name, params, body } => {
                 let func_code = self.compile_function(name, params, body)?;
-                let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
-                self.emit(Opcode::MakeFunction, Some(const_idx));
-                let name_idx = self.code.add_name(name.clone());
-                self.emit(Opcode::StoreName, Some(name_idx));
+                self.emit_function_with_defaults(params, func_code)?;
+                self.emit_store_name_scoped(name);
                 Ok(())
             }
             Stmt::ClassDef { name, bases, body } => self.compile_class_def(name, bases, body),
@@ -244,8 +242,7 @@ impl Compiler {
                     value: Some((**body).clone()),
                 };
                 let func_code = self.compile_function("<lambda>", params, &[return_stmt])?;
-                let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
-                self.emit(Opcode::MakeFunction, Some(const_idx));
+                self.emit_function_with_defaults(params, func_code)?;
                 Ok(())
             }
             Expr::Call { func, args } => {
@@ -431,7 +428,7 @@ impl Compiler {
     fn compile_function(
         &mut self,
         name: &str,
-        params: &[String],
+        params: &[Parameter],
         body: &[Stmt],
     ) -> Result<CodeObject, CompileError> {
         let mut compiler = Compiler {
@@ -440,11 +437,29 @@ impl Compiler {
             loop_stack: Vec::new(),
             global_names: HashSet::new(),
         };
-        compiler.code.params = params.to_vec();
+        compiler.code.params = params.iter().map(|param| param.name.clone()).collect();
         for stmt in body {
             compiler.compile_stmt(stmt)?;
         }
         Ok(compiler.finish())
+    }
+
+    fn emit_function_with_defaults(
+        &mut self,
+        params: &[Parameter],
+        func_code: CodeObject,
+    ) -> Result<(), CompileError> {
+        let defaults: Vec<&Expr> = params
+            .iter()
+            .filter_map(|param| param.default.as_ref())
+            .collect();
+        for expr in &defaults {
+            self.compile_expr(expr)?;
+        }
+        self.emit(Opcode::BuildTuple, Some(defaults.len() as u32));
+        let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
+        self.emit(Opcode::MakeFunction, Some(const_idx));
+        Ok(())
     }
 
     fn compile_class_def(
