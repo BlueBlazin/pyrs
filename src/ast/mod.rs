@@ -95,6 +95,7 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mul,
+    Mod,
     Eq,
     Lt,
     In,

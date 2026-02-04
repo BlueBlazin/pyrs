@@ -44,6 +44,7 @@ pub enum TokenKind {
     PlusEqual,
     MinusEqual,
     StarEqual,
+    Percent,
     Semicolon,
     Keyword(Keyword),
     EndMarker,

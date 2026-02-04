@@ -178,6 +178,10 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token::new(TokenKind::Star, "*", offset, line, column));
                     }
                 }
+                '%' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::Percent, "%", offset, line, column));
+                }
                 '\'' | '"' => {
                     let lexeme = self.consume_string(ch)?;
                     tokens.push(Token::new(TokenKind::String, lexeme, offset, line, column));

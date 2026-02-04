@@ -286,14 +286,16 @@ impl Parser {
         let (mut left, mut pos) = self.parse_unary(pos)?;
 
         loop {
-            if !matches!(self.token_at(pos).kind, TokenKind::Star) {
-                break;
-            }
+            let op = match self.token_at(pos).kind {
+                TokenKind::Star => BinaryOp::Mul,
+                TokenKind::Percent => BinaryOp::Mod,
+                _ => break,
+            };
             pos += 1;
             let (right, next) = self.parse_unary(pos)?;
             left = Expr::Binary {
                 left: Box::new(left),
-                op: BinaryOp::Mul,
+                op,
                 right: Box::new(right),
             };
             pos = next;
