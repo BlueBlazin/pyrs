@@ -245,3 +245,15 @@ fn parses_block_if_else_statement() {
         other => panic!("unexpected stmt: {other:?}"),
     }
 }
+
+#[test]
+fn parses_if_elif_else_statement() {
+    let source = "if x:\n    pass\nelif y:\n    pass\nelse:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::If { orelse, .. } => {
+            assert_eq!(orelse.len(), 1);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}

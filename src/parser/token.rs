@@ -16,6 +16,7 @@ pub enum Keyword {
     And,
     Or,
     Not,
+    Elif,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

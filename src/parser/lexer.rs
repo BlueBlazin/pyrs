@@ -182,6 +182,7 @@ impl<'a> Lexer<'a> {
                         "and" => TokenKind::Keyword(Keyword::And),
                         "or" => TokenKind::Keyword(Keyword::Or),
                         "not" => TokenKind::Keyword(Keyword::Not),
+                        "elif" => TokenKind::Keyword(Keyword::Elif),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

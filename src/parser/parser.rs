@@ -330,7 +330,11 @@ impl Parser {
     }
 
     fn parse_if_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
-        let mut pos = pos + 1;
+        self.parse_if_after_keyword(pos + 1)
+    }
+
+    fn parse_if_after_keyword(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos;
         let (test, next) = self.parse_expr_at(pos)?;
         pos = next;
         pos = self.expect_kind(pos, TokenKind::Colon)?;
@@ -339,7 +343,11 @@ impl Parser {
 
         let mut orelse = Vec::new();
         let else_pos = self.skip_newlines(pos);
-        if self.match_keyword(else_pos, Keyword::Else) {
+        if self.match_keyword(else_pos, Keyword::Elif) {
+            let (elif_stmt, next) = self.parse_if_after_keyword(else_pos + 1)?;
+            orelse.push(elif_stmt);
+            pos = next;
+        } else if self.match_keyword(else_pos, Keyword::Else) {
             pos = else_pos + 1;
             pos = self.expect_kind(pos, TokenKind::Colon)?;
             let (suite, next) = self.parse_suite(pos)?;
