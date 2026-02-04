@@ -111,6 +111,13 @@ impl Parser {
 
     fn parse_stmt_uncached(&mut self, pos: usize) -> ParseResult<Stmt> {
         let token = self.token_at(pos);
+        if token.kind == TokenKind::Name
+            && matches!(self.token_at(pos + 1).kind, TokenKind::Equal)
+        {
+            let target = token.lexeme.clone();
+            let (value, next) = self.parse_expr_at(pos + 2)?;
+            return Ok((Stmt::Assign { target, value }, next));
+        }
         match token.kind {
             TokenKind::Keyword(Keyword::If) => self.parse_if_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),

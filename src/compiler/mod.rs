@@ -58,6 +58,12 @@ impl Compiler {
                 self.emit(Opcode::PopTop, None);
                 Ok(())
             }
+            Stmt::Assign { target, value } => {
+                self.compile_expr(value)?;
+                let idx = self.code.add_name(target.clone());
+                self.emit(Opcode::StoreName, Some(idx));
+                Ok(())
+            }
             Stmt::If { .. } => Err(CompileError::new("if statements not supported yet")),
         }
     }

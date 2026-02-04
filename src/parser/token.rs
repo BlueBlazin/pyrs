@@ -16,6 +16,7 @@ pub enum TokenKind {
     LParen,
     RParen,
     Colon,
+    Equal,
     Semicolon,
     Keyword(Keyword),
     EndMarker,

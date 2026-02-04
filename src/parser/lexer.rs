@@ -112,6 +112,10 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     tokens.push(Token::new(TokenKind::Colon, ":", offset, line, column));
                 }
+                '=' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::Equal, "=", offset, line, column));
+                }
                 '\'' | '"' => {
                     let lexeme = self.consume_string(ch)?;
                     tokens.push(Token::new(TokenKind::String, lexeme, offset, line, column));

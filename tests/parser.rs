@@ -17,6 +17,18 @@ fn parses_name_expression_statement() {
 }
 
 #[test]
+fn parses_assignment_statement() {
+    let module = parser::parse_module("x = 1").expect("parse should succeed");
+    assert_eq!(
+        module.body,
+        vec![Stmt::Assign {
+            target: "x".to_string(),
+            value: Expr::Constant(Constant::Int(1)),
+        }]
+    );
+}
+
+#[test]
 fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(

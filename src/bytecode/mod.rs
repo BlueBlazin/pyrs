@@ -8,6 +8,7 @@ pub enum Opcode {
     Nop,
     LoadConst,
     LoadName,
+    StoreName,
     PopTop,
     ReturnValue,
 }

@@ -20,6 +20,10 @@ pub enum Stmt {
         body: Vec<Stmt>,
         orelse: Vec<Stmt>,
     },
+    Assign {
+        target: String,
+        value: Expr,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -23,6 +23,10 @@ impl Vm {
         self.globals.insert(name.into(), value);
     }
 
+    pub fn get_global(&self, name: &str) -> Option<&Value> {
+        self.globals.get(name)
+    }
+
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {
         let mut ip = 0usize;
         while ip < code.instructions.len() {
@@ -54,6 +58,22 @@ impl Vm {
                         RuntimeError::new(format!("name '{name}' is not defined"))
                     })?;
                     self.stack.push(value);
+                }
+                Opcode::StoreName => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing name argument"))?
+                        as usize;
+                    let name = code
+                        .names
+                        .get(idx)
+                        .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                        .clone();
+                    let value = self
+                        .stack
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+                    self.globals.insert(name, value);
                 }
                 Opcode::PopTop => {
                     self.stack.pop();
