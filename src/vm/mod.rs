@@ -783,6 +783,10 @@ impl Vm {
             .insert("abs".to_string(), Value::Builtin(BuiltinFunction::Abs));
         self.builtins
             .insert("sum".to_string(), Value::Builtin(BuiltinFunction::Sum));
+        self.builtins
+            .insert("min".to_string(), Value::Builtin(BuiltinFunction::Min));
+        self.builtins
+            .insert("max".to_string(), Value::Builtin(BuiltinFunction::Max));
     }
 }
 

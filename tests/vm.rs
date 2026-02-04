@@ -316,6 +316,21 @@ b = sum((1, 2), 5)\n";
 }
 
 #[test]
+fn executes_min_max_builtins() {
+    let source = "a = min(3, 1, 2)\n\
+b = max([1, 5, 2])\n\
+c = min('b', 'a')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("c"), Some(Value::Str("a".to_string())));
+}
+
+#[test]
 fn executes_lambda_expression() {
     let source = "f = lambda x: x + 1\nx = f(2)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

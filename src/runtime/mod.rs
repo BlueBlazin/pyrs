@@ -1,6 +1,7 @@
 //! Runtime object model (stubbed).
 
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -99,6 +100,8 @@ pub enum BuiltinFunction {
     Str,
     Abs,
     Sum,
+    Min,
+    Max,
 }
 
 impl BuiltinFunction {
@@ -245,8 +248,38 @@ impl BuiltinFunction {
 
                 Ok(Value::Int(total))
             }
+            BuiltinFunction::Min => builtin_min_max(args, Ordering::Less),
+            BuiltinFunction::Max => builtin_min_max(args, Ordering::Greater),
         }
     }
+}
+
+fn builtin_min_max(args: Vec<Value>, preferred: Ordering) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("min/max expects at least one argument"));
+    }
+
+    let mut values: Vec<Value> = if args.len() == 1 {
+        match &args[0] {
+            Value::List(values) | Value::Tuple(values) => values.clone(),
+            _ => return Err(RuntimeError::new("min/max expects list or tuple")),
+        }
+    } else {
+        args
+    };
+
+    if values.is_empty() {
+        return Err(RuntimeError::new("min/max arg is an empty sequence"));
+    }
+
+    let mut best = values.swap_remove(0);
+    for value in values {
+        let ordering = compare_values(&value, &best)?;
+        if ordering == preferred {
+            best = value;
+        }
+    }
+    Ok(best)
 }
 
 fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
@@ -254,6 +287,25 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
         Value::Int(value) => Ok(value),
         Value::Bool(value) => Ok(if value { 1 } else { 0 }),
         _ => Err(RuntimeError::new("expected integer")),
+    }
+}
+
+fn numeric_value(value: &Value) -> Option<i64> {
+    match value {
+        Value::Int(value) => Some(*value),
+        Value::Bool(value) => Some(if *value { 1 } else { 0 }),
+        _ => None,
+    }
+}
+
+fn compare_values(left: &Value, right: &Value) -> Result<Ordering, RuntimeError> {
+    if let (Some(left), Some(right)) = (numeric_value(left), numeric_value(right)) {
+        return Ok(left.cmp(&right));
+    }
+
+    match (left, right) {
+        (Value::Str(a), Value::Str(b)) => Ok(a.cmp(b)),
+        _ => Err(RuntimeError::new("min/max unsupported type")),
     }
 }
 
