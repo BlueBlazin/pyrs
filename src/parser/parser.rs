@@ -110,14 +110,16 @@ impl Parser {
     }
 
     fn parse_stmt_uncached(&mut self, pos: usize) -> ParseResult<Stmt> {
-        let token = self.token_at(pos);
-        if token.kind == TokenKind::Name
-            && matches!(self.token_at(pos + 1).kind, TokenKind::Equal)
-        {
-            let target = token.lexeme.clone();
-            let (value, next) = self.parse_expr_at(pos + 2)?;
-            return Ok((Stmt::Assign { target, value }, next));
+        if let Some((target_expr, next_pos)) = self.parse_assignment_target(pos) {
+            if matches!(self.token_at(next_pos).kind, TokenKind::Equal) {
+                let (value, next) = self.parse_expr_at(next_pos + 1)?;
+                return match target_expr {
+                    Expr::Name(name) => Ok((Stmt::Assign { target: name, value }, next)),
+                    _ => Ok((Stmt::AssignSubscript { target: target_expr, value }, next)),
+                };
+            }
         }
+        let token = self.token_at(pos);
         match token.kind {
             TokenKind::Keyword(Keyword::Def) => self.parse_function_def(pos),
             TokenKind::Keyword(Keyword::Return) => self.parse_return_stmt(pos),
@@ -396,6 +398,30 @@ impl Parser {
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
         Ok((Stmt::For { target, iter, body }, pos))
+    }
+
+    fn parse_assignment_target(&mut self, pos: usize) -> Option<(Expr, usize)> {
+        let token = self.token_at(pos);
+        if token.kind != TokenKind::Name {
+            return None;
+        }
+
+        let mut expr = Expr::Name(token.lexeme.clone());
+        let mut pos = pos + 1;
+
+        loop {
+            if !matches!(self.token_at(pos).kind, TokenKind::LBracket) {
+                break;
+            }
+            let (index, next) = self.parse_subscript(pos + 1).ok()?;
+            expr = Expr::Subscript {
+                value: Box::new(expr),
+                index: Box::new(index),
+            };
+            pos = next;
+        }
+
+        Some((expr, pos))
     }
 
     fn parse_function_def(&mut self, pos: usize) -> ParseResult<Stmt> {

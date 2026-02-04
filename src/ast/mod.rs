@@ -24,6 +24,10 @@ pub enum Stmt {
         target: String,
         value: Expr,
     },
+    AssignSubscript {
+        target: Expr,
+        value: Expr,
+    },
     FunctionDef {
         name: String,
         params: Vec<String>,

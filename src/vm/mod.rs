@@ -261,6 +261,36 @@ impl Vm {
                         _ => return Err(RuntimeError::new("subscript unsupported type")),
                     }
                 }
+                Opcode::StoreSubscript => {
+                    let value = self.pop_value()?;
+                    let index = self.pop_value()?;
+                    let target = self.pop_value()?;
+                    match target {
+                        Value::List(mut values) => {
+                            let idx = value_to_int(index)? as isize;
+                            if idx < 0 || idx as usize >= values.len() {
+                                return Err(RuntimeError::new("list index out of range"));
+                            }
+                            values[idx as usize] = value;
+                            self.push_value(Value::List(values));
+                        }
+                        Value::Dict(mut entries) => {
+                            let mut found = false;
+                            for (key, stored) in entries.iter_mut() {
+                                if *key == index {
+                                    *stored = value.clone();
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if !found {
+                                entries.push((index, value));
+                            }
+                            self.push_value(Value::Dict(entries));
+                        }
+                        _ => return Err(RuntimeError::new("store subscript unsupported type")),
+                    }
+                }
                 Opcode::MakeFunction => {
                     let idx = instr
                         .arg

@@ -77,6 +77,25 @@ impl Compiler {
                 self.emit(Opcode::StoreName, Some(idx));
                 Ok(())
             }
+            Stmt::AssignSubscript { target, value } => {
+                if let Expr::Subscript { value: container, index } = target {
+                    if let Expr::Name(name) = &**container {
+                        let name = name.clone();
+                        self.emit_load_name(&name);
+                        self.compile_expr(index)?;
+                        self.compile_expr(value)?;
+                        self.emit(Opcode::StoreSubscript, None);
+                        self.emit_store_name(&name);
+                        Ok(())
+                    } else {
+                        Err(CompileError::new(
+                            "only name-based subscript assignments supported",
+                        ))
+                    }
+                } else {
+                    Err(CompileError::new("invalid assignment target"))
+                }
+            }
             Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
             Stmt::While { test, body } => self.compile_while(test, body),
             Stmt::FunctionDef { name, params, body } => {

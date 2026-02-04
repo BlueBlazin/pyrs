@@ -22,6 +22,7 @@ pub enum Opcode {
     BuildTuple,
     BuildDict,
     Subscript,
+    StoreSubscript,
     DupTop,
     JumpIfFalse,
     JumpIfTrue,
