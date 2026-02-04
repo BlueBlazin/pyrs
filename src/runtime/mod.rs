@@ -108,6 +108,7 @@ pub enum BuiltinFunction {
     List,
     Tuple,
     DivMod,
+    Sorted,
 }
 
 impl BuiltinFunction {
@@ -327,6 +328,38 @@ impl BuiltinFunction {
                 let div = left.div_euclid(right);
                 let rem = left.rem_euclid(right);
                 Ok(Value::Tuple(vec![Value::Int(div), Value::Int(rem)]))
+            }
+            BuiltinFunction::Sorted => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("sorted() expects one argument"));
+                }
+                match &args[0] {
+                    Value::List(values) | Value::Tuple(values) => {
+                        let mut result = values.clone();
+                        let all_numeric = result.iter().all(|value| numeric_value(value).is_some());
+                        let all_str = result.iter().all(|value| matches!(value, Value::Str(_)));
+
+                        if all_numeric {
+                            result.sort_by(|a, b| {
+                                let left = numeric_value(a).unwrap();
+                                let right = numeric_value(b).unwrap();
+                                left.cmp(&right)
+                            });
+                        } else if all_str {
+                            result.sort_by(|a, b| match (a, b) {
+                                (Value::Str(a), Value::Str(b)) => a.cmp(b),
+                                _ => Ordering::Equal,
+                            });
+                        } else {
+                            return Err(RuntimeError::new(
+                                "sorted() expects list/tuple of comparable values",
+                            ));
+                        }
+
+                        Ok(Value::List(result))
+                    }
+                    _ => Err(RuntimeError::new("sorted() expects list or tuple")),
+                }
             }
         }
     }

@@ -807,6 +807,8 @@ impl Vm {
             .insert("tuple".to_string(), Value::Builtin(BuiltinFunction::Tuple));
         self.builtins
             .insert("divmod".to_string(), Value::Builtin(BuiltinFunction::DivMod));
+        self.builtins
+            .insert("sorted".to_string(), Value::Builtin(BuiltinFunction::Sorted));
     }
 }
 
