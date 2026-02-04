@@ -9,6 +9,9 @@ pub enum Opcode {
     LoadConst,
     LoadName,
     StoreName,
+    BinaryAdd,
+    BinarySub,
+    BinaryMul,
     PopTop,
     ReturnValue,
 }

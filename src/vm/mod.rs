@@ -75,6 +75,18 @@ impl Vm {
                         .ok_or_else(|| RuntimeError::new("stack underflow"))?;
                     self.globals.insert(name, value);
                 }
+                Opcode::BinaryAdd => {
+                    let (left, right) = self.pop_int_pair()?;
+                    self.stack.push(Value::Int(left + right));
+                }
+                Opcode::BinarySub => {
+                    let (left, right) = self.pop_int_pair()?;
+                    self.stack.push(Value::Int(left - right));
+                }
+                Opcode::BinaryMul => {
+                    let (left, right) = self.pop_int_pair()?;
+                    self.stack.push(Value::Int(left * right));
+                }
                 Opcode::PopTop => {
                     self.stack.pop();
                 }
@@ -87,5 +99,25 @@ impl Vm {
         }
 
         Ok(Value::None)
+    }
+
+    fn pop_int_pair(&mut self) -> Result<(i64, i64), RuntimeError> {
+        let right = self
+            .stack
+            .pop()
+            .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+        let left = self
+            .stack
+            .pop()
+            .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+        Ok((value_to_int(left)?, value_to_int(right)?))
+    }
+}
+
+fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
+    match value {
+        Value::Int(value) => Ok(value),
+        Value::Bool(value) => Ok(if value { 1 } else { 0 }),
+        _ => Err(RuntimeError::new("unsupported operand type")),
     }
 }

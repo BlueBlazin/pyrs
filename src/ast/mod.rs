@@ -30,6 +30,18 @@ pub enum Stmt {
 pub enum Expr {
     Name(String),
     Constant(Constant),
+    Binary {
+        left: Box<Expr>,
+        op: BinaryOp,
+        right: Box<Expr>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

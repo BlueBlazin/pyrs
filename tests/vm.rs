@@ -28,3 +28,13 @@ fn executes_assignment_statement() {
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(&Value::Int(5)));
 }
+
+#[test]
+fn executes_binary_expression_assignment() {
+    let module = parser::parse_module("x = 1 + 2 * 3").expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(7)));
+}

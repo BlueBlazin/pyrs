@@ -80,6 +80,17 @@ impl Compiler {
                 self.emit(Opcode::LoadConst, Some(idx));
                 Ok(())
             }
+            Expr::Binary { left, op, right } => {
+                self.compile_expr(left)?;
+                self.compile_expr(right)?;
+                let opcode = match op {
+                    crate::ast::BinaryOp::Add => Opcode::BinaryAdd,
+                    crate::ast::BinaryOp::Sub => Opcode::BinarySub,
+                    crate::ast::BinaryOp::Mul => Opcode::BinaryMul,
+                };
+                self.emit(opcode, None);
+                Ok(())
+            }
         }
     }
 
