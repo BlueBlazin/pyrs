@@ -142,6 +142,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Break) => Ok((Stmt::Break, pos + 1)),
             TokenKind::Keyword(Keyword::Continue) => Ok((Stmt::Continue, pos + 1)),
             TokenKind::Keyword(Keyword::Import) => self.parse_import_stmt(pos),
+            TokenKind::Keyword(Keyword::From) => self.parse_from_import_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
@@ -480,6 +481,35 @@ impl Parser {
         }
 
         Ok((Stmt::Import { names }, pos))
+    }
+
+    fn parse_from_import_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let (module, next) = self.parse_import_name(pos)?;
+        pos = next;
+
+        if !self.match_keyword(pos, Keyword::Import) {
+            return Err(self.error_at(pos, "expected 'import'"));
+        }
+        pos += 1;
+
+        let mut names = Vec::new();
+        loop {
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected imported name"));
+            }
+            names.push(token.lexeme.clone());
+            pos += 1;
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+
+        Ok((Stmt::ImportFrom { module, names }, pos))
     }
 
     fn parse_import_name(&mut self, pos: usize) -> Result<(String, usize), ParseError> {

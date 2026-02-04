@@ -18,6 +18,7 @@ pub enum Keyword {
     Not,
     Elif,
     Import,
+    From,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

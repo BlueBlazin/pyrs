@@ -244,6 +244,18 @@ fn parses_import_statement() {
 }
 
 #[test]
+fn parses_from_import_statement() {
+    let module = parser::parse_module("from mod import a, b").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::ImportFrom { module, names } => {
+            assert_eq!(module, "mod");
+            assert_eq!(names, &vec!["a".to_string(), "b".to_string()]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_slice_subscript() {
     let module = parser::parse_module("x[1:3]").expect("parse should succeed");
     match &module.body[0] {

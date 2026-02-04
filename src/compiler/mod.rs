@@ -143,6 +143,19 @@ impl Compiler {
                 }
                 Ok(())
             }
+            Stmt::ImportFrom { module, names } => {
+                let const_idx = self.code.add_const(Value::Str(module.clone()));
+                self.emit(Opcode::ImportName, Some(const_idx));
+                for name in names {
+                    self.emit(Opcode::DupTop, None);
+                    let attr_idx = self.code.add_name(name.clone());
+                    self.emit(Opcode::LoadAttr, Some(attr_idx));
+                    let name_idx = self.code.add_name(name.clone());
+                    self.emit(Opcode::StoreName, Some(name_idx));
+                }
+                self.emit(Opcode::PopTop, None);
+                Ok(())
+            }
             Stmt::Break => self.compile_break(),
             Stmt::Continue => self.compile_continue(),
         }

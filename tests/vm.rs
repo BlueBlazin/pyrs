@@ -250,6 +250,32 @@ fn executes_import_statement() {
 }
 
 #[test]
+fn executes_from_import_statement() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_from_import_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let module_path = temp_dir.join("mod.py");
+    std::fs::write(&module_path, "value = 5\nother = 7\n").expect("write module");
+
+    let source = "from mod import value, other\nx = value\ny = other\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(7)));
+
+    let _ = std::fs::remove_file(&module_path);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn executes_len_on_list() {
     let source = "x = len([1, 2, 3])";
     let module = parser::parse_module(source).expect("parse should succeed");

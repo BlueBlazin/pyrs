@@ -53,6 +53,10 @@ pub enum Stmt {
     Import {
         names: Vec<String>,
     },
+    ImportFrom {
+        module: String,
+        names: Vec<String>,
+    },
     Break,
     Continue,
 }
