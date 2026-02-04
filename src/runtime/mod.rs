@@ -97,6 +97,7 @@ pub enum BuiltinFunction {
     Bool,
     Int,
     Str,
+    Abs,
 }
 
 impl BuiltinFunction {
@@ -211,6 +212,16 @@ impl BuiltinFunction {
                     return Err(RuntimeError::new("str() expects one argument"));
                 }
                 Ok(Value::Str(format_value(&args[0])))
+            }
+            BuiltinFunction::Abs => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("abs() expects one argument"));
+                }
+                match &args[0] {
+                    Value::Int(value) => Ok(Value::Int(value.abs())),
+                    Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
+                    _ => Err(RuntimeError::new("abs() unsupported type")),
+                }
             }
         }
     }

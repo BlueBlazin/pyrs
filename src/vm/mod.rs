@@ -779,6 +779,8 @@ impl Vm {
             .insert("int".to_string(), Value::Builtin(BuiltinFunction::Int));
         self.builtins
             .insert("str".to_string(), Value::Builtin(BuiltinFunction::Str));
+        self.builtins
+            .insert("abs".to_string(), Value::Builtin(BuiltinFunction::Abs));
     }
 }
 
