@@ -50,6 +50,7 @@ pub enum TokenKind {
     Plus,
     Minus,
     Star,
+    DoubleSlash,
     PlusEqual,
     MinusEqual,
     StarEqual,

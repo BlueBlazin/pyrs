@@ -310,6 +310,7 @@ impl Parser {
         loop {
             let op = match self.token_at(pos).kind {
                 TokenKind::Star => BinaryOp::Mul,
+                TokenKind::DoubleSlash => BinaryOp::FloorDiv,
                 TokenKind::Percent => BinaryOp::Mod,
                 _ => break,
             };

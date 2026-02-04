@@ -127,6 +127,7 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mul,
+    FloorDiv,
     Mod,
     Eq,
     Ne,

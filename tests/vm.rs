@@ -477,6 +477,18 @@ fn executes_modulo() {
 }
 
 #[test]
+fn executes_floor_division() {
+    let source = "x = 7 // 2\ny = -3 // 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(-2)));
+}
+
+#[test]
 fn executes_multiplication_and_concat() {
     let source = "a = 'hi' * 3\nb = [1] * 2\nc = (1,) * 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");

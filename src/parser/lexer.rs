@@ -228,6 +228,20 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token::new(TokenKind::Star, "*", offset, line, column));
                     }
                 }
+                '/' => {
+                    self.advance();
+                    if self.peek_char() == Some('/') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::DoubleSlash, "//", offset, line, column));
+                    } else {
+                        return Err(LexError::new(
+                            "unexpected character: /",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    }
+                }
                 '%' => {
                     self.advance();
                     tokens.push(Token::new(TokenKind::Percent, "%", offset, line, column));

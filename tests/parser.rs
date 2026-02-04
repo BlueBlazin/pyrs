@@ -84,6 +84,17 @@ fn parses_mod_expression() {
 }
 
 #[test]
+fn parses_floor_div_expression() {
+    let module = parser::parse_module("5 // 2").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Binary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::FloorDiv);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_comparison_expression() {
     let module = parser::parse_module("1 < 2 + 3").expect("parse should succeed");
     let expected = Stmt::Expr(Expr::Binary {
