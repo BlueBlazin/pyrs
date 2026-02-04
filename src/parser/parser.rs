@@ -158,6 +158,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Continue) => Ok((Stmt::Continue, pos + 1)),
             TokenKind::Keyword(Keyword::Import) => self.parse_import_stmt(pos),
             TokenKind::Keyword(Keyword::From) => self.parse_from_import_stmt(pos),
+            TokenKind::Keyword(Keyword::Global) => self.parse_global_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
@@ -547,6 +548,28 @@ impl Parser {
         }
 
         Ok((Stmt::ImportFrom { module, names }, pos))
+    }
+
+    fn parse_global_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let mut names = Vec::new();
+
+        loop {
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected global name"));
+            }
+            names.push(token.lexeme.clone());
+            pos += 1;
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+
+        Ok((Stmt::Global { names }, pos))
     }
 
     fn parse_import_name(&mut self, pos: usize) -> Result<(String, usize), ParseError> {

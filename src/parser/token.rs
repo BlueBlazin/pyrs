@@ -19,6 +19,7 @@ pub enum Keyword {
     Elif,
     Import,
     From,
+    Global,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

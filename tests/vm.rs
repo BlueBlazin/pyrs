@@ -117,6 +117,28 @@ fn executes_function_definition_and_call() {
 }
 
 #[test]
+fn executes_global_assignment() {
+    let source = "x = 1\ndef f():\n    global x\n    x = 3\nf()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_global_augmented_assignment() {
+    let source = "x = 2\ndef f():\n    global x\n    x += 4\nf()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(6)));
+}
+
+#[test]
 fn executes_function_without_return() {
     let source = "def noop():\n    x = 1\ny = noop()\n";
     let module = parser::parse_module(source).expect("parse should succeed");

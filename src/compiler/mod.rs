@@ -1,5 +1,6 @@
 //! AST to bytecode compiler (minimal subset).
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ast::{Constant, Expr, Module, Stmt};
@@ -29,6 +30,7 @@ struct Compiler {
     code: CodeObject,
     temp_counter: usize,
     loop_stack: Vec<LoopContext>,
+    global_names: HashSet<String>,
 }
 
 struct LoopContext {
@@ -44,6 +46,7 @@ impl Compiler {
             code: CodeObject::new("<module>"),
             temp_counter: 0,
             loop_stack: Vec::new(),
+            global_names: HashSet::new(),
         }
     }
 
@@ -73,8 +76,7 @@ impl Compiler {
             }
             Stmt::Assign { target, value } => {
                 self.compile_expr(value)?;
-                let idx = self.code.add_name(target.clone());
-                self.emit(Opcode::StoreName, Some(idx));
+                self.emit_store_name_scoped(target);
                 Ok(())
             }
             Stmt::AssignSubscript { target, value } => {
@@ -85,7 +87,7 @@ impl Compiler {
                         self.compile_expr(index)?;
                         self.compile_expr(value)?;
                         self.emit(Opcode::StoreSubscript, None);
-                        self.emit_store_name(&name);
+                        self.emit_store_name_scoped(&name);
                         Ok(())
                     } else {
                         Err(CompileError::new(
@@ -113,7 +115,7 @@ impl Compiler {
                         crate::ast::AugOp::Mul => Opcode::BinaryMul,
                     };
                     self.emit(opcode, None);
-                    self.emit_store_name(name);
+                    self.emit_store_name_scoped(name);
                     Ok(())
                 } else {
                     Err(CompileError::new(
@@ -162,10 +164,15 @@ impl Compiler {
                     self.emit(Opcode::DupTop, None);
                     let attr_idx = self.code.add_name(name.clone());
                     self.emit(Opcode::LoadAttr, Some(attr_idx));
-                    let name_idx = self.code.add_name(name.clone());
-                    self.emit(Opcode::StoreName, Some(name_idx));
+                    self.emit_store_name_scoped(name);
                 }
                 self.emit(Opcode::PopTop, None);
+                Ok(())
+            }
+            Stmt::Global { names } => {
+                for name in names {
+                    self.global_names.insert(name.clone());
+                }
                 Ok(())
             }
             Stmt::Break => self.compile_break(),
@@ -298,6 +305,15 @@ impl Compiler {
         self.emit(Opcode::StoreName, Some(idx));
     }
 
+    fn emit_store_name_scoped(&mut self, name: &str) {
+        let idx = self.code.add_name(name.to_string());
+        if self.global_names.contains(name) {
+            self.emit(Opcode::StoreGlobal, Some(idx));
+        } else {
+            self.emit(Opcode::StoreName, Some(idx));
+        }
+    }
+
     fn emit_jump(&mut self, opcode: Opcode) -> usize {
         let index = self.code.instructions.len();
         self.code
@@ -399,6 +415,7 @@ impl Compiler {
             code: CodeObject::new(name),
             temp_counter: 0,
             loop_stack: Vec::new(),
+            global_names: HashSet::new(),
         };
         compiler.code.params = params.to_vec();
         for stmt in body {
@@ -435,7 +452,7 @@ impl Compiler {
         self.emit_load_name(&iter_temp);
         self.emit_load_name(&index_temp);
         self.emit(Opcode::Subscript, None);
-        self.emit_store_name(target);
+        self.emit_store_name_scoped(target);
 
         self.loop_stack.push(LoopContext {
             start: loop_start,

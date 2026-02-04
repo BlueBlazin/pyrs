@@ -262,6 +262,7 @@ impl<'a> Lexer<'a> {
                         "elif" => TokenKind::Keyword(Keyword::Elif),
                         "import" => TokenKind::Keyword(Keyword::Import),
                         "from" => TokenKind::Keyword(Keyword::From),
+                        "global" => TokenKind::Keyword(Keyword::Global),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

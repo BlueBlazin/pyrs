@@ -255,6 +255,17 @@ fn parses_import_statement() {
 }
 
 #[test]
+fn parses_global_statement() {
+    let module = parser::parse_module("global x, y").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Global { names } => {
+            assert_eq!(names, &vec!["x".to_string(), "y".to_string()]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_from_import_statement() {
     let module = parser::parse_module("from mod import a, b").expect("parse should succeed");
     match &module.body[0] {

@@ -303,6 +303,25 @@ impl Vm {
                         }
                     }
                 }
+                Opcode::StoreGlobal => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing name argument"))?
+                        as usize;
+                    let name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = self.pop_value()?;
+                    if let Some(frame) = self.frames.last() {
+                        frame.module.globals.borrow_mut().insert(name, value);
+                    }
+                }
                 Opcode::BinaryAdd => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;

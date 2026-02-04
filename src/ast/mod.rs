@@ -64,6 +64,9 @@ pub enum Stmt {
         module: String,
         names: Vec<String>,
     },
+    Global {
+        names: Vec<String>,
+    },
     Break,
     Continue,
 }
