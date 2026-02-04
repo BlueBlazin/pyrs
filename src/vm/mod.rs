@@ -536,7 +536,10 @@ impl Vm {
                         }
                         index => match target {
                             Value::List(mut values) => {
-                                let idx = value_to_int(index)? as isize;
+                                let mut idx = value_to_int(index)? as isize;
+                                if idx < 0 {
+                                    idx += values.len() as isize;
+                                }
                                 if idx < 0 || idx as usize >= values.len() {
                                     return Err(RuntimeError::new("list index out of range"));
                                 }
