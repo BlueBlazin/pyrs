@@ -24,6 +24,14 @@ pub enum Stmt {
         target: String,
         value: Expr,
     },
+    FunctionDef {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Stmt>,
+    },
+    Return {
+        value: Option<Expr>,
+    },
     While {
         test: Expr,
         body: Vec<Stmt>,
@@ -42,6 +50,10 @@ pub enum Expr {
     Unary {
         op: UnaryOp,
         operand: Box<Expr>,
+    },
+    Call {
+        func: Box<Expr>,
+        args: Vec<Expr>,
     },
 }
 

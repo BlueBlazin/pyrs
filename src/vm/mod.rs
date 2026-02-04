@@ -1,20 +1,41 @@
 //! Bytecode virtual machine (minimal subset).
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::bytecode::{CodeObject, Opcode};
 use crate::runtime::{RuntimeError, Value};
 
+struct Frame {
+    code: Rc<CodeObject>,
+    ip: usize,
+    stack: Vec<Value>,
+    locals: HashMap<String, Value>,
+    is_module: bool,
+}
+
+impl Frame {
+    fn new(code: Rc<CodeObject>, is_module: bool) -> Self {
+        Self {
+            code,
+            ip: 0,
+            stack: Vec::new(),
+            locals: HashMap::new(),
+            is_module,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Vm {
-    stack: Vec<Value>,
+    frames: Vec<Frame>,
     globals: HashMap<String, Value>,
 }
 
 impl Vm {
     pub fn new() -> Self {
         Self {
-            stack: Vec::new(),
+            frames: Vec::new(),
             globals: HashMap::new(),
         }
     }
@@ -28,9 +49,44 @@ impl Vm {
     }
 
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {
-        let mut ip = 0usize;
-        while ip < code.instructions.len() {
-            let instr = &code.instructions[ip];
+        self.frames.clear();
+        let code = Rc::new(code.clone());
+        self.frames.push(Frame::new(code, true));
+        self.run()
+    }
+
+    fn run(&mut self) -> Result<Value, RuntimeError> {
+        loop {
+            if self.frames.is_empty() {
+                return Ok(Value::None);
+            }
+
+            let should_return_none = {
+                let frame = self.frames.last_mut().expect("frame exists");
+                if frame.ip >= frame.code.instructions.len() {
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if should_return_none {
+                let value = Value::None;
+                self.frames.pop();
+                if let Some(caller) = self.frames.last_mut() {
+                    caller.stack.push(value);
+                    continue;
+                }
+                return Ok(value);
+            }
+
+            let instr = {
+                let frame = self.frames.last_mut().expect("frame exists");
+                let instr = frame.code.instructions[frame.ip].clone();
+                frame.ip += 1;
+                instr
+            };
+
             match instr.opcode {
                 Opcode::Nop => {}
                 Opcode::LoadConst => {
@@ -38,122 +94,216 @@ impl Vm {
                         .arg
                         .ok_or_else(|| RuntimeError::new("missing const argument"))?
                         as usize;
-                    let value = code
-                        .constants
-                        .get(idx)
-                        .cloned()
-                        .ok_or_else(|| RuntimeError::new("constant index out of range"))?;
-                    self.stack.push(value);
+                    let value = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .constants
+                            .get(idx)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                    };
+                    self.frames
+                        .last_mut()
+                        .expect("frame exists")
+                        .stack
+                        .push(value);
                 }
                 Opcode::LoadName => {
                     let idx = instr
                         .arg
                         .ok_or_else(|| RuntimeError::new("missing name argument"))?
                         as usize;
-                    let name = code
-                        .names
-                        .get(idx)
-                        .ok_or_else(|| RuntimeError::new("name index out of range"))?;
-                    let value = self.globals.get(name).cloned().ok_or_else(|| {
-                        RuntimeError::new(format!("name '{name}' is not defined"))
-                    })?;
-                    self.stack.push(value);
+                    let name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = self.lookup_name(&name)?;
+                    self.frames
+                        .last_mut()
+                        .expect("frame exists")
+                        .stack
+                        .push(value);
                 }
                 Opcode::StoreName => {
                     let idx = instr
                         .arg
                         .ok_or_else(|| RuntimeError::new("missing name argument"))?
                         as usize;
-                    let name = code
-                        .names
-                        .get(idx)
-                        .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                        .clone();
-                    let value = self
-                        .stack
-                        .pop()
-                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
-                    self.globals.insert(name, value);
+                    let name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = {
+                        let frame = self.frames.last_mut().expect("frame exists");
+                        frame
+                            .stack
+                            .pop()
+                            .ok_or_else(|| RuntimeError::new("stack underflow"))?
+                    };
+                    self.store_name(name, value);
                 }
                 Opcode::BinaryAdd => {
                     let (left, right) = self.pop_int_pair()?;
-                    self.stack.push(Value::Int(left + right));
+                    self.push_value(Value::Int(left + right));
                 }
                 Opcode::BinarySub => {
                     let (left, right) = self.pop_int_pair()?;
-                    self.stack.push(Value::Int(left - right));
+                    self.push_value(Value::Int(left - right));
                 }
                 Opcode::BinaryMul => {
                     let (left, right) = self.pop_int_pair()?;
-                    self.stack.push(Value::Int(left * right));
+                    self.push_value(Value::Int(left * right));
                 }
                 Opcode::CompareEq => {
-                    let right = self
-                        .stack
-                        .pop()
-                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
-                    let left = self
-                        .stack
-                        .pop()
-                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
-                    self.stack.push(Value::Bool(left == right));
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(Value::Bool(left == right));
                 }
                 Opcode::CompareLt => {
                     let (left, right) = self.pop_int_pair()?;
-                    self.stack.push(Value::Bool(left < right));
+                    self.push_value(Value::Bool(left < right));
                 }
                 Opcode::UnaryNeg => {
-                    let value = self
-                        .stack
-                        .pop()
-                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+                    let value = self.pop_value()?;
                     let value = value_to_int(value)?;
-                    self.stack.push(Value::Int(-value));
+                    self.push_value(Value::Int(-value));
+                }
+                Opcode::MakeFunction => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing function argument"))?
+                        as usize;
+                    let value = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .constants
+                            .get(idx)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                    };
+                    let code = match value {
+                        Value::Code(code) => code,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "expected code object for function",
+                            ))
+                        }
+                    };
+                    self.push_value(Value::Function(code));
+                }
+                Opcode::CallFunction => {
+                    let argc = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing call argument"))?
+                        as usize;
+                    let mut args = Vec::with_capacity(argc);
+                    for _ in 0..argc {
+                        args.push(self.pop_value()?);
+                    }
+                    args.reverse();
+                    let func = self.pop_value()?;
+                    let code = match func {
+                        Value::Function(code) => code,
+                        _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    };
+
+                    if code.params.len() != args.len() {
+                        return Err(RuntimeError::new("argument count mismatch"));
+                    }
+
+                    let params = code.params.clone();
+                    let mut frame = Frame::new(code, false);
+                    for (name, value) in params.into_iter().zip(args.into_iter()) {
+                        frame.locals.insert(name, value);
+                    }
+                    self.frames.push(frame);
                 }
                 Opcode::JumpIfFalse => {
                     let target = instr
                         .arg
-                        .ok_or_else(|| RuntimeError::new("missing jump target"))? as usize;
-                    let value = self
-                        .stack
-                        .pop()
-                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+                        .ok_or_else(|| RuntimeError::new("missing jump target"))?
+                        as usize;
+                    let value = self.pop_value()?;
                     if !is_truthy(&value) {
-                        ip = target;
-                        continue;
+                        let frame = self.frames.last_mut().expect("frame exists");
+                        frame.ip = target;
                     }
                 }
                 Opcode::Jump => {
                     let target = instr
                         .arg
-                        .ok_or_else(|| RuntimeError::new("missing jump target"))? as usize;
-                    ip = target;
-                    continue;
+                        .ok_or_else(|| RuntimeError::new("missing jump target"))?
+                        as usize;
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    frame.ip = target;
                 }
                 Opcode::PopTop => {
-                    self.stack.pop();
+                    let _ = self.pop_value()?;
                 }
                 Opcode::ReturnValue => {
-                    let value = self.stack.pop().unwrap_or(Value::None);
+                    let value = self.pop_value().unwrap_or(Value::None);
+                    self.frames.pop();
+                    if let Some(caller) = self.frames.last_mut() {
+                        caller.stack.push(value);
+                        continue;
+                    }
                     return Ok(value);
                 }
             }
-            ip += 1;
         }
+    }
 
-        Ok(Value::None)
+    fn pop_value(&mut self) -> Result<Value, RuntimeError> {
+        let frame = self.frames.last_mut().expect("frame exists");
+        frame
+            .stack
+            .pop()
+            .ok_or_else(|| RuntimeError::new("stack underflow"))
+    }
+
+    fn push_value(&mut self, value: Value) {
+        let frame = self.frames.last_mut().expect("frame exists");
+        frame.stack.push(value);
     }
 
     fn pop_int_pair(&mut self) -> Result<(i64, i64), RuntimeError> {
-        let right = self
-            .stack
-            .pop()
-            .ok_or_else(|| RuntimeError::new("stack underflow"))?;
-        let left = self
-            .stack
-            .pop()
-            .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+        let right = self.pop_value()?;
+        let left = self.pop_value()?;
         Ok((value_to_int(left)?, value_to_int(right)?))
+    }
+
+    fn lookup_name(&self, name: &str) -> Result<Value, RuntimeError> {
+        if let Some(frame) = self.frames.last() {
+            if let Some(value) = frame.locals.get(name) {
+                return Ok(value.clone());
+            }
+        }
+        self.globals
+            .get(name)
+            .cloned()
+            .ok_or_else(|| RuntimeError::new(format!("name '{name}' is not defined")))
+    }
+
+    fn store_name(&mut self, name: String, value: Value) {
+        if let Some(frame) = self.frames.last_mut() {
+            if frame.is_module {
+                self.globals.insert(name, value);
+            } else {
+                frame.locals.insert(name, value);
+            }
+        }
     }
 }
 
@@ -171,5 +321,6 @@ fn is_truthy(value: &Value) -> bool {
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
         Value::Str(value) => !value.is_empty(),
+        Value::Code(_) | Value::Function(_) => true,
     }
 }

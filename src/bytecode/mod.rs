@@ -15,6 +15,8 @@ pub enum Opcode {
     CompareEq,
     CompareLt,
     UnaryNeg,
+    MakeFunction,
+    CallFunction,
     JumpIfFalse,
     Jump,
     PopTop,
@@ -39,6 +41,7 @@ pub struct CodeObject {
     pub instructions: Vec<Instruction>,
     pub constants: Vec<crate::runtime::Value>,
     pub names: Vec<String>,
+    pub params: Vec<String>,
 }
 
 impl CodeObject {
@@ -48,6 +51,7 @@ impl CodeObject {
             instructions: Vec::new(),
             constants: vec![crate::runtime::Value::None],
             names: Vec::new(),
+            params: Vec::new(),
         }
     }
 

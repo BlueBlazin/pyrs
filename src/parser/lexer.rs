@@ -127,6 +127,10 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token::new(TokenKind::Equal, "=", offset, line, column));
                     }
                 }
+                ',' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::Comma, ",", offset, line, column));
+                }
                 '<' => {
                     self.advance();
                     tokens.push(Token::new(TokenKind::Less, "<", offset, line, column));
@@ -161,6 +165,8 @@ impl<'a> Lexer<'a> {
                         "True" => TokenKind::Keyword(Keyword::TrueLiteral),
                         "False" => TokenKind::Keyword(Keyword::FalseLiteral),
                         "None" => TokenKind::Keyword(Keyword::NoneLiteral),
+                        "def" => TokenKind::Keyword(Keyword::Def),
+                        "return" => TokenKind::Keyword(Keyword::Return),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

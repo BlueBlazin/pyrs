@@ -119,6 +119,8 @@ impl Parser {
             return Ok((Stmt::Assign { target, value }, next));
         }
         match token.kind {
+            TokenKind::Keyword(Keyword::Def) => self.parse_function_def(pos),
+            TokenKind::Keyword(Keyword::Return) => self.parse_return_stmt(pos),
             TokenKind::Keyword(Keyword::If) => self.parse_if_stmt(pos),
             TokenKind::Keyword(Keyword::While) => self.parse_while_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
@@ -223,32 +225,47 @@ impl Parser {
 
     fn parse_atom(&mut self, pos: usize) -> ParseResult<Expr> {
         let token = self.token_at(pos);
-        match &token.kind {
-            TokenKind::Name => Ok((Expr::Name(token.lexeme.clone()), pos + 1)),
+        let (mut expr, mut pos) = match &token.kind {
+            TokenKind::Name => (Expr::Name(token.lexeme.clone()), pos + 1),
             TokenKind::Number => {
                 let value = token
                     .lexeme
                     .parse::<i64>()
                     .map_err(|_| self.error_at(pos, "invalid integer literal"))?;
-                Ok((Expr::Constant(Constant::Int(value)), pos + 1))
+                (Expr::Constant(Constant::Int(value)), pos + 1)
             }
-            TokenKind::String => Ok((Expr::Constant(Constant::Str(token.lexeme.clone())), pos + 1)),
+            TokenKind::String => (
+                Expr::Constant(Constant::Str(token.lexeme.clone())),
+                pos + 1,
+            ),
             TokenKind::Keyword(Keyword::TrueLiteral) => {
-                Ok((Expr::Constant(Constant::Bool(true)), pos + 1))
+                (Expr::Constant(Constant::Bool(true)), pos + 1)
             }
             TokenKind::Keyword(Keyword::FalseLiteral) => {
-                Ok((Expr::Constant(Constant::Bool(false)), pos + 1))
+                (Expr::Constant(Constant::Bool(false)), pos + 1)
             }
-            TokenKind::Keyword(Keyword::NoneLiteral) => {
-                Ok((Expr::Constant(Constant::None), pos + 1))
-            }
+            TokenKind::Keyword(Keyword::NoneLiteral) => (Expr::Constant(Constant::None), pos + 1),
             TokenKind::LParen => {
-                let (expr, next) = self.parse_expr_at(pos + 1)?;
+                let (inner, next) = self.parse_expr_at(pos + 1)?;
                 let next = self.expect_kind(next, TokenKind::RParen)?;
-                Ok((expr, next))
+                (inner, next)
             }
-            _ => Err(self.error_at(pos, "expected expression")),
+            _ => return Err(self.error_at(pos, "expected expression")),
+        };
+
+        loop {
+            if !matches!(self.token_at(pos).kind, TokenKind::LParen) {
+                break;
+            }
+            let (args, next) = self.parse_call_args(pos + 1)?;
+            expr = Expr::Call {
+                func: Box::new(expr),
+                args,
+            };
+            pos = next;
         }
+
+        Ok((expr, pos))
     }
 
     fn parse_if_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -289,11 +306,105 @@ impl Parser {
         Ok((Stmt::While { test, body }, pos))
     }
 
+    fn parse_function_def(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let name_token = self.token_at(pos);
+        if name_token.kind != TokenKind::Name {
+            return Err(self.error_at(pos, "expected function name"));
+        }
+        let name = name_token.lexeme.clone();
+        pos += 1;
+        pos = self.expect_kind(pos, TokenKind::LParen)?;
+        let (params, next) = self.parse_parameters(pos)?;
+        pos = next;
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        let (body, next) = self.parse_suite(pos)?;
+        pos = next;
+        Ok((
+            Stmt::FunctionDef {
+                name,
+                params,
+                body,
+            },
+            pos,
+        ))
+    }
+
+    fn parse_return_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        if matches!(
+            self.token_at(pos).kind,
+            TokenKind::Newline | TokenKind::Semicolon | TokenKind::Dedent | TokenKind::EndMarker
+        ) {
+            return Ok((Stmt::Return { value: None }, pos));
+        }
+        let (expr, next) = self.parse_expr_at(pos)?;
+        pos = next;
+        Ok((Stmt::Return { value: Some(expr) }, pos))
+    }
+
     fn parse_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
         match self.token_at(pos).kind {
             TokenKind::Newline => self.parse_block_suite(pos),
             _ => self.parse_inline_suite(pos),
         }
+    }
+
+    fn parse_call_args(&mut self, pos: usize) -> Result<(Vec<Expr>, usize), ParseError> {
+        let mut pos = pos;
+        let mut args = Vec::new();
+
+        if matches!(self.token_at(pos).kind, TokenKind::RParen) {
+            return Ok((args, pos + 1));
+        }
+
+        loop {
+            let (expr, next) = self.parse_expr_at(pos)?;
+            args.push(expr);
+            pos = next;
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        pos = self.expect_kind(pos, TokenKind::RParen)?;
+        Ok((args, pos))
+    }
+
+    fn parse_parameters(&mut self, pos: usize) -> Result<(Vec<String>, usize), ParseError> {
+        let mut pos = pos;
+        let mut params = Vec::new();
+
+        if matches!(self.token_at(pos).kind, TokenKind::RParen) {
+            return Ok((params, pos + 1));
+        }
+
+        loop {
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected parameter name"));
+            }
+            params.push(token.lexeme.clone());
+            pos += 1;
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        pos = self.expect_kind(pos, TokenKind::RParen)?;
+        Ok((params, pos))
     }
 
     fn parse_block_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
@@ -423,5 +534,8 @@ impl Parser {
 }
 
 fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
-    matches!(stmt, Stmt::If { .. } | Stmt::While { .. })
+    matches!(
+        stmt,
+        Stmt::If { .. } | Stmt::While { .. } | Stmt::FunctionDef { .. }
+    )
 }

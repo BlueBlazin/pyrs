@@ -7,6 +7,8 @@ pub enum Keyword {
     TrueLiteral,
     FalseLiteral,
     NoneLiteral,
+    Def,
+    Return,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +25,7 @@ pub enum TokenKind {
     Equal,
     DoubleEqual,
     Less,
+    Comma,
     Plus,
     Minus,
     Star,

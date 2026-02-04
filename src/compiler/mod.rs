@@ -1,5 +1,7 @@
 //! AST to bytecode compiler (minimal subset).
 
+use std::rc::Rc;
+
 use crate::ast::{Constant, Expr, Module, Stmt};
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
@@ -66,6 +68,23 @@ impl Compiler {
             }
             Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
             Stmt::While { test, body } => self.compile_while(test, body),
+            Stmt::FunctionDef { name, params, body } => {
+                let func_code = self.compile_function(name, params, body)?;
+                let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
+                self.emit(Opcode::MakeFunction, Some(const_idx));
+                let name_idx = self.code.add_name(name.clone());
+                self.emit(Opcode::StoreName, Some(name_idx));
+                Ok(())
+            }
+            Stmt::Return { value } => {
+                if let Some(expr) = value {
+                    self.compile_expr(expr)?;
+                } else {
+                    self.emit(Opcode::LoadConst, Some(0));
+                }
+                self.emit(Opcode::ReturnValue, None);
+                Ok(())
+            }
         }
     }
 
@@ -100,6 +119,14 @@ impl Compiler {
                     crate::ast::UnaryOp::Neg => Opcode::UnaryNeg,
                 };
                 self.emit(opcode, None);
+                Ok(())
+            }
+            Expr::Call { func, args } => {
+                self.compile_expr(func)?;
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.emit(Opcode::CallFunction, Some(args.len() as u32));
                 Ok(())
             }
         }
@@ -179,6 +206,22 @@ impl Compiler {
         let loop_end = self.current_ip();
         self.patch_jump(jump_if_false, loop_end)?;
         Ok(())
+    }
+
+    fn compile_function(
+        &mut self,
+        name: &str,
+        params: &[String],
+        body: &[Stmt],
+    ) -> Result<CodeObject, CompileError> {
+        let mut compiler = Compiler {
+            code: CodeObject::new(name),
+        };
+        compiler.code.params = params.to_vec();
+        for stmt in body {
+            compiler.compile_stmt(stmt)?;
+        }
+        Ok(compiler.finish())
     }
 }
 

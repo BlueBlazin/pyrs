@@ -82,6 +82,43 @@ fn parses_boolean_and_none_literals() {
 }
 
 #[test]
+fn parses_function_definition_and_return() {
+    let source = "def add(a, b):\n    return a + b\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::FunctionDef { name, params, body } => {
+            assert_eq!(name, "add");
+            assert_eq!(params, &vec!["a".to_string(), "b".to_string()]);
+            match &body[0] {
+                Stmt::Return { value } => {
+                    assert!(value.is_some());
+                }
+                other => panic!("unexpected stmt: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_call_expression() {
+    let module = parser::parse_module("add(1, 2)").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Call { func, args }) => {
+            assert_eq!(**func, Expr::Name("add".to_string()));
+            assert_eq!(
+                args,
+                &vec![
+                    Expr::Constant(Constant::Int(1)),
+                    Expr::Constant(Constant::Int(2)),
+                ]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(

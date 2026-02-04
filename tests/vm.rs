@@ -70,6 +70,39 @@ fn executes_boolean_literal_assignment() {
 }
 
 #[test]
+fn executes_function_definition_and_call() {
+    let source = "def add(a, b):\n    return a + b\nx = add(2, 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(5)));
+}
+
+#[test]
+fn executes_function_without_return() {
+    let source = "def noop():\n    x = 1\ny = noop()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(&Value::None));
+}
+
+#[test]
+fn function_locals_do_not_override_globals() {
+    let source = "x = 1\ndef f():\n    x = 2\nf()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(1)));
+}
+
+#[test]
 fn executes_if_else_statement() {
     let source = "if 0:\n    x = 1\nelse:\n    x = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");
