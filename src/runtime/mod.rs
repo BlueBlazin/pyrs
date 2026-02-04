@@ -1,6 +1,6 @@
 //! Runtime object model (stubbed).
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     None,
     Bool(bool),

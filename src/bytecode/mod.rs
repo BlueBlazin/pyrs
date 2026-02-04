@@ -6,7 +6,10 @@ pub mod pyc;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     Nop,
-    ReturnConst,
+    LoadConst,
+    LoadName,
+    PopTop,
+    ReturnValue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +28,8 @@ impl Instruction {
 pub struct CodeObject {
     pub name: String,
     pub instructions: Vec<Instruction>,
+    pub constants: Vec<crate::runtime::Value>,
+    pub names: Vec<String>,
 }
 
 impl CodeObject {
@@ -32,6 +37,27 @@ impl CodeObject {
         Self {
             name: name.into(),
             instructions: Vec::new(),
+            constants: vec![crate::runtime::Value::None],
+            names: Vec::new(),
         }
+    }
+
+    pub fn add_const(&mut self, value: crate::runtime::Value) -> u32 {
+        self.constants.push(value);
+        (self.constants.len() - 1) as u32
+    }
+
+    pub fn add_name(&mut self, name: impl Into<String>) -> u32 {
+        let name = name.into();
+        if let Some((idx, _)) = self
+            .names
+            .iter()
+            .enumerate()
+            .find(|(_, existing)| *existing == &name)
+        {
+            return idx as u32;
+        }
+        self.names.push(name);
+        (self.names.len() - 1) as u32
     }
 }
