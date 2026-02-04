@@ -9,6 +9,8 @@ pub enum Keyword {
     NoneLiteral,
     Def,
     Return,
+    For,
+    In,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

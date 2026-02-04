@@ -137,6 +137,26 @@ fn parses_list_literal_and_subscript() {
 }
 
 #[test]
+fn parses_for_loop() {
+    let source = "for i in [1, 2]:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::For { target, iter, body } => {
+            assert_eq!(target, "i");
+            assert_eq!(
+                *iter,
+                Expr::List(vec![
+                    Expr::Constant(Constant::Int(1)),
+                    Expr::Constant(Constant::Int(2))
+                ])
+            );
+            assert_eq!(body, &vec![Stmt::Pass]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(

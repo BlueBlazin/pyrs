@@ -123,6 +123,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Return) => self.parse_return_stmt(pos),
             TokenKind::Keyword(Keyword::If) => self.parse_if_stmt(pos),
             TokenKind::Keyword(Keyword::While) => self.parse_while_stmt(pos),
+            TokenKind::Keyword(Keyword::For) => self.parse_for_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
@@ -318,6 +319,26 @@ impl Parser {
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
         Ok((Stmt::While { test, body }, pos))
+    }
+
+    fn parse_for_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let target_token = self.token_at(pos);
+        if target_token.kind != TokenKind::Name {
+            return Err(self.error_at(pos, "expected loop target"));
+        }
+        let target = target_token.lexeme.clone();
+        pos += 1;
+        if !self.match_keyword(pos, Keyword::In) {
+            return Err(self.error_at(pos, "expected 'in'"));
+        }
+        pos += 1;
+        let (iter, next) = self.parse_expr_at(pos)?;
+        pos = next;
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        let (body, next) = self.parse_suite(pos)?;
+        pos = next;
+        Ok((Stmt::For { target, iter, body }, pos))
     }
 
     fn parse_function_def(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -583,6 +604,9 @@ impl Parser {
 fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
     matches!(
         stmt,
-        Stmt::If { .. } | Stmt::While { .. } | Stmt::FunctionDef { .. }
+        Stmt::If { .. }
+            | Stmt::While { .. }
+            | Stmt::For { .. }
+            | Stmt::FunctionDef { .. }
     )
 }

@@ -343,6 +343,8 @@ impl Vm {
             .insert("print".to_string(), Value::Builtin(BuiltinFunction::Print));
         self.globals
             .insert("len".to_string(), Value::Builtin(BuiltinFunction::Len));
+        self.globals
+            .insert("range".to_string(), Value::Builtin(BuiltinFunction::Range));
     }
 }
 

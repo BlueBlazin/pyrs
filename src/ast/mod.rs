@@ -36,6 +36,11 @@ pub enum Stmt {
         test: Expr,
         body: Vec<Stmt>,
     },
+    For {
+        target: String,
+        iter: Expr,
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

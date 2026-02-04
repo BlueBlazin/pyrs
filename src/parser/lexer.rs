@@ -175,6 +175,8 @@ impl<'a> Lexer<'a> {
                         "None" => TokenKind::Keyword(Keyword::NoneLiteral),
                         "def" => TokenKind::Keyword(Keyword::Def),
                         "return" => TokenKind::Keyword(Keyword::Return),
+                        "for" => TokenKind::Keyword(Keyword::For),
+                        "in" => TokenKind::Keyword(Keyword::In),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

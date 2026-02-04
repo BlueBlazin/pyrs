@@ -38,6 +38,7 @@ impl Eq for Value {}
 pub enum BuiltinFunction {
     Print,
     Len,
+    Range,
 }
 
 impl BuiltinFunction {
@@ -60,6 +61,24 @@ impl BuiltinFunction {
                     Value::List(values) => Ok(Value::Int(values.len() as i64)),
                     _ => Err(RuntimeError::new("len() unsupported type")),
                 }
+            }
+            BuiltinFunction::Range => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("range() expects one argument"));
+                }
+                let stop = match &args[0] {
+                    Value::Int(value) => *value,
+                    Value::Bool(value) => if *value { 1 } else { 0 },
+                    _ => return Err(RuntimeError::new("range() expects integer")),
+                };
+                if stop < 0 {
+                    return Err(RuntimeError::new("range() negative not supported"));
+                }
+                let mut values = Vec::new();
+                for i in 0..stop {
+                    values.push(Value::Int(i));
+                }
+                Ok(Value::List(values))
             }
         }
     }

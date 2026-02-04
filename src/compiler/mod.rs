@@ -27,12 +27,14 @@ pub fn compile_module(module: &Module) -> Result<CodeObject, CompileError> {
 
 struct Compiler {
     code: CodeObject,
+    temp_counter: usize,
 }
 
 impl Compiler {
     fn new() -> Self {
         Self {
             code: CodeObject::new("<module>"),
+            temp_counter: 0,
         }
     }
 
@@ -85,6 +87,7 @@ impl Compiler {
                 self.emit(Opcode::ReturnValue, None);
                 Ok(())
             }
+            Stmt::For { target, iter, body } => self.compile_for(target, iter, body),
         }
     }
 
@@ -147,6 +150,21 @@ impl Compiler {
 
     fn emit(&mut self, opcode: Opcode, arg: Option<u32>) {
         self.code.instructions.push(Instruction::new(opcode, arg));
+    }
+
+    fn emit_const(&mut self, value: Value) {
+        let idx = self.code.add_const(value);
+        self.emit(Opcode::LoadConst, Some(idx));
+    }
+
+    fn emit_load_name(&mut self, name: &str) {
+        let idx = self.code.add_name(name.to_string());
+        self.emit(Opcode::LoadName, Some(idx));
+    }
+
+    fn emit_store_name(&mut self, name: &str) {
+        let idx = self.code.add_name(name.to_string());
+        self.emit(Opcode::StoreName, Some(idx));
     }
 
     fn emit_jump(&mut self, opcode: Opcode) -> usize {
@@ -229,12 +247,64 @@ impl Compiler {
     ) -> Result<CodeObject, CompileError> {
         let mut compiler = Compiler {
             code: CodeObject::new(name),
+            temp_counter: 0,
         };
         compiler.code.params = params.to_vec();
         for stmt in body {
             compiler.compile_stmt(stmt)?;
         }
         Ok(compiler.finish())
+    }
+
+    fn compile_for(
+        &mut self,
+        target: &str,
+        iter: &Expr,
+        body: &[Stmt],
+    ) -> Result<(), CompileError> {
+        let iter_temp = self.fresh_temp("iter");
+        let index_temp = self.fresh_temp("idx");
+
+        self.compile_expr(iter)?;
+        self.emit_store_name(&iter_temp);
+
+        self.emit_const(Value::Int(0));
+        self.emit_store_name(&index_temp);
+
+        let loop_start = self.current_ip();
+
+        self.emit_load_name(&index_temp);
+        self.emit_load_name("len");
+        self.emit_load_name(&iter_temp);
+        self.emit(Opcode::CallFunction, Some(1));
+        self.emit(Opcode::CompareLt, None);
+        let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
+
+        self.emit_load_name(&iter_temp);
+        self.emit_load_name(&index_temp);
+        self.emit(Opcode::Subscript, None);
+        self.emit_store_name(target);
+
+        for stmt in body {
+            self.compile_stmt(stmt)?;
+        }
+
+        self.emit_load_name(&index_temp);
+        self.emit_const(Value::Int(1));
+        self.emit(Opcode::BinaryAdd, None);
+        self.emit_store_name(&index_temp);
+
+        self.emit(Opcode::Jump, Some(loop_start as u32));
+        let loop_end = self.current_ip();
+        self.patch_jump(jump_if_false, loop_end)?;
+
+        Ok(())
+    }
+
+    fn fresh_temp(&mut self, prefix: &str) -> String {
+        let name = format!("__pyrs_{prefix}_{}", self.temp_counter);
+        self.temp_counter += 1;
+        name
     }
 }
 
