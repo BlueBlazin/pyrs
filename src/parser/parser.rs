@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{BinaryOp, Constant, Expr, Module, Stmt};
+use crate::ast::{BinaryOp, Constant, Expr, Module, Stmt, UnaryOp};
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
 
@@ -188,14 +188,14 @@ impl Parser {
     }
 
     fn parse_mul(&mut self, pos: usize) -> ParseResult<Expr> {
-        let (mut left, mut pos) = self.parse_atom(pos)?;
+        let (mut left, mut pos) = self.parse_unary(pos)?;
 
         loop {
             if !matches!(self.token_at(pos).kind, TokenKind::Star) {
                 break;
             }
             pos += 1;
-            let (right, next) = self.parse_atom(pos)?;
+            let (right, next) = self.parse_unary(pos)?;
             left = Expr::Binary {
                 left: Box::new(left),
                 op: BinaryOp::Mul,
@@ -205,6 +205,20 @@ impl Parser {
         }
 
         Ok((left, pos))
+    }
+
+    fn parse_unary(&mut self, pos: usize) -> ParseResult<Expr> {
+        if matches!(self.token_at(pos).kind, TokenKind::Minus) {
+            let (expr, next) = self.parse_unary(pos + 1)?;
+            return Ok((
+                Expr::Unary {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(expr),
+                },
+                next,
+            ));
+        }
+        self.parse_atom(pos)
     }
 
     fn parse_atom(&mut self, pos: usize) -> ParseResult<Expr> {
@@ -219,6 +233,15 @@ impl Parser {
                 Ok((Expr::Constant(Constant::Int(value)), pos + 1))
             }
             TokenKind::String => Ok((Expr::Constant(Constant::Str(token.lexeme.clone())), pos + 1)),
+            TokenKind::Keyword(Keyword::TrueLiteral) => {
+                Ok((Expr::Constant(Constant::Bool(true)), pos + 1))
+            }
+            TokenKind::Keyword(Keyword::FalseLiteral) => {
+                Ok((Expr::Constant(Constant::Bool(false)), pos + 1))
+            }
+            TokenKind::Keyword(Keyword::NoneLiteral) => {
+                Ok((Expr::Constant(Constant::None), pos + 1))
+            }
             TokenKind::LParen => {
                 let (expr, next) = self.parse_expr_at(pos + 1)?;
                 let next = self.expect_kind(next, TokenKind::RParen)?;

@@ -102,6 +102,14 @@ impl Vm {
                     let (left, right) = self.pop_int_pair()?;
                     self.stack.push(Value::Bool(left < right));
                 }
+                Opcode::UnaryNeg => {
+                    let value = self
+                        .stack
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("stack underflow"))?;
+                    let value = value_to_int(value)?;
+                    self.stack.push(Value::Int(-value));
+                }
                 Opcode::JumpIfFalse => {
                     let target = instr
                         .arg

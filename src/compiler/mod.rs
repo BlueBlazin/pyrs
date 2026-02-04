@@ -94,6 +94,14 @@ impl Compiler {
                 self.emit(opcode, None);
                 Ok(())
             }
+            Expr::Unary { op, operand } => {
+                self.compile_expr(operand)?;
+                let opcode = match op {
+                    crate::ast::UnaryOp::Neg => Opcode::UnaryNeg,
+                };
+                self.emit(opcode, None);
+                Ok(())
+            }
         }
     }
 

@@ -158,6 +158,9 @@ impl<'a> Lexer<'a> {
                         "if" => TokenKind::Keyword(Keyword::If),
                         "else" => TokenKind::Keyword(Keyword::Else),
                         "while" => TokenKind::Keyword(Keyword::While),
+                        "True" => TokenKind::Keyword(Keyword::TrueLiteral),
+                        "False" => TokenKind::Keyword(Keyword::FalseLiteral),
+                        "None" => TokenKind::Keyword(Keyword::NoneLiteral),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));

@@ -4,6 +4,9 @@ pub enum Keyword {
     If,
     Else,
     While,
+    TrueLiteral,
+    FalseLiteral,
+    NoneLiteral,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

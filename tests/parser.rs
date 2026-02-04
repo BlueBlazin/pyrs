@@ -59,6 +59,29 @@ fn parses_comparison_expression() {
 }
 
 #[test]
+fn parses_unary_minus() {
+    let module = parser::parse_module("-1").expect("parse should succeed");
+    let expected = Stmt::Expr(Expr::Unary {
+        op: pyrs::ast::UnaryOp::Neg,
+        operand: Box::new(Expr::Constant(Constant::Int(1))),
+    });
+    assert_eq!(module.body, vec![expected]);
+}
+
+#[test]
+fn parses_boolean_and_none_literals() {
+    let module = parser::parse_module("True\nFalse\nNone").expect("parse should succeed");
+    assert_eq!(
+        module.body,
+        vec![
+            Stmt::Expr(Expr::Constant(Constant::Bool(true))),
+            Stmt::Expr(Expr::Constant(Constant::Bool(false))),
+            Stmt::Expr(Expr::Constant(Constant::None)),
+        ]
+    );
+}
+
+#[test]
 fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(
