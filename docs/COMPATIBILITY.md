@@ -3,7 +3,7 @@
 This document tracks progress toward source and bytecode compatibility with CPython 3.14.
 
 ## Parser & Grammar
-- [ ] Vendored `Grammar/python.gram` and `Grammar/Tokens` (placeholders only; not synced)
+- [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
 - [x] Indentation + basic tokenization (names, ints, strings, operators, keywords for implemented subset)
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
 - [x] Statements subset: pass, expr, assign/augassign, if/elif/else, while/for/else, break/continue, def/return, import/from, global, raise, assert, try/except/else, class (no bases)
@@ -11,7 +11,8 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [ ] Comprehensions, generators, pattern matching, async/await, with, etc.
 
 ## Bytecode
-- [ ] Opcode table synced from CPython 3.14
+- [x] Opcode source files synced (`opcode.py`, `bytecodes.c`, `opcode.h`)
+- [ ] Opcode table synced from CPython 3.14 (CSV generation pending)
 - [x] Internal bytecode IR + compiler for subset (non-CPython)
 - [x] `.pyc` header parsing
 - [ ] CPython bytecode decoder/encoder

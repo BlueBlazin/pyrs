@@ -57,6 +57,7 @@ We measure success by:
 - Roadmap: `docs/ROADMAP.md`
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - CPython vendor sync script: `scripts/sync_cpython.py`
+- Vendor snapshot: CPython 3.14.3 grammar + opcode sources synced into `vendor/cpython-3.14/` (opcode table CSV still pending).
 
 ## Current Scaffolding (Early Stage)
 - Parser: packrat-style memoization with a minimal lexer, indentation tokens, `if`/`elif`/`else`/`while`/`for`, `break`/`continue`, function defs, returns, and calls.
