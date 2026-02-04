@@ -158,6 +158,28 @@ fn executes_for_loop_over_range() {
 }
 
 #[test]
+fn executes_break_in_while_loop() {
+    let source = "x = 0\nwhile 1:\n    x = x + 1\n    break\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(1)));
+}
+
+#[test]
+fn executes_continue_in_while_loop() {
+    let source = "x = 0\nwhile x < 3:\n    x = x + 1\n    continue\n    x = 100\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(&Value::Int(3)));
+}
+
+#[test]
 fn executes_if_else_statement() {
     let source = "if 0:\n    x = 1\nelse:\n    x = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -157,6 +157,18 @@ fn parses_for_loop() {
 }
 
 #[test]
+fn parses_break_and_continue() {
+    let source = "while 1:\n    break\n    continue\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::While { body, .. } => {
+            assert_eq!(body, &vec![Stmt::Break, Stmt::Continue]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(

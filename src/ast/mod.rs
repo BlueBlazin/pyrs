@@ -41,6 +41,8 @@ pub enum Stmt {
         iter: Expr,
         body: Vec<Stmt>,
     },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

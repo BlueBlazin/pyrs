@@ -124,6 +124,8 @@ impl Parser {
             TokenKind::Keyword(Keyword::If) => self.parse_if_stmt(pos),
             TokenKind::Keyword(Keyword::While) => self.parse_while_stmt(pos),
             TokenKind::Keyword(Keyword::For) => self.parse_for_stmt(pos),
+            TokenKind::Keyword(Keyword::Break) => Ok((Stmt::Break, pos + 1)),
+            TokenKind::Keyword(Keyword::Continue) => Ok((Stmt::Continue, pos + 1)),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;

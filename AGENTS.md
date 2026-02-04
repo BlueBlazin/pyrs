@@ -59,9 +59,9 @@ We measure success by:
 - CPython vendor sync script: `scripts/sync_cpython.py`
 
 ## Current Scaffolding (Early Stage)
-- Parser: packrat-style memoization with a minimal lexer, indentation tokens, `if`/`else`/`while`/`for`, function defs, returns, and calls.
+- Parser: packrat-style memoization with a minimal lexer, indentation tokens, `if`/`else`/`while`/`for`, `break`/`continue`, function defs, returns, and calls.
 - Bytecode: minimal opcodes for constants/names + metadata loader (`opcode_table.csv`).
-- Compiler/VM: emits and executes bytecode for `pass`, assignments, literals (`True`, `False`, `None`), unary minus, binary ops (`+`, `-`, `*`), comparisons (`==`, `<`), `if/else`, `while`, `for`, simple functions (positional params only), list literals, and subscripts. Builtins: `print`, `len` (strings, lists), `range` (1-arg).
+- Compiler/VM: emits and executes bytecode for `pass`, assignments, literals (`True`, `False`, `None`), unary minus, binary ops (`+`, `-`, `*`), comparisons (`==`, `<`), `if/else`, `while`, `for`, `break`/`continue`, simple functions (positional params only), list literals, and subscripts. Builtins: `print`, `len` (strings, lists), `range` (1-arg).
 - `.pyc` header parser stub (hash-based and timestamp-based variants).
 - Tests: parser smoke tests, bytecode metadata loader test, and pyc header tests.
 - CLI: `--ast` and `--bytecode` flags to inspect parsed AST and bytecode.

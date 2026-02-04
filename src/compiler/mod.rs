@@ -28,6 +28,14 @@ pub fn compile_module(module: &Module) -> Result<CodeObject, CompileError> {
 struct Compiler {
     code: CodeObject,
     temp_counter: usize,
+    loop_stack: Vec<LoopContext>,
+}
+
+struct LoopContext {
+    start: usize,
+    continue_target: Option<usize>,
+    breaks: Vec<usize>,
+    continues: Vec<usize>,
 }
 
 impl Compiler {
@@ -35,6 +43,7 @@ impl Compiler {
         Self {
             code: CodeObject::new("<module>"),
             temp_counter: 0,
+            loop_stack: Vec::new(),
         }
     }
 
@@ -88,6 +97,8 @@ impl Compiler {
                 Ok(())
             }
             Stmt::For { target, iter, body } => self.compile_for(target, iter, body),
+            Stmt::Break => self.compile_break(),
+            Stmt::Continue => self.compile_continue(),
         }
     }
 
@@ -229,6 +240,13 @@ impl Compiler {
         self.compile_expr(test)?;
         let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
 
+        self.loop_stack.push(LoopContext {
+            start: loop_start,
+            continue_target: Some(loop_start),
+            breaks: Vec::new(),
+            continues: Vec::new(),
+        });
+
         for stmt in body {
             self.compile_stmt(stmt)?;
         }
@@ -236,6 +254,7 @@ impl Compiler {
         self.emit(Opcode::Jump, Some(loop_start as u32));
         let loop_end = self.current_ip();
         self.patch_jump(jump_if_false, loop_end)?;
+        self.resolve_loop(loop_end)?;
         Ok(())
     }
 
@@ -248,6 +267,7 @@ impl Compiler {
         let mut compiler = Compiler {
             code: CodeObject::new(name),
             temp_counter: 0,
+            loop_stack: Vec::new(),
         };
         compiler.code.params = params.to_vec();
         for stmt in body {
@@ -285,8 +305,20 @@ impl Compiler {
         self.emit(Opcode::Subscript, None);
         self.emit_store_name(target);
 
+        self.loop_stack.push(LoopContext {
+            start: loop_start,
+            continue_target: None,
+            breaks: Vec::new(),
+            continues: Vec::new(),
+        });
+
         for stmt in body {
             self.compile_stmt(stmt)?;
+        }
+
+        let continue_target = self.current_ip();
+        if let Some(ctx) = self.loop_stack.last_mut() {
+            ctx.continue_target = Some(continue_target);
         }
 
         self.emit_load_name(&index_temp);
@@ -297,6 +329,7 @@ impl Compiler {
         self.emit(Opcode::Jump, Some(loop_start as u32));
         let loop_end = self.current_ip();
         self.patch_jump(jump_if_false, loop_end)?;
+        self.resolve_loop(loop_end)?;
 
         Ok(())
     }
@@ -305,6 +338,41 @@ impl Compiler {
         let name = format!("__pyrs_{prefix}_{}", self.temp_counter);
         self.temp_counter += 1;
         name
+    }
+
+    fn compile_break(&mut self) -> Result<(), CompileError> {
+        let jump = self.emit_jump(Opcode::Jump);
+        let ctx = self
+            .loop_stack
+            .last_mut()
+            .ok_or_else(|| CompileError::new("break outside loop"))?;
+        ctx.breaks.push(jump);
+        Ok(())
+    }
+
+    fn compile_continue(&mut self) -> Result<(), CompileError> {
+        let jump = self.emit_jump(Opcode::Jump);
+        let ctx = self
+            .loop_stack
+            .last_mut()
+            .ok_or_else(|| CompileError::new("continue outside loop"))?;
+        ctx.continues.push(jump);
+        Ok(())
+    }
+
+    fn resolve_loop(&mut self, loop_end: usize) -> Result<(), CompileError> {
+        let ctx = self
+            .loop_stack
+            .pop()
+            .ok_or_else(|| CompileError::new("loop stack underflow"))?;
+        for jump in ctx.breaks {
+            self.patch_jump(jump, loop_end)?;
+        }
+        let continue_target = ctx.continue_target.unwrap_or(ctx.start);
+        for jump in ctx.continues {
+            self.patch_jump(jump, continue_target)?;
+        }
+        Ok(())
     }
 }
 
