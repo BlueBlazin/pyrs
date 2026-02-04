@@ -491,6 +491,19 @@ fn assert_raises_on_false() {
 }
 
 #[test]
+fn executes_is_operator() {
+    let source = "a = None\nb = None\nc = 1\nd = 2\nx = (a is b)\ny = (c is d)\nz = (c is not d)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("y"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("z"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_lambda_expression() {
     let source = "f = lambda x: x + 1\nx = f(2)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

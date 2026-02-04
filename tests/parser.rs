@@ -156,6 +156,23 @@ fn parses_in_expression() {
 }
 
 #[test]
+fn parses_is_expression() {
+    let module = parser::parse_module("x is y\nx is not y").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Binary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::Is);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+    match &module.body[1] {
+        Stmt::Expr(Expr::Binary { op, .. }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::IsNot);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_if_expression() {
     let module = parser::parse_module("1 if x else 2").expect("parse should succeed");
     match &module.body[0] {
