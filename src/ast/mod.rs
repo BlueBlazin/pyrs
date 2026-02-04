@@ -45,6 +45,7 @@ pub enum Stmt {
     },
     ClassDef {
         name: String,
+        bases: Vec<Expr>,
         body: Vec<Stmt>,
     },
     Return {

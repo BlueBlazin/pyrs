@@ -864,14 +864,17 @@ impl Parser {
         let name = name_token.lexeme.clone();
         pos += 1;
 
+        let mut bases = Vec::new();
         if matches!(self.token_at(pos).kind, TokenKind::LParen) {
-            return Err(self.error_at(pos, "class bases not supported yet"));
+            let (args, next) = self.parse_call_args(pos + 1)?;
+            bases = args;
+            pos = next;
         }
 
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-        Ok((Stmt::ClassDef { name, body }, pos))
+        Ok((Stmt::ClassDef { name, bases, body }, pos))
     }
 
     fn parse_return_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {

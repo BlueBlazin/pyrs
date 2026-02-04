@@ -31,6 +31,7 @@ struct Frame {
     return_module: bool,
     return_instance: Option<Rc<InstanceObject>>,
     return_class: bool,
+    class_bases: Vec<Rc<ClassObject>>,
     blocks: Vec<Block>,
     active_exception: Option<Value>,
 }
@@ -49,6 +50,7 @@ impl Frame {
             return_module,
             return_instance: None,
             return_class: false,
+            class_bases: Vec::new(),
             blocks: Vec::new(),
             active_exception: None,
         }
@@ -180,7 +182,7 @@ impl Vm {
             if should_return {
                 let frame = self.frames.pop().expect("frame exists");
                 let value = if frame.return_class {
-                    self.class_value_from_module(&frame.module)
+                    self.class_value_from_module(&frame.module, frame.class_bases)
                 } else if let Some(instance) = frame.return_instance {
                     Value::Instance(instance)
                 } else if frame.return_module {
@@ -273,8 +275,7 @@ impl Vm {
                             self.push_value(attr);
                         }
                         Value::Class(class) => {
-                            let attrs = class.attrs.borrow();
-                            let attr = attrs.get(&attr_name).cloned().ok_or_else(|| {
+                            let attr = class_attr_lookup(&class, &attr_name).ok_or_else(|| {
                                 RuntimeError::new(format!(
                                     "class '{}' has no attribute '{}'",
                                     class.name, attr_name
@@ -287,13 +288,7 @@ impl Vm {
                                 self.push_value(attr);
                                 return Ok(None);
                             }
-                            if let Some(attr) = instance
-                                .class
-                                .attrs
-                                .borrow()
-                                .get(&attr_name)
-                                .cloned()
-                            {
+                            if let Some(attr) = class_attr_lookup(&instance.class, &attr_name) {
                                 if let Value::Function(func) = attr {
                                     let bound = BoundMethod::new(func, instance.clone());
                                     self.push_value(Value::BoundMethod(Rc::new(bound)));
@@ -712,10 +707,26 @@ impl Vm {
                         }
                     };
                     let name_value = self.pop_value()?;
+                    let bases_value = self.pop_value()?;
                     let class_name = match name_value {
                         Value::Str(name) => name,
                         _ => return Err(RuntimeError::new("class name must be a string")),
                     };
+                    let bases = match bases_value {
+                        Value::Tuple(values) => values,
+                        _ => return Err(RuntimeError::new("class bases must be a tuple")),
+                    };
+                    let mut base_classes = Vec::new();
+                    for base in bases {
+                        match base {
+                            Value::Class(class) => base_classes.push(class),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "class base must be a class object",
+                                ))
+                            }
+                        }
+                    }
 
                     let class_module = Rc::new(ModuleObject::new(class_name.clone()));
                     class_module.globals.borrow_mut().insert(
@@ -732,6 +743,7 @@ impl Vm {
                     frame.function_globals = outer_globals.clone();
                     frame.globals_fallback = Some(outer_globals);
                     frame.return_class = true;
+                    frame.class_bases = base_classes;
                     self.frames.push(frame);
                 }
                 Opcode::CallFunction => {
@@ -781,7 +793,7 @@ impl Vm {
                         }
                         Value::Class(class) => {
                             let instance = Rc::new(InstanceObject::new(class.clone()));
-                            let init = class.attrs.borrow().get("__init__").cloned();
+                            let init = class_attr_lookup(&class, "__init__");
                             if let Some(Value::Function(init_func)) = init {
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
@@ -935,7 +947,7 @@ impl Vm {
                     let value = self.pop_value().unwrap_or(Value::None);
                     let frame = self.frames.pop().expect("frame exists");
                     let value = if frame.return_class {
-                        self.class_value_from_module(&frame.module)
+                        self.class_value_from_module(&frame.module, frame.class_bases)
                     } else if let Some(instance) = frame.return_instance {
                         Value::Instance(instance)
                     } else if frame.return_module {
@@ -997,8 +1009,12 @@ impl Vm {
         self.raise_exception(exception)
     }
 
-    fn class_value_from_module(&self, module: &ModuleObject) -> Value {
-        let class = Rc::new(ClassObject::new(module.name.clone()));
+    fn class_value_from_module(
+        &self,
+        module: &ModuleObject,
+        bases: Vec<Rc<ClassObject>>,
+    ) -> Value {
+        let class = Rc::new(ClassObject::new(module.name.clone(), bases));
         let attrs = module.globals.borrow().clone();
         class.attrs.borrow_mut().extend(attrs);
         Value::Class(class)
@@ -1209,6 +1225,18 @@ fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, Ru
     }
 
     Ok(exception_name == handler_name)
+}
+
+fn class_attr_lookup(class: &Rc<ClassObject>, name: &str) -> Option<Value> {
+    if let Some(value) = class.attrs.borrow().get(name).cloned() {
+        return Some(value);
+    }
+    for base in &class.bases {
+        if let Some(value) = class_attr_lookup(base, name) {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn classify_runtime_error(message: &str) -> &'static str {

@@ -133,7 +133,7 @@ impl Compiler {
                 self.emit(Opcode::StoreName, Some(name_idx));
                 Ok(())
             }
-            Stmt::ClassDef { name, body } => self.compile_class_def(name, body),
+            Stmt::ClassDef { name, bases, body } => self.compile_class_def(name, bases, body),
             Stmt::Return { value } => {
                 if let Some(expr) = value {
                     self.compile_expr(expr)?;
@@ -447,9 +447,18 @@ impl Compiler {
         Ok(compiler.finish())
     }
 
-    fn compile_class_def(&mut self, name: &str, body: &[Stmt]) -> Result<(), CompileError> {
+    fn compile_class_def(
+        &mut self,
+        name: &str,
+        bases: &[Expr],
+        body: &[Stmt],
+    ) -> Result<(), CompileError> {
         let class_code = self.compile_class(name, body)?;
         let code_idx = self.code.add_const(Value::Code(Rc::new(class_code)));
+        for base in bases {
+            self.compile_expr(base)?;
+        }
+        self.emit(Opcode::BuildTuple, Some(bases.len() as u32));
         let name_idx = self.code.add_const(Value::Str(name.to_string()));
         self.emit(Opcode::LoadConst, Some(name_idx));
         self.emit(Opcode::BuildClass, Some(code_idx));

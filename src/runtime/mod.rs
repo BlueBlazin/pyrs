@@ -37,13 +37,15 @@ impl FunctionObject {
 #[derive(Debug)]
 pub struct ClassObject {
     pub name: String,
+    pub bases: Vec<Rc<ClassObject>>,
     pub attrs: RefCell<HashMap<String, Value>>,
 }
 
 impl ClassObject {
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, bases: Vec<Rc<ClassObject>>) -> Self {
         Self {
             name: name.into(),
+            bases,
             attrs: RefCell::new(HashMap::new()),
         }
     }
