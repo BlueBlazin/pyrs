@@ -504,6 +504,18 @@ fn executes_class_attribute_lookup() {
 }
 
 #[test]
+fn class_body_can_access_module_globals() {
+    let source = "x = 5\nclass Baz:\n    y = x\n    def get(self):\n        return x\n\nb = Baz()\nval = b.get()\nattr = Baz.y\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("val"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("attr"), Some(Value::Int(5)));
+}
+
+#[test]
 fn executes_assert_statement() {
     let source = "assert 1\nx = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");
