@@ -165,8 +165,9 @@ impl Vm {
                     self.push_value(Value::Int(left - right));
                 }
                 Opcode::BinaryMul => {
-                    let (left, right) = self.pop_int_pair()?;
-                    self.push_value(Value::Int(left * right));
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    self.push_value(mul_values(left, right)?);
                 }
                 Opcode::CompareEq => {
                     let right = self.pop_value()?;
@@ -464,5 +465,42 @@ fn compare_lt(left: Value, right: Value) -> Result<Value, RuntimeError> {
         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a < b)),
         (Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a < b)),
         _ => Err(RuntimeError::new("unsupported operand type for <")),
+    }
+}
+
+fn mul_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
+        (Value::Bool(a), Value::Bool(b)) => Ok(Value::Int((a as i64) * (b as i64))),
+        (Value::Str(s), other) | (other, Value::Str(s)) => {
+            let count = value_to_int(other)?;
+            if count <= 0 {
+                return Ok(Value::Str(String::new()));
+            }
+            Ok(Value::Str(s.repeat(count as usize)))
+        }
+        (Value::List(values), other) | (other, Value::List(values)) => {
+            let count = value_to_int(other)?;
+            if count <= 0 {
+                return Ok(Value::List(Vec::new()));
+            }
+            let mut result = Vec::new();
+            for _ in 0..count {
+                result.extend(values.clone());
+            }
+            Ok(Value::List(result))
+        }
+        (Value::Tuple(values), other) | (other, Value::Tuple(values)) => {
+            let count = value_to_int(other)?;
+            if count <= 0 {
+                return Ok(Value::Tuple(Vec::new()));
+            }
+            let mut result = Vec::new();
+            for _ in 0..count {
+                result.extend(values.clone());
+            }
+            Ok(Value::Tuple(result))
+        }
+        _ => Err(RuntimeError::new("unsupported operand type for *")),
     }
 }

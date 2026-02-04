@@ -148,6 +148,48 @@ fn executes_tuple_and_dict() {
 }
 
 #[test]
+fn executes_multiplication_and_concat() {
+    let source = "a = 'hi' * 3\nb = [1] * 2\nc = (1,) * 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(&Value::Str("hihihi".to_string())));
+    assert_eq!(vm.get_global("b"), Some(&Value::List(vec![Value::Int(1), Value::Int(1)])));
+    assert_eq!(
+        vm.get_global("c"),
+        Some(&Value::Tuple(vec![
+            Value::Int(1),
+            Value::Int(1),
+            Value::Int(1)
+        ]))
+    );
+}
+
+#[test]
+fn executes_range_variants() {
+    let source = "a = range(3)\nb = range(1, 4)\nc = range(5, 0, -2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("a"),
+        Some(&Value::List(vec![Value::Int(0), Value::Int(1), Value::Int(2)]))
+    );
+    assert_eq!(
+        vm.get_global("b"),
+        Some(&Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+    );
+    assert_eq!(
+        vm.get_global("c"),
+        Some(&Value::List(vec![Value::Int(5), Value::Int(3), Value::Int(1)]))
+    );
+}
+
+#[test]
 fn executes_len_on_tuple_dict() {
     let source = "x = len((1, 2, 3))\ny = len({'a': 1})\n";
     let module = parser::parse_module(source).expect("parse should succeed");

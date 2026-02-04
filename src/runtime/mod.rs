@@ -69,21 +69,43 @@ impl BuiltinFunction {
                 }
             }
             BuiltinFunction::Range => {
-                if args.len() != 1 {
-                    return Err(RuntimeError::new("range() expects one argument"));
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new("range() expects 1-3 arguments"));
                 }
-                let stop = match &args[0] {
-                    Value::Int(value) => *value,
-                    Value::Bool(value) => if *value { 1 } else { 0 },
-                    _ => return Err(RuntimeError::new("range() expects integer")),
+
+                let mut nums = Vec::new();
+                for arg in &args {
+                    match arg {
+                        Value::Int(value) => nums.push(*value),
+                        Value::Bool(value) => nums.push(if *value { 1 } else { 0 }),
+                        _ => return Err(RuntimeError::new("range() expects integers")),
+                    }
+                }
+
+                let (start, stop, step) = match nums.len() {
+                    1 => (0, nums[0], 1),
+                    2 => (nums[0], nums[1], 1),
+                    _ => (nums[0], nums[1], nums[2]),
                 };
-                if stop < 0 {
-                    return Err(RuntimeError::new("range() negative not supported"));
+
+                if step == 0 {
+                    return Err(RuntimeError::new("range() step cannot be zero"));
                 }
+
                 let mut values = Vec::new();
-                for i in 0..stop {
-                    values.push(Value::Int(i));
+                let mut i = start;
+                if step > 0 {
+                    while i < stop {
+                        values.push(Value::Int(i));
+                        i += step;
+                    }
+                } else {
+                    while i > stop {
+                        values.push(Value::Int(i));
+                        i += step;
+                    }
                 }
+
                 Ok(Value::List(values))
             }
         }
