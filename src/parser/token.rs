@@ -1,6 +1,8 @@
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Keyword {
     Pass,
+    If,
+    Else,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

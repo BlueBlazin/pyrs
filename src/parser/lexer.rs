@@ -19,11 +19,23 @@ impl LexError {
     }
 }
 
+enum IndentResult {
+    Blank,
+    Indent {
+        level: usize,
+        offset: usize,
+        line: usize,
+        column: usize,
+    },
+}
+
 pub struct Lexer<'a> {
     source: &'a str,
     offset: usize,
     line: usize,
     column: usize,
+    indent_stack: Vec<usize>,
+    at_line_start: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -33,13 +45,37 @@ impl<'a> Lexer<'a> {
             offset: 0,
             line: 1,
             column: 1,
+            indent_stack: vec![0],
+            at_line_start: true,
         }
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
 
-        while let Some(ch) = self.peek_char() {
+        while self.peek_char().is_some() {
+            if self.at_line_start {
+                match self.consume_indentation() {
+                    IndentResult::Blank => {
+                        self.at_line_start = false;
+                    }
+                    IndentResult::Indent {
+                        level,
+                        offset,
+                        line,
+                        column,
+                    } => {
+                        self.emit_indent_tokens(level, offset, line, column, &mut tokens)?;
+                        self.at_line_start = false;
+                    }
+                }
+            }
+
+            let ch = match self.peek_char() {
+                Some(value) => value,
+                None => break,
+            };
+
             if ch == ' ' || ch == '\t' || ch == '\r' {
                 self.advance();
                 continue;
@@ -58,6 +94,7 @@ impl<'a> Lexer<'a> {
                 '\n' => {
                     self.advance();
                     tokens.push(Token::new(TokenKind::Newline, "\n", offset, line, column));
+                    self.at_line_start = true;
                 }
                 ';' => {
                     self.advance();
@@ -87,6 +124,8 @@ impl<'a> Lexer<'a> {
                     let lexeme = self.consume_identifier();
                     let kind = match lexeme.as_str() {
                         "pass" => TokenKind::Keyword(Keyword::Pass),
+                        "if" => TokenKind::Keyword(Keyword::If),
+                        "else" => TokenKind::Keyword(Keyword::Else),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));
@@ -100,6 +139,17 @@ impl<'a> Lexer<'a> {
                     ));
                 }
             }
+        }
+
+        while self.indent_stack.len() > 1 {
+            self.indent_stack.pop();
+            tokens.push(Token::new(
+                TokenKind::Dedent,
+                "",
+                self.offset,
+                self.line,
+                self.column,
+            ));
         }
 
         tokens.push(Token::new(
@@ -217,6 +267,86 @@ impl<'a> Lexer<'a> {
             start_offset,
             start_line,
             start_column,
+        ))
+    }
+
+    fn consume_indentation(&mut self) -> IndentResult {
+        let mut level = 0usize;
+
+        while let Some(ch) = self.peek_char() {
+            match ch {
+                ' ' => {
+                    level += 1;
+                    self.advance();
+                }
+                '\t' => {
+                    let next = 8 - (level % 8);
+                    level += next;
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+
+        let offset = self.offset;
+        let line = self.line;
+        let column = self.column;
+
+        match self.peek_char() {
+            Some('\n') | Some('#') | None => IndentResult::Blank,
+            _ => IndentResult::Indent {
+                level,
+                offset,
+                line,
+                column,
+            },
+        }
+    }
+
+    fn emit_indent_tokens(
+        &mut self,
+        level: usize,
+        offset: usize,
+        line: usize,
+        column: usize,
+        tokens: &mut Vec<Token>,
+    ) -> Result<(), LexError> {
+        let current = *self.indent_stack.last().unwrap_or(&0);
+        if level == current {
+            return Ok(());
+        }
+
+        if level > current {
+            self.indent_stack.push(level);
+            tokens.push(Token::new(
+                TokenKind::Indent,
+                "",
+                offset,
+                line,
+                column,
+            ));
+            return Ok(());
+        }
+
+        while let Some(&top) = self.indent_stack.last() {
+            if level == top {
+                return Ok(());
+            }
+            self.indent_stack.pop();
+            tokens.push(Token::new(
+                TokenKind::Dedent,
+                "",
+                offset,
+                line,
+                column,
+            ));
+        }
+
+        Err(LexError::new(
+            "indentation does not match any outer level",
+            offset,
+            line,
+            column,
         ))
     }
 }

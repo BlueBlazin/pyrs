@@ -15,6 +15,11 @@ impl Module {
 pub enum Stmt {
     Pass,
     Expr(Expr),
+    If {
+        test: Expr,
+        body: Vec<Stmt>,
+        orelse: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

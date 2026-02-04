@@ -79,8 +79,19 @@ impl Parser {
 
         while !self.is_end(pos) {
             let (stmt, next) = self.parse_stmt_at(pos)?;
+            let allows_missing = stmt_allows_missing_terminator(&stmt);
             body.push(stmt);
-            pos = self.consume_terminators(next)?;
+
+            let next_kind = &self.token_at(next).kind;
+            if matches!(next_kind, TokenKind::Newline | TokenKind::Semicolon | TokenKind::EndMarker)
+            {
+                pos = self.consume_terminators(next)?;
+            } else if allows_missing {
+                pos = next;
+            } else {
+                return Err(self.error_at(next, "expected statement terminator"));
+            }
+
             pos = self.consume_separators(pos);
         }
 
@@ -101,6 +112,7 @@ impl Parser {
     fn parse_stmt_uncached(&mut self, pos: usize) -> ParseResult<Stmt> {
         let token = self.token_at(pos);
         match token.kind {
+            TokenKind::Keyword(Keyword::If) => self.parse_if_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
@@ -136,11 +148,103 @@ impl Parser {
         }
     }
 
+    fn parse_if_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let (test, next) = self.parse_expr_at(pos)?;
+        pos = next;
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        let (body, next) = self.parse_suite(pos)?;
+        pos = next;
+
+        let mut orelse = Vec::new();
+        let else_pos = self.skip_newlines(pos);
+        if self.match_keyword(else_pos, Keyword::Else) {
+            pos = else_pos + 1;
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (suite, next) = self.parse_suite(pos)?;
+            orelse = suite;
+            pos = next;
+        }
+
+        Ok((
+            Stmt::If {
+                test,
+                body,
+                orelse,
+            },
+            pos,
+        ))
+    }
+
+    fn parse_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
+        match self.token_at(pos).kind {
+            TokenKind::Newline => self.parse_block_suite(pos),
+            _ => self.parse_inline_suite(pos),
+        }
+    }
+
+    fn parse_block_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
+        let mut pos = pos;
+        pos = self.expect_kind(pos, TokenKind::Newline)?;
+        pos = self.expect_kind(pos, TokenKind::Indent)?;
+
+        let mut body = Vec::new();
+        pos = self.consume_separators(pos);
+
+        while !matches!(self.token_at(pos).kind, TokenKind::Dedent | TokenKind::EndMarker) {
+            let (stmt, next) = self.parse_stmt_at(pos)?;
+            body.push(stmt);
+            pos = self.consume_terminators(next)?;
+            pos = self.consume_separators(pos);
+        }
+
+        pos = self.expect_kind(pos, TokenKind::Dedent)?;
+        Ok((body, pos))
+    }
+
+    fn parse_inline_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
+        let mut pos = pos;
+        let mut body = Vec::new();
+
+        let (stmt, next) = self.parse_stmt_at(pos)?;
+        body.push(stmt);
+        pos = next;
+
+        while matches!(self.token_at(pos).kind, TokenKind::Semicolon) {
+            pos += 1;
+            if matches!(
+                self.token_at(pos).kind,
+                TokenKind::Newline | TokenKind::EndMarker
+            ) {
+                break;
+            }
+            let (stmt, next) = self.parse_stmt_at(pos)?;
+            body.push(stmt);
+            pos = next;
+        }
+
+        if !matches!(
+            self.token_at(pos).kind,
+            TokenKind::Newline | TokenKind::EndMarker
+        ) {
+            return Err(self.error_at(pos, "expected newline after inline suite"));
+        }
+
+        Ok((body, pos))
+    }
+
     fn consume_separators(&self, mut pos: usize) -> usize {
         while matches!(
             self.token_at(pos).kind,
             TokenKind::Newline | TokenKind::Semicolon
         ) {
+            pos += 1;
+        }
+        pos
+    }
+
+    fn skip_newlines(&self, mut pos: usize) -> usize {
+        while matches!(self.token_at(pos).kind, TokenKind::Newline) {
             pos += 1;
         }
         pos
@@ -168,6 +272,19 @@ impl Parser {
         }
     }
 
+    fn expect_kind(&self, pos: usize, kind: TokenKind) -> Result<usize, ParseError> {
+        let token = self.token_at(pos);
+        if token.kind == kind {
+            Ok(pos + 1)
+        } else {
+            Err(self.error_at(pos, format!("expected {:?}", kind)))
+        }
+    }
+
+    fn match_keyword(&self, pos: usize, keyword: Keyword) -> bool {
+        matches!(self.token_at(pos).kind, TokenKind::Keyword(k) if k == keyword)
+    }
+
     fn expect_end(&self, pos: usize) -> Result<(), ParseError> {
         if self.is_end(pos) {
             Ok(())
@@ -190,4 +307,8 @@ impl Parser {
         let token = self.token_at(pos);
         ParseError::new(message, token.offset, token.line, token.column)
     }
+}
+
+fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
+    matches!(stmt, Stmt::If { .. })
 }

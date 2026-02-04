@@ -10,7 +10,7 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 
 ## Bytecode
 - [ ] Opcode table synced from CPython 3.14
-- [ ] `.pyc` header parsing
+- [x] `.pyc` header parsing
 - [ ] Bytecode decoder/encoder
 - [ ] Opcode execution parity
 
