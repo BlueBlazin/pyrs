@@ -104,6 +104,7 @@ pub enum BuiltinFunction {
     Max,
     All,
     Any,
+    Pow,
 }
 
 impl BuiltinFunction {
@@ -254,6 +255,25 @@ impl BuiltinFunction {
             BuiltinFunction::Max => builtin_min_max(args, Ordering::Greater),
             BuiltinFunction::All => builtin_all_any(args, true),
             BuiltinFunction::Any => builtin_all_any(args, false),
+            BuiltinFunction::Pow => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(RuntimeError::new("pow() expects 2-3 arguments"));
+                }
+                let base = value_to_int(args[0].clone())?;
+                let exp = value_to_int(args[1].clone())?;
+                if exp < 0 {
+                    return Err(RuntimeError::new("pow() negative exponent unsupported"));
+                }
+                let mut value = base.pow(exp as u32);
+                if args.len() == 3 {
+                    let modu = value_to_int(args[2].clone())?;
+                    if modu == 0 {
+                        return Err(RuntimeError::new("pow() modulo by zero"));
+                    }
+                    value = value.rem_euclid(modu);
+                }
+                Ok(Value::Int(value))
+            }
         }
     }
 }

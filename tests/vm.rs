@@ -357,6 +357,19 @@ c = all((1, 2, 3))\n";
 }
 
 #[test]
+fn executes_pow_builtin() {
+    let source = "a = pow(2, 3)\n\
+b = pow(2, 3, 5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(8)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(3)));
+}
+
+#[test]
 fn executes_lambda_expression() {
     let source = "f = lambda x: x + 1\nx = f(2)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
