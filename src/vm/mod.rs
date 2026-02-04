@@ -25,6 +25,8 @@ struct Frame {
     stack: Vec<Value>,
     locals: HashMap<String, Value>,
     module: Rc<ModuleObject>,
+    function_globals: Rc<ModuleObject>,
+    globals_fallback: Option<Rc<ModuleObject>>,
     is_module: bool,
     return_module: bool,
     return_instance: Option<Rc<InstanceObject>>,
@@ -40,7 +42,9 @@ impl Frame {
             ip: 0,
             stack: Vec::new(),
             locals: HashMap::new(),
-            module,
+            module: module.clone(),
+            function_globals: module,
+            globals_fallback: None,
             is_module,
             return_module,
             return_instance: None,
@@ -680,7 +684,7 @@ impl Vm {
                         .frames
                         .last()
                         .expect("frame exists")
-                        .module
+                        .function_globals
                         .clone();
                     let func = FunctionObject::new(code, module);
                     self.push_value(Value::Function(Rc::new(func)));
@@ -719,7 +723,14 @@ impl Vm {
                         Value::Str(class_name),
                     );
 
+                    let outer_globals = self
+                        .frames
+                        .last()
+                        .map(|frame| frame.module.clone())
+                        .unwrap_or_else(|| self.main_module.clone());
                     let mut frame = Frame::new(code, class_module, true, false);
+                    frame.function_globals = outer_globals.clone();
+                    frame.globals_fallback = Some(outer_globals);
                     frame.return_class = true;
                     self.frames.push(frame);
                 }
@@ -1019,6 +1030,11 @@ impl Vm {
             }
             if let Some(value) = frame.module.globals.borrow().get(name) {
                 return Ok(value.clone());
+            }
+            if let Some(fallback) = &frame.globals_fallback {
+                if let Some(value) = fallback.globals.borrow().get(name) {
+                    return Ok(value.clone());
+                }
             }
         }
         self.builtins
