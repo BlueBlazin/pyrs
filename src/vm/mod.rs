@@ -823,6 +823,29 @@ impl Vm {
                             ))
                         }
                     };
+                    let kwonly_value = self.pop_value()?;
+                    let kwonly_defaults = match kwonly_value {
+                        Value::Dict(entries) => {
+                            let mut map = HashMap::new();
+                            for (key, value) in entries {
+                                let key = match key {
+                                    Value::Str(name) => name,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "kwonly default name must be string",
+                                        ))
+                                    }
+                                };
+                                map.insert(key, value);
+                            }
+                            map
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "expected kwonly defaults dict for function",
+                            ))
+                        }
+                    };
                     let defaults_value = self.pop_value()?;
                     let defaults = match defaults_value {
                         Value::Tuple(values) => values,
@@ -838,7 +861,7 @@ impl Vm {
                         .expect("frame exists")
                         .function_globals
                         .clone();
-                    let func = FunctionObject::new(code, module, defaults);
+                    let func = FunctionObject::new(code, module, defaults, kwonly_defaults);
                     self.push_value(Value::Function(Rc::new(func)));
                 }
                 Opcode::BuildClass => {
@@ -1581,6 +1604,7 @@ fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, Ru
 
 struct BoundArguments {
     positional: Vec<Value>,
+    kwonly: Vec<Value>,
     vararg: Option<Value>,
     kwarg: Option<Value>,
 }
@@ -1591,6 +1615,7 @@ fn bind_arguments(
     mut kwargs: HashMap<String, Value>,
 ) -> Result<BoundArguments, RuntimeError> {
     let params_len = func.code.params.len();
+    let kwonly_len = func.code.kwonly_params.len();
     let defaults_len = func.defaults.len();
     if defaults_len > params_len {
         return Err(RuntimeError::new("invalid function defaults"));
@@ -1612,12 +1637,18 @@ fn bind_arguments(
     }
 
     let mut extra_kwargs: HashMap<String, Value> = HashMap::new();
+    let mut kwonly_values: HashMap<String, Value> = HashMap::new();
     for (name, value) in kwargs.drain() {
         if let Some(index) = func.code.params.iter().position(|param| param == &name) {
             if bound[index].is_some() {
                 return Err(RuntimeError::new("multiple values for argument"));
             }
             bound[index] = Some(value);
+        } else if func.code.kwonly_params.iter().any(|param| param == &name) {
+            if kwonly_values.contains_key(&name) {
+                return Err(RuntimeError::new("multiple values for argument"));
+            }
+            kwonly_values.insert(name, value);
         } else if func.code.kwarg.is_some() {
             if extra_kwargs.contains_key(&name) {
                 return Err(RuntimeError::new("duplicate keyword argument"));
@@ -1639,6 +1670,16 @@ fn bind_arguments(
     }
 
     let positional = bound.into_iter().map(|value| value.unwrap()).collect();
+    let mut kwonly = Vec::with_capacity(kwonly_len);
+    for name in &func.code.kwonly_params {
+        if let Some(value) = kwonly_values.remove(name) {
+            kwonly.push(value);
+        } else if let Some(default) = func.kwonly_defaults.get(name) {
+            kwonly.push(default.clone());
+        } else {
+            return Err(RuntimeError::new("missing keyword-only argument"));
+        }
+    }
     let vararg = func
         .code
         .vararg
@@ -1654,6 +1695,7 @@ fn bind_arguments(
 
     Ok(BoundArguments {
         positional,
+        kwonly,
         vararg,
         kwarg,
     })
@@ -1665,6 +1707,14 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
         .iter()
         .cloned()
         .zip(bindings.positional.into_iter())
+    {
+        frame.locals.insert(name, value);
+    }
+    for (name, value) in code
+        .kwonly_params
+        .iter()
+        .cloned()
+        .zip(bindings.kwonly.into_iter())
     {
         frame.locals.insert(name, value);
     }

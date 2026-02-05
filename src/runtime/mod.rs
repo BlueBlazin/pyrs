@@ -27,14 +27,21 @@ pub struct FunctionObject {
     pub code: Rc<CodeObject>,
     pub module: Rc<ModuleObject>,
     pub defaults: Vec<Value>,
+    pub kwonly_defaults: HashMap<String, Value>,
 }
 
 impl FunctionObject {
-    pub fn new(code: Rc<CodeObject>, module: Rc<ModuleObject>, defaults: Vec<Value>) -> Self {
+    pub fn new(
+        code: Rc<CodeObject>,
+        module: Rc<ModuleObject>,
+        defaults: Vec<Value>,
+        kwonly_defaults: HashMap<String, Value>,
+    ) -> Self {
         Self {
             code,
             module,
             defaults,
+            kwonly_defaults,
         }
     }
 }

@@ -133,10 +133,12 @@ impl Compiler {
                 params,
                 vararg,
                 kwarg,
+                kwonly_params,
                 body,
             } => {
-                let func_code = self.compile_function(name, params, vararg, kwarg, body)?;
-                self.emit_function_with_defaults(params, func_code)?;
+                let func_code =
+                    self.compile_function(name, params, kwonly_params, vararg, kwarg, body)?;
+                self.emit_function_with_defaults(params, kwonly_params, func_code)?;
                 self.emit_store_name_scoped(name);
                 Ok(())
             }
@@ -271,14 +273,21 @@ impl Compiler {
                 params,
                 vararg,
                 kwarg,
+                kwonly_params,
                 body,
             } => {
                 let return_stmt = Stmt::Return {
                     value: Some((**body).clone()),
                 };
-                let func_code =
-                    self.compile_function("<lambda>", params, vararg, kwarg, &[return_stmt])?;
-                self.emit_function_with_defaults(params, func_code)?;
+                let func_code = self.compile_function(
+                    "<lambda>",
+                    params,
+                    kwonly_params,
+                    vararg,
+                    kwarg,
+                    &[return_stmt],
+                )?;
+                self.emit_function_with_defaults(params, kwonly_params, func_code)?;
                 Ok(())
             }
             Expr::Call { func, args } => {
@@ -565,6 +574,7 @@ impl Compiler {
         &mut self,
         name: &str,
         params: &[Parameter],
+        kwonly_params: &[Parameter],
         vararg: &Option<String>,
         kwarg: &Option<String>,
         body: &[Stmt],
@@ -576,6 +586,10 @@ impl Compiler {
             global_names: HashSet::new(),
         };
         compiler.code.params = params.iter().map(|param| param.name.clone()).collect();
+        compiler.code.kwonly_params = kwonly_params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
         compiler.code.vararg = vararg.clone();
         compiler.code.kwarg = kwarg.clone();
         for stmt in body {
@@ -587,6 +601,7 @@ impl Compiler {
     fn emit_function_with_defaults(
         &mut self,
         params: &[Parameter],
+        kwonly_params: &[Parameter],
         func_code: CodeObject,
     ) -> Result<(), CompileError> {
         let defaults: Vec<&Expr> = params
@@ -597,6 +612,15 @@ impl Compiler {
             self.compile_expr(expr)?;
         }
         self.emit(Opcode::BuildTuple, Some(defaults.len() as u32));
+        let mut kwonly_count = 0;
+        for param in kwonly_params {
+            if let Some(default) = &param.default {
+                self.emit_const(Value::Str(param.name.clone()));
+                self.compile_expr(default)?;
+                kwonly_count += 1;
+            }
+        }
+        self.emit(Opcode::BuildDict, Some(kwonly_count));
         let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
         self.emit(Opcode::MakeFunction, Some(const_idx));
         Ok(())

@@ -198,9 +198,12 @@ impl Parser {
 
     fn parse_lambda(&mut self, pos: usize) -> ParseResult<Expr> {
         let mut pos = pos + 1;
-        let (params, vararg, kwarg, next) = if matches!(self.token_at(pos).kind, TokenKind::Colon)
+        let (params, kwonly_params, vararg, kwarg, next) = if matches!(
+            self.token_at(pos).kind,
+            TokenKind::Colon
+        )
         {
-            (Vec::new(), None, None, pos)
+            (Vec::new(), Vec::new(), None, None, pos)
         } else {
             self.parse_lambda_params(pos)?
         };
@@ -213,6 +216,7 @@ impl Parser {
                 params,
                 vararg,
                 kwarg,
+                kwonly_params,
                 body: Box::new(body),
             },
             next,
@@ -859,7 +863,7 @@ impl Parser {
         let name = name_token.lexeme.clone();
         pos += 1;
         pos = self.expect_kind(pos, TokenKind::LParen)?;
-        let (params, vararg, kwarg, next) = self.parse_parameters(pos)?;
+        let (params, kwonly_params, vararg, kwarg, next) = self.parse_parameters(pos)?;
         pos = next;
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
@@ -870,6 +874,7 @@ impl Parser {
                 params,
                 vararg,
                 kwarg,
+                kwonly_params,
                 body,
             },
             pos,
@@ -1107,16 +1112,27 @@ impl Parser {
     fn parse_parameters(
         &mut self,
         pos: usize,
-    ) -> Result<(Vec<Parameter>, Option<String>, Option<String>, usize), ParseError> {
+    ) -> Result<
+        (
+            Vec<Parameter>,
+            Vec<Parameter>,
+            Option<String>,
+            Option<String>,
+            usize,
+        ),
+        ParseError,
+    > {
         let mut pos = pos;
         let mut params = Vec::new();
+        let mut kwonly_params = Vec::new();
         let mut vararg = None;
         let mut kwarg = None;
         let mut saw_default = false;
-        let mut saw_vararg = false;
+        let mut saw_kwonly_default = false;
+        let mut keyword_only = false;
 
         if matches!(self.token_at(pos).kind, TokenKind::RParen) {
-            return Ok((params, None, None, pos + 1));
+            return Ok((params, kwonly_params, None, None, pos + 1));
         }
 
         loop {
@@ -1128,12 +1144,22 @@ impl Parser {
                     }
                     pos += 1;
                     let name_token = self.token_at(pos);
+                    if name_token.kind == TokenKind::Comma
+                        || name_token.kind == TokenKind::RParen
+                    {
+                        keyword_only = true;
+                        if name_token.kind == TokenKind::Comma {
+                            pos += 1;
+                            continue;
+                        }
+                        break;
+                    }
                     if name_token.kind != TokenKind::Name {
                         return Err(self.error_at(pos, "expected parameter name after *"));
                     }
                     vararg = Some(name_token.lexeme.clone());
                     pos += 1;
-                    saw_vararg = true;
+                    keyword_only = true;
                 }
                 TokenKind::DoubleStar => {
                     if kwarg.is_some() {
@@ -1146,15 +1172,8 @@ impl Parser {
                     }
                     kwarg = Some(name_token.lexeme.clone());
                     pos += 1;
-                    saw_vararg = true;
                 }
                 TokenKind::Name => {
-                    if saw_vararg {
-                        return Err(self.error_at(
-                            pos,
-                            "positional parameter not allowed after *args",
-                        ));
-                    }
                     let name = token.lexeme.clone();
                     pos += 1;
 
@@ -1164,12 +1183,22 @@ impl Parser {
                         let (expr, next) = self.parse_expr_at(pos)?;
                         default = Some(expr);
                         pos = next;
-                        saw_default = true;
-                    } else if saw_default {
+                        if keyword_only {
+                            saw_kwonly_default = true;
+                        } else {
+                            saw_default = true;
+                        }
+                    } else if keyword_only && saw_kwonly_default {
+                        return Err(self.error_at(pos, "non-default parameter follows default"));
+                    } else if !keyword_only && saw_default {
                         return Err(self.error_at(pos, "non-default parameter follows default"));
                     }
 
-                    params.push(Parameter { name, default });
+                    if keyword_only {
+                        kwonly_params.push(Parameter { name, default });
+                    } else {
+                        params.push(Parameter { name, default });
+                    }
                 }
                 _ => return Err(self.error_at(pos, "expected parameter name")),
             }
@@ -1188,19 +1217,30 @@ impl Parser {
         }
 
         pos = self.expect_kind(pos, TokenKind::RParen)?;
-        Ok((params, vararg, kwarg, pos))
+        Ok((params, kwonly_params, vararg, kwarg, pos))
     }
 
     fn parse_lambda_params(
         &mut self,
         pos: usize,
-    ) -> Result<(Vec<Parameter>, Option<String>, Option<String>, usize), ParseError> {
+    ) -> Result<
+        (
+            Vec<Parameter>,
+            Vec<Parameter>,
+            Option<String>,
+            Option<String>,
+            usize,
+        ),
+        ParseError,
+    > {
         let mut pos = pos;
         let mut params = Vec::new();
+        let mut kwonly_params = Vec::new();
         let mut vararg = None;
         let mut kwarg = None;
         let mut saw_default = false;
-        let mut saw_vararg = false;
+        let mut saw_kwonly_default = false;
+        let mut keyword_only = false;
 
         loop {
             let token = self.token_at(pos);
@@ -1211,12 +1251,22 @@ impl Parser {
                     }
                     pos += 1;
                     let name_token = self.token_at(pos);
+                    if name_token.kind == TokenKind::Comma
+                        || name_token.kind == TokenKind::Colon
+                    {
+                        keyword_only = true;
+                        if name_token.kind == TokenKind::Comma {
+                            pos += 1;
+                            continue;
+                        }
+                        break;
+                    }
                     if name_token.kind != TokenKind::Name {
                         return Err(self.error_at(pos, "expected parameter name after *"));
                     }
                     vararg = Some(name_token.lexeme.clone());
                     pos += 1;
-                    saw_vararg = true;
+                    keyword_only = true;
                 }
                 TokenKind::DoubleStar => {
                     if kwarg.is_some() {
@@ -1229,15 +1279,8 @@ impl Parser {
                     }
                     kwarg = Some(name_token.lexeme.clone());
                     pos += 1;
-                    saw_vararg = true;
                 }
                 TokenKind::Name => {
-                    if saw_vararg {
-                        return Err(self.error_at(
-                            pos,
-                            "positional parameter not allowed after *args",
-                        ));
-                    }
                     let name = token.lexeme.clone();
                     pos += 1;
 
@@ -1247,12 +1290,22 @@ impl Parser {
                         let (expr, next) = self.parse_expr_at(pos)?;
                         default = Some(expr);
                         pos = next;
-                        saw_default = true;
-                    } else if saw_default {
+                        if keyword_only {
+                            saw_kwonly_default = true;
+                        } else {
+                            saw_default = true;
+                        }
+                    } else if keyword_only && saw_kwonly_default {
+                        return Err(self.error_at(pos, "non-default parameter follows default"));
+                    } else if !keyword_only && saw_default {
                         return Err(self.error_at(pos, "non-default parameter follows default"));
                     }
 
-                    params.push(Parameter { name, default });
+                    if keyword_only {
+                        kwonly_params.push(Parameter { name, default });
+                    } else {
+                        params.push(Parameter { name, default });
+                    }
                 }
                 _ => return Err(self.error_at(pos, "expected parameter name")),
             }
@@ -1270,7 +1323,7 @@ impl Parser {
             break;
         }
 
-        Ok((params, vararg, kwarg, pos))
+        Ok((params, kwonly_params, vararg, kwarg, pos))
     }
 
     fn parse_block_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {

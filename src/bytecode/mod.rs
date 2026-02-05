@@ -81,6 +81,7 @@ pub struct CodeObject {
     pub params: Vec<String>,
     pub vararg: Option<String>,
     pub kwarg: Option<String>,
+    pub kwonly_params: Vec<String>,
 }
 
 impl CodeObject {
@@ -93,6 +94,7 @@ impl CodeObject {
             params: Vec::new(),
             vararg: None,
             kwarg: None,
+            kwonly_params: Vec::new(),
         }
     }
 

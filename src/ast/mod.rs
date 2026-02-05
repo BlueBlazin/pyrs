@@ -43,6 +43,7 @@ pub enum Stmt {
         params: Vec<Parameter>,
         vararg: Option<String>,
         kwarg: Option<String>,
+        kwonly_params: Vec<Parameter>,
         body: Vec<Stmt>,
     },
     ClassDef {
@@ -152,6 +153,7 @@ pub enum Expr {
         params: Vec<Parameter>,
         vararg: Option<String>,
         kwarg: Option<String>,
+        kwonly_params: Vec<Parameter>,
         body: Box<Expr>,
     },
     Slice {
