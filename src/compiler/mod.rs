@@ -1,9 +1,12 @@
 //! AST to bytecode compiler (minimal subset).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::ast::{AssignTarget, Constant, ExceptHandler, Expr, Module, Parameter, Stmt};
+use crate::ast::{
+    AssignTarget, CallArg, Constant, ExceptHandler, Expr, ExprKind, Module, Parameter, Span, Stmt,
+    StmtKind,
+};
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
 
@@ -20,8 +23,620 @@ impl CompileError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum ScopeType {
+    Module,
+    Function,
+    Class,
+    Lambda,
+}
+
+#[derive(Debug, Clone)]
+struct ScopeInfo {
+    scope_type: ScopeType,
+    locals: HashSet<String>,
+    globals: HashSet<String>,
+    nonlocals: HashSet<String>,
+    cellvars: Vec<String>,
+    freevars: Vec<String>,
+    cellvar_set: HashSet<String>,
+    freevar_set: HashSet<String>,
+    available_nonlocal: HashSet<String>,
+}
+
+impl ScopeInfo {
+    fn for_module(module: &Module) -> Result<Self, CompileError> {
+        analyze_scope(
+            ScopeType::Module,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            &module.body,
+            &HashSet::new(),
+        )
+    }
+
+    fn for_class(body: &[Stmt], enclosing: &ScopeInfo) -> Result<Self, CompileError> {
+        analyze_scope(
+            ScopeType::Class,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            body,
+            &enclosing.available_nonlocal,
+        )
+    }
+
+    fn for_function(
+        posonly_params: &[Parameter],
+        params: &[Parameter],
+        kwonly_params: &[Parameter],
+        vararg: &Option<String>,
+        kwarg: &Option<String>,
+        body: &[Stmt],
+        enclosing: &ScopeInfo,
+    ) -> Result<Self, CompileError> {
+        analyze_scope(
+            ScopeType::Function,
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg.as_ref(),
+            kwarg.as_ref(),
+            body,
+            &enclosing.available_nonlocal,
+        )
+    }
+
+    fn for_lambda(
+        posonly_params: &[Parameter],
+        params: &[Parameter],
+        kwonly_params: &[Parameter],
+        vararg: &Option<String>,
+        kwarg: &Option<String>,
+        body: &Expr,
+        enclosing: &ScopeInfo,
+    ) -> Result<Self, CompileError> {
+        analyze_scope_expr(
+            ScopeType::Lambda,
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg.as_ref(),
+            kwarg.as_ref(),
+            body,
+            &enclosing.available_nonlocal,
+        )
+    }
+
+    fn is_local(&self, name: &str) -> bool {
+        self.locals.contains(name)
+    }
+
+    fn is_cell(&self, name: &str) -> bool {
+        self.cellvar_set.contains(name)
+    }
+
+    fn is_free(&self, name: &str) -> bool {
+        self.freevar_set.contains(name)
+    }
+
+    fn is_global(&self, name: &str) -> bool {
+        self.globals.contains(name)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum NameKind {
+    Local,
+    Cell,
+    Free,
+    Global,
+    Name,
+}
+
+fn analyze_scope(
+    scope_type: ScopeType,
+    posonly_params: &[Parameter],
+    params: &[Parameter],
+    kwonly_params: &[Parameter],
+    vararg: Option<&String>,
+    kwarg: Option<&String>,
+    body: &[Stmt],
+    enclosing: &HashSet<String>,
+) -> Result<ScopeInfo, CompileError> {
+    let mut locals = HashSet::new();
+    let mut globals = HashSet::new();
+    let mut nonlocals = HashSet::new();
+
+    collect_param_locals(posonly_params, params, kwonly_params, vararg, kwarg, &mut locals);
+
+    for stmt in body {
+        collect_locals_stmt(stmt, &mut locals, &mut globals, &mut nonlocals);
+    }
+
+    if !matches!(scope_type, ScopeType::Function | ScopeType::Lambda) && !nonlocals.is_empty() {
+        return Err(CompileError::new(
+            "nonlocal declarations only allowed in function scopes",
+        ));
+    }
+
+    for name in &nonlocals {
+        if !enclosing.contains(name) {
+            return Err(CompileError::new(format!(
+                "no binding for nonlocal '{name}' found"
+            )));
+        }
+    }
+
+    locals.retain(|name| !globals.contains(name) && !nonlocals.contains(name));
+
+    let mut available_nonlocal = enclosing.clone();
+    if matches!(scope_type, ScopeType::Function | ScopeType::Lambda) {
+        for name in &locals {
+            available_nonlocal.insert(name.clone());
+        }
+    }
+
+    let mut uses = HashSet::new();
+    let mut child_free = HashSet::new();
+    for stmt in body {
+        collect_uses_stmt(stmt, &mut uses, &mut child_free, &available_nonlocal)?;
+    }
+
+    let mut direct_free: HashSet<String> = uses
+        .intersection(&available_nonlocal)
+        .cloned()
+        .collect();
+    for name in &nonlocals {
+        direct_free.insert(name.clone());
+    }
+    direct_free.retain(|name| !locals.contains(name) && !globals.contains(name));
+
+    let mut cellvar_set = HashSet::new();
+    let mut freevar_set = HashSet::new();
+
+    match scope_type {
+        ScopeType::Function | ScopeType::Lambda => {
+            for name in child_free {
+                if locals.contains(&name) {
+                    cellvar_set.insert(name);
+                } else {
+                    freevar_set.insert(name);
+                }
+            }
+            for name in direct_free {
+                freevar_set.insert(name);
+            }
+        }
+        ScopeType::Module | ScopeType::Class => {
+            for name in child_free {
+                freevar_set.insert(name);
+            }
+        }
+    }
+
+    let mut cellvars: Vec<String> = cellvar_set.iter().cloned().collect();
+    cellvars.sort();
+    let mut freevars: Vec<String> = freevar_set.iter().cloned().collect();
+    freevars.sort();
+
+    Ok(ScopeInfo {
+        scope_type,
+        locals,
+        globals,
+        nonlocals,
+        cellvars,
+        freevars,
+        cellvar_set,
+        freevar_set,
+        available_nonlocal,
+    })
+}
+
+fn analyze_scope_expr(
+    scope_type: ScopeType,
+    posonly_params: &[Parameter],
+    params: &[Parameter],
+    kwonly_params: &[Parameter],
+    vararg: Option<&String>,
+    kwarg: Option<&String>,
+    body: &Expr,
+    enclosing: &HashSet<String>,
+) -> Result<ScopeInfo, CompileError> {
+    let stmt = Stmt {
+        node: StmtKind::Expr(body.clone()),
+        span: body.span,
+    };
+    analyze_scope(
+        scope_type,
+        posonly_params,
+        params,
+        kwonly_params,
+        vararg,
+        kwarg,
+        std::slice::from_ref(&stmt),
+        enclosing,
+    )
+}
+
+fn collect_param_locals(
+    posonly_params: &[Parameter],
+    params: &[Parameter],
+    kwonly_params: &[Parameter],
+    vararg: Option<&String>,
+    kwarg: Option<&String>,
+    locals: &mut HashSet<String>,
+) {
+    for param in posonly_params {
+        locals.insert(param.name.clone());
+    }
+    for param in params {
+        locals.insert(param.name.clone());
+    }
+    for param in kwonly_params {
+        locals.insert(param.name.clone());
+    }
+    if let Some(name) = vararg {
+        locals.insert(name.clone());
+    }
+    if let Some(name) = kwarg {
+        locals.insert(name.clone());
+    }
+}
+
+fn collect_locals_stmt(
+    stmt: &Stmt,
+    locals: &mut HashSet<String>,
+    globals: &mut HashSet<String>,
+    nonlocals: &mut HashSet<String>,
+) {
+    match &stmt.node {
+        StmtKind::Assign { target, .. } | StmtKind::AugAssign { target, .. } => {
+            collect_locals_target(target, locals);
+        }
+        StmtKind::For { target, .. } => collect_locals_target(target, locals),
+        StmtKind::With { target, .. } => {
+            if let Some(target) = target {
+                collect_locals_target(target, locals);
+            }
+        }
+        StmtKind::FunctionDef { name, .. } | StmtKind::ClassDef { name, .. } => {
+            locals.insert(name.clone());
+        }
+        StmtKind::Import { names } => {
+            for alias in names {
+                let binding = alias
+                    .asname
+                    .clone()
+                    .unwrap_or_else(|| alias.name.split('.').next().unwrap_or(&alias.name).to_string());
+                locals.insert(binding);
+            }
+        }
+        StmtKind::ImportFrom { names, .. } => {
+            for alias in names {
+                let binding = alias.asname.clone().unwrap_or_else(|| alias.name.clone());
+                locals.insert(binding);
+            }
+        }
+        StmtKind::Try { handlers, .. } => {
+            for handler in handlers {
+                if let Some(name) = &handler.name {
+                    locals.insert(name.clone());
+                }
+            }
+        }
+        StmtKind::Global { names } => {
+            for name in names {
+                globals.insert(name.clone());
+            }
+        }
+        StmtKind::Nonlocal { names } => {
+            for name in names {
+                nonlocals.insert(name.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_locals_target(target: &AssignTarget, locals: &mut HashSet<String>) {
+    match target {
+        AssignTarget::Name(name) => {
+            locals.insert(name.clone());
+        }
+        AssignTarget::Tuple(items) | AssignTarget::List(items) => {
+            for item in items {
+                collect_locals_target(item, locals);
+            }
+        }
+        AssignTarget::Subscript { .. } | AssignTarget::Attribute { .. } => {}
+    }
+}
+
+fn collect_uses_stmt(
+    stmt: &Stmt,
+    uses: &mut HashSet<String>,
+    child_free: &mut HashSet<String>,
+    enclosing: &HashSet<String>,
+) -> Result<(), CompileError> {
+    match &stmt.node {
+        StmtKind::Expr(expr) => collect_uses_expr(expr, uses, child_free, enclosing)?,
+        StmtKind::Assign { target, value } => {
+            collect_target_uses(target, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
+        StmtKind::AugAssign { target, value, .. } => {
+            collect_target_uses(target, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
+        StmtKind::If { test, body, orelse } => {
+            collect_uses_expr(test, uses, child_free, enclosing)?;
+            for stmt in body {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+            for stmt in orelse {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+        }
+        StmtKind::While { test, body, orelse } => {
+            collect_uses_expr(test, uses, child_free, enclosing)?;
+            for stmt in body {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+            for stmt in orelse {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+        }
+        StmtKind::For { target, iter, body, orelse } => {
+            collect_target_uses(target, uses, child_free, enclosing)?;
+            collect_uses_expr(iter, uses, child_free, enclosing)?;
+            for stmt in body {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+            for stmt in orelse {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+        }
+        StmtKind::With { context, target, body } => {
+            collect_uses_expr(context, uses, child_free, enclosing)?;
+            if let Some(target) = target {
+                collect_target_uses(target, uses, child_free, enclosing)?;
+            }
+            for stmt in body {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+        }
+        StmtKind::Try { body, handlers, orelse, finalbody } => {
+            for stmt in body {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+            for handler in handlers {
+                if let Some(expr) = &handler.type_expr {
+                    collect_uses_expr(expr, uses, child_free, enclosing)?;
+                }
+                for stmt in &handler.body {
+                    collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                }
+            }
+            for stmt in orelse {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+            for stmt in finalbody {
+                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            }
+        }
+        StmtKind::Return { value } => {
+            if let Some(expr) = value {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
+        }
+        StmtKind::Raise { value } => {
+            if let Some(expr) = value {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
+        }
+        StmtKind::Assert { test, message } => {
+            collect_uses_expr(test, uses, child_free, enclosing)?;
+            if let Some(expr) = message {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
+        }
+        StmtKind::FunctionDef {
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg,
+            kwarg,
+            body,
+            ..
+        } => {
+            for param in posonly_params.iter().chain(params.iter()).chain(kwonly_params.iter()) {
+                if let Some(default) = &param.default {
+                    collect_uses_expr(default, uses, child_free, enclosing)?;
+                }
+            }
+            let scope = analyze_scope(
+                ScopeType::Function,
+                posonly_params,
+                params,
+                kwonly_params,
+                vararg.as_ref(),
+                kwarg.as_ref(),
+                body,
+                enclosing,
+            )?;
+            child_free.extend(scope.freevars.into_iter());
+        }
+        StmtKind::ClassDef { bases, body, .. } => {
+            for base in bases {
+                collect_uses_expr(base, uses, child_free, enclosing)?;
+            }
+            let scope = analyze_scope(
+                ScopeType::Class,
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                body,
+                enclosing,
+            )?;
+            child_free.extend(scope.freevars.into_iter());
+        }
+        StmtKind::Import { .. }
+        | StmtKind::ImportFrom { .. }
+        | StmtKind::Global { .. }
+        | StmtKind::Nonlocal { .. }
+        | StmtKind::Pass
+        | StmtKind::Break
+        | StmtKind::Continue => {}
+    }
+    Ok(())
+}
+
+fn collect_target_uses(
+    target: &AssignTarget,
+    uses: &mut HashSet<String>,
+    child_free: &mut HashSet<String>,
+    enclosing: &HashSet<String>,
+) -> Result<(), CompileError> {
+    match target {
+        AssignTarget::Subscript { value, index } => {
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_uses_expr(index, uses, child_free, enclosing)?;
+        }
+        AssignTarget::Attribute { value, .. } => {
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
+        AssignTarget::Tuple(items) | AssignTarget::List(items) => {
+            for item in items {
+                collect_target_uses(item, uses, child_free, enclosing)?;
+            }
+        }
+        AssignTarget::Name(_) => {}
+    }
+    Ok(())
+}
+
+fn collect_uses_expr(
+    expr: &Expr,
+    uses: &mut HashSet<String>,
+    child_free: &mut HashSet<String>,
+    enclosing: &HashSet<String>,
+) -> Result<(), CompileError> {
+    match &expr.node {
+        ExprKind::Name(name) => {
+            uses.insert(name.clone());
+        }
+        ExprKind::Constant(_) => {}
+        ExprKind::Binary { left, right, .. } => {
+            collect_uses_expr(left, uses, child_free, enclosing)?;
+            collect_uses_expr(right, uses, child_free, enclosing)?;
+        }
+        ExprKind::Unary { operand, .. } => {
+            collect_uses_expr(operand, uses, child_free, enclosing)?;
+        }
+        ExprKind::Call { func, args } => {
+            collect_uses_expr(func, uses, child_free, enclosing)?;
+            for arg in args {
+                match arg {
+                    CallArg::Positional(expr)
+                    | CallArg::Star(expr)
+                    | CallArg::DoubleStar(expr) => {
+                        collect_uses_expr(expr, uses, child_free, enclosing)?;
+                    }
+                    CallArg::Keyword { value, .. } => {
+                        collect_uses_expr(value, uses, child_free, enclosing)?;
+                    }
+                }
+            }
+        }
+        ExprKind::List(values) | ExprKind::Tuple(values) => {
+            for value in values {
+                collect_uses_expr(value, uses, child_free, enclosing)?;
+            }
+        }
+        ExprKind::Dict(entries) => {
+            for (key, value) in entries {
+                collect_uses_expr(key, uses, child_free, enclosing)?;
+                collect_uses_expr(value, uses, child_free, enclosing)?;
+            }
+        }
+        ExprKind::Subscript { value, index } => {
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_uses_expr(index, uses, child_free, enclosing)?;
+        }
+        ExprKind::Attribute { value, .. } => {
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
+        ExprKind::BoolOp { left, right, .. } => {
+            collect_uses_expr(left, uses, child_free, enclosing)?;
+            collect_uses_expr(right, uses, child_free, enclosing)?;
+        }
+        ExprKind::IfExpr { test, body, orelse } => {
+            collect_uses_expr(test, uses, child_free, enclosing)?;
+            collect_uses_expr(body, uses, child_free, enclosing)?;
+            collect_uses_expr(orelse, uses, child_free, enclosing)?;
+        }
+        ExprKind::Lambda {
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg,
+            kwarg,
+            body,
+        } => {
+            for param in posonly_params
+                .iter()
+                .chain(params.iter())
+                .chain(kwonly_params.iter())
+            {
+                if let Some(default) = &param.default {
+                    collect_uses_expr(default, uses, child_free, enclosing)?;
+                }
+            }
+            let scope = analyze_scope_expr(
+                ScopeType::Lambda,
+                posonly_params,
+                params,
+                kwonly_params,
+                vararg.as_ref(),
+                kwarg.as_ref(),
+                body,
+                enclosing,
+            )?;
+            child_free.extend(scope.freevars.into_iter());
+        }
+        ExprKind::Slice { lower, upper, step } => {
+            if let Some(expr) = lower.as_ref() {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
+            if let Some(expr) = upper.as_ref() {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
+            if let Some(expr) = step.as_ref() {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn compile_module(module: &Module) -> Result<CodeObject, CompileError> {
-    let mut compiler = Compiler::new();
+    compile_module_with_filename(module, "<module>")
+}
+
+pub fn compile_module_with_filename(
+    module: &Module,
+    filename: &str,
+) -> Result<CodeObject, CompileError> {
+    let scope = ScopeInfo::for_module(module)?;
+    let mut compiler = Compiler::new("<module>", filename, scope);
     compiler.compile_module(module)?;
     Ok(compiler.finish())
 }
@@ -30,7 +645,9 @@ struct Compiler {
     code: CodeObject,
     temp_counter: usize,
     loop_stack: Vec<LoopContext>,
-    global_names: HashSet<String>,
+    scope: ScopeInfo,
+    current_span: Span,
+    cell_index: HashMap<String, u32>,
 }
 
 struct LoopContext {
@@ -41,12 +658,26 @@ struct LoopContext {
 }
 
 impl Compiler {
-    fn new() -> Self {
+    fn new(name: &str, filename: &str, scope: ScopeInfo) -> Self {
+        let mut code = CodeObject::new(name, filename);
+        code.cellvars = scope.cellvars.clone();
+        code.freevars = scope.freevars.clone();
+        let mut cell_index = HashMap::new();
+        for (idx, name) in code
+            .cellvars
+            .iter()
+            .chain(code.freevars.iter())
+            .enumerate()
+        {
+            cell_index.insert(name.clone(), idx as u32);
+        }
         Self {
-            code: CodeObject::new("<module>"),
+            code,
             temp_counter: 0,
             loop_stack: Vec::new(),
-            global_names: HashSet::new(),
+            scope,
+            current_span: Span::unknown(),
+            cell_index,
         }
     }
 
@@ -64,23 +695,24 @@ impl Compiler {
     }
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompileError> {
-        match stmt {
-            Stmt::Pass => {
-                self.emit(Opcode::Nop, None);
+        let span = stmt.span;
+        self.with_span(span, |compiler| match &stmt.node {
+            StmtKind::Pass => {
+                compiler.emit(Opcode::Nop, None);
                 Ok(())
             }
-            Stmt::Expr(expr) => {
-                self.compile_expr(expr)?;
-                self.emit(Opcode::PopTop, None);
+            StmtKind::Expr(expr) => {
+                compiler.compile_expr(expr)?;
+                compiler.emit(Opcode::PopTop, None);
                 Ok(())
             }
-            Stmt::Assign { target, value } => self.compile_assign_target(target, value),
-            Stmt::AugAssign { target, op, value } => {
-                self.compile_aug_assign(target, op, value)
+            StmtKind::Assign { target, value } => compiler.compile_assign_target(target, value),
+            StmtKind::AugAssign { target, op, value } => {
+                compiler.compile_aug_assign(target, op, value)
             }
-            Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
-            Stmt::While { test, body, orelse } => self.compile_while(test, body, orelse),
-            Stmt::FunctionDef {
+            StmtKind::If { test, body, orelse } => compiler.compile_if(test, body, orelse),
+            StmtKind::While { test, body, orelse } => compiler.compile_while(test, body, orelse),
+            StmtKind::FunctionDef {
                 name,
                 posonly_params,
                 params,
@@ -89,7 +721,7 @@ impl Compiler {
                 kwonly_params,
                 body,
             } => {
-                let func_code = self.compile_function(
+                let func_code = compiler.compile_function(
                     name,
                     posonly_params,
                     params,
@@ -98,80 +730,85 @@ impl Compiler {
                     kwarg,
                     body,
                 )?;
-                self.emit_function_with_defaults(posonly_params, params, kwonly_params, func_code)?;
-                self.emit_store_name_scoped(name);
+                compiler.emit_function_with_defaults(
+                    posonly_params,
+                    params,
+                    kwonly_params,
+                    func_code,
+                )?;
+                compiler.emit_store_name_scoped(name)?;
                 Ok(())
             }
-            Stmt::ClassDef { name, bases, body } => self.compile_class_def(name, bases, body),
-            Stmt::Return { value } => {
+            StmtKind::ClassDef { name, bases, body } => {
+                compiler.compile_class_def(name, bases, body)
+            }
+            StmtKind::Return { value } => {
                 if let Some(expr) = value {
-                    self.compile_expr(expr)?;
+                    compiler.compile_expr(expr)?;
                 } else {
-                    self.emit(Opcode::LoadConst, Some(0));
+                    compiler.emit(Opcode::LoadConst, Some(0));
                 }
-                self.emit(Opcode::ReturnValue, None);
+                compiler.emit(Opcode::ReturnValue, None);
                 Ok(())
             }
-            Stmt::Raise { value } => self.compile_raise(value.as_ref()),
-            Stmt::Assert { test, message } => self.compile_assert(test, message.as_ref()),
-            Stmt::Try {
+            StmtKind::Raise { value } => compiler.compile_raise(value.as_ref()),
+            StmtKind::Assert { test, message } => compiler.compile_assert(test, message.as_ref()),
+            StmtKind::Try {
                 body,
                 handlers,
                 orelse,
                 finalbody,
-            } => self.compile_try(body, handlers, orelse, finalbody),
-            Stmt::For {
+            } => compiler.compile_try(body, handlers, orelse, finalbody),
+            StmtKind::For {
                 target,
                 iter,
                 body,
                 orelse,
-            } => self.compile_for(target, iter, body, orelse),
-            Stmt::Import { names } => {
+            } => compiler.compile_for(target, iter, body, orelse),
+            StmtKind::Import { names } => {
                 for alias in names {
-                    let const_idx = self.code.add_const(Value::Str(alias.name.clone()));
-                    self.emit(Opcode::ImportName, Some(const_idx));
+                    let const_idx = compiler
+                        .code
+                        .add_const(Value::Str(alias.name.clone()));
+                    compiler.emit(Opcode::ImportName, Some(const_idx));
                     let parts: Vec<&str> = alias.name.split('.').collect();
                     let has_dots = parts.len() > 1;
                     if alias.asname.is_some() && has_dots {
-                        self.emit_import_attr_chain(&alias.name)?;
+                        compiler.emit_import_attr_chain(&alias.name)?;
                     }
                     let target = if let Some(asname) = alias.asname.as_deref() {
                         asname
                     } else {
                         parts.first().copied().unwrap_or(&alias.name)
                     };
-                    self.emit_store_name_scoped(target);
+                    compiler.emit_store_name_scoped(target)?;
                 }
                 Ok(())
             }
-            Stmt::ImportFrom { module, names } => {
-                let const_idx = self.code.add_const(Value::Str(module.clone()));
-                self.emit(Opcode::ImportName, Some(const_idx));
-                self.emit_import_attr_chain(module)?;
+            StmtKind::ImportFrom { module, names } => {
+                let const_idx = compiler.code.add_const(Value::Str(module.clone()));
+                compiler.emit(Opcode::ImportName, Some(const_idx));
+                compiler.emit_import_attr_chain(module)?;
                 for alias in names {
-                    self.emit(Opcode::DupTop, None);
-                    let attr_idx = self.code.add_name(alias.name.clone());
-                    self.emit(Opcode::LoadAttr, Some(attr_idx << 1));
+                    compiler.emit(Opcode::DupTop, None);
+                    let attr_idx = compiler.code.add_name(alias.name.clone());
+                    compiler.emit(Opcode::LoadAttr, Some(attr_idx << 1));
                     let target = alias.asname.as_deref().unwrap_or(&alias.name);
-                    self.emit_store_name_scoped(target);
+                    compiler.emit_store_name_scoped(target)?;
                 }
-                self.emit(Opcode::PopTop, None);
+                compiler.emit(Opcode::PopTop, None);
                 Ok(())
             }
-            Stmt::Global { names } => {
-                for name in names {
-                    self.global_names.insert(name.clone());
-                }
-                Ok(())
-            }
-            Stmt::With {
+            StmtKind::Global { .. } => Ok(()),
+            StmtKind::Nonlocal { .. } => Ok(()),
+            StmtKind::With {
                 context,
                 target,
                 body,
-            } => self.compile_with(context, target.as_ref(), body),
-            Stmt::Break => self.compile_break(),
-            Stmt::Continue => self.compile_continue(),
-        }
+            } => compiler.compile_with(context, target.as_ref(), body),
+            StmtKind::Break => compiler.compile_break(),
+            StmtKind::Continue => compiler.compile_continue(),
+        })
     }
 
     fn emit_import_attr_chain(&mut self, module: &str) -> Result<(), CompileError> {
@@ -185,20 +822,17 @@ impl Compiler {
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
-        match expr {
-            Expr::Name(name) => {
-                let idx = self.code.add_name(name.clone());
-                self.emit(Opcode::LoadName, Some(idx));
+        let span = expr.span;
+        self.with_span(span, |compiler| match &expr.node {
+            ExprKind::Name(name) => compiler.emit_load_name(name),
+            ExprKind::Constant(constant) => {
+                let idx = compiler.code.add_const(constant_to_value(constant));
+                compiler.emit(Opcode::LoadConst, Some(idx));
                 Ok(())
             }
-            Expr::Constant(constant) => {
-                let idx = self.code.add_const(constant_to_value(constant));
-                self.emit(Opcode::LoadConst, Some(idx));
-                Ok(())
-            }
-            Expr::Binary { left, op, right } => {
-                self.compile_expr(left)?;
-                self.compile_expr(right)?;
+            ExprKind::Binary { left, op, right } => {
+                compiler.compile_expr(left)?;
+                compiler.compile_expr(right)?;
                 let opcode = match op {
                     crate::ast::BinaryOp::Add => Opcode::BinaryAdd,
                     crate::ast::BinaryOp::Sub => Opcode::BinarySub,
@@ -217,24 +851,24 @@ impl Compiler {
                     crate::ast::BinaryOp::Is => Opcode::CompareIs,
                     crate::ast::BinaryOp::IsNot => Opcode::CompareIsNot,
                 };
-                self.emit(opcode, None);
+                compiler.emit(opcode, None);
                 Ok(())
             }
-            Expr::Unary { op, operand } => {
-                self.compile_expr(operand)?;
+            ExprKind::Unary { op, operand } => {
+                compiler.compile_expr(operand)?;
                 let opcode = match op {
                     crate::ast::UnaryOp::Neg => Opcode::UnaryNeg,
                     crate::ast::UnaryOp::Not => Opcode::UnaryNot,
                     crate::ast::UnaryOp::Pos => Opcode::UnaryPos,
                 };
-                self.emit(opcode, None);
+                compiler.emit(opcode, None);
                 Ok(())
             }
-            Expr::BoolOp { op, left, right } => self.compile_bool_op(op, left, right),
-            Expr::IfExpr { test, body, orelse } => {
-                self.compile_if_expr(test, body, orelse)
+            ExprKind::BoolOp { op, left, right } => compiler.compile_bool_op(op, left, right),
+            ExprKind::IfExpr { test, body, orelse } => {
+                compiler.compile_if_expr(test, body, orelse)
             }
-            Expr::Lambda {
+            ExprKind::Lambda {
                 posonly_params,
                 params,
                 vararg,
@@ -242,10 +876,13 @@ impl Compiler {
                 kwonly_params,
                 body,
             } => {
-                let return_stmt = Stmt::Return {
-                    value: Some((**body).clone()),
+                let return_stmt = Stmt {
+                    node: StmtKind::Return {
+                        value: Some((**body).clone()),
+                    },
+                    span,
                 };
-                let func_code = self.compile_function(
+                let func_code = compiler.compile_function(
                     "<lambda>",
                     posonly_params,
                     params,
@@ -254,16 +891,18 @@ impl Compiler {
                     kwarg,
                     &[return_stmt],
                 )?;
-                self.emit_function_with_defaults(posonly_params, params, kwonly_params, func_code)?;
+                compiler.emit_function_with_defaults(
+                    posonly_params,
+                    params,
+                    kwonly_params,
+                    func_code,
+                )?;
                 Ok(())
             }
-            Expr::Call { func, args } => {
-                self.compile_expr(func)?;
+            ExprKind::Call { func, args } => {
+                compiler.compile_expr(func)?;
                 let has_star = args.iter().any(|arg| {
-                    matches!(
-                        arg,
-                        crate::ast::CallArg::Star(_) | crate::ast::CallArg::DoubleStar(_)
-                    )
+                    matches!(arg, CallArg::Star(_) | CallArg::DoubleStar(_))
                 });
 
                 if has_star {
@@ -277,66 +916,67 @@ impl Compiler {
                     let mut temps = Vec::new();
                     for arg in args {
                         match arg {
-                            crate::ast::CallArg::Positional(expr) => {
-                                let temp = self.fresh_temp("arg");
-                                self.compile_expr(expr)?;
-                                self.emit_store_name(&temp);
+                            CallArg::Positional(expr) => {
+                                let temp = compiler.fresh_temp("arg");
+                                compiler.compile_expr(expr)?;
+                                compiler.emit_store_name(&temp);
                                 temps.push(TempArg::Positional(temp));
                             }
-                            crate::ast::CallArg::Keyword { name, value } => {
-                                let temp = self.fresh_temp("arg");
-                                self.compile_expr(value)?;
-                                self.emit_store_name(&temp);
+                            CallArg::Keyword { name, value } => {
+                                let temp = compiler.fresh_temp("arg");
+                                compiler.compile_expr(value)?;
+                                compiler.emit_store_name(&temp);
                                 temps.push(TempArg::Keyword(name.clone(), temp));
                             }
-                            crate::ast::CallArg::Star(expr) => {
-                                let temp = self.fresh_temp("arg");
-                                self.compile_expr(expr)?;
-                                self.emit_store_name(&temp);
+                            CallArg::Star(expr) => {
+                                let temp = compiler.fresh_temp("arg");
+                                compiler.compile_expr(expr)?;
+                                compiler.emit_store_name(&temp);
                                 temps.push(TempArg::Star(temp));
                             }
-                            crate::ast::CallArg::DoubleStar(expr) => {
-                                let temp = self.fresh_temp("arg");
-                                self.compile_expr(expr)?;
-                                self.emit_store_name(&temp);
+                            CallArg::DoubleStar(expr) => {
+                                let temp = compiler.fresh_temp("arg");
+                                compiler.compile_expr(expr)?;
+                                compiler.emit_store_name(&temp);
                                 temps.push(TempArg::DoubleStar(temp));
                             }
                         }
                     }
 
-                    self.emit(Opcode::BuildList, Some(0));
+                    compiler.emit(Opcode::BuildList, Some(0));
                     for temp in &temps {
                         match temp {
                             TempArg::Positional(name) => {
-                                self.emit_load_name(name);
-                                self.emit(Opcode::ListAppend, None);
+                                compiler.emit_load_name(name)?;
+                                compiler.emit(Opcode::ListAppend, None);
                             }
                             TempArg::Star(name) => {
-                                self.emit_load_name(name);
-                                self.emit(Opcode::ListExtend, None);
+                                compiler.emit_load_name(name)?;
+                                compiler.emit(Opcode::ListExtend, None);
                             }
                             _ => {}
                         }
                     }
 
-                    self.emit(Opcode::BuildDict, Some(0));
+                    compiler.emit(Opcode::BuildDict, Some(0));
                     for temp in &temps {
                         match temp {
                             TempArg::Keyword(name, value) => {
-                                let name_idx = self.code.add_const(Value::Str(name.clone()));
-                                self.emit(Opcode::LoadConst, Some(name_idx));
-                                self.emit_load_name(value);
-                                self.emit(Opcode::DictSet, None);
+                                let name_idx =
+                                    compiler.code.add_const(Value::Str(name.clone()));
+                                compiler.emit(Opcode::LoadConst, Some(name_idx));
+                                compiler.emit_load_name(value)?;
+                                compiler.emit(Opcode::DictSet, None);
                             }
                             TempArg::DoubleStar(name) => {
-                                self.emit_load_name(name);
-                                self.emit(Opcode::DictUpdate, None);
+                                compiler.emit_load_name(name)?;
+                                compiler.emit(Opcode::DictUpdate, None);
                             }
                             _ => {}
                         }
                     }
 
-                    self.emit(Opcode::CallFunctionVar, None);
+                    compiler.emit(Opcode::CallFunctionVar, None);
                     return Ok(());
                 }
 
@@ -344,73 +984,91 @@ impl Compiler {
                 let mut kw_count = 0u32;
                 for arg in args {
                     match arg {
-                        crate::ast::CallArg::Positional(expr) => {
-                            self.compile_expr(expr)?;
+                        CallArg::Positional(expr) => {
+                            compiler.compile_expr(expr)?;
                             pos_count += 1;
                         }
-                        crate::ast::CallArg::Keyword { name, value } => {
-                            let name_idx = self.code.add_const(Value::Str(name.clone()));
-                            self.emit(Opcode::LoadConst, Some(name_idx));
-                            self.compile_expr(value)?;
+                        CallArg::Keyword { name, value } => {
+                            let name_idx = compiler.code.add_const(Value::Str(name.clone()));
+                            compiler.emit(Opcode::LoadConst, Some(name_idx));
+                            compiler.compile_expr(value)?;
                             kw_count += 1;
                         }
-                        crate::ast::CallArg::Star(_) | crate::ast::CallArg::DoubleStar(_) => {}
+                        CallArg::Star(_) | CallArg::DoubleStar(_) => {}
                     }
                 }
                 if kw_count > 0 {
                     let packed = pack_call_counts(pos_count, kw_count)?;
-                    self.emit(Opcode::CallFunctionKw, Some(packed));
+                    compiler.emit(Opcode::CallFunctionKw, Some(packed));
                 } else {
-                    self.emit(Opcode::CallFunction, Some(pos_count));
+                    compiler.emit(Opcode::CallFunction, Some(pos_count));
                 }
                 Ok(())
             }
-            Expr::List(elements) => {
+            ExprKind::List(elements) => {
                 for elem in elements {
-                    self.compile_expr(elem)?;
+                    compiler.compile_expr(elem)?;
                 }
-                self.emit(Opcode::BuildList, Some(elements.len() as u32));
+                compiler.emit(Opcode::BuildList, Some(elements.len() as u32));
                 Ok(())
             }
-            Expr::Tuple(elements) => {
+            ExprKind::Tuple(elements) => {
                 for elem in elements {
-                    self.compile_expr(elem)?;
+                    compiler.compile_expr(elem)?;
                 }
-                self.emit(Opcode::BuildTuple, Some(elements.len() as u32));
+                compiler.emit(Opcode::BuildTuple, Some(elements.len() as u32));
                 Ok(())
             }
-            Expr::Dict(entries) => {
+            ExprKind::Dict(entries) => {
                 for (key, value) in entries {
-                    self.compile_expr(key)?;
-                    self.compile_expr(value)?;
+                    compiler.compile_expr(key)?;
+                    compiler.compile_expr(value)?;
                 }
-                self.emit(Opcode::BuildDict, Some(entries.len() as u32));
+                compiler.emit(Opcode::BuildDict, Some(entries.len() as u32));
                 Ok(())
             }
-            Expr::Subscript { value, index } => {
-                self.compile_expr(value)?;
-                self.compile_expr(index)?;
-                self.emit(Opcode::Subscript, None);
+            ExprKind::Subscript { value, index } => {
+                compiler.compile_expr(value)?;
+                compiler.compile_expr(index)?;
+                compiler.emit(Opcode::Subscript, None);
                 Ok(())
             }
-            Expr::Attribute { value, name } => {
-                self.compile_expr(value)?;
-                let idx = self.code.add_name(name.clone());
-                self.emit(Opcode::LoadAttr, Some(idx << 1));
+            ExprKind::Attribute { value, name } => {
+                compiler.compile_expr(value)?;
+                let idx = compiler.code.add_name(name.clone());
+                compiler.emit(Opcode::LoadAttr, Some(idx << 1));
                 Ok(())
             }
-            Expr::Slice { lower, upper, step } => {
-                self.compile_slice_part(lower)?;
-                self.compile_slice_part(upper)?;
-                self.compile_slice_part(step)?;
-                self.emit(Opcode::BuildSlice, None);
+            ExprKind::Slice { lower, upper, step } => {
+                compiler.compile_slice_part(lower)?;
+                compiler.compile_slice_part(upper)?;
+                compiler.compile_slice_part(step)?;
+                compiler.emit(Opcode::BuildSlice, None);
                 Ok(())
             }
-        }
+        })
+    }
+
+    fn with_span<T>(
+        &mut self,
+        span: Span,
+        f: impl FnOnce(&mut Self) -> Result<T, CompileError>,
+    ) -> Result<T, CompileError> {
+        let prev = self.current_span;
+        self.current_span = span;
+        let result = f(self);
+        self.current_span = prev;
+        result
     }
 
     fn emit(&mut self, opcode: Opcode, arg: Option<u32>) {
         self.code.instructions.push(Instruction::new(opcode, arg));
+        self.code
+            .locations
+            .push(crate::bytecode::Location::new(
+                self.current_span.line,
+                self.current_span.column,
+            ));
     }
 
     fn emit_const(&mut self, value: Value) {
@@ -427,30 +1085,79 @@ impl Compiler {
         Ok(())
     }
 
-    fn emit_load_name(&mut self, name: &str) {
+    fn emit_load_name(&mut self, name: &str) -> Result<(), CompileError> {
         let idx = self.code.add_name(name.to_string());
-        self.emit(Opcode::LoadName, Some(idx));
+        match self.name_kind(name) {
+            NameKind::Local => self.emit(Opcode::LoadFast, Some(idx)),
+            NameKind::Cell | NameKind::Free => {
+                let deref = self.deref_index(name)?;
+                self.emit(Opcode::LoadDeref, Some(deref));
+            }
+            NameKind::Global => {
+                let encoded = idx << 1;
+                self.emit(Opcode::LoadGlobal, Some(encoded));
+            }
+            NameKind::Name => self.emit(Opcode::LoadName, Some(idx)),
+        }
+        Ok(())
     }
 
     fn emit_store_name(&mut self, name: &str) {
         let idx = self.code.add_name(name.to_string());
-        self.emit(Opcode::StoreName, Some(idx));
+        self.emit(Opcode::StoreFast, Some(idx));
     }
 
-    fn emit_store_name_scoped(&mut self, name: &str) {
+    fn emit_store_name_scoped(&mut self, name: &str) -> Result<(), CompileError> {
         let idx = self.code.add_name(name.to_string());
-        if self.global_names.contains(name) {
-            self.emit(Opcode::StoreGlobal, Some(idx));
-        } else {
-            self.emit(Opcode::StoreName, Some(idx));
+        match self.name_kind(name) {
+            NameKind::Global => self.emit(Opcode::StoreGlobal, Some(idx)),
+            NameKind::Cell | NameKind::Free => {
+                let deref = self.deref_index(name)?;
+                self.emit(Opcode::StoreDeref, Some(deref));
+            }
+            NameKind::Local => self.emit(Opcode::StoreFast, Some(idx)),
+            NameKind::Name => self.emit(Opcode::StoreName, Some(idx)),
         }
+        Ok(())
+    }
+
+    fn emit_closure_tuple(&mut self, freevars: &[String]) -> Result<(), CompileError> {
+        for name in freevars {
+            let deref = self.deref_index(name)?;
+            self.emit(Opcode::LoadClosure, Some(deref));
+        }
+        self.emit(Opcode::BuildTuple, Some(freevars.len() as u32));
+        Ok(())
+    }
+
+    fn name_kind(&self, name: &str) -> NameKind {
+        match self.scope.scope_type {
+            ScopeType::Module | ScopeType::Class => NameKind::Name,
+            ScopeType::Function | ScopeType::Lambda => {
+                if self.scope.is_global(name) {
+                    NameKind::Global
+                } else if self.scope.is_cell(name) {
+                    NameKind::Cell
+                } else if self.scope.is_local(name) {
+                    NameKind::Local
+                } else if self.scope.is_free(name) {
+                    NameKind::Free
+                } else {
+                    NameKind::Global
+                }
+            }
+        }
+    }
+
+    fn deref_index(&self, name: &str) -> Result<u32, CompileError> {
+        self.cell_index.get(name).copied().ok_or_else(|| {
+            CompileError::new(format!("unknown closure variable '{name}'"))
+        })
     }
 
     fn emit_jump(&mut self, opcode: Opcode) -> usize {
         let index = self.code.instructions.len();
-        self.code
-            .instructions
-            .push(Instruction::new(opcode, Some(0)));
+        self.emit(opcode, Some(0));
         index
     }
 
@@ -547,12 +1254,16 @@ impl Compiler {
         kwarg: &Option<String>,
         body: &[Stmt],
     ) -> Result<CodeObject, CompileError> {
-        let mut compiler = Compiler {
-            code: CodeObject::new(name),
-            temp_counter: 0,
-            loop_stack: Vec::new(),
-            global_names: HashSet::new(),
-        };
+        let scope = ScopeInfo::for_function(
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg,
+            kwarg,
+            body,
+            &self.scope,
+        )?;
+        let mut compiler = Compiler::new(name, &self.code.filename, scope);
         compiler.code.posonly_params = posonly_params
             .iter()
             .map(|param| param.name.clone())
@@ -577,6 +1288,10 @@ impl Compiler {
         kwonly_params: &[Parameter],
         func_code: CodeObject,
     ) -> Result<(), CompileError> {
+        let needs_closure = !func_code.freevars.is_empty();
+        if needs_closure {
+            self.emit_closure_tuple(&func_code.freevars)?;
+        }
         let defaults: Vec<&Expr> = posonly_params
             .iter()
             .chain(params.iter())
@@ -597,6 +1312,9 @@ impl Compiler {
         self.emit(Opcode::BuildDict, Some(kwonly_count));
         let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
         self.emit(Opcode::MakeFunction, Some(const_idx));
+        if needs_closure {
+            self.emit(Opcode::SetFunctionAttribute, Some(0x08));
+        }
         Ok(())
     }
 
@@ -615,17 +1333,17 @@ impl Compiler {
         let name_idx = self.code.add_const(Value::Str(name.to_string()));
         self.emit(Opcode::LoadConst, Some(name_idx));
         self.emit(Opcode::BuildClass, Some(code_idx));
-        self.emit_store_name_scoped(name);
+        self.emit_store_name_scoped(name)?;
         Ok(())
     }
 
     fn compile_class(&mut self, name: &str, body: &[Stmt]) -> Result<CodeObject, CompileError> {
-        let mut compiler = Compiler {
-            code: CodeObject::new(format!("<class {name}>")),
-            temp_counter: 0,
-            loop_stack: Vec::new(),
-            global_names: HashSet::new(),
-        };
+        let scope = ScopeInfo::for_class(body, &self.scope)?;
+        let mut compiler = Compiler::new(
+            &format!("<class {name}>"),
+            &self.code.filename,
+            scope,
+        );
         for stmt in body {
             compiler.compile_stmt(stmt)?;
         }
@@ -644,7 +1362,7 @@ impl Compiler {
     fn compile_store_target_from_stack(&mut self, target: &AssignTarget) -> Result<(), CompileError> {
         match target {
             AssignTarget::Name(name) => {
-                self.emit_store_name_scoped(name);
+                self.emit_store_name_scoped(name)?;
                 Ok(())
             }
             AssignTarget::Tuple(items) | AssignTarget::List(items) => {
@@ -658,20 +1376,20 @@ impl Compiler {
                 let temp = self.fresh_temp("assign");
                 self.emit_store_name(&temp);
                 self.compile_expr(value)?;
-                self.emit_load_name(&temp);
+                self.emit_load_name(&temp)?;
                 let idx = self.code.add_name(name.clone());
                 self.emit(Opcode::StoreAttr, Some(idx));
                 Ok(())
             }
             AssignTarget::Subscript { value, index } => {
-                if let Expr::Name(name) = &**value {
+                if let ExprKind::Name(name) = &value.node {
                     let temp = self.fresh_temp("assign");
                     self.emit_store_name(&temp);
-                    self.emit_load_name(name);
+                    self.emit_load_name(name)?;
                     self.compile_expr(index)?;
-                    self.emit_load_name(&temp);
+                    self.emit_load_name(&temp)?;
                     self.emit(Opcode::StoreSubscript, None);
-                    self.emit_store_name_scoped(name);
+                    self.emit_store_name_scoped(name)?;
                     Ok(())
                 } else {
                     Err(CompileError::new(
@@ -690,7 +1408,7 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         match target {
             AssignTarget::Name(name) => {
-                self.emit_load_name(name);
+                self.emit_load_name(name)?;
                 self.compile_expr(value)?;
                 let opcode = match op {
                     crate::ast::AugOp::Add => Opcode::BinaryAdd,
@@ -701,13 +1419,13 @@ impl Compiler {
                     crate::ast::AugOp::Pow => Opcode::BinaryPow,
                 };
                 self.emit(opcode, None);
-                self.emit_store_name_scoped(name);
+                self.emit_store_name_scoped(name)?;
                 Ok(())
             }
             AssignTarget::Subscript { value: container, index } => {
-                if let Expr::Name(name) = &**container {
+                if let ExprKind::Name(name) = &container.node {
                     let name = name.clone();
-                    self.emit_load_name(&name);
+                    self.emit_load_name(&name)?;
                     self.compile_expr(index)?;
                     self.emit(Opcode::Subscript, None);
                     self.compile_expr(value)?;
@@ -720,10 +1438,10 @@ impl Compiler {
                         crate::ast::AugOp::Pow => Opcode::BinaryPow,
                     };
                     self.emit(opcode, None);
-                    self.emit_load_name(&name);
+                    self.emit_load_name(&name)?;
                     self.compile_expr(index)?;
                     self.emit(Opcode::StoreSubscript, None);
-                    self.emit_store_name_scoped(&name);
+                    self.emit_store_name_scoped(&name)?;
                     Ok(())
                 } else {
                     Err(CompileError::new(
@@ -736,7 +1454,7 @@ impl Compiler {
                 let value_temp = self.fresh_temp("assign_val");
                 self.compile_expr(object)?;
                 self.emit_store_name(&temp);
-                self.emit_load_name(&temp);
+                self.emit_load_name(&temp)?;
                 let idx = self.code.add_name(name.clone());
                 self.emit(Opcode::LoadAttr, Some(idx << 1));
                 self.compile_expr(value)?;
@@ -750,8 +1468,8 @@ impl Compiler {
                 };
                 self.emit(opcode, None);
                 self.emit_store_name(&value_temp);
-                self.emit_load_name(&temp);
-                self.emit_load_name(&value_temp);
+                self.emit_load_name(&temp)?;
+                self.emit_load_name(&value_temp)?;
                 let idx = self.code.add_name(name.clone());
                 self.emit(Opcode::StoreAttr, Some(idx));
                 Ok(())
@@ -780,15 +1498,15 @@ impl Compiler {
 
         let loop_start = self.current_ip();
 
-        self.emit_load_name(&index_temp);
-        self.emit_load_name("len");
-        self.emit_load_name(&iter_temp);
+        self.emit_load_name(&index_temp)?;
+        self.emit_load_name("len")?;
+        self.emit_load_name(&iter_temp)?;
         self.emit(Opcode::CallFunction, Some(1));
         self.emit(Opcode::CompareLt, None);
         let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
 
-        self.emit_load_name(&iter_temp);
-        self.emit_load_name(&index_temp);
+        self.emit_load_name(&iter_temp)?;
+        self.emit_load_name(&index_temp)?;
         self.emit(Opcode::Subscript, None);
         self.compile_store_target_from_stack(target)?;
 
@@ -808,7 +1526,7 @@ impl Compiler {
             ctx.continue_target = Some(continue_target);
         }
 
-        self.emit_load_name(&index_temp);
+        self.emit_load_name(&index_temp)?;
         self.emit_const(Value::Int(1));
         self.emit(Opcode::BinaryAdd, None);
         self.emit_store_name(&index_temp);
@@ -837,7 +1555,7 @@ impl Compiler {
         self.compile_expr(context)?;
         self.emit_store_name(&ctx_temp);
 
-        self.emit_load_name(&ctx_temp);
+        self.emit_load_name(&ctx_temp)?;
         let enter_idx = self.code.add_name("__enter__".to_string());
         self.emit(Opcode::LoadAttr, Some(enter_idx << 1));
         self.emit(Opcode::CallFunction, Some(0));
@@ -867,7 +1585,7 @@ impl Compiler {
     }
 
     fn emit_with_exit(&mut self, ctx_temp: &str) -> Result<(), CompileError> {
-        self.emit_load_name(ctx_temp);
+        self.emit_load_name(ctx_temp)?;
         let exit_idx = self.code.add_name("__exit__".to_string());
         self.emit(Opcode::LoadAttr, Some(exit_idx << 1));
         self.emit(Opcode::LoadConst, Some(0));
@@ -896,7 +1614,7 @@ impl Compiler {
         self.compile_expr(test)?;
         let jump_if_true = self.emit_jump(Opcode::JumpIfTrue);
 
-        self.emit_load_name("AssertionError");
+        self.emit_load_name("AssertionError")?;
         if let Some(expr) = message {
             self.compile_expr(expr)?;
             self.emit(Opcode::CallFunction, Some(1));
@@ -962,7 +1680,7 @@ impl Compiler {
             }
 
             if let Some(name) = &handler.name {
-                self.emit_store_name_scoped(name);
+                self.emit_store_name_scoped(name)?;
             } else {
                 self.emit(Opcode::PopTop, None);
             }
@@ -1095,6 +1813,7 @@ impl Compiler {
     fn fresh_temp(&mut self, prefix: &str) -> String {
         let name = format!("__pyrs_{prefix}_{}", self.temp_counter);
         self.temp_counter += 1;
+        self.scope.locals.insert(name.clone());
         name
     }
 

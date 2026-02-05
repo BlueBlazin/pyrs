@@ -9,9 +9,12 @@ pub enum Opcode {
     Nop,
     LoadConst,
     LoadName,
+    LoadLocals,
     LoadFast,
     LoadFast2,
     LoadFastAndClear,
+    LoadDeref,
+    LoadClosure,
     LoadGlobal,
     LoadBuildClass,
     PushNull,
@@ -23,6 +26,7 @@ pub enum Opcode {
     StoreAttr,
     StoreAttrCpython,
     StoreGlobal,
+    StoreDeref,
     BinaryAdd,
     BinarySub,
     BinaryMul,
@@ -92,12 +96,32 @@ impl Instruction {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Location {
+    pub line: usize,
+    pub column: usize,
+}
+
+impl Location {
+    pub fn new(line: usize, column: usize) -> Self {
+        Self { line, column }
+    }
+
+    pub fn unknown() -> Self {
+        Self { line: 0, column: 0 }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeObject {
     pub name: String,
+    pub filename: String,
     pub instructions: Vec<Instruction>,
+    pub locations: Vec<Location>,
     pub constants: Vec<crate::runtime::Value>,
     pub names: Vec<String>,
+    pub cellvars: Vec<String>,
+    pub freevars: Vec<String>,
     pub posonly_params: Vec<String>,
     pub params: Vec<String>,
     pub vararg: Option<String>,
@@ -106,12 +130,16 @@ pub struct CodeObject {
 }
 
 impl CodeObject {
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, filename: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            filename: filename.into(),
             instructions: Vec::new(),
+            locations: Vec::new(),
             constants: vec![crate::runtime::Value::None],
             names: Vec::new(),
+            cellvars: Vec::new(),
+            freevars: Vec::new(),
             posonly_params: Vec::new(),
             params: Vec::new(),
             vararg: None,

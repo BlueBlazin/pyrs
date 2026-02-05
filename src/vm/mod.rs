@@ -21,11 +21,21 @@ struct Block {
     stack_len: usize,
 }
 
+#[derive(Debug, Clone)]
+struct TraceFrame {
+    filename: String,
+    line: usize,
+    column: usize,
+    name: String,
+}
+
 struct Frame {
     code: Rc<CodeObject>,
     ip: usize,
+    last_ip: usize,
     stack: Vec<Value>,
     locals: HashMap<String, Value>,
+    cells: Vec<ObjRef>,
     module: ObjRef,
     function_globals: ObjRef,
     globals_fallback: Option<ObjRef>,
@@ -40,12 +50,20 @@ struct Frame {
 }
 
 impl Frame {
-    fn new(code: Rc<CodeObject>, module: ObjRef, is_module: bool, return_module: bool) -> Self {
+    fn new(
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        is_module: bool,
+        return_module: bool,
+        cells: Vec<ObjRef>,
+    ) -> Self {
         Self {
             code,
             ip: 0,
+            last_ip: 0,
             stack: Vec::new(),
             locals: HashMap::new(),
+            cells,
             module: module.clone(),
             function_globals: module,
             globals_fallback: None,
@@ -138,6 +156,26 @@ impl Vm {
         self.heap.alloc_dict(values)
     }
 
+    fn build_cells(&mut self, code: &CodeObject, closure: Vec<ObjRef>) -> Vec<ObjRef> {
+        let mut cells = Vec::with_capacity(code.cellvars.len() + code.freevars.len());
+        for _ in &code.cellvars {
+            cells.push(self.heap.alloc_cell_obj(None));
+        }
+        cells.extend(closure);
+        cells
+    }
+
+    fn frame_for_function(&mut self, func: &FunctionObject) -> Frame {
+        let cells = self.build_cells(&func.code, func.closure.clone());
+        Frame::new(
+            func.code.clone(),
+            func.module.clone(),
+            false,
+            false,
+            cells,
+        )
+    }
+
     pub fn heap_object_count(&self) -> usize {
         self.heap.live_objects_count()
     }
@@ -154,6 +192,9 @@ impl Vm {
         for frame in &self.frames {
             roots.extend(frame.stack.iter().cloned());
             roots.extend(frame.locals.values().cloned());
+            for cell in &frame.cells {
+                roots.push(Value::Cell(cell.clone()));
+            }
             roots.push(Value::Module(frame.module.clone()));
             roots.push(Value::Module(frame.function_globals.clone()));
             if let Some(fallback) = &frame.globals_fallback {
@@ -175,11 +216,13 @@ impl Vm {
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {
         self.frames.clear();
         let code = Rc::new(code.clone());
+        let cells = self.build_cells(&code, Vec::new());
         self.frames.push(Frame::new(
             code,
             self.main_module.clone(),
             true,
             false,
+            cells,
         ));
         self.run()
     }
@@ -233,10 +276,16 @@ impl Vm {
                 err.offset, err.message
             ))
         })?;
-        let code = compiler::compile_module(&module_ast).map_err(|err| {
+        let code = compiler::compile_module_with_filename(
+            &module_ast,
+            &path.to_string_lossy(),
+        )
+        .map_err(|err| {
             RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
         })?;
-        let frame = Frame::new(Rc::new(code), module.clone(), true, true);
+        let code = Rc::new(code);
+        let cells = self.build_cells(&code, Vec::new());
+        let frame = Frame::new(code, module.clone(), true, true, cells);
         self.frames.push(frame);
         Ok(module)
     }
@@ -353,6 +402,7 @@ impl Vm {
 
             let instr = {
                 let frame = self.frames.last_mut().expect("frame exists");
+                frame.last_ip = frame.ip;
                 let instr = frame.code.instructions[frame.ip].clone();
                 frame.ip += 1;
                 instr
@@ -402,6 +452,10 @@ impl Vm {
                         .stack
                         .push(value);
                 }
+                Opcode::LoadLocals => {
+                    let value = self.builtin_locals(Vec::new(), HashMap::new())?;
+                    self.push_value(value);
+                }
                 Opcode::LoadFast => {
                     let idx = instr
                         .arg
@@ -422,6 +476,22 @@ impl Vm {
                         .and_then(|frame| frame.locals.get(&name).cloned())
                         .ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
                     self.push_value(value);
+                }
+                Opcode::LoadDeref => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing deref argument"))?
+                        as usize;
+                    let value = self.load_deref(idx)?;
+                    self.push_value(value);
+                }
+                Opcode::LoadClosure => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing closure argument"))?
+                        as usize;
+                    let cell = self.get_cell(idx)?;
+                    self.push_value(Value::Cell(cell));
                 }
                 Opcode::LoadFast2 => {
                     let arg = instr
@@ -690,6 +760,14 @@ impl Vm {
                     if let Some(frame) = self.frames.last_mut() {
                         frame.locals.insert(name, value);
                     }
+                }
+                Opcode::StoreDeref => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing deref argument"))?
+                        as usize;
+                    let value = self.pop_value()?;
+                    self.store_deref(idx, value)?;
                 }
                 Opcode::StoreFastLoadFast => {
                     let arg = instr
@@ -1389,7 +1467,7 @@ impl Vm {
                         .expect("frame exists")
                         .function_globals
                         .clone();
-                    let func = FunctionObject::new(code, module, defaults, kwonly_defaults);
+                    let func = FunctionObject::new(code, module, defaults, kwonly_defaults, Vec::new());
                     self.push_value(self.heap.alloc_function(func));
                 }
                 Opcode::BuildClass => {
@@ -1457,7 +1535,8 @@ impl Vm {
                         .last()
                         .map(|frame| frame.module.clone())
                         .unwrap_or_else(|| self.main_module.clone());
-                    let mut frame = Frame::new(code, class_module, true, false);
+                    let cells = self.build_cells(&code, Vec::new());
+                    let mut frame = Frame::new(code, class_module, true, false, cells);
                     frame.function_globals = outer_globals.clone();
                     frame.globals_fallback = Some(outer_globals);
                     frame.locals.insert(
@@ -1484,7 +1563,13 @@ impl Vm {
                         .expect("frame exists")
                         .function_globals
                         .clone();
-                    let func = FunctionObject::new(code, module, Vec::new(), HashMap::new());
+                    let func = FunctionObject::new(
+                        code,
+                        module,
+                        Vec::new(),
+                        HashMap::new(),
+                        Vec::new(),
+                    );
                     self.push_value(self.heap.alloc_function(func));
                 }
                 Opcode::SetFunctionAttribute => {
@@ -1544,8 +1629,41 @@ impl Vm {
                                 func_data.kwonly_defaults = kwonly;
                             }
                         }
+                        0x08 => {
+                            let closure = match attr {
+                                Value::Tuple(obj) => match &*obj.kind() {
+                                    Object::Tuple(values) => {
+                                        let mut cells = Vec::with_capacity(values.len());
+                                        for value in values {
+                                            match value {
+                                                Value::Cell(cell) => cells.push(cell.clone()),
+                                                _ => {
+                                                    return Err(RuntimeError::new(
+                                                        "closure entries must be cells",
+                                                    ))
+                                                }
+                                            }
+                                        }
+                                        cells
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "closure must be tuple",
+                                        ))
+                                    }
+                                },
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "closure must be tuple",
+                                    ))
+                                }
+                            };
+                            if let Object::Function(func_data) = &mut *func.kind_mut() {
+                                func_data.closure = closure;
+                            }
+                        }
                         _ => {
-                            // ignore annotations/closure for now
+                            // ignore annotations for now
                         }
                     }
                     self.push_value(Value::Function(func));
@@ -1573,11 +1691,14 @@ impl Vm {
                             };
                             let bindings =
                                 bind_arguments(&func_data, &self.heap, args, HashMap::new())?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -1608,11 +1729,14 @@ impl Vm {
                                 bound_args,
                                 HashMap::new(),
                             )?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -1644,11 +1768,14 @@ impl Vm {
                                     init_args,
                                     HashMap::new(),
                                 )?;
+                                let cells =
+                                    self.build_cells(&func_data.code, func_data.closure.clone());
                                 let mut frame = Frame::new(
                                     func_data.code.clone(),
                                     func_data.module.clone(),
                                     false,
                                     false,
+                                    cells,
                                 );
                                 frame.return_instance = Some(instance);
                                 frame.expect_none_return = true;
@@ -1659,7 +1786,7 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            let result = builtin.call(&self.heap, args)?;
+                            let result = self.call_builtin(builtin, args, HashMap::new())?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -1774,11 +1901,14 @@ impl Vm {
                                 }
                             };
                             let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -1809,11 +1939,14 @@ impl Vm {
                                 bound_args,
                                 kwargs,
                             )?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -1845,11 +1978,14 @@ impl Vm {
                                     init_args,
                                     kwargs,
                                 )?;
+                                let cells = self
+                                    .build_cells(&func_data.code, func_data.closure.clone());
                                 let mut frame = Frame::new(
                                     func_data.code.clone(),
                                     func_data.module.clone(),
                                     false,
                                     false,
+                                    cells,
                                 );
                                 frame.return_instance = Some(instance);
                                 frame.expect_none_return = true;
@@ -1866,7 +2002,7 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            let result = builtin.call(&self.heap, args)?;
+                            let result = self.call_builtin(builtin, args, kwargs)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -1953,11 +2089,14 @@ impl Vm {
                                 }
                             };
                             let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -1988,11 +2127,14 @@ impl Vm {
                                 bound_args,
                                 kwargs,
                             )?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -2024,11 +2166,14 @@ impl Vm {
                                     init_args,
                                     kwargs,
                                 )?;
+                                let cells = self
+                                    .build_cells(&func_data.code, func_data.closure.clone());
                                 let mut frame = Frame::new(
                                     func_data.code.clone(),
                                     func_data.module.clone(),
                                     false,
                                     false,
+                                    cells,
                                 );
                                 frame.return_instance = Some(instance);
                                 frame.expect_none_return = true;
@@ -2045,7 +2190,7 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            let result = builtin.call(&self.heap, args)?;
+                            let result = self.call_builtin(builtin, args, kwargs)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -2098,11 +2243,14 @@ impl Vm {
                                 }
                             };
                             let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -2129,11 +2277,14 @@ impl Vm {
                             bound_args.extend(args);
                             let bindings =
                                 bind_arguments(&func_data, &self.heap, bound_args, kwargs)?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -2161,11 +2312,14 @@ impl Vm {
                                 init_args.extend(args);
                                 let bindings =
                                     bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
+                                let cells = self
+                                    .build_cells(&func_data.code, func_data.closure.clone());
                                 let mut frame = Frame::new(
                                     func_data.code.clone(),
                                     func_data.module.clone(),
                                     false,
                                     false,
+                                    cells,
                                 );
                                 frame.return_instance = Some(instance);
                                 frame.expect_none_return = true;
@@ -2181,8 +2335,7 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            let result =
-                                call_builtin_with_kwargs(&self.heap, builtin, args, kwargs)?;
+                            let result = self.call_builtin(builtin, args, kwargs)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -2254,11 +2407,14 @@ impl Vm {
                                 }
                             };
                             let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -2285,11 +2441,14 @@ impl Vm {
                             bound_args.extend(args);
                             let bindings =
                                 bind_arguments(&func_data, &self.heap, bound_args, kwargs)?;
+                            let cells =
+                                self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
                                 func_data.code.clone(),
                                 func_data.module.clone(),
                                 false,
                                 false,
+                                cells,
                             );
                             apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
@@ -2317,11 +2476,14 @@ impl Vm {
                                 init_args.extend(args);
                                 let bindings =
                                     bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
+                                let cells = self
+                                    .build_cells(&func_data.code, func_data.closure.clone());
                                 let mut frame = Frame::new(
                                     func_data.code.clone(),
                                     func_data.module.clone(),
                                     false,
                                     false,
+                                    cells,
                                 );
                                 frame.return_instance = Some(instance);
                                 frame.expect_none_return = true;
@@ -2337,8 +2499,7 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            let result =
-                                call_builtin_with_kwargs(&self.heap, builtin, args, kwargs)?;
+                            let result = self.call_builtin(builtin, args, kwargs)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -2653,10 +2814,10 @@ impl Vm {
                 Ok(Some(value)) => return Ok(value),
                 Ok(None) => {}
                 Err(err) => {
-                    if err.message.starts_with("unhandled exception:") {
-                        return Err(err);
+                    match self.handle_runtime_error(err) {
+                        Ok(()) => {}
+                        Err(err) => return Err(err),
                     }
-                    self.handle_runtime_error(err)?;
                 }
             }
         }
@@ -2664,13 +2825,14 @@ impl Vm {
 
     fn raise_exception(&mut self, value: Value) -> Result<(), RuntimeError> {
         let exc = normalize_exception(value)?;
+        let mut traceback = Vec::new();
         loop {
             let Some(frame) = self.frames.last_mut() else {
-                return Err(RuntimeError::new(format!(
-                    "unhandled exception: {}",
-                    format_value(&exc)
-                )));
+                let message = self.format_traceback(&traceback, &exc);
+                return Err(RuntimeError::new(message));
             };
+
+            traceback.push(Self::frame_trace(frame));
 
             if let Some(block) = frame.blocks.pop() {
                 frame.stack.truncate(block.stack_len);
@@ -2691,6 +2853,30 @@ impl Vm {
             message: Some(err.message),
         });
         self.raise_exception(exception)
+    }
+
+    fn frame_trace(frame: &Frame) -> TraceFrame {
+        let location = frame.code.locations.get(frame.last_ip);
+        let line = location.map(|loc| loc.line).unwrap_or(0);
+        let column = location.map(|loc| loc.column).unwrap_or(0);
+        TraceFrame {
+            filename: frame.code.filename.clone(),
+            line,
+            column,
+            name: frame.code.name.clone(),
+        }
+    }
+
+    fn format_traceback(&self, frames: &[TraceFrame], exc: &Value) -> String {
+        let mut output = String::from("Traceback (most recent call last):\n");
+        for frame in frames.iter().rev() {
+            output.push_str(&format!(
+                "  File \"{}\", line {}, column {}, in {}\n",
+                frame.filename, frame.line, frame.column, frame.name
+            ));
+        }
+        output.push_str(&format_value(exc));
+        output
     }
 
     fn class_value_from_module(
@@ -2723,6 +2909,49 @@ impl Vm {
     fn push_value(&mut self, value: Value) {
         let frame = self.frames.last_mut().expect("frame exists");
         frame.stack.push(value);
+    }
+
+    fn get_cell(&self, idx: usize) -> Result<ObjRef, RuntimeError> {
+        let frame = self.frames.last().expect("frame exists");
+        frame
+            .cells
+            .get(idx)
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("cell index out of range"))
+    }
+
+    fn load_deref(&self, idx: usize) -> Result<Value, RuntimeError> {
+        let frame = self.frames.last().expect("frame exists");
+        let cell = frame
+            .cells
+            .get(idx)
+            .ok_or_else(|| RuntimeError::new("cell index out of range"))?;
+        match &*cell.kind() {
+            Object::Cell(cell_data) => cell_data.value.clone().ok_or_else(|| {
+                let name = deref_name(&frame.code, idx).unwrap_or("<cell>");
+                RuntimeError::new(format!(
+                    "free variable '{}' referenced before assignment",
+                    name
+                ))
+            }),
+            _ => Err(RuntimeError::new("invalid cell object")),
+        }
+    }
+
+    fn store_deref(&mut self, idx: usize, value: Value) -> Result<(), RuntimeError> {
+        let frame = self.frames.last_mut().expect("frame exists");
+        let cell = frame
+            .cells
+            .get(idx)
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("cell index out of range"))?;
+        match &mut *cell.kind_mut() {
+            Object::Cell(cell_data) => {
+                cell_data.value = Some(value);
+                Ok(())
+            }
+            _ => Err(RuntimeError::new("invalid cell object")),
+        }
     }
 
     fn pop_int_pair(&mut self) -> Result<(i64, i64), RuntimeError> {
@@ -2764,6 +2993,90 @@ impl Vm {
             } else {
                 frame.locals.insert(name, value);
             }
+        }
+    }
+
+    fn call_builtin(
+        &self,
+        builtin: BuiltinFunction,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        match builtin {
+            BuiltinFunction::Locals => self.builtin_locals(args, kwargs),
+            BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
+            _ => {
+                if kwargs.is_empty() {
+                    builtin.call(&self.heap, args)
+                } else {
+                    call_builtin_with_kwargs(&self.heap, builtin, args, kwargs)
+                }
+            }
+        }
+    }
+
+    fn builtin_locals(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("locals() expects no arguments"));
+        }
+        let frame = self.frames.last().ok_or_else(|| RuntimeError::new("no frame"))?;
+        if frame.is_module {
+            if let Object::Module(module_data) = &*frame.module.kind() {
+                let mut entries = Vec::with_capacity(module_data.globals.len());
+                for (name, value) in module_data.globals.iter() {
+                    entries.push((Value::Str(name.clone()), value.clone()));
+                }
+                return Ok(self.heap.alloc_dict(entries));
+            }
+        }
+        let mut map = frame.locals.clone();
+        for (idx, name) in frame.code.cellvars.iter().enumerate() {
+            if !map.contains_key(name) {
+                if let Some(cell) = frame.cells.get(idx) {
+                    if let Object::Cell(cell_data) = &*cell.kind() {
+                        map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
+                    }
+                }
+            }
+        }
+        let cell_offset = frame.code.cellvars.len();
+        for (idx, name) in frame.code.freevars.iter().enumerate() {
+            if !map.contains_key(name) {
+                if let Some(cell) = frame.cells.get(cell_offset + idx) {
+                    if let Object::Cell(cell_data) = &*cell.kind() {
+                        map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
+                    }
+                }
+            }
+        }
+        let mut entries = Vec::with_capacity(map.len());
+        for (name, value) in map {
+            entries.push((Value::Str(name), value));
+        }
+        Ok(self.heap.alloc_dict(entries))
+    }
+
+    fn builtin_globals(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("globals() expects no arguments"));
+        }
+        let frame = self.frames.last().ok_or_else(|| RuntimeError::new("no frame"))?;
+        if let Object::Module(module_data) = &*frame.function_globals.kind() {
+            let mut entries = Vec::with_capacity(module_data.globals.len());
+            for (name, value) in module_data.globals.iter() {
+                entries.push((Value::Str(name.clone()), value.clone()));
+            }
+            Ok(self.heap.alloc_dict(entries))
+        } else {
+            Ok(self.heap.alloc_dict(Vec::new()))
         }
     }
 
@@ -2810,6 +3123,10 @@ impl Vm {
         );
         self.builtins
             .insert("id".to_string(), Value::Builtin(BuiltinFunction::Id));
+        self.builtins
+            .insert("locals".to_string(), Value::Builtin(BuiltinFunction::Locals));
+        self.builtins
+            .insert("globals".to_string(), Value::Builtin(BuiltinFunction::Globals));
         self.builtins
             .insert("Exception".to_string(), Value::ExceptionType("Exception".to_string()));
         self.builtins
@@ -2886,7 +3203,8 @@ impl Vm {
         }
 
         let outer_globals = func_data.module.clone();
-        let mut frame = Frame::new(func_data.code.clone(), class_module, true, false);
+        let cells = self.build_cells(&func_data.code, func_data.closure.clone());
+        let mut frame = Frame::new(func_data.code.clone(), class_module, true, false, cells);
         frame.function_globals = outer_globals.clone();
         frame.globals_fallback = Some(outer_globals);
         frame.locals.insert(
@@ -2906,6 +3224,14 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
         Value::Bool(value) => Ok(if value { 1 } else { 0 }),
         _ => Err(RuntimeError::new("unsupported operand type")),
     }
+}
+
+fn deref_name(code: &CodeObject, idx: usize) -> Option<&str> {
+    if idx < code.cellvars.len() {
+        return code.cellvars.get(idx).map(|name| name.as_str());
+    }
+    let free_idx = idx - code.cellvars.len();
+    code.freevars.get(free_idx).map(|name| name.as_str())
 }
 
 fn value_to_optional_index(value: Value) -> Result<Option<i64>, RuntimeError> {
@@ -2990,6 +3316,10 @@ fn is_truthy(value: &Value) -> bool {
         },
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Cell(obj) => match &*obj.kind() {
+            Object::Cell(cell) => cell.value.as_ref().map_or(false, is_truthy),
             _ => true,
         },
         Value::Iterator(_) => true,
@@ -3155,13 +3485,24 @@ fn bind_arguments(
 }
 
 fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments, heap: &Heap) {
+    let mut assign = |name: String, value: Value| {
+        if let Some(idx) = code.cellvars.iter().position(|cell| cell == &name) {
+            if let Some(cell) = frame.cells.get(idx) {
+                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                    cell_data.value = Some(value);
+                    return;
+                }
+            }
+        }
+        frame.locals.insert(name, value);
+    };
     for (name, value) in code
         .posonly_params
         .iter()
         .cloned()
         .zip(bindings.posonly.into_iter())
     {
-        frame.locals.insert(name, value);
+        assign(name, value);
     }
     for (name, value) in code
         .params
@@ -3169,7 +3510,7 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
         .cloned()
         .zip(bindings.positional.into_iter())
     {
-        frame.locals.insert(name, value);
+        assign(name, value);
     }
     for (name, value) in code
         .kwonly_params
@@ -3177,21 +3518,21 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
         .cloned()
         .zip(bindings.kwonly.into_iter())
     {
-        frame.locals.insert(name, value);
+        assign(name, value);
     }
 
     if let Some(name) = code.vararg.as_ref() {
         let value = bindings
             .vararg
             .unwrap_or_else(|| heap.alloc_list(Vec::new()));
-        frame.locals.insert(name.clone(), value);
+        assign(name.clone(), value);
     }
 
     if let Some(name) = code.kwarg.as_ref() {
         let value = bindings
             .kwarg
             .unwrap_or_else(|| heap.alloc_dict(Vec::new()));
-        frame.locals.insert(name.clone(), value);
+        assign(name.clone(), value);
     }
 }
 

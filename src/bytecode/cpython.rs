@@ -82,6 +82,9 @@ struct Translator<'a> {
     name_index: HashMap<String, u32>,
     locals_map: Vec<u32>,
     names_map: Vec<u32>,
+    deref_map: Vec<Option<u32>>,
+    cellvars: Vec<String>,
+    freevars: Vec<String>,
     constants: Vec<Value>,
 }
 
@@ -102,6 +105,9 @@ impl<'a> Translator<'a> {
             name_index: HashMap::new(),
             locals_map: Vec::new(),
             names_map: Vec::new(),
+            deref_map: Vec::new(),
+            cellvars: Vec::new(),
+            freevars: Vec::new(),
             constants: Vec::new(),
         })
     }
@@ -110,21 +116,41 @@ impl<'a> Translator<'a> {
         self.build_name_maps()?;
         self.constants = self.convert_constants(&self.code.consts)?;
 
-        let mut result = CodeObject::new(self.code.name.clone());
+        let mut result = CodeObject::new(self.code.name.clone(), self.code.filename.clone());
         result.constants = self.constants.clone();
         result.names = self.names.clone();
+        result.cellvars = self.cellvars.clone();
+        result.freevars = self.freevars.clone();
         self.populate_params(&mut result)?;
 
         let instructions = self.translate_instructions()?;
         result.instructions = instructions;
+        result.locations = vec![crate::bytecode::Location::unknown(); result.instructions.len()];
         result.constants = self.constants.clone();
         Ok(result)
     }
 
     fn build_name_maps(&mut self) -> Result<(), CpythonError> {
-        for name in &self.code.localsplusnames {
-            let idx = self.intern_name(name);
-            self.locals_map.push(idx);
+        for (idx, name) in self.code.localsplusnames.iter().enumerate() {
+            let mapped = self.intern_name(name);
+            self.locals_map.push(mapped);
+            let kind = self
+                .code
+                .localspluskinds
+                .get(idx)
+                .copied()
+                .unwrap_or(0);
+            let mut deref_index = None;
+            if kind & 0x40 != 0 {
+                self.cellvars.push(name.clone());
+                deref_index = Some((self.cellvars.len() - 1) as u32);
+            }
+            if kind & 0x80 != 0 {
+                self.freevars.push(name.clone());
+                let idx = (self.cellvars.len() + self.freevars.len() - 1) as u32;
+                deref_index = Some(idx);
+            }
+            self.deref_map.push(deref_index);
         }
         for name in &self.code.names {
             let idx = self.intern_name(name);
@@ -209,7 +235,13 @@ impl<'a> Translator<'a> {
                     Instruction::new(Opcode::LoadConst, Some(idx))
                 }
                 "LOAD_NAME" => Instruction::new(Opcode::LoadName, Some(self.map_name(arg)?)),
+                "LOAD_LOCALS" => Instruction::new(Opcode::LoadLocals, None),
                 "STORE_NAME" => Instruction::new(Opcode::StoreName, Some(self.map_name(arg)?)),
+                "LOAD_DEREF" => Instruction::new(Opcode::LoadDeref, Some(self.map_deref(arg)?)),
+                "STORE_DEREF" => Instruction::new(Opcode::StoreDeref, Some(self.map_deref(arg)?)),
+                "LOAD_CLOSURE" => {
+                    Instruction::new(Opcode::LoadClosure, Some(self.map_deref(arg)?))
+                }
                 "LOAD_GLOBAL" | "LOAD_GLOBAL_ADAPTIVE" | "LOAD_GLOBAL_BUILTIN"
                 | "LOAD_GLOBAL_MODULE" => {
                     let name_idx = (arg >> 1) as u32;
@@ -270,6 +302,7 @@ impl<'a> Translator<'a> {
                 "SET_FUNCTION_ATTRIBUTE" => {
                     Instruction::new(Opcode::SetFunctionAttribute, Some(arg))
                 }
+                "COPY_FREE_VARS" => Instruction::new(Opcode::Nop, None),
                 "KW_NAMES" => {
                     pending_kw_names = Some(arg as u16);
                     Instruction::new(Opcode::Nop, None)
@@ -387,6 +420,14 @@ impl<'a> Translator<'a> {
             .get(idx)
             .cloned()
             .ok_or_else(|| CpythonError::new("local index out of range"))
+    }
+
+    fn map_deref(&self, index: u32) -> Result<u32, CpythonError> {
+        let idx = index as usize;
+        match self.deref_map.get(idx).copied().flatten() {
+            Some(mapped) => Ok(mapped),
+            None => Err(CpythonError::new("deref index out of range")),
+        }
     }
 
     fn convert_constants(&mut self, consts: &[PyObject]) -> Result<Vec<Value>, CpythonError> {

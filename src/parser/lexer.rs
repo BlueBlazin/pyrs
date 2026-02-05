@@ -327,6 +327,7 @@ impl<'a> Lexer<'a> {
                         "import" => TokenKind::Keyword(Keyword::Import),
                         "from" => TokenKind::Keyword(Keyword::From),
                         "global" => TokenKind::Keyword(Keyword::Global),
+                        "nonlocal" => TokenKind::Keyword(Keyword::Nonlocal),
                         "as" => TokenKind::Keyword(Keyword::As),
                         "lambda" => TokenKind::Keyword(Keyword::Lambda),
                         "with" => TokenKind::Keyword(Keyword::With),

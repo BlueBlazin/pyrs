@@ -1,5 +1,40 @@
 //! Minimal AST definitions. These will expand to cover the full CPython 3.14 grammar.
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub line: usize,
+    pub column: usize,
+}
+
+impl Span {
+    pub fn new(line: usize, column: usize) -> Self {
+        Self { line, column }
+    }
+
+    pub fn unknown() -> Self {
+        Self { line: 0, column: 0 }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    pub fn new(node: T, span: Span) -> Self {
+        Self { node, span }
+    }
+
+    pub fn map<U>(self, node: U) -> Spanned<U> {
+        Spanned::new(node, self.span)
+    }
+}
+
+pub type Expr = Spanned<ExprKind>;
+pub type Stmt = Spanned<StmtKind>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub body: Vec<Stmt>,
@@ -12,7 +47,7 @@ impl Module {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Stmt {
+pub enum StmtKind {
     Pass,
     Expr(Expr),
     If {
@@ -80,6 +115,9 @@ pub enum Stmt {
     Global {
         names: Vec<String>,
     },
+    Nonlocal {
+        names: Vec<String>,
+    },
     With {
         context: Expr,
         target: Option<AssignTarget>,
@@ -109,7 +147,7 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expr {
+pub enum ExprKind {
     Name(String),
     Constant(Constant),
     Binary {

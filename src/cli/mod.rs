@@ -81,7 +81,7 @@ fn run_file(path: &str) -> Result<(), String> {
     let module = parser::parse_module(&source)
         .map_err(|err| format!("parse error at {}: {}", err.offset, err.message))?;
 
-    let code = compiler::compile_module(&module)
+    let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
 
     let mut vm = Vm::new();
@@ -105,7 +105,7 @@ fn run_bytecode(path: &str) -> Result<(), String> {
         .map_err(|err| format!("failed to read {path}: {err}"))?;
     let module = parser::parse_module(&source)
         .map_err(|err| format!("parse error at {}: {}", err.offset, err.message))?;
-    let code = compiler::compile_module(&module)
+    let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
     println!("{}", code.disassemble());
     Ok(())

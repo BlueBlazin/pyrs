@@ -28,6 +28,7 @@ pub struct FunctionObject {
     pub module: ObjRef,
     pub defaults: Vec<Value>,
     pub kwonly_defaults: HashMap<String, Value>,
+    pub closure: Vec<ObjRef>,
 }
 
 impl FunctionObject {
@@ -36,12 +37,14 @@ impl FunctionObject {
         module: ObjRef,
         defaults: Vec<Value>,
         kwonly_defaults: HashMap<String, Value>,
+        closure: Vec<ObjRef>,
     ) -> Self {
         Self {
             code,
             module,
             defaults,
             kwonly_defaults,
+            closure,
         }
     }
 }
@@ -136,6 +139,18 @@ pub enum Object {
     Instance(InstanceObject),
     BoundMethod(BoundMethod),
     Function(FunctionObject),
+    Cell(CellObject),
+}
+
+#[derive(Debug)]
+pub struct CellObject {
+    pub value: Option<Value>,
+}
+
+impl CellObject {
+    pub fn new(value: Option<Value>) -> Self {
+        Self { value }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -233,6 +248,14 @@ impl Heap {
         Value::Iterator(self.alloc(Object::Iterator(iterator)))
     }
 
+    pub fn alloc_cell_obj(&self, value: Option<Value>) -> ObjRef {
+        self.alloc(Object::Cell(CellObject::new(value)))
+    }
+
+    pub fn alloc_cell(&self, value: Option<Value>) -> Value {
+        Value::Cell(self.alloc_cell_obj(value))
+    }
+
     pub fn id_of(&self, value: &Value) -> u64 {
         match value {
             Value::None => self.id_for_immediate(ImmediateKey::None),
@@ -247,7 +270,8 @@ impl Heap {
             | Value::Class(obj)
             | Value::Instance(obj)
             | Value::Function(obj)
-            | Value::BoundMethod(obj) => obj.id(),
+            | Value::BoundMethod(obj)
+            | Value::Cell(obj) => obj.id(),
             Value::Exception(exception) => {
                 self.id_for_immediate(ImmediateKey::Exception(
                     exception.name.clone(),
@@ -325,7 +349,8 @@ fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         | Value::Class(obj)
         | Value::Instance(obj)
         | Value::Function(obj)
-        | Value::BoundMethod(obj) => {
+        | Value::BoundMethod(obj)
+        | Value::Cell(obj) => {
             let id = obj.id();
             if marked.contains_key(&id) {
                 return;
@@ -385,6 +410,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             for value in func.kwonly_defaults.values() {
                 trace_value(value, stack, marked);
             }
+            for cell in &func.closure {
+                stack.push(cell.clone());
+            }
             for value in &func.code.constants {
                 trace_value(value, stack, marked);
             }
@@ -392,6 +420,11 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         Object::BoundMethod(method) => {
             stack.push(method.function.clone());
             stack.push(method.receiver.clone());
+        }
+        Object::Cell(cell) => {
+            if let Some(value) = &cell.value {
+                trace_value(value, stack, marked);
+            }
         }
     }
 }
@@ -429,8 +462,12 @@ fn clear_object_refs(obj: &ObjRef) {
         Object::Function(func) => {
             func.defaults.clear();
             func.kwonly_defaults.clear();
+            func.closure.clear();
         }
         Object::BoundMethod(_) => {}
+        Object::Cell(cell) => {
+            cell.value = None;
+        }
     }
 }
 
@@ -449,6 +486,7 @@ pub enum Value {
     Instance(ObjRef),
     BoundMethod(ObjRef),
     Function(ObjRef),
+    Cell(ObjRef),
     Exception(ExceptionObject),
     ExceptionType(String),
     Slice {
@@ -524,7 +562,8 @@ impl PartialEq for Value {
             | (Value::Class(a), Value::Class(b))
             | (Value::Instance(a), Value::Instance(b))
             | (Value::Function(a), Value::Function(b))
-            | (Value::BoundMethod(a), Value::BoundMethod(b)) => a.id() == b.id(),
+            | (Value::BoundMethod(a), Value::BoundMethod(b))
+            | (Value::Cell(a), Value::Cell(b)) => a.id() == b.id(),
             (Value::Exception(a), Value::Exception(b)) => a == b,
             (Value::ExceptionType(a), Value::ExceptionType(b)) => a == b,
             (
@@ -571,6 +610,8 @@ pub enum BuiltinFunction {
     Enumerate,
     BuildClass,
     Id,
+    Locals,
+    Globals,
 }
 
 impl BuiltinFunction {
@@ -929,6 +970,9 @@ impl BuiltinFunction {
                 }
                 Ok(heap.alloc_list(entries))
             }
+            BuiltinFunction::Locals | BuiltinFunction::Globals => Err(RuntimeError::new(
+                "locals()/globals() require VM context",
+            )),
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
                 "__build_class__ is only available in the VM",
             )),
@@ -1121,6 +1165,7 @@ pub fn format_value(value: &Value) -> String {
             },
             _ => "<bound method ?>".to_string(),
         },
+        Value::Cell(_) => "<cell>".to_string(),
         Value::Exception(exception) => match &exception.message {
             Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
             _ => exception.name.clone(),
@@ -1144,6 +1189,7 @@ fn is_truthy_value(value: &Value) -> bool {
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
         Value::Str(value) => !value.is_empty(),
+        Value::Cell(_) => true,
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => !values.is_empty(),
             _ => true,

@@ -27,6 +27,7 @@ pub enum Keyword {
     Import,
     From,
     Global,
+    Nonlocal,
     As,
     Lambda,
     With,

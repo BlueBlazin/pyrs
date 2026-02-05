@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    AssignTarget, BinaryOp, BoolOp, CallArg, Constant, ExceptHandler, Expr, ImportAlias, Module,
-    Parameter, Stmt, UnaryOp,
+    AssignTarget, BinaryOp, BoolOp, CallArg, Constant, ExceptHandler, Expr, ExprKind, ImportAlias,
+    Module, Parameter, Span, Stmt, StmtKind, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -65,6 +65,25 @@ impl Parser {
         }
     }
 
+    fn span_at(&self, pos: usize) -> Span {
+        let token = self.token_at(pos);
+        Span::new(token.line, token.column)
+    }
+
+    fn make_stmt(&self, pos: usize, node: StmtKind) -> Stmt {
+        Stmt {
+            node,
+            span: self.span_at(pos),
+        }
+    }
+
+    fn make_expr(&self, pos: usize, node: ExprKind) -> Expr {
+        Expr {
+            node,
+            span: self.span_at(pos),
+        }
+    }
+
     fn parse_module_at(&mut self, pos: usize) -> ParseResult<Module> {
         if let Some(entry) = self.module_memo.get(&pos) {
             return entry.result.clone();
@@ -113,15 +132,16 @@ impl Parser {
     }
 
     fn parse_stmt_uncached(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         if let Some((target_expr, next_pos)) = self.parse_assignment_target_list(pos) {
             let kind = self.token_at(next_pos).kind.clone();
             if kind == TokenKind::Equal {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;
                 return Ok((
-                    Stmt::Assign {
+                    self.make_stmt(start, StmtKind::Assign {
                         target: target_expr,
                         value,
-                    },
+                    }),
                     next,
                 ));
             }
@@ -138,7 +158,14 @@ impl Parser {
 
             if let Some(op) = aug_op {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;
-                return Ok((Stmt::AugAssign { target: target_expr, op, value }, next));
+                return Ok((
+                    self.make_stmt(start, StmtKind::AugAssign {
+                        target: target_expr,
+                        op,
+                        value,
+                    }),
+                    next,
+                ));
             }
         }
         let token = self.token_at(pos);
@@ -150,18 +177,19 @@ impl Parser {
             TokenKind::Keyword(Keyword::Try) => self.parse_try_stmt(pos),
             TokenKind::Keyword(Keyword::For) => self.parse_for_stmt(pos),
             TokenKind::Keyword(Keyword::Class) => self.parse_class_def(pos),
-            TokenKind::Keyword(Keyword::Break) => Ok((Stmt::Break, pos + 1)),
-            TokenKind::Keyword(Keyword::Continue) => Ok((Stmt::Continue, pos + 1)),
+            TokenKind::Keyword(Keyword::Break) => Ok((self.make_stmt(start, StmtKind::Break), pos + 1)),
+            TokenKind::Keyword(Keyword::Continue) => Ok((self.make_stmt(start, StmtKind::Continue), pos + 1)),
             TokenKind::Keyword(Keyword::Import) => self.parse_import_stmt(pos),
             TokenKind::Keyword(Keyword::From) => self.parse_from_import_stmt(pos),
             TokenKind::Keyword(Keyword::Global) => self.parse_global_stmt(pos),
+            TokenKind::Keyword(Keyword::Nonlocal) => self.parse_nonlocal_stmt(pos),
             TokenKind::Keyword(Keyword::With) => self.parse_with_stmt(pos),
             TokenKind::Keyword(Keyword::Raise) => self.parse_raise_stmt(pos),
             TokenKind::Keyword(Keyword::Assert) => self.parse_assert_stmt(pos),
-            TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
+            TokenKind::Keyword(Keyword::Pass) => Ok((self.make_stmt(start, StmtKind::Pass), pos + 1)),
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
-                Ok((Stmt::Expr(expr), next))
+                Ok((self.make_stmt(start, StmtKind::Expr(expr)), next))
             }
         }
     }
@@ -186,6 +214,7 @@ impl Parser {
     }
 
     fn parse_lambda(&mut self, pos: usize) -> ParseResult<Expr> {
+        let start = pos;
         let mut pos = pos + 1;
         let (posonly_params, params, kwonly_params, vararg, kwarg, next) = if matches!(
             self.token_at(pos).kind,
@@ -201,14 +230,14 @@ impl Parser {
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_expr_at(pos)?;
         Ok((
-            Expr::Lambda {
+            self.make_expr(start, ExprKind::Lambda {
                 posonly_params,
                 params,
                 vararg,
                 kwarg,
                 kwonly_params,
                 body: Box::new(body),
-            },
+            }),
             next,
         ))
     }
@@ -224,14 +253,16 @@ impl Parser {
             }
             pos += 1;
             let (orelse, next) = self.parse_if_expr(pos)?;
-            return Ok((
-                Expr::IfExpr {
+            let span = body.span;
+            let expr = Expr {
+                node: ExprKind::IfExpr {
                     test: Box::new(test),
                     body: Box::new(body),
                     orelse: Box::new(orelse),
                 },
-                next,
-            ));
+                span,
+            };
+            return Ok((expr, next));
         }
         Ok((body, pos))
     }
@@ -241,10 +272,14 @@ impl Parser {
         while self.match_keyword(pos, Keyword::Or) {
             pos += 1;
             let (right, next) = self.parse_and(pos)?;
-            left = Expr::BoolOp {
-                op: BoolOp::Or,
-                left: Box::new(left),
-                right: Box::new(right),
+            let span = left.span;
+            left = Expr {
+                node: ExprKind::BoolOp {
+                    op: BoolOp::Or,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
             };
             pos = next;
         }
@@ -256,10 +291,14 @@ impl Parser {
         while self.match_keyword(pos, Keyword::And) {
             pos += 1;
             let (right, next) = self.parse_not(pos)?;
-            left = Expr::BoolOp {
-                op: BoolOp::And,
-                left: Box::new(left),
-                right: Box::new(right),
+            let span = left.span;
+            left = Expr {
+                node: ExprKind::BoolOp {
+                    op: BoolOp::And,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
             };
             pos = next;
         }
@@ -268,12 +307,13 @@ impl Parser {
 
     fn parse_not(&mut self, pos: usize) -> ParseResult<Expr> {
         if self.match_keyword(pos, Keyword::Not) {
+            let start = pos;
             let (expr, next) = self.parse_not(pos + 1)?;
             return Ok((
-                Expr::Unary {
+                self.make_expr(start, ExprKind::Unary {
                     op: UnaryOp::Not,
                     operand: Box::new(expr),
-                },
+                }),
                 next,
             ));
         }
@@ -310,11 +350,15 @@ impl Parser {
 
         pos += consumed;
         let (right, next) = self.parse_add_sub(pos)?;
+        let span = left.span;
         Ok((
-            Expr::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
+            Expr {
+                node: ExprKind::Binary {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+                span,
             },
             next,
         ))
@@ -331,10 +375,14 @@ impl Parser {
             };
             pos += 1;
             let (right, next) = self.parse_mul(pos)?;
-            left = Expr::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
+            let span = left.span;
+            left = Expr {
+                node: ExprKind::Binary {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+                span,
             };
             pos = next;
         }
@@ -354,10 +402,14 @@ impl Parser {
             };
             pos += 1;
             let (right, next) = self.parse_unary(pos)?;
-            left = Expr::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
+            let span = left.span;
+            left = Expr {
+                node: ExprKind::Binary {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+                span,
             };
             pos = next;
         }
@@ -370,11 +422,15 @@ impl Parser {
         if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
             pos += 1;
             let (right, next) = self.parse_unary(pos)?;
+            let span = left.span;
             return Ok((
-                Expr::Binary {
-                    left: Box::new(left),
-                    op: BinaryOp::Pow,
-                    right: Box::new(right),
+                Expr {
+                    node: ExprKind::Binary {
+                        left: Box::new(left),
+                        op: BinaryOp::Pow,
+                        right: Box::new(right),
+                    },
+                    span,
                 },
                 next,
             ));
@@ -384,22 +440,24 @@ impl Parser {
 
     fn parse_unary(&mut self, pos: usize) -> ParseResult<Expr> {
         if matches!(self.token_at(pos).kind, TokenKind::Minus) {
+            let start = pos;
             let (expr, next) = self.parse_unary(pos + 1)?;
             return Ok((
-                Expr::Unary {
+                self.make_expr(start, ExprKind::Unary {
                     op: UnaryOp::Neg,
                     operand: Box::new(expr),
-                },
+                }),
                 next,
             ));
         }
         if matches!(self.token_at(pos).kind, TokenKind::Plus) {
+            let start = pos;
             let (expr, next) = self.parse_unary(pos + 1)?;
             return Ok((
-                Expr::Unary {
+                self.make_expr(start, ExprKind::Unary {
                     op: UnaryOp::Pos,
                     operand: Box::new(expr),
-                },
+                }),
                 next,
             ));
         }
@@ -409,36 +467,41 @@ impl Parser {
     fn parse_atom(&mut self, pos: usize) -> ParseResult<Expr> {
         let token = self.token_at(pos);
         let (mut expr, mut pos) = match &token.kind {
-            TokenKind::Name => (Expr::Name(token.lexeme.clone()), pos + 1),
+            TokenKind::Name => (self.make_expr(pos, ExprKind::Name(token.lexeme.clone())), pos + 1),
             TokenKind::Number => {
                 let value = token
                     .lexeme
                     .parse::<i64>()
                     .map_err(|_| self.error_at(pos, "invalid integer literal"))?;
-                (Expr::Constant(Constant::Int(value)), pos + 1)
+                (self.make_expr(pos, ExprKind::Constant(Constant::Int(value))), pos + 1)
             }
             TokenKind::String => (
-                Expr::Constant(Constant::Str(token.lexeme.clone())),
+                self.make_expr(
+                    pos,
+                    ExprKind::Constant(Constant::Str(token.lexeme.clone())),
+                ),
                 pos + 1,
             ),
             TokenKind::Keyword(Keyword::TrueLiteral) => {
-                (Expr::Constant(Constant::Bool(true)), pos + 1)
+                (self.make_expr(pos, ExprKind::Constant(Constant::Bool(true))), pos + 1)
             }
             TokenKind::Keyword(Keyword::FalseLiteral) => {
-                (Expr::Constant(Constant::Bool(false)), pos + 1)
+                (self.make_expr(pos, ExprKind::Constant(Constant::Bool(false))), pos + 1)
             }
-            TokenKind::Keyword(Keyword::NoneLiteral) => (Expr::Constant(Constant::None), pos + 1),
+            TokenKind::Keyword(Keyword::NoneLiteral) => {
+                (self.make_expr(pos, ExprKind::Constant(Constant::None)), pos + 1)
+            }
             TokenKind::LParen => {
                 let (expr, next) = self.parse_paren_expr(pos + 1)?;
                 (expr, next)
             }
             TokenKind::LBracket => {
                 let (elements, next) = self.parse_list_elements(pos + 1)?;
-                (Expr::List(elements), next)
+                (self.make_expr(pos, ExprKind::List(elements)), next)
             }
             TokenKind::LBrace => {
                 let (entries, next) = self.parse_dict_entries(pos + 1)?;
-                (Expr::Dict(entries), next)
+                (self.make_expr(pos, ExprKind::Dict(entries)), next)
             }
             _ => return Err(self.error_at(pos, "expected expression")),
         };
@@ -447,17 +510,25 @@ impl Parser {
             match self.token_at(pos).kind {
                 TokenKind::LParen => {
                     let (args, next) = self.parse_call_args(pos + 1)?;
-                    expr = Expr::Call {
-                        func: Box::new(expr),
-                        args,
+                    let span = expr.span;
+                    expr = Expr {
+                        node: ExprKind::Call {
+                            func: Box::new(expr),
+                            args,
+                        },
+                        span,
                     };
                     pos = next;
                 }
                 TokenKind::LBracket => {
                     let (index, next) = self.parse_subscript(pos + 1)?;
-                    expr = Expr::Subscript {
-                        value: Box::new(expr),
-                        index: Box::new(index),
+                    let span = expr.span;
+                    expr = Expr {
+                        node: ExprKind::Subscript {
+                            value: Box::new(expr),
+                            index: Box::new(index),
+                        },
+                        span,
                     };
                     pos = next;
                 }
@@ -467,9 +538,13 @@ impl Parser {
                     if token.kind != TokenKind::Name {
                         return Err(self.error_at(pos, "expected attribute name"));
                     }
-                    expr = Expr::Attribute {
-                        value: Box::new(expr),
-                        name: token.lexeme.clone(),
+                    let span = expr.span;
+                    expr = Expr {
+                        node: ExprKind::Attribute {
+                            value: Box::new(expr),
+                            name: token.lexeme.clone(),
+                        },
+                        span,
                     };
                     pos += 1;
                 }
@@ -481,10 +556,10 @@ impl Parser {
     }
 
     fn parse_if_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
-        self.parse_if_after_keyword(pos + 1)
+        self.parse_if_after_keyword(pos, pos + 1)
     }
 
-    fn parse_if_after_keyword(&mut self, pos: usize) -> ParseResult<Stmt> {
+    fn parse_if_after_keyword(&mut self, start: usize, pos: usize) -> ParseResult<Stmt> {
         let mut pos = pos;
         let (test, next) = self.parse_expr_at(pos)?;
         pos = next;
@@ -495,7 +570,7 @@ impl Parser {
         let mut orelse = Vec::new();
         let else_pos = self.skip_newlines(pos);
         if self.match_keyword(else_pos, Keyword::Elif) {
-            let (elif_stmt, next) = self.parse_if_after_keyword(else_pos + 1)?;
+            let (elif_stmt, next) = self.parse_if_after_keyword(else_pos, else_pos + 1)?;
             orelse.push(elif_stmt);
             pos = next;
         } else if self.match_keyword(else_pos, Keyword::Else) {
@@ -507,16 +582,13 @@ impl Parser {
         }
 
         Ok((
-            Stmt::If {
-                test,
-                body,
-                orelse,
-            },
+            self.make_stmt(start, StmtKind::If { test, body, orelse }),
             pos,
         ))
     }
 
     fn parse_while_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let (test, next) = self.parse_expr_at(pos)?;
         pos = next;
@@ -534,10 +606,11 @@ impl Parser {
             pos = next;
         }
 
-        Ok((Stmt::While { test, body, orelse }, pos))
+        Ok((self.make_stmt(start, StmtKind::While { test, body, orelse }), pos))
     }
 
     fn parse_for_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let (target, next) = self
             .parse_assignment_target_list(pos)
@@ -563,10 +636,11 @@ impl Parser {
             pos = next;
         }
 
-        Ok((Stmt::For { target, iter, body, orelse }, pos))
+        Ok((self.make_stmt(start, StmtKind::For { target, iter, body, orelse }), pos))
     }
 
     fn parse_with_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let (context, next) = self.parse_expr_at(pos)?;
         pos = next;
@@ -584,10 +658,11 @@ impl Parser {
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-        Ok((Stmt::With { context, target, body }, pos))
+        Ok((self.make_stmt(start, StmtKind::With { context, target, body }), pos))
     }
 
     fn parse_try_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
@@ -657,17 +732,18 @@ impl Parser {
         }
 
         Ok((
-            Stmt::Try {
+            self.make_stmt(start, StmtKind::Try {
                 body,
                 handlers,
                 orelse,
                 finalbody,
-            },
+            }),
             pos,
         ))
     }
 
     fn parse_import_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let mut names = Vec::new();
 
@@ -683,10 +759,11 @@ impl Parser {
             break;
         }
 
-        Ok((Stmt::Import { names }, pos))
+        Ok((self.make_stmt(start, StmtKind::Import { names }), pos))
     }
 
     fn parse_from_import_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let (module, next) = self.parse_import_name(pos)?;
         pos = next;
@@ -709,10 +786,11 @@ impl Parser {
             break;
         }
 
-        Ok((Stmt::ImportFrom { module, names }, pos))
+        Ok((self.make_stmt(start, StmtKind::ImportFrom { module, names }), pos))
     }
 
     fn parse_global_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let mut names = Vec::new();
 
@@ -731,23 +809,47 @@ impl Parser {
             break;
         }
 
-        Ok((Stmt::Global { names }, pos))
+        Ok((self.make_stmt(start, StmtKind::Global { names }), pos))
+    }
+
+    fn parse_nonlocal_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
+        let mut pos = pos + 1;
+        let mut names = Vec::new();
+
+        loop {
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected name"));
+            }
+            names.push(token.lexeme.clone());
+            pos += 1;
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+
+        Ok((self.make_stmt(start, StmtKind::Nonlocal { names }), pos))
     }
 
     fn parse_raise_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         if matches!(
             self.token_at(pos).kind,
             TokenKind::Newline | TokenKind::Semicolon | TokenKind::Dedent | TokenKind::EndMarker
         ) {
-            return Ok((Stmt::Raise { value: None }, pos));
+            return Ok((self.make_stmt(start, StmtKind::Raise { value: None }), pos));
         }
         let (expr, next) = self.parse_expr_at(pos)?;
         pos = next;
-        Ok((Stmt::Raise { value: Some(expr) }, pos))
+        Ok((self.make_stmt(start, StmtKind::Raise { value: Some(expr) }), pos))
     }
 
     fn parse_assert_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let (test, next) = self.parse_expr_at(pos)?;
         pos = next;
@@ -760,7 +862,7 @@ impl Parser {
             pos = next;
         }
 
-        Ok((Stmt::Assert { test, message }, pos))
+        Ok((self.make_stmt(start, StmtKind::Assert { test, message }), pos))
     }
 
     fn parse_import_alias(&mut self, pos: usize) -> Result<(ImportAlias, usize), ParseError> {
@@ -849,16 +951,20 @@ impl Parser {
         let token = self.token_at(pos);
         match &token.kind {
             TokenKind::Name => {
-                let mut expr = Expr::Name(token.lexeme.clone());
+                let mut expr = self.make_expr(pos, ExprKind::Name(token.lexeme.clone()));
                 let mut pos = pos + 1;
 
                 loop {
                     match self.token_at(pos).kind {
                         TokenKind::LBracket => {
                             let (index, next) = self.parse_subscript(pos + 1).ok()?;
-                            expr = Expr::Subscript {
-                                value: Box::new(expr),
-                                index: Box::new(index),
+                            let span = expr.span;
+                            expr = Expr {
+                                node: ExprKind::Subscript {
+                                    value: Box::new(expr),
+                                    index: Box::new(index),
+                                },
+                                span,
                             };
                             pos = next;
                         }
@@ -868,9 +974,13 @@ impl Parser {
                             if token.kind != TokenKind::Name {
                                 return None;
                             }
-                            expr = Expr::Attribute {
-                                value: Box::new(expr),
-                                name: token.lexeme.clone(),
+                            let span = expr.span;
+                            expr = Expr {
+                                node: ExprKind::Attribute {
+                                    value: Box::new(expr),
+                                    name: token.lexeme.clone(),
+                                },
+                                span,
                             };
                             pos += 1;
                         }
@@ -878,12 +988,12 @@ impl Parser {
                     }
                 }
 
-                let target = match expr {
-                    Expr::Name(name) => AssignTarget::Name(name),
-                    Expr::Subscript { value, index } => {
+                let target = match expr.node {
+                    ExprKind::Name(name) => AssignTarget::Name(name),
+                    ExprKind::Subscript { value, index } => {
                         AssignTarget::Subscript { value, index }
                     }
-                    Expr::Attribute { value, name } => AssignTarget::Attribute { value, name },
+                    ExprKind::Attribute { value, name } => AssignTarget::Attribute { value, name },
                     _ => return None,
                 };
 
@@ -934,6 +1044,7 @@ impl Parser {
     }
 
     fn parse_function_def(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let name_token = self.token_at(pos);
         if name_token.kind != TokenKind::Name {
@@ -949,7 +1060,7 @@ impl Parser {
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
         Ok((
-            Stmt::FunctionDef {
+            self.make_stmt(start, StmtKind::FunctionDef {
                 name,
                 posonly_params,
                 params,
@@ -957,12 +1068,13 @@ impl Parser {
                 kwarg,
                 kwonly_params,
                 body,
-            },
+            }),
             pos,
         ))
     }
 
     fn parse_class_def(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         let name_token = self.token_at(pos);
         if name_token.kind != TokenKind::Name {
@@ -988,20 +1100,21 @@ impl Parser {
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-        Ok((Stmt::ClassDef { name, bases, body }, pos))
+        Ok((self.make_stmt(start, StmtKind::ClassDef { name, bases, body }), pos))
     }
 
     fn parse_return_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
         let mut pos = pos + 1;
         if matches!(
             self.token_at(pos).kind,
             TokenKind::Newline | TokenKind::Semicolon | TokenKind::Dedent | TokenKind::EndMarker
         ) {
-            return Ok((Stmt::Return { value: None }, pos));
+            return Ok((self.make_stmt(start, StmtKind::Return { value: None }), pos));
         }
         let (expr, next) = self.parse_expr_at(pos)?;
         pos = next;
-        Ok((Stmt::Return { value: Some(expr) }, pos))
+        Ok((self.make_stmt(start, StmtKind::Return { value: Some(expr) }), pos))
     }
 
     fn parse_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
@@ -1088,7 +1201,7 @@ impl Parser {
 
     fn parse_paren_expr(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
         if matches!(self.token_at(pos).kind, TokenKind::RParen) {
-            return Ok((Expr::Tuple(Vec::new()), pos + 1));
+            return Ok((self.make_expr(pos.saturating_sub(1), ExprKind::Tuple(Vec::new())), pos + 1));
         }
 
         let (first, mut pos) = self.parse_expr_at(pos)?;
@@ -1109,7 +1222,8 @@ impl Parser {
         }
 
         pos = self.expect_kind(pos, TokenKind::RParen)?;
-        Ok((Expr::Tuple(elements), pos))
+        let span = elements.first().map(|expr| expr.span).unwrap_or_else(Span::unknown);
+        Ok((Expr { node: ExprKind::Tuple(elements), span }, pos))
     }
 
     fn parse_dict_entries(&mut self, pos: usize) -> Result<(Vec<(Expr, Expr)>, usize), ParseError> {
@@ -1180,11 +1294,18 @@ impl Parser {
         }
 
         pos = self.expect_kind(pos, TokenKind::RBracket)?;
+        let span = lower
+            .as_ref()
+            .map(|expr| expr.span)
+            .unwrap_or_else(|| self.span_at(pos.saturating_sub(1)));
         Ok((
-            Expr::Slice {
-                lower: lower.map(Box::new),
-                upper: upper.map(Box::new),
-                step: step.map(Box::new),
+            Expr {
+                node: ExprKind::Slice {
+                    lower: lower.map(Box::new),
+                    upper: upper.map(Box::new),
+                    step: step.map(Box::new),
+                },
+                span,
             },
             pos,
         ))
@@ -1576,13 +1697,13 @@ impl Parser {
 
 fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
     matches!(
-        stmt,
-        Stmt::If { .. }
-            | Stmt::While { .. }
-            | Stmt::For { .. }
-            | Stmt::FunctionDef { .. }
-            | Stmt::ClassDef { .. }
-            | Stmt::Try { .. }
-            | Stmt::With { .. }
+        stmt.node,
+        StmtKind::If { .. }
+            | StmtKind::While { .. }
+            | StmtKind::For { .. }
+            | StmtKind::FunctionDef { .. }
+            | StmtKind::ClassDef { .. }
+            | StmtKind::Try { .. }
+            | StmtKind::With { .. }
     )
 }
