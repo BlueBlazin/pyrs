@@ -177,3 +177,9 @@ DoD:
 - Create crate layout for parser, AST, compiler, VM, runtime, stdlib, CLI.
 - Add a vendor area for CPython 3.14 grammar and opcode metadata.
 - Set up a minimal test harness for parser and bytecode tests.
+
+## Testing Focus Note
+After Milestone 2 (CPython bytecode compatibility), prioritize a testing push:
+- CPython `Lib/test` subset harness.
+- Property/fuzz tests for parser + VM semantics.
+- Integration tests with real scripts and package layouts.

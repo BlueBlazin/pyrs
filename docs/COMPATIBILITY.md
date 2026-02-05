@@ -12,7 +12,7 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 
 ## Bytecode
 - [x] Opcode source files synced (`opcode.py`, `bytecodes.c`, `opcode.h`)
-- [ ] Opcode table synced from CPython 3.14 (CSV generation pending)
+- [x] Opcode table synced from CPython 3.14 (generated `opcode_table.csv`)
 - [x] Internal bytecode IR + compiler for subset (non-CPython)
 - [x] `.pyc` header parsing
 - [ ] CPython bytecode decoder/encoder
