@@ -608,6 +608,18 @@ fn parses_import_statement() {
 }
 
 #[test]
+fn parses_dotted_import_statement() {
+    let module = parser::parse_module("import pkg.sub").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Import { names } => {
+            assert_eq!(names.len(), 1);
+            assert_eq!(names[0].name, "pkg.sub");
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_global_statement() {
     let module = parser::parse_module("global x, y").expect("parse should succeed");
     match &module.body[0] {
@@ -636,6 +648,24 @@ fn parses_from_import_statement() {
                         asname: None
                     }
                 ]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_from_dotted_import_statement() {
+    let module = parser::parse_module("from pkg.sub import item").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::ImportFrom { module, names } => {
+            assert_eq!(module, "pkg.sub");
+            assert_eq!(
+                names,
+                &vec![pyrs::ast::ImportAlias {
+                    name: "item".to_string(),
+                    asname: None
+                }]
             );
         }
         other => panic!("unexpected stmt: {other:?}"),

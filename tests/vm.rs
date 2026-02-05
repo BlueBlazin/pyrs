@@ -814,6 +814,33 @@ fn executes_import_alias() {
 }
 
 #[test]
+fn executes_dotted_import_statement() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_import_dotted_{unique}"));
+    let pkg_dir = temp_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp dir");
+
+    let module_path = pkg_dir.join("sub.py");
+    std::fs::write(&module_path, "value = 13\n").expect("write module");
+
+    let source = "import pkg.sub\nx = pkg.sub.value\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(13)));
+
+    let _ = std::fs::remove_file(&module_path);
+    let _ = std::fs::remove_dir(&pkg_dir);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn executes_from_import_statement() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -836,6 +863,33 @@ fn executes_from_import_statement() {
     assert_eq!(vm.get_global("y"), Some(Value::Int(7)));
 
     let _ = std::fs::remove_file(&module_path);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn executes_from_dotted_import_statement() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_from_import_dotted_{unique}"));
+    let pkg_dir = temp_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp dir");
+
+    let module_path = pkg_dir.join("sub.py");
+    std::fs::write(&module_path, "value = 17\n").expect("write module");
+
+    let source = "from pkg.sub import value\nx = value\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(17)));
+
+    let _ = std::fs::remove_file(&module_path);
+    let _ = std::fs::remove_dir(&pkg_dir);
     let _ = std::fs::remove_dir(&temp_dir);
 }
 
