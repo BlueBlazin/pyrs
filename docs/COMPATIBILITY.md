@@ -38,8 +38,8 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [ ] `json`, `re`, `datetime`
 
 ## CPython Tests
-- [ ] Establish test harness runner
-- [ ] Smoke tests passing
+- [x] Establish test harness runner (optional; set `PYRS_CPYTHON_LIB`)
+- [x] Smoke tests passing (local harness + integration tests)
 - [ ] Incremental `Lib/test` coverage
 
 ## Real-world Apps

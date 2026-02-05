@@ -72,5 +72,5 @@ We measure success by:
 - Numeric compatibility: `bool` participates in int arithmetic/comparisons (`True == 1`, `True + 1`, etc.).
 - Scoping: `global` statements supported inside functions; assignments to globals emit `StoreGlobal`.
 - `.pyc` header parsing (hash-based + timestamp) + executor (`Vm::execute_pyc_*`), with CLI support for `.pyc` paths.
-- Tests: parser smoke tests, bytecode metadata loader test, pyc header tests, and a CPython `.pyc` execution smoke test.
+- Tests: parser smoke tests, bytecode metadata loader test, pyc header tests, CPython `.pyc` execution smoke test, arithmetic fuzz/property tests, integration package test, and an optional CPython `Lib/test` harness (see `tests/cpython_harness.rs` + `tests/cpython_subset.txt`).
 - CLI: `--ast`, `--bytecode`, and `.pyc` execution by file extension.

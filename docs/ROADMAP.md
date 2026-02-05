@@ -185,3 +185,8 @@ After Milestone 2 (CPython bytecode compatibility), prioritize a testing push:
 - CPython `Lib/test` subset harness.
 - Property/fuzz tests for parser + VM semantics.
 - Integration tests with real scripts and package layouts.
+
+Status:
+- CPython `Lib/test` subset harness stub in place (ignored by default; set `PYRS_CPYTHON_LIB`).
+- Property/fuzz tests added for arithmetic expressions.
+- Integration test added for multi-module package execution.
