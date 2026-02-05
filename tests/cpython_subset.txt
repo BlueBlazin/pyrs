@@ -1,0 +1,6 @@
+# CPython Lib/test modules to run when PYRS_CPYTHON_LIB is set.
+# These are intentionally minimal smoke checks; extend as coverage improves.
+test_grammar
+test_annotated_assign
+test_boolean
+test_builtin

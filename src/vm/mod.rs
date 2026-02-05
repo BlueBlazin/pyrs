@@ -887,19 +887,15 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     let (left, right) = (value_to_int(left)?, value_to_int(right)?);
-                    if right == 0 {
-                        return Err(RuntimeError::new("integer division by zero"));
-                    }
-                    self.push_value(Value::Int(left.div_euclid(right)));
+                    let value = python_floor_div(left, right)?;
+                    self.push_value(Value::Int(value));
                 }
                 Opcode::BinaryMod => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     let (left, right) = (value_to_int(left)?, value_to_int(right)?);
-                    if right == 0 {
-                        return Err(RuntimeError::new("modulo by zero"));
-                    }
-                    self.push_value(Value::Int(left % right));
+                    let value = python_mod(left, right)?;
+                    self.push_value(Value::Int(value));
                 }
                 Opcode::CompareEq => {
                     let right = self.pop_value()?;
@@ -2917,6 +2913,37 @@ fn value_to_optional_index(value: Value) -> Result<Option<i64>, RuntimeError> {
         Value::None => Ok(None),
         other => Ok(Some(value_to_int(other)?)),
     }
+}
+
+fn python_floor_div(left: i64, right: i64) -> Result<i64, RuntimeError> {
+    if right == 0 {
+        return Err(RuntimeError::new("integer division by zero"));
+    }
+    let a = left as i128;
+    let b = right as i128;
+    let mut div = a / b;
+    let rem = a % b;
+    if rem != 0 && ((a < 0) ^ (b < 0)) {
+        div -= 1;
+    }
+    if div < i64::MIN as i128 || div > i64::MAX as i128 {
+        return Err(RuntimeError::new("integer overflow"));
+    }
+    Ok(div as i64)
+}
+
+fn python_mod(left: i64, right: i64) -> Result<i64, RuntimeError> {
+    if right == 0 {
+        return Err(RuntimeError::new("modulo by zero"));
+    }
+    let a = left as i128;
+    let b = right as i128;
+    let div = python_floor_div(left, right)? as i128;
+    let value = a - b * div;
+    if value < i64::MIN as i128 || value > i64::MAX as i128 {
+        return Err(RuntimeError::new("integer overflow"));
+    }
+    Ok(value as i64)
 }
 
 fn numeric_pair(left: &Value, right: &Value) -> Option<(i64, i64)> {

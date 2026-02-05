@@ -732,7 +732,8 @@ impl Compiler {
                 }
             }
             AssignTarget::Attribute { value: object, name } => {
-                let temp = self.fresh_temp("assign");
+                let temp = self.fresh_temp("assign_obj");
+                let value_temp = self.fresh_temp("assign_val");
                 self.compile_expr(object)?;
                 self.emit_store_name(&temp);
                 self.emit_load_name(&temp);
@@ -748,7 +749,9 @@ impl Compiler {
                     crate::ast::AugOp::Pow => Opcode::BinaryPow,
                 };
                 self.emit(opcode, None);
+                self.emit_store_name(&value_temp);
                 self.emit_load_name(&temp);
+                self.emit_load_name(&value_temp);
                 let idx = self.code.add_name(name.clone());
                 self.emit(Opcode::StoreAttr, Some(idx));
                 Ok(())
