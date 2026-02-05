@@ -795,11 +795,18 @@ impl Parser {
         if token.kind != TokenKind::Name {
             return Err(self.error_at(pos, "expected module name"));
         }
-        let name = token.lexeme.clone();
+        let mut name = token.lexeme.clone();
         pos += 1;
 
-        if matches!(self.token_at(pos).kind, TokenKind::Dot) {
-            return Err(self.error_at(pos, "dotted imports are not supported yet"));
+        while matches!(self.token_at(pos).kind, TokenKind::Dot) {
+            pos += 1;
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected module name after '.'"));
+            }
+            name.push('.');
+            name.push_str(&token.lexeme);
+            pos += 1;
         }
 
         Ok((name, pos))

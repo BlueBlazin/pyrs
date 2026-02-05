@@ -142,6 +142,7 @@ impl Vm {
         }
 
         self.modules.insert(name.to_string(), module.clone());
+        self.link_module_chain(name, module.clone());
 
         let module_ast = parser::parse_module(&source).map_err(|err| {
             RuntimeError::new(format!(
@@ -158,14 +159,57 @@ impl Vm {
     }
 
     fn find_module_file(&self, name: &str) -> Option<PathBuf> {
-        let filename = format!("{name}.py");
+        let rel_name = name.replace('.', "/");
+        let filename = format!("{rel_name}.py");
         for base in &self.module_paths {
             let candidate = base.join(&filename);
             if candidate.exists() {
                 return Some(candidate);
             }
+            let package_init = base.join(&rel_name).join("__init__.py");
+            if package_init.exists() {
+                return Some(package_init);
+            }
         }
         None
+    }
+
+    fn ensure_module(&mut self, name: &str) -> Rc<ModuleObject> {
+        if let Some(module) = self.modules.get(name).cloned() {
+            return module;
+        }
+        let module = Rc::new(ModuleObject::new(name));
+        module
+            .globals
+            .borrow_mut()
+            .insert("__name__".to_string(), Value::Str(name.to_string()));
+        self.modules.insert(name.to_string(), module.clone());
+        module
+    }
+
+    fn link_module_chain(&mut self, name: &str, module: Rc<ModuleObject>) {
+        let parts: Vec<&str> = name.split('.').collect();
+        if parts.len() <= 1 {
+            return;
+        }
+
+        let mut current_name = parts[0].to_string();
+        let mut current_module = self.ensure_module(&current_name);
+
+        for part in parts.iter().skip(1) {
+            let child_name = format!("{current_name}.{part}");
+            let child_module = if child_name == name {
+                module.clone()
+            } else {
+                self.ensure_module(&child_name)
+            };
+            current_module
+                .globals
+                .borrow_mut()
+                .insert(part.to_string(), Value::Module(child_module.clone()));
+            current_module = child_module;
+            current_name = child_name;
+        }
     }
 
     fn run(&mut self) -> Result<Value, RuntimeError> {
@@ -266,12 +310,28 @@ impl Vm {
                     match value {
                         Value::Module(module) => {
                             let globals = module.globals.borrow();
-                            let attr = globals.get(&attr_name).cloned().ok_or_else(|| {
-                                RuntimeError::new(format!(
-                                    "module '{}' has no attribute '{}'",
-                                    module.name, attr_name
-                                ))
-                            })?;
+                            let attr = globals
+                                .get(&attr_name)
+                                .cloned()
+                                .or_else(|| {
+                                    module
+                                        .name
+                                        .split('.')
+                                        .last()
+                                        .and_then(|suffix| {
+                                            if suffix == attr_name {
+                                                Some(Value::Module(module.clone()))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                })
+                                .ok_or_else(|| {
+                                    RuntimeError::new(format!(
+                                        "module '{}' has no attribute '{}'",
+                                        module.name, attr_name
+                                    ))
+                                })?;
                             self.push_value(attr);
                         }
                         Value::Class(class) => {
@@ -1147,11 +1207,21 @@ impl Vm {
                         Value::Str(name) => name,
                         _ => return Err(RuntimeError::new("import expects string name")),
                     };
-                    if let Some(module) = self.modules.get(&name).cloned() {
-                        self.push_value(Value::Module(module));
+                    let module = if let Some(module) = self.modules.get(&name).cloned() {
+                        module
                     } else {
-                        self.load_module(&name)?;
-                    }
+                        self.load_module(&name)?
+                    };
+                    let result_module = if let Some((root, _)) = name.split_once('.') {
+                        self.link_module_chain(&name, module.clone());
+                        match self.modules.get(root).cloned() {
+                            Some(module) if module.name == root => module,
+                            _ => self.ensure_module(root),
+                        }
+                    } else {
+                        module
+                    };
+                    self.push_value(Value::Module(result_module));
                 }
                 Opcode::JumpIfFalse => {
                     let target = instr

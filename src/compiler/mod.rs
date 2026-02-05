@@ -168,7 +168,16 @@ impl Compiler {
                 for alias in names {
                     let const_idx = self.code.add_const(Value::Str(alias.name.clone()));
                     self.emit(Opcode::ImportName, Some(const_idx));
-                    let target = alias.asname.as_deref().unwrap_or(&alias.name);
+                    let parts: Vec<&str> = alias.name.split('.').collect();
+                    let has_dots = parts.len() > 1;
+                    if alias.asname.is_some() && has_dots {
+                        self.emit_import_attr_chain(&alias.name)?;
+                    }
+                    let target = if let Some(asname) = alias.asname.as_deref() {
+                        asname
+                    } else {
+                        parts.first().copied().unwrap_or(&alias.name)
+                    };
                     self.emit_store_name_scoped(target);
                 }
                 Ok(())
@@ -176,6 +185,7 @@ impl Compiler {
             Stmt::ImportFrom { module, names } => {
                 let const_idx = self.code.add_const(Value::Str(module.clone()));
                 self.emit(Opcode::ImportName, Some(const_idx));
+                self.emit_import_attr_chain(module)?;
                 for alias in names {
                     self.emit(Opcode::DupTop, None);
                     let attr_idx = self.code.add_name(alias.name.clone());
@@ -195,6 +205,16 @@ impl Compiler {
             Stmt::Break => self.compile_break(),
             Stmt::Continue => self.compile_continue(),
         }
+    }
+
+    fn emit_import_attr_chain(&mut self, module: &str) -> Result<(), CompileError> {
+        let mut parts = module.split('.');
+        let _root = parts.next();
+        for part in parts {
+            let attr_idx = self.code.add_name(part.to_string());
+            self.emit(Opcode::LoadAttr, Some(attr_idx));
+        }
+        Ok(())
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
