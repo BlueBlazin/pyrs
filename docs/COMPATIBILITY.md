@@ -26,7 +26,7 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [ ] Tracebacks + exception chaining
 - [x] Module/import system (file-based, dotted modules, lazy submodule loading on attribute access)
 - [x] Classes subset (single inheritance, instance attrs + bound methods)
-- [ ] Reference counting + cycle handling
+- [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
 
 ## Stdlib Coverage
 - [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted)
@@ -49,8 +49,8 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 Status flags: `[ ]` not started, `[x]` complete.
 
 ### P0 (Production Blocking)
-- [ ] Object identity + stable headers (`id`, `is` semantics).
-- [ ] Reference counting + cycle GC.
+- [x] Object identity + stable headers (`id`, `is` semantics).
+- [x] Reference counting + cycle GC.
 - [ ] CPython opcode table decoder/encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14.
 - [ ] Closures + `nonlocal` (cell/free vars).

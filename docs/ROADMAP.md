@@ -70,8 +70,8 @@ We are building a production-grade Python interpreter in Rust with full source a
 Status flags: `[ ]` not started, `[x]` complete.
 
 ### P0 (Production Blocking)
-- [ ] Object identity + stable headers (`id`, `is` semantics).
-- [ ] Reference counting + cycle GC.
+- [x] Object identity + stable headers (`id`, `is` semantics).
+- [x] Reference counting + cycle GC.
 - [ ] CPython opcode table decoder/encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14.
 - [ ] Closures + `nonlocal` (cell/free vars).
@@ -109,6 +109,7 @@ DoD:
 - `is`/`is not` are identity-based.
 - Refcounting correct for all objects; deterministic dealloc in tests.
 - Cycle GC handles self-referential containers.
+Status: complete
 
 ### Milestone 2 — CPython Bytecode Compatibility (P0)
 DoD:
