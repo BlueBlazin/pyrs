@@ -21,20 +21,11 @@ pub enum Stmt {
         orelse: Vec<Stmt>,
     },
     Assign {
-        target: String,
-        value: Expr,
-    },
-    AssignSubscript {
-        target: Expr,
-        value: Expr,
-    },
-    AssignAttr {
-        object: Expr,
-        name: String,
+        target: AssignTarget,
         value: Expr,
     },
     AugAssign {
-        target: Expr,
+        target: AssignTarget,
         op: AugOp,
         value: Expr,
     },
@@ -74,7 +65,7 @@ pub enum Stmt {
         orelse: Vec<Stmt>,
     },
     For {
-        target: String,
+        target: AssignTarget,
         iter: Expr,
         body: Vec<Stmt>,
         orelse: Vec<Stmt>,
@@ -88,6 +79,11 @@ pub enum Stmt {
     },
     Global {
         names: Vec<String>,
+    },
+    With {
+        context: Expr,
+        target: Option<AssignTarget>,
+        body: Vec<Stmt>,
     },
     Break,
     Continue,
@@ -163,6 +159,15 @@ pub enum Expr {
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssignTarget {
+    Name(String),
+    Tuple(Vec<AssignTarget>),
+    List(Vec<AssignTarget>),
+    Subscript { value: Box<Expr>, index: Box<Expr> },
+    Attribute { value: Box<Expr>, name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

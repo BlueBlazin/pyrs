@@ -41,6 +41,7 @@ pub enum Opcode {
     BuildTuple,
     BuildDict,
     BuildSlice,
+    UnpackSequence,
     ListAppend,
     ListExtend,
     DictSet,

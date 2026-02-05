@@ -29,6 +29,7 @@ pub enum Keyword {
     Global,
     As,
     Lambda,
+    With,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

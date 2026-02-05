@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    BinaryOp, BoolOp, CallArg, Constant, ExceptHandler, Expr, ImportAlias, Module, Parameter,
-    Stmt, UnaryOp,
+    AssignTarget, BinaryOp, BoolOp, CallArg, Constant, ExceptHandler, Expr, ImportAlias, Module,
+    Parameter, Stmt, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -113,29 +113,17 @@ impl Parser {
     }
 
     fn parse_stmt_uncached(&mut self, pos: usize) -> ParseResult<Stmt> {
-        if let Some((target_expr, next_pos)) = self.parse_assignment_target(pos) {
+        if let Some((target_expr, next_pos)) = self.parse_assignment_target_list(pos) {
             let kind = self.token_at(next_pos).kind.clone();
             if kind == TokenKind::Equal {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;
-                return match target_expr {
-                    Expr::Name(name) => Ok((Stmt::Assign { target: name, value }, next)),
-                    Expr::Subscript { .. } => Ok((
-                        Stmt::AssignSubscript {
-                            target: target_expr,
-                            value,
-                        },
-                        next,
-                    )),
-                    Expr::Attribute { value: object, name } => Ok((
-                        Stmt::AssignAttr {
-                            object: *object,
-                            name,
-                            value,
-                        },
-                        next,
-                    )),
-                    _ => Err(self.error_at(pos, "invalid assignment target")),
-                };
+                return Ok((
+                    Stmt::Assign {
+                        target: target_expr,
+                        value,
+                    },
+                    next,
+                ));
             }
 
             let aug_op = match kind {
@@ -167,6 +155,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Import) => self.parse_import_stmt(pos),
             TokenKind::Keyword(Keyword::From) => self.parse_from_import_stmt(pos),
             TokenKind::Keyword(Keyword::Global) => self.parse_global_stmt(pos),
+            TokenKind::Keyword(Keyword::With) => self.parse_with_stmt(pos),
             TokenKind::Keyword(Keyword::Raise) => self.parse_raise_stmt(pos),
             TokenKind::Keyword(Keyword::Assert) => self.parse_assert_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => Ok((Stmt::Pass, pos + 1)),
@@ -550,12 +539,10 @@ impl Parser {
 
     fn parse_for_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
         let mut pos = pos + 1;
-        let target_token = self.token_at(pos);
-        if target_token.kind != TokenKind::Name {
-            return Err(self.error_at(pos, "expected loop target"));
-        }
-        let target = target_token.lexeme.clone();
-        pos += 1;
+        let (target, next) = self
+            .parse_assignment_target_list(pos)
+            .ok_or_else(|| self.error_at(pos, "expected loop target"))?;
+        pos = next;
         if !self.match_keyword(pos, Keyword::In) {
             return Err(self.error_at(pos, "expected 'in'"));
         }
@@ -577,6 +564,27 @@ impl Parser {
         }
 
         Ok((Stmt::For { target, iter, body, orelse }, pos))
+    }
+
+    fn parse_with_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let mut pos = pos + 1;
+        let (context, next) = self.parse_expr_at(pos)?;
+        pos = next;
+
+        let mut target = None;
+        if self.match_keyword(pos, Keyword::As) {
+            pos += 1;
+            let (target_expr, next) = self
+                .parse_assignment_target_list(pos)
+                .ok_or_else(|| self.error_at(pos, "expected with target"))?;
+            target = Some(target_expr);
+            pos = next;
+        }
+
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        let (body, next) = self.parse_suite(pos)?;
+        pos = next;
+        Ok((Stmt::With { context, target, body }, pos))
     }
 
     fn parse_try_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -817,42 +825,112 @@ impl Parser {
         Ok((name, pos))
     }
 
-    fn parse_assignment_target(&mut self, pos: usize) -> Option<(Expr, usize)> {
+    fn parse_assignment_target_list(&mut self, pos: usize) -> Option<(AssignTarget, usize)> {
+        let (first, mut pos) = self.parse_assignment_target(pos)?;
+        let mut targets = vec![first];
+
+        if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::Equal) {
+                    break;
+                }
+                let (target, next) = self.parse_assignment_target(pos)?;
+                targets.push(target);
+                pos = next;
+            }
+            return Some((AssignTarget::Tuple(targets), pos));
+        }
+
+        Some((targets.remove(0), pos))
+    }
+
+    fn parse_assignment_target(&mut self, pos: usize) -> Option<(AssignTarget, usize)> {
         let token = self.token_at(pos);
-        if token.kind != TokenKind::Name {
+        match &token.kind {
+            TokenKind::Name => {
+                let mut expr = Expr::Name(token.lexeme.clone());
+                let mut pos = pos + 1;
+
+                loop {
+                    match self.token_at(pos).kind {
+                        TokenKind::LBracket => {
+                            let (index, next) = self.parse_subscript(pos + 1).ok()?;
+                            expr = Expr::Subscript {
+                                value: Box::new(expr),
+                                index: Box::new(index),
+                            };
+                            pos = next;
+                        }
+                        TokenKind::Dot => {
+                            pos += 1;
+                            let token = self.token_at(pos);
+                            if token.kind != TokenKind::Name {
+                                return None;
+                            }
+                            expr = Expr::Attribute {
+                                value: Box::new(expr),
+                                name: token.lexeme.clone(),
+                            };
+                            pos += 1;
+                        }
+                        _ => break,
+                    }
+                }
+
+                let target = match expr {
+                    Expr::Name(name) => AssignTarget::Name(name),
+                    Expr::Subscript { value, index } => {
+                        AssignTarget::Subscript { value, index }
+                    }
+                    Expr::Attribute { value, name } => AssignTarget::Attribute { value, name },
+                    _ => return None,
+                };
+
+                Some((target, pos))
+            }
+            TokenKind::LParen => {
+                let (targets, next) = self.parse_target_sequence(pos + 1, TokenKind::RParen)?;
+                Some((AssignTarget::Tuple(targets), next))
+            }
+            TokenKind::LBracket => {
+                let (targets, next) = self.parse_target_sequence(pos + 1, TokenKind::RBracket)?;
+                Some((AssignTarget::List(targets), next))
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_target_sequence(
+        &mut self,
+        pos: usize,
+        end: TokenKind,
+    ) -> Option<(Vec<AssignTarget>, usize)> {
+        let mut pos = pos;
+        let mut targets = Vec::new();
+
+        if matches!(self.token_at(pos).kind, ref kind if *kind == end) {
             return None;
         }
 
-        let mut expr = Expr::Name(token.lexeme.clone());
-        let mut pos = pos + 1;
-
         loop {
-            match self.token_at(pos).kind {
-                TokenKind::LBracket => {
-                    let (index, next) = self.parse_subscript(pos + 1).ok()?;
-                    expr = Expr::Subscript {
-                        value: Box::new(expr),
-                        index: Box::new(index),
-                    };
-                    pos = next;
+            let (target, next) = self.parse_assignment_target(pos)?;
+            targets.push(target);
+            pos = next;
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, ref kind if *kind == end) {
+                    break;
                 }
-                TokenKind::Dot => {
-                    pos += 1;
-                    let token = self.token_at(pos);
-                    if token.kind != TokenKind::Name {
-                        return None;
-                    }
-                    expr = Expr::Attribute {
-                        value: Box::new(expr),
-                        name: token.lexeme.clone(),
-                    };
-                    pos += 1;
-                }
-                _ => break,
+                continue;
             }
+            break;
         }
 
-        Some((expr, pos))
+        if !matches!(self.token_at(pos).kind, ref kind if *kind == end) {
+            return None;
+        }
+        Some((targets, pos + 1))
     }
 
     fn parse_function_def(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -1505,5 +1583,6 @@ fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
             | Stmt::FunctionDef { .. }
             | Stmt::ClassDef { .. }
             | Stmt::Try { .. }
+            | Stmt::With { .. }
     )
 }

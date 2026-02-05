@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::ast::{Constant, ExceptHandler, Expr, Module, Parameter, Stmt};
+use crate::ast::{AssignTarget, Constant, ExceptHandler, Expr, Module, Parameter, Stmt};
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
 
@@ -74,57 +74,9 @@ impl Compiler {
                 self.emit(Opcode::PopTop, None);
                 Ok(())
             }
-            Stmt::Assign { target, value } => {
-                self.compile_expr(value)?;
-                self.emit_store_name_scoped(target);
-                Ok(())
-            }
-            Stmt::AssignSubscript { target, value } => {
-                if let Expr::Subscript { value: container, index } = target {
-                    if let Expr::Name(name) = &**container {
-                        let name = name.clone();
-                        self.emit_load_name(&name);
-                        self.compile_expr(index)?;
-                        self.compile_expr(value)?;
-                        self.emit(Opcode::StoreSubscript, None);
-                        self.emit_store_name_scoped(&name);
-                        Ok(())
-                    } else {
-                        Err(CompileError::new(
-                            "only name-based subscript assignments supported",
-                        ))
-                    }
-                } else {
-                    Err(CompileError::new("invalid assignment target"))
-                }
-            }
-            Stmt::AssignAttr { object, name, value } => {
-                self.compile_expr(object)?;
-                self.compile_expr(value)?;
-                let idx = self.code.add_name(name.clone());
-                self.emit(Opcode::StoreAttr, Some(idx));
-                Ok(())
-            }
+            Stmt::Assign { target, value } => self.compile_assign_target(target, value),
             Stmt::AugAssign { target, op, value } => {
-                if let Expr::Name(name) = target {
-                    self.emit_load_name(name);
-                    self.compile_expr(value)?;
-                    let opcode = match op {
-                        crate::ast::AugOp::Add => Opcode::BinaryAdd,
-                        crate::ast::AugOp::Sub => Opcode::BinarySub,
-                        crate::ast::AugOp::Mul => Opcode::BinaryMul,
-                        crate::ast::AugOp::Mod => Opcode::BinaryMod,
-                        crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
-                        crate::ast::AugOp::Pow => Opcode::BinaryPow,
-                    };
-                    self.emit(opcode, None);
-                    self.emit_store_name_scoped(name);
-                    Ok(())
-                } else {
-                    Err(CompileError::new(
-                        "only name-based augmented assignments supported",
-                    ))
-                }
+                self.compile_aug_assign(target, op, value)
             }
             Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
             Stmt::While { test, body, orelse } => self.compile_while(test, body, orelse),
@@ -212,6 +164,11 @@ impl Compiler {
                 }
                 Ok(())
             }
+            Stmt::With {
+                context,
+                target,
+                body,
+            } => self.compile_with(context, target.as_ref(), body),
             Stmt::Break => self.compile_break(),
             Stmt::Continue => self.compile_continue(),
         }
@@ -675,9 +632,136 @@ impl Compiler {
         Ok(compiler.finish())
     }
 
+    fn compile_assign_target(
+        &mut self,
+        target: &AssignTarget,
+        value: &Expr,
+    ) -> Result<(), CompileError> {
+        self.compile_expr(value)?;
+        self.compile_store_target_from_stack(target)
+    }
+
+    fn compile_store_target_from_stack(&mut self, target: &AssignTarget) -> Result<(), CompileError> {
+        match target {
+            AssignTarget::Name(name) => {
+                self.emit_store_name_scoped(name);
+                Ok(())
+            }
+            AssignTarget::Tuple(items) | AssignTarget::List(items) => {
+                self.emit(Opcode::UnpackSequence, Some(items.len() as u32));
+                for item in items.iter().rev() {
+                    self.compile_store_target_from_stack(item)?;
+                }
+                Ok(())
+            }
+            AssignTarget::Attribute { value, name } => {
+                let temp = self.fresh_temp("assign");
+                self.emit_store_name(&temp);
+                self.compile_expr(value)?;
+                self.emit_load_name(&temp);
+                let idx = self.code.add_name(name.clone());
+                self.emit(Opcode::StoreAttr, Some(idx));
+                Ok(())
+            }
+            AssignTarget::Subscript { value, index } => {
+                if let Expr::Name(name) = &**value {
+                    let temp = self.fresh_temp("assign");
+                    self.emit_store_name(&temp);
+                    self.emit_load_name(name);
+                    self.compile_expr(index)?;
+                    self.emit_load_name(&temp);
+                    self.emit(Opcode::StoreSubscript, None);
+                    self.emit_store_name_scoped(name);
+                    Ok(())
+                } else {
+                    Err(CompileError::new(
+                        "only name-based subscript assignments supported",
+                    ))
+                }
+            }
+        }
+    }
+
+    fn compile_aug_assign(
+        &mut self,
+        target: &AssignTarget,
+        op: &crate::ast::AugOp,
+        value: &Expr,
+    ) -> Result<(), CompileError> {
+        match target {
+            AssignTarget::Name(name) => {
+                self.emit_load_name(name);
+                self.compile_expr(value)?;
+                let opcode = match op {
+                    crate::ast::AugOp::Add => Opcode::BinaryAdd,
+                    crate::ast::AugOp::Sub => Opcode::BinarySub,
+                    crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                    crate::ast::AugOp::Mod => Opcode::BinaryMod,
+                    crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
+                    crate::ast::AugOp::Pow => Opcode::BinaryPow,
+                };
+                self.emit(opcode, None);
+                self.emit_store_name_scoped(name);
+                Ok(())
+            }
+            AssignTarget::Subscript { value: container, index } => {
+                if let Expr::Name(name) = &**container {
+                    let name = name.clone();
+                    self.emit_load_name(&name);
+                    self.compile_expr(index)?;
+                    self.emit(Opcode::Subscript, None);
+                    self.compile_expr(value)?;
+                    let opcode = match op {
+                        crate::ast::AugOp::Add => Opcode::BinaryAdd,
+                        crate::ast::AugOp::Sub => Opcode::BinarySub,
+                        crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                        crate::ast::AugOp::Mod => Opcode::BinaryMod,
+                        crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
+                        crate::ast::AugOp::Pow => Opcode::BinaryPow,
+                    };
+                    self.emit(opcode, None);
+                    self.emit_load_name(&name);
+                    self.compile_expr(index)?;
+                    self.emit(Opcode::StoreSubscript, None);
+                    self.emit_store_name_scoped(&name);
+                    Ok(())
+                } else {
+                    Err(CompileError::new(
+                        "only name-based subscript assignments supported",
+                    ))
+                }
+            }
+            AssignTarget::Attribute { value: object, name } => {
+                let temp = self.fresh_temp("assign");
+                self.compile_expr(object)?;
+                self.emit_store_name(&temp);
+                self.emit_load_name(&temp);
+                let idx = self.code.add_name(name.clone());
+                self.emit(Opcode::LoadAttr, Some(idx));
+                self.compile_expr(value)?;
+                let opcode = match op {
+                    crate::ast::AugOp::Add => Opcode::BinaryAdd,
+                    crate::ast::AugOp::Sub => Opcode::BinarySub,
+                    crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                    crate::ast::AugOp::Mod => Opcode::BinaryMod,
+                    crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
+                    crate::ast::AugOp::Pow => Opcode::BinaryPow,
+                };
+                self.emit(opcode, None);
+                self.emit_load_name(&temp);
+                let idx = self.code.add_name(name.clone());
+                self.emit(Opcode::StoreAttr, Some(idx));
+                Ok(())
+            }
+            _ => Err(CompileError::new(
+                "invalid augmented assignment target",
+            )),
+        }
+    }
+
     fn compile_for(
         &mut self,
-        target: &str,
+        target: &AssignTarget,
         iter: &Expr,
         body: &[Stmt],
         orelse: &[Stmt],
@@ -703,7 +787,7 @@ impl Compiler {
         self.emit_load_name(&iter_temp);
         self.emit_load_name(&index_temp);
         self.emit(Opcode::Subscript, None);
-        self.emit_store_name_scoped(target);
+        self.compile_store_target_from_stack(target)?;
 
         self.loop_stack.push(LoopContext {
             start: loop_start,
@@ -737,6 +821,57 @@ impl Compiler {
         let loop_end = self.current_ip();
         self.resolve_loop(loop_end)?;
 
+        Ok(())
+    }
+
+    fn compile_with(
+        &mut self,
+        context: &Expr,
+        target: Option<&AssignTarget>,
+        body: &[Stmt],
+    ) -> Result<(), CompileError> {
+        let ctx_temp = self.fresh_temp("ctx");
+        self.compile_expr(context)?;
+        self.emit_store_name(&ctx_temp);
+
+        self.emit_load_name(&ctx_temp);
+        let enter_idx = self.code.add_name("__enter__".to_string());
+        self.emit(Opcode::LoadAttr, Some(enter_idx));
+        self.emit(Opcode::CallFunction, Some(0));
+        if let Some(target) = target {
+            self.compile_store_target_from_stack(target)?;
+        } else {
+            self.emit(Opcode::PopTop, None);
+        }
+
+        let setup_except = self.emit_jump(Opcode::SetupExcept);
+        for stmt in body {
+            self.compile_stmt(stmt)?;
+        }
+        self.emit(Opcode::PopBlock, None);
+        self.emit_with_exit(&ctx_temp)?;
+        let jump_to_end = self.emit_jump(Opcode::Jump);
+
+        let handler_start = self.current_ip();
+        self.patch_jump(setup_except, handler_start)?;
+        self.emit(Opcode::PopTop, None);
+        self.emit_with_exit(&ctx_temp)?;
+        self.emit(Opcode::Raise, Some(0));
+
+        let end_target = self.current_ip();
+        self.patch_jump(jump_to_end, end_target)?;
+        Ok(())
+    }
+
+    fn emit_with_exit(&mut self, ctx_temp: &str) -> Result<(), CompileError> {
+        self.emit_load_name(ctx_temp);
+        let exit_idx = self.code.add_name("__exit__".to_string());
+        self.emit(Opcode::LoadAttr, Some(exit_idx));
+        self.emit(Opcode::LoadConst, Some(0));
+        self.emit(Opcode::LoadConst, Some(0));
+        self.emit(Opcode::LoadConst, Some(0));
+        self.emit(Opcode::CallFunction, Some(3));
+        self.emit(Opcode::PopTop, None);
         Ok(())
     }
 

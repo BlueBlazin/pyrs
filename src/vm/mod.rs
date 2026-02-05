@@ -624,6 +624,28 @@ impl Vm {
                     values.reverse();
                     self.push_value(Value::Dict(values));
                 }
+                Opcode::UnpackSequence => {
+                    let count = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing unpack size"))?
+                        as usize;
+                    let value = self.pop_value()?;
+                    let items = match value {
+                        Value::List(values) => values,
+                        Value::Tuple(values) => values,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "unpack expects list or tuple",
+                            ))
+                        }
+                    };
+                    if items.len() != count {
+                        return Err(RuntimeError::new("unpack length mismatch"));
+                    }
+                    for item in items {
+                        self.push_value(item);
+                    }
+                }
                 Opcode::ListAppend => {
                     let value = self.pop_value()?;
                     let list = self.pop_value()?;
