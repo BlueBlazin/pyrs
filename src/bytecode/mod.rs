@@ -33,6 +33,7 @@ pub enum Opcode {
     MakeFunction,
     BuildClass,
     CallFunction,
+    CallFunctionKw,
     ImportName,
     BuildList,
     BuildTuple,

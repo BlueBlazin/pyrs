@@ -123,7 +123,7 @@ pub enum Expr {
     },
     Call {
         func: Box<Expr>,
-        args: Vec<Expr>,
+        args: Vec<CallArg>,
     },
     List(Vec<Expr>),
     Tuple(Vec<Expr>),
@@ -155,6 +155,12 @@ pub enum Expr {
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallArg {
+    Positional(Expr),
+    Keyword { name: String, value: Expr },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

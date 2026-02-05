@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    BinaryOp, BoolOp, Constant, ExceptHandler, Expr, ImportAlias, Module, Parameter, Stmt,
-    UnaryOp,
+    BinaryOp, BoolOp, CallArg, Constant, ExceptHandler, Expr, ImportAlias, Module, Parameter,
+    Stmt, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -882,7 +882,14 @@ impl Parser {
         let mut bases = Vec::new();
         if matches!(self.token_at(pos).kind, TokenKind::LParen) {
             let (args, next) = self.parse_call_args(pos + 1)?;
-            bases = args;
+            for arg in args {
+                match arg {
+                    CallArg::Positional(expr) => bases.push(expr),
+                    CallArg::Keyword { .. } => {
+                        return Err(self.error_at(pos, "class bases cannot be keyword arguments"))
+                    }
+                }
+            }
             pos = next;
         }
 
@@ -912,7 +919,7 @@ impl Parser {
         }
     }
 
-    fn parse_call_args(&mut self, pos: usize) -> Result<(Vec<Expr>, usize), ParseError> {
+    fn parse_call_args(&mut self, pos: usize) -> Result<(Vec<CallArg>, usize), ParseError> {
         let mut pos = pos;
         let mut args = Vec::new();
 
@@ -921,9 +928,19 @@ impl Parser {
         }
 
         loop {
-            let (expr, next) = self.parse_expr_at(pos)?;
-            args.push(expr);
-            pos = next;
+            let token = self.token_at(pos);
+            if token.kind == TokenKind::Name && matches!(self.token_at(pos + 1).kind, TokenKind::Equal)
+            {
+                let name = token.lexeme.clone();
+                pos += 2;
+                let (value, next) = self.parse_expr_at(pos)?;
+                args.push(CallArg::Keyword { name, value });
+                pos = next;
+            } else {
+                let (expr, next) = self.parse_expr_at(pos)?;
+                args.push(CallArg::Positional(expr));
+                pos = next;
+            }
 
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
                 pos += 1;

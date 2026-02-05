@@ -247,10 +247,28 @@ impl Compiler {
             }
             Expr::Call { func, args } => {
                 self.compile_expr(func)?;
+                let mut pos_count = 0u32;
+                let mut kw_count = 0u32;
                 for arg in args {
-                    self.compile_expr(arg)?;
+                    match arg {
+                        crate::ast::CallArg::Positional(expr) => {
+                            self.compile_expr(expr)?;
+                            pos_count += 1;
+                        }
+                        crate::ast::CallArg::Keyword { name, value } => {
+                            let name_idx = self.code.add_const(Value::Str(name.clone()));
+                            self.emit(Opcode::LoadConst, Some(name_idx));
+                            self.compile_expr(value)?;
+                            kw_count += 1;
+                        }
+                    }
                 }
-                self.emit(Opcode::CallFunction, Some(args.len() as u32));
+                if kw_count > 0 {
+                    let packed = pack_call_counts(pos_count, kw_count)?;
+                    self.emit(Opcode::CallFunctionKw, Some(packed));
+                } else {
+                    self.emit(Opcode::CallFunction, Some(pos_count));
+                }
                 Ok(())
             }
             Expr::List(elements) => {
@@ -813,6 +831,13 @@ impl Compiler {
         }
         Ok(())
     }
+}
+
+fn pack_call_counts(positional: u32, keywords: u32) -> Result<u32, CompileError> {
+    if positional > u16::MAX as u32 || keywords > u16::MAX as u32 {
+        return Err(CompileError::new("too many call arguments"));
+    }
+    Ok((keywords << 16) | positional)
 }
 
 fn constant_to_value(constant: &Constant) -> Value {

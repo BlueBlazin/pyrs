@@ -768,7 +768,7 @@ impl Vm {
                     let func = self.pop_value()?;
                     match func {
                         Value::Function(func) => {
-                            let args = apply_defaults(&func, args)?;
+                            let args = bind_arguments(&func, args, HashMap::new())?;
                             let params = func.code.params.clone();
                             let mut frame =
                                 Frame::new(func.code.clone(), func.module.clone(), false, false);
@@ -781,7 +781,8 @@ impl Vm {
                             let mut bound_args = Vec::with_capacity(args.len() + 1);
                             bound_args.push(Value::Instance(method.receiver.clone()));
                             bound_args.extend(args);
-                            let bound_args = apply_defaults(&method.function, bound_args)?;
+                            let bound_args =
+                                bind_arguments(&method.function, bound_args, HashMap::new())?;
                             let params = method.function.code.params.clone();
                             let mut frame = Frame::new(
                                 method.function.code.clone(),
@@ -801,7 +802,8 @@ impl Vm {
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
                                 init_args.extend(args);
-                                let init_args = apply_defaults(&init_func, init_args)?;
+                                let init_args =
+                                    bind_arguments(&init_func, init_args, HashMap::new())?;
                                 let params = init_func.code.params.clone();
                                 let mut frame = Frame::new(
                                     init_func.code.clone(),
@@ -823,6 +825,116 @@ impl Vm {
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
+                            let message = match args.as_slice() {
+                                [] => None,
+                                [value] => Some(format_value(value)),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "exception constructor expects at most one argument",
+                                    ))
+                                }
+                            };
+                            self.push_value(Value::Exception(ExceptionObject { name, message }));
+                        }
+                        _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    }
+                }
+                Opcode::CallFunctionKw => {
+                    let arg = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing call argument"))?;
+                    let (pos_count, kw_count) = decode_call_counts(arg);
+                    let mut kwargs = HashMap::new();
+                    for _ in 0..kw_count {
+                        let value = self.pop_value()?;
+                        let name = self.pop_value()?;
+                        let name = match name {
+                            Value::Str(name) => name,
+                            _ => return Err(RuntimeError::new("keyword name must be string")),
+                        };
+                        if kwargs.contains_key(&name) {
+                            return Err(RuntimeError::new("duplicate keyword argument"));
+                        }
+                        kwargs.insert(name, value);
+                    }
+                    let mut args = Vec::with_capacity(pos_count);
+                    for _ in 0..pos_count {
+                        args.push(self.pop_value()?);
+                    }
+                    args.reverse();
+                    let func = self.pop_value()?;
+                    match func {
+                        Value::Function(func) => {
+                            let args = bind_arguments(&func, args, kwargs)?;
+                            let params = func.code.params.clone();
+                            let mut frame =
+                                Frame::new(func.code.clone(), func.module.clone(), false, false);
+                            for (name, value) in params.into_iter().zip(args.into_iter()) {
+                                frame.locals.insert(name, value);
+                            }
+                            self.frames.push(frame);
+                        }
+                        Value::BoundMethod(method) => {
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(Value::Instance(method.receiver.clone()));
+                            bound_args.extend(args);
+                            let bound_args = bind_arguments(&method.function, bound_args, kwargs)?;
+                            let params = method.function.code.params.clone();
+                            let mut frame = Frame::new(
+                                method.function.code.clone(),
+                                method.function.module.clone(),
+                                false,
+                                false,
+                            );
+                            for (name, value) in params.into_iter().zip(bound_args.into_iter()) {
+                                frame.locals.insert(name, value);
+                            }
+                            self.frames.push(frame);
+                        }
+                        Value::Class(class) => {
+                            let instance = Rc::new(InstanceObject::new(class.clone()));
+                            let init = class_attr_lookup(&class, "__init__");
+                            if let Some(Value::Function(init_func)) = init {
+                                let mut init_args = Vec::with_capacity(args.len() + 1);
+                                init_args.push(Value::Instance(instance.clone()));
+                                init_args.extend(args);
+                                let init_args = bind_arguments(&init_func, init_args, kwargs)?;
+                                let params = init_func.code.params.clone();
+                                let mut frame = Frame::new(
+                                    init_func.code.clone(),
+                                    init_func.module.clone(),
+                                    false,
+                                    false,
+                                );
+                                frame.return_instance = Some(instance);
+                                for (name, value) in params.into_iter().zip(init_args.into_iter()) {
+                                    frame.locals.insert(name, value);
+                                }
+                                self.frames.push(frame);
+                            } else {
+                                if !kwargs.is_empty() {
+                                    return Err(RuntimeError::new(
+                                        "unexpected keyword arguments",
+                                    ));
+                                }
+                                self.push_value(Value::Instance(instance));
+                            }
+                        }
+                        Value::Builtin(builtin) => {
+                            if !kwargs.is_empty() {
+                                return Err(RuntimeError::new(
+                                    "keyword arguments not supported for builtin",
+                                ));
+                            }
+                            let result = builtin.call(args)?;
+                            self.push_value(result);
+                        }
+                        Value::ExceptionType(name) => {
+                            if !kwargs.is_empty() {
+                                return Err(RuntimeError::new(
+                                    "keyword arguments not supported for exceptions",
+                                ));
+                            }
                             let message = match args.as_slice() {
                                 [] => None,
                                 [value] => Some(format_value(value)),
@@ -1227,9 +1339,10 @@ fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, Ru
     Ok(exception_name == handler_name)
 }
 
-fn apply_defaults(
+fn bind_arguments(
     func: &FunctionObject,
-    mut args: Vec<Value>,
+    positional: Vec<Value>,
+    mut kwargs: HashMap<String, Value>,
 ) -> Result<Vec<Value>, RuntimeError> {
     let params_len = func.code.params.len();
     let defaults_len = func.defaults.len();
@@ -1237,17 +1350,47 @@ fn apply_defaults(
         return Err(RuntimeError::new("invalid function defaults"));
     }
 
-    let required = params_len - defaults_len;
-    if args.len() < required || args.len() > params_len {
+    if positional.len() > params_len {
         return Err(RuntimeError::new("argument count mismatch"));
     }
 
-    let missing = params_len - args.len();
-    if missing > 0 {
-        let start = defaults_len - missing;
-        args.extend(func.defaults[start..].iter().cloned());
+    let required = params_len - defaults_len;
+    let mut bound: Vec<Option<Value>> = vec![None; params_len];
+
+    for (idx, value) in positional.into_iter().enumerate() {
+        bound[idx] = Some(value);
     }
-    Ok(args)
+
+    for (name, value) in kwargs.drain() {
+        let index = func
+            .code
+            .params
+            .iter()
+            .position(|param| param == &name)
+            .ok_or_else(|| RuntimeError::new("unexpected keyword argument"))?;
+        if bound[index].is_some() {
+            return Err(RuntimeError::new("multiple values for argument"));
+        }
+        bound[index] = Some(value);
+    }
+
+    for idx in 0..params_len {
+        if bound[idx].is_none() {
+            if idx < required {
+                return Err(RuntimeError::new("argument count mismatch"));
+            }
+            let default_index = idx - required;
+            bound[idx] = Some(func.defaults[default_index].clone());
+        }
+    }
+
+    Ok(bound.into_iter().map(|value| value.unwrap()).collect())
+}
+
+fn decode_call_counts(arg: u32) -> (usize, usize) {
+    let pos = (arg & 0xFFFF) as usize;
+    let kw = (arg >> 16) as usize;
+    (pos, kw)
 }
 
 fn class_attr_lookup(class: &Rc<ClassObject>, name: &str) -> Option<Value> {
