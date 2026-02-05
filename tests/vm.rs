@@ -577,6 +577,31 @@ fn executes_sorted_with_reverse() {
 }
 
 #[test]
+fn executes_enumerate_builtin() {
+    let source = "a = enumerate([1, 2])\n\
+b = enumerate('ab', start=1)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("a"),
+        Some(Value::List(vec![
+            Value::Tuple(vec![Value::Int(0), Value::Int(1)]),
+            Value::Tuple(vec![Value::Int(1), Value::Int(2)])
+        ]))
+    );
+    assert_eq!(
+        vm.get_global("b"),
+        Some(Value::List(vec![
+            Value::Tuple(vec![Value::Int(1), Value::Str("a".to_string())]),
+            Value::Tuple(vec![Value::Int(2), Value::Str("b".to_string())])
+        ]))
+    );
+}
+
+#[test]
 fn executes_try_except_statement() {
     let source =
         "try:\n    raise ValueError('bad')\nexcept ValueError as err:\n    x = 1\n";
