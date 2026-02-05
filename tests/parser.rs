@@ -1,4 +1,4 @@
-use pyrs::ast::{Constant, Expr, Stmt};
+use pyrs::ast::{AssignTarget, Constant, Expr, Stmt};
 use pyrs::parser;
 
 #[test]
@@ -22,17 +22,36 @@ fn parses_assignment_statement() {
     assert_eq!(
         module.body,
         vec![Stmt::Assign {
-            target: "x".to_string(),
+            target: AssignTarget::Name("x".to_string()),
             value: Expr::Constant(Constant::Int(1)),
         }]
     );
 }
 
 #[test]
+fn parses_destructuring_assignment_statement() {
+    let module = parser::parse_module("a, b = (1, 2)").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Assign {
+            target: AssignTarget::Tuple(items),
+            ..
+        } => {
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0], AssignTarget::Name("a".to_string()));
+            assert_eq!(items[1], AssignTarget::Name("b".to_string()));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_subscript_assignment_statement() {
     let module = parser::parse_module("x[0] = 1").expect("parse should succeed");
     match &module.body[0] {
-        Stmt::AssignSubscript { .. } => {}
+        Stmt::Assign {
+            target: AssignTarget::Subscript { .. },
+            ..
+        } => {}
         other => panic!("unexpected stmt: {other:?}"),
     }
 }
@@ -41,9 +60,10 @@ fn parses_subscript_assignment_statement() {
 fn parses_attribute_assignment_statement() {
     let module = parser::parse_module("mod.x = 1").expect("parse should succeed");
     match &module.body[0] {
-        Stmt::AssignAttr { name, .. } => {
-            assert_eq!(name, "x");
-        }
+        Stmt::Assign {
+            target: AssignTarget::Attribute { name, .. },
+            ..
+        } => assert_eq!(name, "x"),
         other => panic!("unexpected stmt: {other:?}"),
     }
 }
@@ -67,6 +87,20 @@ fn parses_augmented_assignment_variants() {
             Stmt::AugAssign { .. } => {}
             other => panic!("unexpected stmt: {other:?}"),
         }
+    }
+}
+
+#[test]
+fn parses_with_statement() {
+    let source = "with mgr as value:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::With { context, target, .. } => {
+            assert_eq!(context, &Expr::Name("mgr".to_string()));
+            let target = target.as_ref().expect("with target");
+            assert_eq!(*target, AssignTarget::Name("value".to_string()));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
     }
 }
 
@@ -896,7 +930,7 @@ fn parses_for_loop() {
             body,
             orelse,
         } => {
-            assert_eq!(target, "i");
+            assert_eq!(target, &AssignTarget::Name("i".to_string()));
             assert_eq!(
                 *iter,
                 Expr::List(vec![

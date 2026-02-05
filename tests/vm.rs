@@ -37,6 +37,30 @@ fn executes_assignment_statement() {
 }
 
 #[test]
+fn executes_destructuring_assignment() {
+    let module = parser::parse_module("a, b = [1, 2]").expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(2)));
+}
+
+#[test]
+fn executes_destructuring_assignment_nested() {
+    let source = "a, (b, c) = (1, (2, 3))";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("c"), Some(Value::Int(3)));
+}
+
+#[test]
 fn executes_binary_expression_assignment() {
     let module = parser::parse_module("x = 1 + 2 * 3").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -1155,6 +1179,66 @@ fn executes_augmented_assignment() {
 #[test]
 fn executes_augmented_assignment_variants() {
     let source = "x = 10\nx %= 4\nx //= 2\nx **= 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
+}
+
+#[test]
+fn executes_for_with_tuple_target() {
+    let source = r#"pairs = [(1, 2), (3, 4)]
+total = 0
+for a, b in pairs:
+    total = total + a + b
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("total"), Some(Value::Int(10)));
+}
+
+#[test]
+fn executes_with_statement_with_target() {
+    let source = r#"class C:
+    def __init__(self):
+        self.state = 0
+    def __enter__(self):
+        self.state = 1
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        self.state = self.state + 1
+        return False
+with C() as c:
+    c.state = c.state + 10
+x = c.state
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(12)));
+}
+
+#[test]
+fn executes_with_statement_without_target() {
+    let source = r#"flag = 0
+class C:
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        global flag
+        flag = 1
+        return False
+with C():
+    pass
+x = flag
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
