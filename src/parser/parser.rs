@@ -368,6 +368,23 @@ impl Parser {
         Ok((left, pos))
     }
 
+    fn parse_power(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (left, mut pos) = self.parse_atom(pos)?;
+        if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
+            pos += 1;
+            let (right, next) = self.parse_unary(pos)?;
+            return Ok((
+                Expr::Binary {
+                    left: Box::new(left),
+                    op: BinaryOp::Pow,
+                    right: Box::new(right),
+                },
+                next,
+            ));
+        }
+        Ok((left, pos))
+    }
+
     fn parse_unary(&mut self, pos: usize) -> ParseResult<Expr> {
         if matches!(self.token_at(pos).kind, TokenKind::Minus) {
             let (expr, next) = self.parse_unary(pos + 1)?;
@@ -389,7 +406,7 @@ impl Parser {
                 next,
             ));
         }
-        self.parse_atom(pos)
+        self.parse_power(pos)
     }
 
     fn parse_atom(&mut self, pos: usize) -> ParseResult<Expr> {

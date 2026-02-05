@@ -398,6 +398,18 @@ impl Vm {
                     let left = self.pop_value()?;
                     self.push_value(mul_values(left, right)?);
                 }
+                Opcode::BinaryPow => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let (left, right) = (value_to_int(left)?, value_to_int(right)?);
+                    if right < 0 {
+                        return Err(RuntimeError::new("negative exponent not supported"));
+                    }
+                    let value = left
+                        .checked_pow(right as u32)
+                        .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+                    self.push_value(Value::Int(value));
+                }
                 Opcode::BinaryFloorDiv => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;

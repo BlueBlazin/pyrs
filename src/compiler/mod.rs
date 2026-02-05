@@ -213,6 +213,7 @@ impl Compiler {
                     crate::ast::BinaryOp::Add => Opcode::BinaryAdd,
                     crate::ast::BinaryOp::Sub => Opcode::BinarySub,
                     crate::ast::BinaryOp::Mul => Opcode::BinaryMul,
+                    crate::ast::BinaryOp::Pow => Opcode::BinaryPow,
                     crate::ast::BinaryOp::FloorDiv => Opcode::BinaryFloorDiv,
                     crate::ast::BinaryOp::Mod => Opcode::BinaryMod,
                     crate::ast::BinaryOp::Eq => Opcode::CompareEq,

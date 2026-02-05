@@ -15,6 +15,7 @@ pub enum Opcode {
     BinaryAdd,
     BinarySub,
     BinaryMul,
+    BinaryPow,
     BinaryFloorDiv,
     BinaryMod,
     CompareEq,
