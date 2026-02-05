@@ -439,6 +439,17 @@ b = sum((1, 2), 5)\n";
 }
 
 #[test]
+fn executes_sum_with_keyword_start() {
+    let source = "a = sum([1, 2, 3], start=4)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(10)));
+}
+
+#[test]
 fn executes_min_max_builtins() {
     let source = "a = min(3, 1, 2)\n\
 b = max([1, 5, 2])\n\
@@ -548,6 +559,20 @@ b = sorted(('b', 'a'))\n";
             Value::Str("a".to_string()),
             Value::Str("b".to_string())
         ]))
+    );
+}
+
+#[test]
+fn executes_sorted_with_reverse() {
+    let source = "a = sorted([3, 1, 2], reverse=True)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("a"),
+        Some(Value::List(vec![Value::Int(3), Value::Int(2), Value::Int(1)]))
     );
 }
 
