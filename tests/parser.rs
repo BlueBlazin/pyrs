@@ -415,8 +415,31 @@ fn parses_call_expression() {
             assert_eq!(
                 args,
                 &vec![
-                    Expr::Constant(Constant::Int(1)),
-                    Expr::Constant(Constant::Int(2)),
+                    pyrs::ast::CallArg::Positional(Expr::Constant(Constant::Int(1))),
+                    pyrs::ast::CallArg::Positional(Expr::Constant(Constant::Int(2))),
+                ]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_call_with_keywords() {
+    let module = parser::parse_module("add(a=1, b=2)").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Call { args, .. }) => {
+            assert_eq!(
+                args,
+                &vec![
+                    pyrs::ast::CallArg::Keyword {
+                        name: "a".to_string(),
+                        value: Expr::Constant(Constant::Int(1)),
+                    },
+                    pyrs::ast::CallArg::Keyword {
+                        name: "b".to_string(),
+                        value: Expr::Constant(Constant::Int(2)),
+                    },
                 ]
             );
         }
