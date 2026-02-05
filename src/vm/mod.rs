@@ -1903,6 +1903,44 @@ fn call_builtin_with_kwargs(
 
             Ok(Value::List(values))
         }
+        BuiltinFunction::Sum => {
+            let start = kwargs.remove("start");
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "sum() got an unexpected keyword argument",
+                ));
+            }
+            if let Some(value) = start {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("sum() got multiple values"));
+                }
+                args.push(value);
+            }
+            builtin.call(args)
+        }
+        BuiltinFunction::Sorted => {
+            let reverse = kwargs
+                .remove("reverse")
+                .map(|value| is_truthy(&value))
+                .unwrap_or(false);
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "sorted() got an unexpected keyword argument",
+                ));
+            }
+            let result = builtin.call(args)?;
+            if reverse {
+                match result {
+                    Value::List(mut values) => {
+                        values.reverse();
+                        Ok(Value::List(values))
+                    }
+                    other => Ok(other),
+                }
+            } else {
+                Ok(result)
+            }
+        }
         _ => {
             if !kwargs.is_empty() {
                 return Err(RuntimeError::new(
