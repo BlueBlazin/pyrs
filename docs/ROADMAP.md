@@ -75,9 +75,9 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] CPython opcode table decoder (3.14).
 - [ ] CPython opcode encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
-- [ ] Closures + `nonlocal` (cell/free vars).
+- [x] Closures + `nonlocal` (cell/free vars).
 - [ ] Generators (`yield`, `yield from`) + protocol.
-- [ ] Tracebacks + accurate frames (file/line/col).
+- [x] Tracebacks + accurate frames (file/line/col).
 - [ ] Import system parity (`importlib`, specs, hooks).
 
 ### P1 (Major Ecosystem Enablers)
@@ -126,6 +126,7 @@ DoD:
 - Cells/free vars capture correctly across calls.
 - Tracebacks show filename/line/column and frame names.
 - `locals()`/`globals()` reflect correct scopes.
+Status: complete
 
 ### Milestone 4 — Generators & Iteration (P0)
 DoD:
