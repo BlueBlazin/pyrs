@@ -947,6 +947,17 @@ fn executes_augmented_assignment() {
 }
 
 #[test]
+fn executes_augmented_assignment_variants() {
+    let source = "x = 10\nx %= 4\nx //= 2\nx **= 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
+}
+
+#[test]
 fn executes_modulo() {
     let source = "x = 5 % 2\ny = 9 % 4\n";
     let module = parser::parse_module(source).expect("parse should succeed");

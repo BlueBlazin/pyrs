@@ -58,6 +58,19 @@ fn parses_augmented_assignment() {
 }
 
 #[test]
+fn parses_augmented_assignment_variants() {
+    let module =
+        parser::parse_module("x %= 2\nx //= 3\nx **= 2\n").expect("parse should succeed");
+    assert_eq!(module.body.len(), 3);
+    for stmt in &module.body {
+        match stmt {
+            Stmt::AugAssign { .. } => {}
+            other => panic!("unexpected stmt: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn parses_binary_expression_with_precedence() {
     let module = parser::parse_module("1 + 2 * 3").expect("parse should succeed");
     let expected = Stmt::Expr(Expr::Binary {
