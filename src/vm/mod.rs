@@ -844,31 +844,28 @@ impl Vm {
                     let func = self.pop_value()?;
                     match func {
                         Value::Function(func) => {
-                            let args = bind_arguments(&func, args, HashMap::new())?;
-                            let params = func.code.params.clone();
+                            let bindings = bind_arguments(&func, args, HashMap::new())?;
                             let mut frame =
                                 Frame::new(func.code.clone(), func.module.clone(), false, false);
-                            for (name, value) in params.into_iter().zip(args.into_iter()) {
-                                frame.locals.insert(name, value);
-                            }
+                            apply_bindings(&mut frame, &func.code, bindings);
                             self.frames.push(frame);
                         }
                         Value::BoundMethod(method) => {
                             let mut bound_args = Vec::with_capacity(args.len() + 1);
                             bound_args.push(Value::Instance(method.receiver.clone()));
                             bound_args.extend(args);
-                            let bound_args =
-                                bind_arguments(&method.function, bound_args, HashMap::new())?;
-                            let params = method.function.code.params.clone();
+                            let bindings = bind_arguments(
+                                &method.function,
+                                bound_args,
+                                HashMap::new(),
+                            )?;
                             let mut frame = Frame::new(
                                 method.function.code.clone(),
                                 method.function.module.clone(),
                                 false,
                                 false,
                             );
-                            for (name, value) in params.into_iter().zip(bound_args.into_iter()) {
-                                frame.locals.insert(name, value);
-                            }
+                            apply_bindings(&mut frame, &method.function.code, bindings);
                             self.frames.push(frame);
                         }
                         Value::Class(class) => {
@@ -878,9 +875,8 @@ impl Vm {
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
                                 init_args.extend(args);
-                                let init_args =
+                                let bindings =
                                     bind_arguments(&init_func, init_args, HashMap::new())?;
-                                let params = init_func.code.params.clone();
                                 let mut frame = Frame::new(
                                     init_func.code.clone(),
                                     init_func.module.clone(),
@@ -888,9 +884,7 @@ impl Vm {
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
-                                for (name, value) in params.into_iter().zip(init_args.into_iter()) {
-                                    frame.locals.insert(name, value);
-                                }
+                                apply_bindings(&mut frame, &init_func.code, bindings);
                                 self.frames.push(frame);
                             } else {
                                 self.push_value(Value::Instance(instance));
@@ -941,30 +935,24 @@ impl Vm {
                     let func = self.pop_value()?;
                     match func {
                         Value::Function(func) => {
-                            let args = bind_arguments(&func, args, kwargs)?;
-                            let params = func.code.params.clone();
+                            let bindings = bind_arguments(&func, args, kwargs)?;
                             let mut frame =
                                 Frame::new(func.code.clone(), func.module.clone(), false, false);
-                            for (name, value) in params.into_iter().zip(args.into_iter()) {
-                                frame.locals.insert(name, value);
-                            }
+                            apply_bindings(&mut frame, &func.code, bindings);
                             self.frames.push(frame);
                         }
                         Value::BoundMethod(method) => {
                             let mut bound_args = Vec::with_capacity(args.len() + 1);
                             bound_args.push(Value::Instance(method.receiver.clone()));
                             bound_args.extend(args);
-                            let bound_args = bind_arguments(&method.function, bound_args, kwargs)?;
-                            let params = method.function.code.params.clone();
+                            let bindings = bind_arguments(&method.function, bound_args, kwargs)?;
                             let mut frame = Frame::new(
                                 method.function.code.clone(),
                                 method.function.module.clone(),
                                 false,
                                 false,
                             );
-                            for (name, value) in params.into_iter().zip(bound_args.into_iter()) {
-                                frame.locals.insert(name, value);
-                            }
+                            apply_bindings(&mut frame, &method.function.code, bindings);
                             self.frames.push(frame);
                         }
                         Value::Class(class) => {
@@ -974,8 +962,7 @@ impl Vm {
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
                                 init_args.extend(args);
-                                let init_args = bind_arguments(&init_func, init_args, kwargs)?;
-                                let params = init_func.code.params.clone();
+                                let bindings = bind_arguments(&init_func, init_args, kwargs)?;
                                 let mut frame = Frame::new(
                                     init_func.code.clone(),
                                     init_func.module.clone(),
@@ -983,9 +970,7 @@ impl Vm {
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
-                                for (name, value) in params.into_iter().zip(init_args.into_iter()) {
-                                    frame.locals.insert(name, value);
-                                }
+                                apply_bindings(&mut frame, &init_func.code, bindings);
                                 self.frames.push(frame);
                             } else {
                                 if !kwargs.is_empty() {
@@ -1057,30 +1042,24 @@ impl Vm {
 
                     match func {
                         Value::Function(func) => {
-                            let args = bind_arguments(&func, args, kwargs)?;
-                            let params = func.code.params.clone();
+                            let bindings = bind_arguments(&func, args, kwargs)?;
                             let mut frame =
                                 Frame::new(func.code.clone(), func.module.clone(), false, false);
-                            for (name, value) in params.into_iter().zip(args.into_iter()) {
-                                frame.locals.insert(name, value);
-                            }
+                            apply_bindings(&mut frame, &func.code, bindings);
                             self.frames.push(frame);
                         }
                         Value::BoundMethod(method) => {
                             let mut bound_args = Vec::with_capacity(args.len() + 1);
                             bound_args.push(Value::Instance(method.receiver.clone()));
                             bound_args.extend(args);
-                            let bound_args = bind_arguments(&method.function, bound_args, kwargs)?;
-                            let params = method.function.code.params.clone();
+                            let bindings = bind_arguments(&method.function, bound_args, kwargs)?;
                             let mut frame = Frame::new(
                                 method.function.code.clone(),
                                 method.function.module.clone(),
                                 false,
                                 false,
                             );
-                            for (name, value) in params.into_iter().zip(bound_args.into_iter()) {
-                                frame.locals.insert(name, value);
-                            }
+                            apply_bindings(&mut frame, &method.function.code, bindings);
                             self.frames.push(frame);
                         }
                         Value::Class(class) => {
@@ -1090,8 +1069,7 @@ impl Vm {
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
                                 init_args.extend(args);
-                                let init_args = bind_arguments(&init_func, init_args, kwargs)?;
-                                let params = init_func.code.params.clone();
+                                let bindings = bind_arguments(&init_func, init_args, kwargs)?;
                                 let mut frame = Frame::new(
                                     init_func.code.clone(),
                                     init_func.module.clone(),
@@ -1099,9 +1077,7 @@ impl Vm {
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
-                                for (name, value) in params.into_iter().zip(init_args.into_iter()) {
-                                    frame.locals.insert(name, value);
-                                }
+                                apply_bindings(&mut frame, &init_func.code, bindings);
                                 self.frames.push(frame);
                             } else {
                                 if !kwargs.is_empty() {
@@ -1531,19 +1507,29 @@ fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, Ru
     Ok(exception_name == handler_name)
 }
 
+struct BoundArguments {
+    positional: Vec<Value>,
+    vararg: Option<Value>,
+    kwarg: Option<Value>,
+}
+
 fn bind_arguments(
     func: &FunctionObject,
-    positional: Vec<Value>,
+    mut positional: Vec<Value>,
     mut kwargs: HashMap<String, Value>,
-) -> Result<Vec<Value>, RuntimeError> {
+) -> Result<BoundArguments, RuntimeError> {
     let params_len = func.code.params.len();
     let defaults_len = func.defaults.len();
     if defaults_len > params_len {
         return Err(RuntimeError::new("invalid function defaults"));
     }
 
+    let mut extra_positional = Vec::new();
     if positional.len() > params_len {
-        return Err(RuntimeError::new("argument count mismatch"));
+        if func.code.vararg.is_none() {
+            return Err(RuntimeError::new("argument count mismatch"));
+        }
+        extra_positional = positional.split_off(params_len);
     }
 
     let required = params_len - defaults_len;
@@ -1553,17 +1539,21 @@ fn bind_arguments(
         bound[idx] = Some(value);
     }
 
+    let mut extra_kwargs: HashMap<String, Value> = HashMap::new();
     for (name, value) in kwargs.drain() {
-        let index = func
-            .code
-            .params
-            .iter()
-            .position(|param| param == &name)
-            .ok_or_else(|| RuntimeError::new("unexpected keyword argument"))?;
-        if bound[index].is_some() {
-            return Err(RuntimeError::new("multiple values for argument"));
+        if let Some(index) = func.code.params.iter().position(|param| param == &name) {
+            if bound[index].is_some() {
+                return Err(RuntimeError::new("multiple values for argument"));
+            }
+            bound[index] = Some(value);
+        } else if func.code.kwarg.is_some() {
+            if extra_kwargs.contains_key(&name) {
+                return Err(RuntimeError::new("duplicate keyword argument"));
+            }
+            extra_kwargs.insert(name, value);
+        } else {
+            return Err(RuntimeError::new("unexpected keyword argument"));
         }
-        bound[index] = Some(value);
     }
 
     for idx in 0..params_len {
@@ -1576,7 +1566,46 @@ fn bind_arguments(
         }
     }
 
-    Ok(bound.into_iter().map(|value| value.unwrap()).collect())
+    let positional = bound.into_iter().map(|value| value.unwrap()).collect();
+    let vararg = func
+        .code
+        .vararg
+        .as_ref()
+        .map(|_| Value::List(extra_positional));
+    let kwarg = func.code.kwarg.as_ref().map(|_| {
+        let mut entries = Vec::with_capacity(extra_kwargs.len());
+        for (key, value) in extra_kwargs {
+            entries.push((Value::Str(key), value));
+        }
+        Value::Dict(entries)
+    });
+
+    Ok(BoundArguments {
+        positional,
+        vararg,
+        kwarg,
+    })
+}
+
+fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments) {
+    for (name, value) in code
+        .params
+        .iter()
+        .cloned()
+        .zip(bindings.positional.into_iter())
+    {
+        frame.locals.insert(name, value);
+    }
+
+    if let Some(name) = code.vararg.as_ref() {
+        let value = bindings.vararg.unwrap_or_else(|| Value::List(Vec::new()));
+        frame.locals.insert(name.clone(), value);
+    }
+
+    if let Some(name) = code.kwarg.as_ref() {
+        let value = bindings.kwarg.unwrap_or_else(|| Value::Dict(Vec::new()));
+        frame.locals.insert(name.clone(), value);
+    }
 }
 
 fn decode_call_counts(arg: u32) -> (usize, usize) {

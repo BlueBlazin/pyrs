@@ -41,6 +41,8 @@ pub enum Stmt {
     FunctionDef {
         name: String,
         params: Vec<Parameter>,
+        vararg: Option<String>,
+        kwarg: Option<String>,
         body: Vec<Stmt>,
     },
     ClassDef {
@@ -148,6 +150,8 @@ pub enum Expr {
     },
     Lambda {
         params: Vec<Parameter>,
+        vararg: Option<String>,
+        kwarg: Option<String>,
         body: Box<Expr>,
     },
     Slice {

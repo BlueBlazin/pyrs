@@ -78,6 +78,8 @@ pub struct CodeObject {
     pub constants: Vec<crate::runtime::Value>,
     pub names: Vec<String>,
     pub params: Vec<String>,
+    pub vararg: Option<String>,
+    pub kwarg: Option<String>,
 }
 
 impl CodeObject {
@@ -88,6 +90,8 @@ impl CodeObject {
             constants: vec![crate::runtime::Value::None],
             names: Vec::new(),
             params: Vec::new(),
+            vararg: None,
+            kwarg: None,
         }
     }
 

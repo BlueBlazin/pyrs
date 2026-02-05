@@ -195,44 +195,21 @@ impl Parser {
 
     fn parse_lambda(&mut self, pos: usize) -> ParseResult<Expr> {
         let mut pos = pos + 1;
-        let mut params = Vec::new();
-        let mut saw_default = false;
-
-        if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
-            loop {
-                let token = self.token_at(pos);
-                if token.kind != TokenKind::Name {
-                    return Err(self.error_at(pos, "expected parameter name"));
-                }
-                let name = token.lexeme.clone();
-                pos += 1;
-
-                let mut default = None;
-                if matches!(self.token_at(pos).kind, TokenKind::Equal) {
-                    pos += 1;
-                    let (expr, next) = self.parse_expr_at(pos)?;
-                    default = Some(expr);
-                    pos = next;
-                    saw_default = true;
-                } else if saw_default {
-                    return Err(self.error_at(pos, "non-default parameter follows default"));
-                }
-
-                params.push(Parameter { name, default });
-
-                if matches!(self.token_at(pos).kind, TokenKind::Comma) {
-                    pos += 1;
-                    continue;
-                }
-                break;
-            }
-        }
+        let (params, vararg, kwarg, next) = if matches!(self.token_at(pos).kind, TokenKind::Colon)
+        {
+            (Vec::new(), None, None, pos)
+        } else {
+            self.parse_lambda_params(pos)?
+        };
+        pos = next;
 
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_expr_at(pos)?;
         Ok((
             Expr::Lambda {
                 params,
+                vararg,
+                kwarg,
                 body: Box::new(body),
             },
             next,
@@ -855,7 +832,7 @@ impl Parser {
         let name = name_token.lexeme.clone();
         pos += 1;
         pos = self.expect_kind(pos, TokenKind::LParen)?;
-        let (params, next) = self.parse_parameters(pos)?;
+        let (params, vararg, kwarg, next) = self.parse_parameters(pos)?;
         pos = next;
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
@@ -864,6 +841,8 @@ impl Parser {
             Stmt::FunctionDef {
                 name,
                 params,
+                vararg,
+                kwarg,
                 body,
             },
             pos,
@@ -1098,40 +1077,83 @@ impl Parser {
         ))
     }
 
-    fn parse_parameters(&mut self, pos: usize) -> Result<(Vec<Parameter>, usize), ParseError> {
+    fn parse_parameters(
+        &mut self,
+        pos: usize,
+    ) -> Result<(Vec<Parameter>, Option<String>, Option<String>, usize), ParseError> {
         let mut pos = pos;
         let mut params = Vec::new();
+        let mut vararg = None;
+        let mut kwarg = None;
         let mut saw_default = false;
+        let mut saw_vararg = false;
 
         if matches!(self.token_at(pos).kind, TokenKind::RParen) {
-            return Ok((params, pos + 1));
+            return Ok((params, None, None, pos + 1));
         }
 
         loop {
             let token = self.token_at(pos);
-            if token.kind != TokenKind::Name {
-                return Err(self.error_at(pos, "expected parameter name"));
-            }
-            let name = token.lexeme.clone();
-            pos += 1;
+            match token.kind {
+                TokenKind::Star => {
+                    if vararg.is_some() {
+                        return Err(self.error_at(pos, "multiple *args parameters"));
+                    }
+                    pos += 1;
+                    let name_token = self.token_at(pos);
+                    if name_token.kind != TokenKind::Name {
+                        return Err(self.error_at(pos, "expected parameter name after *"));
+                    }
+                    vararg = Some(name_token.lexeme.clone());
+                    pos += 1;
+                    saw_vararg = true;
+                }
+                TokenKind::DoubleStar => {
+                    if kwarg.is_some() {
+                        return Err(self.error_at(pos, "multiple **kwargs parameters"));
+                    }
+                    pos += 1;
+                    let name_token = self.token_at(pos);
+                    if name_token.kind != TokenKind::Name {
+                        return Err(self.error_at(pos, "expected parameter name after **"));
+                    }
+                    kwarg = Some(name_token.lexeme.clone());
+                    pos += 1;
+                    saw_vararg = true;
+                }
+                TokenKind::Name => {
+                    if saw_vararg {
+                        return Err(self.error_at(
+                            pos,
+                            "positional parameter not allowed after *args",
+                        ));
+                    }
+                    let name = token.lexeme.clone();
+                    pos += 1;
 
-            let mut default = None;
-            if matches!(self.token_at(pos).kind, TokenKind::Equal) {
-                pos += 1;
-                let (expr, next) = self.parse_expr_at(pos)?;
-                default = Some(expr);
-                pos = next;
-                saw_default = true;
-            } else if saw_default {
-                return Err(self.error_at(pos, "non-default parameter follows default"));
-            }
+                    let mut default = None;
+                    if matches!(self.token_at(pos).kind, TokenKind::Equal) {
+                        pos += 1;
+                        let (expr, next) = self.parse_expr_at(pos)?;
+                        default = Some(expr);
+                        pos = next;
+                        saw_default = true;
+                    } else if saw_default {
+                        return Err(self.error_at(pos, "non-default parameter follows default"));
+                    }
 
-            params.push(Parameter { name, default });
+                    params.push(Parameter { name, default });
+                }
+                _ => return Err(self.error_at(pos, "expected parameter name")),
+            }
 
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
                 pos += 1;
                 if matches!(self.token_at(pos).kind, TokenKind::RParen) {
                     break;
+                }
+                if kwarg.is_some() {
+                    return Err(self.error_at(pos, "**kwargs must be last parameter"));
                 }
                 continue;
             }
@@ -1139,7 +1161,89 @@ impl Parser {
         }
 
         pos = self.expect_kind(pos, TokenKind::RParen)?;
-        Ok((params, pos))
+        Ok((params, vararg, kwarg, pos))
+    }
+
+    fn parse_lambda_params(
+        &mut self,
+        pos: usize,
+    ) -> Result<(Vec<Parameter>, Option<String>, Option<String>, usize), ParseError> {
+        let mut pos = pos;
+        let mut params = Vec::new();
+        let mut vararg = None;
+        let mut kwarg = None;
+        let mut saw_default = false;
+        let mut saw_vararg = false;
+
+        loop {
+            let token = self.token_at(pos);
+            match token.kind {
+                TokenKind::Star => {
+                    if vararg.is_some() {
+                        return Err(self.error_at(pos, "multiple *args parameters"));
+                    }
+                    pos += 1;
+                    let name_token = self.token_at(pos);
+                    if name_token.kind != TokenKind::Name {
+                        return Err(self.error_at(pos, "expected parameter name after *"));
+                    }
+                    vararg = Some(name_token.lexeme.clone());
+                    pos += 1;
+                    saw_vararg = true;
+                }
+                TokenKind::DoubleStar => {
+                    if kwarg.is_some() {
+                        return Err(self.error_at(pos, "multiple **kwargs parameters"));
+                    }
+                    pos += 1;
+                    let name_token = self.token_at(pos);
+                    if name_token.kind != TokenKind::Name {
+                        return Err(self.error_at(pos, "expected parameter name after **"));
+                    }
+                    kwarg = Some(name_token.lexeme.clone());
+                    pos += 1;
+                    saw_vararg = true;
+                }
+                TokenKind::Name => {
+                    if saw_vararg {
+                        return Err(self.error_at(
+                            pos,
+                            "positional parameter not allowed after *args",
+                        ));
+                    }
+                    let name = token.lexeme.clone();
+                    pos += 1;
+
+                    let mut default = None;
+                    if matches!(self.token_at(pos).kind, TokenKind::Equal) {
+                        pos += 1;
+                        let (expr, next) = self.parse_expr_at(pos)?;
+                        default = Some(expr);
+                        pos = next;
+                        saw_default = true;
+                    } else if saw_default {
+                        return Err(self.error_at(pos, "non-default parameter follows default"));
+                    }
+
+                    params.push(Parameter { name, default });
+                }
+                _ => return Err(self.error_at(pos, "expected parameter name")),
+            }
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+                    return Err(self.error_at(pos, "expected parameter name"));
+                }
+                if kwarg.is_some() {
+                    return Err(self.error_at(pos, "**kwargs must be last parameter"));
+                }
+                continue;
+            }
+            break;
+        }
+
+        Ok((params, vararg, kwarg, pos))
     }
 
     fn parse_block_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {

@@ -125,8 +125,14 @@ impl Compiler {
             }
             Stmt::If { test, body, orelse } => self.compile_if(test, body, orelse),
             Stmt::While { test, body, orelse } => self.compile_while(test, body, orelse),
-            Stmt::FunctionDef { name, params, body } => {
-                let func_code = self.compile_function(name, params, body)?;
+            Stmt::FunctionDef {
+                name,
+                params,
+                vararg,
+                kwarg,
+                body,
+            } => {
+                let func_code = self.compile_function(name, params, vararg, kwarg, body)?;
                 self.emit_function_with_defaults(params, func_code)?;
                 self.emit_store_name_scoped(name);
                 Ok(())
@@ -237,11 +243,17 @@ impl Compiler {
             Expr::IfExpr { test, body, orelse } => {
                 self.compile_if_expr(test, body, orelse)
             }
-            Expr::Lambda { params, body } => {
+            Expr::Lambda {
+                params,
+                vararg,
+                kwarg,
+                body,
+            } => {
                 let return_stmt = Stmt::Return {
                     value: Some((**body).clone()),
                 };
-                let func_code = self.compile_function("<lambda>", params, &[return_stmt])?;
+                let func_code =
+                    self.compile_function("<lambda>", params, vararg, kwarg, &[return_stmt])?;
                 self.emit_function_with_defaults(params, func_code)?;
                 Ok(())
             }
@@ -529,6 +541,8 @@ impl Compiler {
         &mut self,
         name: &str,
         params: &[Parameter],
+        vararg: &Option<String>,
+        kwarg: &Option<String>,
         body: &[Stmt],
     ) -> Result<CodeObject, CompileError> {
         let mut compiler = Compiler {
@@ -538,6 +552,8 @@ impl Compiler {
             global_names: HashSet::new(),
         };
         compiler.code.params = params.iter().map(|param| param.name.clone()).collect();
+        compiler.code.vararg = vararg.clone();
+        compiler.code.kwarg = kwarg.clone();
         for stmt in body {
             compiler.compile_stmt(stmt)?;
         }
