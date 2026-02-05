@@ -161,6 +161,8 @@ pub enum Expr {
 pub enum CallArg {
     Positional(Expr),
     Keyword { name: String, value: Expr },
+    Star(Expr),
+    DoubleStar(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

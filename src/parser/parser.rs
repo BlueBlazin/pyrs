@@ -885,7 +885,7 @@ impl Parser {
             for arg in args {
                 match arg {
                     CallArg::Positional(expr) => bases.push(expr),
-                    CallArg::Keyword { .. } => {
+                    CallArg::Keyword { .. } | CallArg::Star(_) | CallArg::DoubleStar(_) => {
                         return Err(self.error_at(pos, "class bases cannot be keyword arguments"))
                     }
                 }
@@ -929,7 +929,18 @@ impl Parser {
 
         loop {
             let token = self.token_at(pos);
-            if token.kind == TokenKind::Name && matches!(self.token_at(pos + 1).kind, TokenKind::Equal)
+            if token.kind == TokenKind::Star {
+                pos += 1;
+                let (expr, next) = self.parse_expr_at(pos)?;
+                args.push(CallArg::Star(expr));
+                pos = next;
+            } else if token.kind == TokenKind::DoubleStar {
+                pos += 1;
+                let (expr, next) = self.parse_expr_at(pos)?;
+                args.push(CallArg::DoubleStar(expr));
+                pos = next;
+            } else if token.kind == TokenKind::Name
+                && matches!(self.token_at(pos + 1).kind, TokenKind::Equal)
             {
                 let name = token.lexeme.clone();
                 pos += 2;

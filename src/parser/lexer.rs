@@ -221,7 +221,10 @@ impl<'a> Lexer<'a> {
                 }
                 '*' => {
                     self.advance();
-                    if self.peek_char() == Some('=') {
+                    if self.peek_char() == Some('*') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::DoubleStar, "**", offset, line, column));
+                    } else if self.peek_char() == Some('=') {
                         self.advance();
                         tokens.push(Token::new(TokenKind::StarEqual, "*=", offset, line, column));
                     } else {

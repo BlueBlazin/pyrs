@@ -521,6 +521,82 @@ impl Vm {
                     values.reverse();
                     self.push_value(Value::Dict(values));
                 }
+                Opcode::ListAppend => {
+                    let value = self.pop_value()?;
+                    let list = self.pop_value()?;
+                    match list {
+                        Value::List(mut values) => {
+                            values.push(value);
+                            self.push_value(Value::List(values));
+                        }
+                        _ => return Err(RuntimeError::new("list append expects list")),
+                    }
+                }
+                Opcode::ListExtend => {
+                    let other = self.pop_value()?;
+                    let list = self.pop_value()?;
+                    match list {
+                        Value::List(mut values) => {
+                            match other {
+                                Value::List(items) => values.extend(items),
+                                Value::Tuple(items) => values.extend(items),
+                                Value::Str(text) => {
+                                    for ch in text.chars() {
+                                        values.push(Value::Str(ch.to_string()));
+                                    }
+                                }
+                                _ => return Err(RuntimeError::new("list extend expects iterable")),
+                            }
+                            self.push_value(Value::List(values));
+                        }
+                        _ => return Err(RuntimeError::new("list extend expects list")),
+                    }
+                }
+                Opcode::DictSet => {
+                    let value = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let dict = self.pop_value()?;
+                    match dict {
+                        Value::Dict(mut entries) => {
+                            let mut found = false;
+                            for (stored_key, stored_value) in entries.iter_mut() {
+                                if *stored_key == key {
+                                    *stored_value = value.clone();
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if !found {
+                                entries.push((key, value));
+                            }
+                            self.push_value(Value::Dict(entries));
+                        }
+                        _ => return Err(RuntimeError::new("dict set expects dict")),
+                    }
+                }
+                Opcode::DictUpdate => {
+                    let other = self.pop_value()?;
+                    let dict = self.pop_value()?;
+                    match (dict, other) {
+                        (Value::Dict(mut entries), Value::Dict(other_entries)) => {
+                            for (key, value) in other_entries {
+                                let mut found = false;
+                                for (stored_key, stored_value) in entries.iter_mut() {
+                                    if *stored_key == key {
+                                        *stored_value = value.clone();
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if !found {
+                                    entries.push((key, value));
+                                }
+                            }
+                            self.push_value(Value::Dict(entries));
+                        }
+                        _ => return Err(RuntimeError::new("dict update expects dict")),
+                    }
+                }
                 Opcode::BuildSlice => {
                     let step = self.pop_value()?;
                     let upper = self.pop_value()?;
@@ -863,6 +939,122 @@ impl Vm {
                     }
                     args.reverse();
                     let func = self.pop_value()?;
+                    match func {
+                        Value::Function(func) => {
+                            let args = bind_arguments(&func, args, kwargs)?;
+                            let params = func.code.params.clone();
+                            let mut frame =
+                                Frame::new(func.code.clone(), func.module.clone(), false, false);
+                            for (name, value) in params.into_iter().zip(args.into_iter()) {
+                                frame.locals.insert(name, value);
+                            }
+                            self.frames.push(frame);
+                        }
+                        Value::BoundMethod(method) => {
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(Value::Instance(method.receiver.clone()));
+                            bound_args.extend(args);
+                            let bound_args = bind_arguments(&method.function, bound_args, kwargs)?;
+                            let params = method.function.code.params.clone();
+                            let mut frame = Frame::new(
+                                method.function.code.clone(),
+                                method.function.module.clone(),
+                                false,
+                                false,
+                            );
+                            for (name, value) in params.into_iter().zip(bound_args.into_iter()) {
+                                frame.locals.insert(name, value);
+                            }
+                            self.frames.push(frame);
+                        }
+                        Value::Class(class) => {
+                            let instance = Rc::new(InstanceObject::new(class.clone()));
+                            let init = class_attr_lookup(&class, "__init__");
+                            if let Some(Value::Function(init_func)) = init {
+                                let mut init_args = Vec::with_capacity(args.len() + 1);
+                                init_args.push(Value::Instance(instance.clone()));
+                                init_args.extend(args);
+                                let init_args = bind_arguments(&init_func, init_args, kwargs)?;
+                                let params = init_func.code.params.clone();
+                                let mut frame = Frame::new(
+                                    init_func.code.clone(),
+                                    init_func.module.clone(),
+                                    false,
+                                    false,
+                                );
+                                frame.return_instance = Some(instance);
+                                for (name, value) in params.into_iter().zip(init_args.into_iter()) {
+                                    frame.locals.insert(name, value);
+                                }
+                                self.frames.push(frame);
+                            } else {
+                                if !kwargs.is_empty() {
+                                    return Err(RuntimeError::new(
+                                        "unexpected keyword arguments",
+                                    ));
+                                }
+                                self.push_value(Value::Instance(instance));
+                            }
+                        }
+                        Value::Builtin(builtin) => {
+                            if !kwargs.is_empty() {
+                                return Err(RuntimeError::new(
+                                    "keyword arguments not supported for builtin",
+                                ));
+                            }
+                            let result = builtin.call(args)?;
+                            self.push_value(result);
+                        }
+                        Value::ExceptionType(name) => {
+                            if !kwargs.is_empty() {
+                                return Err(RuntimeError::new(
+                                    "keyword arguments not supported for exceptions",
+                                ));
+                            }
+                            let message = match args.as_slice() {
+                                [] => None,
+                                [value] => Some(format_value(value)),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "exception constructor expects at most one argument",
+                                    ))
+                                }
+                            };
+                            self.push_value(Value::Exception(ExceptionObject { name, message }));
+                        }
+                        _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    }
+                }
+                Opcode::CallFunctionVar => {
+                    let kwargs_value = self.pop_value()?;
+                    let args_value = self.pop_value()?;
+                    let func = self.pop_value()?;
+                    let kwargs = match kwargs_value {
+                        Value::Dict(entries) => {
+                            let mut map = HashMap::new();
+                            for (key, value) in entries {
+                                let key = match key {
+                                    Value::Str(name) => name,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "keyword name must be string",
+                                        ))
+                                    }
+                                };
+                                if map.contains_key(&key) {
+                                    return Err(RuntimeError::new("duplicate keyword argument"));
+                                }
+                                map.insert(key, value);
+                            }
+                            map
+                        }
+                        _ => return Err(RuntimeError::new("call kwargs must be dict")),
+                    };
+                    let args = match args_value {
+                        Value::List(values) => values,
+                        _ => return Err(RuntimeError::new("call args must be list")),
+                    };
+
                     match func {
                         Value::Function(func) => {
                             let args = bind_arguments(&func, args, kwargs)?;

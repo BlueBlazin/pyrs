@@ -247,6 +247,87 @@ impl Compiler {
             }
             Expr::Call { func, args } => {
                 self.compile_expr(func)?;
+                let has_star = args.iter().any(|arg| {
+                    matches!(
+                        arg,
+                        crate::ast::CallArg::Star(_) | crate::ast::CallArg::DoubleStar(_)
+                    )
+                });
+
+                if has_star {
+                    enum TempArg {
+                        Positional(String),
+                        Keyword(String, String),
+                        Star(String),
+                        DoubleStar(String),
+                    }
+
+                    let mut temps = Vec::new();
+                    for arg in args {
+                        match arg {
+                            crate::ast::CallArg::Positional(expr) => {
+                                let temp = self.fresh_temp("arg");
+                                self.compile_expr(expr)?;
+                                self.emit_store_name(&temp);
+                                temps.push(TempArg::Positional(temp));
+                            }
+                            crate::ast::CallArg::Keyword { name, value } => {
+                                let temp = self.fresh_temp("arg");
+                                self.compile_expr(value)?;
+                                self.emit_store_name(&temp);
+                                temps.push(TempArg::Keyword(name.clone(), temp));
+                            }
+                            crate::ast::CallArg::Star(expr) => {
+                                let temp = self.fresh_temp("arg");
+                                self.compile_expr(expr)?;
+                                self.emit_store_name(&temp);
+                                temps.push(TempArg::Star(temp));
+                            }
+                            crate::ast::CallArg::DoubleStar(expr) => {
+                                let temp = self.fresh_temp("arg");
+                                self.compile_expr(expr)?;
+                                self.emit_store_name(&temp);
+                                temps.push(TempArg::DoubleStar(temp));
+                            }
+                        }
+                    }
+
+                    self.emit(Opcode::BuildList, Some(0));
+                    for temp in &temps {
+                        match temp {
+                            TempArg::Positional(name) => {
+                                self.emit_load_name(name);
+                                self.emit(Opcode::ListAppend, None);
+                            }
+                            TempArg::Star(name) => {
+                                self.emit_load_name(name);
+                                self.emit(Opcode::ListExtend, None);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    self.emit(Opcode::BuildDict, Some(0));
+                    for temp in &temps {
+                        match temp {
+                            TempArg::Keyword(name, value) => {
+                                let name_idx = self.code.add_const(Value::Str(name.clone()));
+                                self.emit(Opcode::LoadConst, Some(name_idx));
+                                self.emit_load_name(value);
+                                self.emit(Opcode::DictSet, None);
+                            }
+                            TempArg::DoubleStar(name) => {
+                                self.emit_load_name(name);
+                                self.emit(Opcode::DictUpdate, None);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    self.emit(Opcode::CallFunctionVar, None);
+                    return Ok(());
+                }
+
                 let mut pos_count = 0u32;
                 let mut kw_count = 0u32;
                 for arg in args {
@@ -261,6 +342,7 @@ impl Compiler {
                             self.compile_expr(value)?;
                             kw_count += 1;
                         }
+                        crate::ast::CallArg::Star(_) | crate::ast::CallArg::DoubleStar(_) => {}
                     }
                 }
                 if kw_count > 0 {
