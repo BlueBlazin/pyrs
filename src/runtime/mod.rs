@@ -181,6 +181,7 @@ pub enum BuiltinFunction {
     Tuple,
     DivMod,
     Sorted,
+    Enumerate,
 }
 
 impl BuiltinFunction {
@@ -432,6 +433,36 @@ impl BuiltinFunction {
                     }
                     _ => Err(RuntimeError::new("sorted() expects list or tuple")),
                 }
+            }
+            BuiltinFunction::Enumerate => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("enumerate() expects 1-2 arguments"));
+                }
+                let start = if args.len() == 2 {
+                    value_to_int(args[1].clone())?
+                } else {
+                    0
+                };
+                let mut entries = Vec::new();
+                match &args[0] {
+                    Value::List(values) | Value::Tuple(values) => {
+                        for (idx, value) in values.iter().cloned().enumerate() {
+                            let index = start + idx as i64;
+                            entries.push(Value::Tuple(vec![Value::Int(index), value]));
+                        }
+                    }
+                    Value::Str(value) => {
+                        for (idx, ch) in value.chars().enumerate() {
+                            let index = start + idx as i64;
+                            entries.push(Value::Tuple(vec![
+                                Value::Int(index),
+                                Value::Str(ch.to_string()),
+                            ]));
+                        }
+                    }
+                    _ => return Err(RuntimeError::new("enumerate() expects iterable")),
+                }
+                Ok(Value::List(entries))
             }
         }
     }

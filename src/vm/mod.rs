@@ -1520,6 +1520,10 @@ impl Vm {
             .insert("divmod".to_string(), Value::Builtin(BuiltinFunction::DivMod));
         self.builtins
             .insert("sorted".to_string(), Value::Builtin(BuiltinFunction::Sorted));
+        self.builtins.insert(
+            "enumerate".to_string(),
+            Value::Builtin(BuiltinFunction::Enumerate),
+        );
         self.builtins
             .insert("Exception".to_string(), Value::ExceptionType("Exception".to_string()));
         self.builtins
@@ -1940,6 +1944,21 @@ fn call_builtin_with_kwargs(
             } else {
                 Ok(result)
             }
+        }
+        BuiltinFunction::Enumerate => {
+            let start = kwargs.remove("start");
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "enumerate() got an unexpected keyword argument",
+                ));
+            }
+            if let Some(value) = start {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("enumerate() got multiple values"));
+                }
+                args.push(value);
+            }
+            builtin.call(args)
         }
         _ => {
             if !kwargs.is_empty() {
