@@ -174,6 +174,27 @@ impl Vm {
         None
     }
 
+    fn load_submodule(
+        &mut self,
+        parent: &Rc<ModuleObject>,
+        attr_name: &str,
+    ) -> Option<Rc<ModuleObject>> {
+        let full_name = format!("{}.{}", parent.name, attr_name);
+        if let Some(module) = self.modules.get(&full_name).cloned() {
+            return Some(module);
+        }
+        if self.find_module_file(&full_name).is_some() {
+            if let Ok(module) = self.load_module(&full_name) {
+                parent
+                    .globals
+                    .borrow_mut()
+                    .insert(attr_name.to_string(), Value::Module(module.clone()));
+                return Some(module);
+            }
+        }
+        None
+    }
+
     fn ensure_module(&mut self, name: &str) -> Rc<ModuleObject> {
         if let Some(module) = self.modules.get(name).cloned() {
             return module;
@@ -309,29 +330,32 @@ impl Vm {
                     let value = self.pop_value()?;
                     match value {
                         Value::Module(module) => {
-                            let globals = module.globals.borrow();
-                            let attr = globals
-                                .get(&attr_name)
-                                .cloned()
-                                .or_else(|| {
-                                    module
-                                        .name
-                                        .split('.')
-                                        .last()
-                                        .and_then(|suffix| {
-                                            if suffix == attr_name {
-                                                Some(Value::Module(module.clone()))
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                })
-                                .ok_or_else(|| {
-                                    RuntimeError::new(format!(
-                                        "module '{}' has no attribute '{}'",
-                                        module.name, attr_name
-                                    ))
-                                })?;
+                            let attr = module.globals.borrow().get(&attr_name).cloned();
+                            let attr = if let Some(attr) = attr {
+                                Some(attr)
+                            } else {
+                                module
+                                    .name
+                                    .split('.')
+                                    .last()
+                                    .and_then(|suffix| {
+                                        if suffix == attr_name {
+                                            Some(Value::Module(module.clone()))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                            }
+                            .or_else(|| {
+                                self.load_submodule(&module, &attr_name)
+                                    .map(Value::Module)
+                            })
+                            .ok_or_else(|| {
+                                RuntimeError::new(format!(
+                                    "module '{}' has no attribute '{}'",
+                                    module.name, attr_name
+                                ))
+                            })?;
                             self.push_value(attr);
                         }
                         Value::Class(class) => {

@@ -1152,6 +1152,8 @@ impl Parser {
                         return Err(self.error_at(pos, "invalid '/' position"));
                     }
                     saw_slash = true;
+                    posonly_params = params;
+                    params = Vec::new();
                     pos += 1;
                 }
                 TokenKind::Star => {
@@ -1212,8 +1214,6 @@ impl Parser {
 
                     if keyword_only {
                         kwonly_params.push(Parameter { name, default });
-                    } else if !saw_slash {
-                        posonly_params.push(Parameter { name, default });
                     } else {
                         params.push(Parameter { name, default });
                     }
@@ -1274,6 +1274,8 @@ impl Parser {
                         return Err(self.error_at(pos, "invalid '/' position"));
                     }
                     saw_slash = true;
+                    posonly_params = params;
+                    params = Vec::new();
                     pos += 1;
                 }
                 TokenKind::Star => {
@@ -1334,8 +1336,6 @@ impl Parser {
 
                     if keyword_only {
                         kwonly_params.push(Parameter { name, default });
-                    } else if !saw_slash {
-                        posonly_params.push(Parameter { name, default });
                     } else {
                         params.push(Parameter { name, default });
                     }
