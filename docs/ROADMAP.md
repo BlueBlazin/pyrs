@@ -67,6 +67,7 @@ We are building a production-grade Python interpreter in Rust with full source a
 5. Milestone 4: Performance profiling + tooling and hardening.
 
 ## Production Readiness Checklist (Living)
+Canonical checklist lives in `docs/PRODUCTION_READINESS.md`. The list below is a snapshot of P0-P3 items we are actively tracking in the roadmap.
 Status flags: `[ ]` not started, `[x]` complete.
 
 ### P0 (Production Blocking)

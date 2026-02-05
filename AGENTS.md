@@ -57,6 +57,7 @@ We measure success by:
 ## Project Artifacts
 - Roadmap: `docs/ROADMAP.md`
 - Compatibility tracker: `docs/COMPATIBILITY.md`
+- Production readiness accounting: `docs/PRODUCTION_READINESS.md`
 - CPython vendor sync script: `scripts/sync_cpython.py`
 - Vendor snapshot: CPython 3.14.3 grammar + opcode sources synced into `vendor/cpython-3.14/` (opcode table CSV generated).
 

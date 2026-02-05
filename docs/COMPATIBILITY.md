@@ -1,6 +1,7 @@
 # Compatibility Tracker (CPython 3.14)
 
 This document tracks progress toward source and bytecode compatibility with CPython 3.14.
+For a full production-readiness accounting (beyond compatibility deltas), see `docs/PRODUCTION_READINESS.md`.
 
 ## Parser & Grammar
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
