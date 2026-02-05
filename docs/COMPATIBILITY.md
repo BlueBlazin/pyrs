@@ -9,7 +9,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
 - [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise, assert, try/except/else, with, class (bases supported, no keywords)
 - [x] Expressions subset: arithmetic (incl `**`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda
-- [ ] Type annotations / hints (variable annotations, function parameter + return annotations)
+- [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
 - [ ] Comprehensions, generators, pattern matching, async/await, etc.
 
 ## Bytecode
@@ -29,7 +29,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [x] Tracebacks with filename/line/col + frame names
 - [ ] Exception chaining
-- [ ] `__annotations__` storage for modules/classes/functions
+- [x] `__annotations__` storage for modules/classes/functions
 - [x] Module/import system (file-based, dotted modules, lazy submodule loading on attribute access)
 - [x] Classes subset (single inheritance, instance attrs + bound methods)
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC

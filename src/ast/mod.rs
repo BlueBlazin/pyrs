@@ -68,15 +68,21 @@ pub enum StmtKind {
         name: String,
         posonly_params: Vec<Parameter>,
         params: Vec<Parameter>,
-        vararg: Option<String>,
-        kwarg: Option<String>,
+        vararg: Option<Parameter>,
+        kwarg: Option<Parameter>,
         kwonly_params: Vec<Parameter>,
+        returns: Option<Expr>,
         body: Vec<Stmt>,
     },
     ClassDef {
         name: String,
         bases: Vec<Expr>,
         body: Vec<Stmt>,
+    },
+    AnnAssign {
+        target: AssignTarget,
+        annotation: Expr,
+        value: Option<Expr>,
     },
     Return {
         value: Option<Expr>,
@@ -143,7 +149,8 @@ pub struct ImportAlias {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parameter {
     pub name: String,
-    pub default: Option<Expr>,
+    pub default: Option<Box<Expr>>,
+    pub annotation: Option<Box<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,8 +194,8 @@ pub enum ExprKind {
     Lambda {
         posonly_params: Vec<Parameter>,
         params: Vec<Parameter>,
-        vararg: Option<String>,
-        kwarg: Option<String>,
+        vararg: Option<Parameter>,
+        kwarg: Option<Parameter>,
         kwonly_params: Vec<Parameter>,
         body: Box<Expr>,
     },

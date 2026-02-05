@@ -712,6 +712,42 @@ impl Vm {
                                 class_name, attr_name
                             )));
                         }
+                        Value::Function(func) => {
+                            if attr_name == "__annotations__" {
+                                let annotations = {
+                                    let mut func_ref = func.kind_mut();
+                                    match &mut *func_ref {
+                                        Object::Function(func_data) => {
+                                            if let Some(obj) = &func_data.annotations {
+                                                obj.clone()
+                                            } else {
+                                                let dict = self.heap.alloc_dict(Vec::new());
+                                                let obj = match dict {
+                                                    Value::Dict(obj) => obj,
+                                                    _ => unreachable!(),
+                                                };
+                                                func_data.annotations = Some(obj.clone());
+                                                obj
+                                            }
+                                        }
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "attribute access unsupported type",
+                                            ))
+                                        }
+                                    }
+                                };
+                                if push_null {
+                                    self.push_value(Value::None);
+                                }
+                                self.push_value(Value::Dict(annotations));
+                            } else {
+                                return Err(RuntimeError::new(format!(
+                                    "function has no attribute '{}'",
+                                    attr_name
+                                )));
+                            }
+                        }
                         _ => {
                             return Err(RuntimeError::new(
                                 "attribute access unsupported type",
@@ -867,6 +903,24 @@ impl Vm {
                                 class_data.attrs.insert(attr_name, value);
                             }
                         }
+                        Value::Function(func) => {
+                            if attr_name != "__annotations__" {
+                                return Err(RuntimeError::new(
+                                    "attribute assignment unsupported type",
+                                ));
+                            }
+                            let annotations = match value {
+                                Value::Dict(obj) => obj,
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "function __annotations__ must be dict",
+                                    ))
+                                }
+                            };
+                            if let Object::Function(func_data) = &mut *func.kind_mut() {
+                                func_data.annotations = Some(annotations);
+                            }
+                        }
                         _ => {
                             return Err(RuntimeError::new(
                                 "attribute assignment unsupported type",
@@ -904,6 +958,24 @@ impl Vm {
                         Value::Class(class) => {
                             if let Object::Class(class_data) = &mut *class.kind_mut() {
                                 class_data.attrs.insert(attr_name, value);
+                            }
+                        }
+                        Value::Function(func) => {
+                            if attr_name != "__annotations__" {
+                                return Err(RuntimeError::new(
+                                    "attribute assignment unsupported type",
+                                ));
+                            }
+                            let annotations = match value {
+                                Value::Dict(obj) => obj,
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "function __annotations__ must be dict",
+                                    ))
+                                }
+                            };
+                            if let Object::Function(func_data) = &mut *func.kind_mut() {
+                                func_data.annotations = Some(annotations);
                             }
                         }
                         _ => {
@@ -1467,7 +1539,8 @@ impl Vm {
                         .expect("frame exists")
                         .function_globals
                         .clone();
-                    let func = FunctionObject::new(code, module, defaults, kwonly_defaults, Vec::new());
+                    let func =
+                        FunctionObject::new(code, module, defaults, kwonly_defaults, Vec::new(), None);
                     self.push_value(self.heap.alloc_function(func));
                 }
                 Opcode::BuildClass => {
@@ -1563,13 +1636,8 @@ impl Vm {
                         .expect("frame exists")
                         .function_globals
                         .clone();
-                    let func = FunctionObject::new(
-                        code,
-                        module,
-                        Vec::new(),
-                        HashMap::new(),
-                        Vec::new(),
-                    );
+                    let func =
+                        FunctionObject::new(code, module, Vec::new(), HashMap::new(), Vec::new(), None);
                     self.push_value(self.heap.alloc_function(func));
                 }
                 Opcode::SetFunctionAttribute => {
@@ -1627,6 +1695,19 @@ impl Vm {
                             };
                             if let Object::Function(func_data) = &mut *func.kind_mut() {
                                 func_data.kwonly_defaults = kwonly;
+                            }
+                        }
+                        0x04 => {
+                            let annotations = match attr {
+                                Value::Dict(obj) => obj,
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "annotations must be dict",
+                                    ))
+                                }
+                            };
+                            if let Object::Function(func_data) = &mut *func.kind_mut() {
+                                func_data.annotations = Some(annotations);
                             }
                         }
                         0x08 => {

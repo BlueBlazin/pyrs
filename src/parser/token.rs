@@ -59,6 +59,7 @@ pub enum TokenKind {
     Comma,
     Plus,
     Minus,
+    Arrow,
     Star,
     DoubleStar,
     DoubleSlash,

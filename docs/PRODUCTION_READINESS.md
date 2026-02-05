@@ -8,18 +8,23 @@ Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (futu
 **Language & Grammar**
 - [~] P0: Full 3.14 tokenizer parity (strings, bytes, numeric literals, f‑strings, comments, indents).
 - [~] P0: Full 3.14 grammar coverage (all statements/expressions).
+- [ ] P0: Decorators on functions/classes.
+- [ ] P0: Assignment expressions (`:=`).
 - [ ] P0: `yield`, `yield from`.
 - [ ] P0: `async`/`await`, async comprehensions, async generators.
 - [ ] P0: `try/except*` (exception groups) and `ExceptionGroup` semantics.
 - [ ] P0: Pattern matching (`match`/`case`).
 - [ ] P0: Comprehensions + generator expressions with correct scoping.
-- [ ] P1: Type annotations (`x: T`, `def f(x: T) -> U`, class/instance annotations).
+- [ ] P0: f‑strings + format spec mini‑language (PEP 701 compatible).
+- [x] P1: Type annotations (`x: T`, `def f(x: T) -> U`, class/instance annotations).
 - [ ] P1: Annotation evaluation semantics matching 3.14 (deferred vs eager).
+- [ ] P1: Type parameter syntax / `type` statements (PEP 695 family).
 
 **Semantic Analysis & Compilation**
 - [~] P0: Scope analysis (locals/globals/nonlocals/freevars/cellvars).
 - [ ] P0: Correct comprehension scope isolation.
 - [ ] P0: `exec`/`eval` semantics and dynamic scope effects.
+- [ ] P0: `__future__` flags and compiler feature gating.
 - [ ] P1: Annotation capture into `__annotations__` (module/class/function).
 - [ ] P1: Constant folding and peephole optimizations (no semantic changes).
 - [ ] P2: Bytecode verification pass (stack effects, jump targets, invalid op sequences).
@@ -38,6 +43,7 @@ Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (futu
 - [ ] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules.
 - [ ] P0: bytes/bytearray/memoryview and buffer protocol.
 - [ ] P0: set/frozenset.
+- [ ] P0: Unicode/codec behavior parity (including error handlers).
 - [ ] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`).
 - [ ] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`).
 - [ ] P0: MRO + metaclasses + `super()` semantics.
@@ -61,10 +67,11 @@ Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (futu
 - [~] P0: Minimal builtins subset.
 - [ ] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
 - [ ] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core).
-- [ ] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`.
+- [ ] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator`.
 - [ ] P1: `threading`, `multiprocessing`, `asyncio`, `concurrent.futures`.
 - [ ] P1: `subprocess`, `socket`, `ssl`, `http`, `urllib`.
 - [ ] P2: `logging`, `argparse`, `unittest`, `doctest`.
+- [ ] P2: `typing`, `dataclasses`, `enum`, `contextvars`.
 
 **Tooling & UX**
 - [ ] P1: REPL parity (interactive hooks, displayhook, completion hooks).

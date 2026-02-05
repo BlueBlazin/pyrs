@@ -135,6 +135,26 @@ impl Parser {
         let start = pos;
         if let Some((target_expr, next_pos)) = self.parse_assignment_target_list(pos) {
             let kind = self.token_at(next_pos).kind.clone();
+            if kind == TokenKind::Colon {
+                if matches!(target_expr, AssignTarget::Tuple(_) | AssignTarget::List(_)) {
+                    return Err(self.error_at(next_pos, "invalid annotation target"));
+                }
+                let (annotation, mut next) = self.parse_expr_at(next_pos + 1)?;
+                let mut value = None;
+                if matches!(self.token_at(next).kind, TokenKind::Equal) {
+                    let (expr, after) = self.parse_expr_at(next + 1)?;
+                    value = Some(expr);
+                    next = after;
+                }
+                return Ok((
+                    self.make_stmt(start, StmtKind::AnnAssign {
+                        target: target_expr,
+                        annotation,
+                        value,
+                    }),
+                    next,
+                ));
+            }
             if kind == TokenKind::Equal {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;
                 return Ok((
@@ -1056,6 +1076,12 @@ impl Parser {
         let (posonly_params, params, kwonly_params, vararg, kwarg, next) =
             self.parse_parameters(pos)?;
         pos = next;
+        let mut returns = None;
+        if matches!(self.token_at(pos).kind, TokenKind::Arrow) {
+            let (expr, next) = self.parse_expr_at(pos + 1)?;
+            returns = Some(expr);
+            pos = next;
+        }
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
@@ -1067,6 +1093,7 @@ impl Parser {
                 vararg,
                 kwarg,
                 kwonly_params,
+                returns,
                 body,
             }),
             pos,
@@ -1319,8 +1346,8 @@ impl Parser {
             Vec<Parameter>,
             Vec<Parameter>,
             Vec<Parameter>,
-            Option<String>,
-            Option<String>,
+            Option<Parameter>,
+            Option<Parameter>,
             usize,
         ),
         ParseError,
@@ -1329,8 +1356,8 @@ impl Parser {
         let mut posonly_params = Vec::new();
         let mut params = Vec::new();
         let mut kwonly_params = Vec::new();
-        let mut vararg = None;
-        let mut kwarg = None;
+        let mut vararg: Option<Parameter> = None;
+        let mut kwarg: Option<Parameter> = None;
         let mut saw_default = false;
         let mut saw_kwonly_default = false;
         let mut keyword_only = false;
@@ -1374,8 +1401,19 @@ impl Parser {
                     if name_token.kind != TokenKind::Name {
                         return Err(self.error_at(pos, "expected parameter name after *"));
                     }
-                    vararg = Some(name_token.lexeme.clone());
+                    let name = name_token.lexeme.clone();
                     pos += 1;
+                    let mut annotation = None;
+                    if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+                        let (expr, next) = self.parse_expr_at(pos + 1)?;
+                        annotation = Some(Box::new(expr));
+                        pos = next;
+                    }
+                    vararg = Some(Parameter {
+                        name,
+                        default: None,
+                        annotation,
+                    });
                     keyword_only = true;
                 }
                 TokenKind::DoubleStar => {
@@ -1387,18 +1425,36 @@ impl Parser {
                     if name_token.kind != TokenKind::Name {
                         return Err(self.error_at(pos, "expected parameter name after **"));
                     }
-                    kwarg = Some(name_token.lexeme.clone());
+                    let name = name_token.lexeme.clone();
                     pos += 1;
+                    let mut annotation = None;
+                    if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+                        let (expr, next) = self.parse_expr_at(pos + 1)?;
+                        annotation = Some(Box::new(expr));
+                        pos = next;
+                    }
+                    kwarg = Some(Parameter {
+                        name,
+                        default: None,
+                        annotation,
+                    });
                 }
                 TokenKind::Name => {
                     let name = token.lexeme.clone();
                     pos += 1;
 
+                    let mut annotation = None;
+                    if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+                        let (expr, next) = self.parse_expr_at(pos + 1)?;
+                        annotation = Some(Box::new(expr));
+                        pos = next;
+                    }
+
                     let mut default = None;
                     if matches!(self.token_at(pos).kind, TokenKind::Equal) {
                         pos += 1;
                         let (expr, next) = self.parse_expr_at(pos)?;
-                        default = Some(expr);
+                        default = Some(Box::new(expr));
                         pos = next;
                         if keyword_only {
                             saw_kwonly_default = true;
@@ -1411,10 +1467,15 @@ impl Parser {
                         return Err(self.error_at(pos, "non-default parameter follows default"));
                     }
 
+                    let param = Parameter {
+                        name,
+                        default,
+                        annotation,
+                    };
                     if keyword_only {
-                        kwonly_params.push(Parameter { name, default });
+                        kwonly_params.push(param);
                     } else {
-                        params.push(Parameter { name, default });
+                        params.push(param);
                     }
                 }
                 _ => return Err(self.error_at(pos, "expected parameter name")),
@@ -1445,8 +1506,8 @@ impl Parser {
             Vec<Parameter>,
             Vec<Parameter>,
             Vec<Parameter>,
-            Option<String>,
-            Option<String>,
+            Option<Parameter>,
+            Option<Parameter>,
             usize,
         ),
         ParseError,
@@ -1455,8 +1516,8 @@ impl Parser {
         let mut posonly_params = Vec::new();
         let mut params = Vec::new();
         let mut kwonly_params = Vec::new();
-        let mut vararg = None;
-        let mut kwarg = None;
+        let mut vararg: Option<Parameter> = None;
+        let mut kwarg: Option<Parameter> = None;
         let mut saw_default = false;
         let mut saw_kwonly_default = false;
         let mut keyword_only = false;
@@ -1496,8 +1557,15 @@ impl Parser {
                     if name_token.kind != TokenKind::Name {
                         return Err(self.error_at(pos, "expected parameter name after *"));
                     }
-                    vararg = Some(name_token.lexeme.clone());
+                    let name = name_token.lexeme.clone();
                     pos += 1;
+                    let (annotation, next) = self.parse_lambda_annotation(pos)?;
+                    pos = next;
+                    vararg = Some(Parameter {
+                        name,
+                        default: None,
+                        annotation,
+                    });
                     keyword_only = true;
                 }
                 TokenKind::DoubleStar => {
@@ -1509,18 +1577,27 @@ impl Parser {
                     if name_token.kind != TokenKind::Name {
                         return Err(self.error_at(pos, "expected parameter name after **"));
                     }
-                    kwarg = Some(name_token.lexeme.clone());
+                    let name = name_token.lexeme.clone();
                     pos += 1;
+                    let (annotation, next) = self.parse_lambda_annotation(pos)?;
+                    pos = next;
+                    kwarg = Some(Parameter {
+                        name,
+                        default: None,
+                        annotation,
+                    });
                 }
                 TokenKind::Name => {
                     let name = token.lexeme.clone();
                     pos += 1;
+                    let (annotation, next) = self.parse_lambda_annotation(pos)?;
+                    pos = next;
 
                     let mut default = None;
                     if matches!(self.token_at(pos).kind, TokenKind::Equal) {
                         pos += 1;
                         let (expr, next) = self.parse_expr_at(pos)?;
-                        default = Some(expr);
+                        default = Some(Box::new(expr));
                         pos = next;
                         if keyword_only {
                             saw_kwonly_default = true;
@@ -1533,10 +1610,15 @@ impl Parser {
                         return Err(self.error_at(pos, "non-default parameter follows default"));
                     }
 
+                    let param = Parameter {
+                        name,
+                        default,
+                        annotation,
+                    };
                     if keyword_only {
-                        kwonly_params.push(Parameter { name, default });
+                        kwonly_params.push(param);
                     } else {
-                        params.push(Parameter { name, default });
+                        params.push(param);
                     }
                 }
                 _ => return Err(self.error_at(pos, "expected parameter name")),
@@ -1556,6 +1638,30 @@ impl Parser {
         }
 
         Ok((posonly_params, params, kwonly_params, vararg, kwarg, pos))
+    }
+
+    fn parse_lambda_annotation(
+        &mut self,
+        pos: usize,
+    ) -> Result<(Option<Box<Expr>>, usize), ParseError> {
+        if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
+            return Ok((None, pos));
+        }
+        let (expr, next) = self.parse_expr_at(pos + 1)?;
+        let next_kind = &self.token_at(next).kind;
+        let allowed = matches!(
+            next_kind,
+            TokenKind::Comma
+                | TokenKind::Equal
+                | TokenKind::Slash
+                | TokenKind::Star
+                | TokenKind::DoubleStar
+                | TokenKind::Colon
+        );
+        if !allowed {
+            return Ok((None, pos));
+        }
+        Ok((Some(Box::new(expr)), next))
     }
 
     fn parse_block_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {

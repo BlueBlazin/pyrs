@@ -75,8 +75,8 @@ impl ScopeInfo {
         posonly_params: &[Parameter],
         params: &[Parameter],
         kwonly_params: &[Parameter],
-        vararg: &Option<String>,
-        kwarg: &Option<String>,
+        vararg: &Option<Parameter>,
+        kwarg: &Option<Parameter>,
         body: &[Stmt],
         enclosing: &ScopeInfo,
     ) -> Result<Self, CompileError> {
@@ -96,8 +96,8 @@ impl ScopeInfo {
         posonly_params: &[Parameter],
         params: &[Parameter],
         kwonly_params: &[Parameter],
-        vararg: &Option<String>,
-        kwarg: &Option<String>,
+        vararg: &Option<Parameter>,
+        kwarg: &Option<Parameter>,
         body: &Expr,
         enclosing: &ScopeInfo,
     ) -> Result<Self, CompileError> {
@@ -144,8 +144,8 @@ fn analyze_scope(
     posonly_params: &[Parameter],
     params: &[Parameter],
     kwonly_params: &[Parameter],
-    vararg: Option<&String>,
-    kwarg: Option<&String>,
+    vararg: Option<&Parameter>,
+    kwarg: Option<&Parameter>,
     body: &[Stmt],
     enclosing: &HashSet<String>,
 ) -> Result<ScopeInfo, CompileError> {
@@ -243,8 +243,8 @@ fn analyze_scope_expr(
     posonly_params: &[Parameter],
     params: &[Parameter],
     kwonly_params: &[Parameter],
-    vararg: Option<&String>,
-    kwarg: Option<&String>,
+    vararg: Option<&Parameter>,
+    kwarg: Option<&Parameter>,
     body: &Expr,
     enclosing: &HashSet<String>,
 ) -> Result<ScopeInfo, CompileError> {
@@ -268,8 +268,8 @@ fn collect_param_locals(
     posonly_params: &[Parameter],
     params: &[Parameter],
     kwonly_params: &[Parameter],
-    vararg: Option<&String>,
-    kwarg: Option<&String>,
+    vararg: Option<&Parameter>,
+    kwarg: Option<&Parameter>,
     locals: &mut HashSet<String>,
 ) {
     for param in posonly_params {
@@ -281,11 +281,11 @@ fn collect_param_locals(
     for param in kwonly_params {
         locals.insert(param.name.clone());
     }
-    if let Some(name) = vararg {
-        locals.insert(name.clone());
+    if let Some(param) = vararg {
+        locals.insert(param.name.clone());
     }
-    if let Some(name) = kwarg {
-        locals.insert(name.clone());
+    if let Some(param) = kwarg {
+        locals.insert(param.name.clone());
     }
 }
 
@@ -296,7 +296,9 @@ fn collect_locals_stmt(
     nonlocals: &mut HashSet<String>,
 ) {
     match &stmt.node {
-        StmtKind::Assign { target, .. } | StmtKind::AugAssign { target, .. } => {
+        StmtKind::Assign { target, .. }
+        | StmtKind::AugAssign { target, .. }
+        | StmtKind::AnnAssign { target, .. } => {
             collect_locals_target(target, locals);
         }
         StmtKind::For { target, .. } => collect_locals_target(target, locals),
@@ -369,6 +371,17 @@ fn collect_uses_stmt(
         StmtKind::Assign { target, value } => {
             collect_target_uses(target, uses, child_free, enclosing)?;
             collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
+        StmtKind::AnnAssign {
+            target,
+            annotation,
+            value,
+        } => {
+            collect_target_uses(target, uses, child_free, enclosing)?;
+            collect_uses_expr(annotation, uses, child_free, enclosing)?;
+            if let Some(expr) = value {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
         }
         StmtKind::AugAssign { target, value, .. } => {
             collect_target_uses(target, uses, child_free, enclosing)?;
@@ -452,6 +465,7 @@ fn collect_uses_stmt(
             kwonly_params,
             vararg,
             kwarg,
+            returns,
             body,
             ..
         } => {
@@ -459,6 +473,17 @@ fn collect_uses_stmt(
                 if let Some(default) = &param.default {
                     collect_uses_expr(default, uses, child_free, enclosing)?;
                 }
+                if let Some(annotation) = &param.annotation {
+                    collect_uses_expr(annotation, uses, child_free, enclosing)?;
+                }
+            }
+            for param in vararg.iter().chain(kwarg.iter()) {
+                if let Some(annotation) = &param.annotation {
+                    collect_uses_expr(annotation, uses, child_free, enclosing)?;
+                }
+            }
+            if let Some(annotation) = returns {
+                collect_uses_expr(annotation, uses, child_free, enclosing)?;
             }
             let scope = analyze_scope(
                 ScopeType::Function,
@@ -627,6 +652,55 @@ fn collect_uses_expr(
     Ok(())
 }
 
+fn body_has_ann_assign(body: &[Stmt]) -> bool {
+    for stmt in body {
+        match &stmt.node {
+            StmtKind::AnnAssign { .. } => return true,
+            StmtKind::If { body, orelse, .. } => {
+                if body_has_ann_assign(body) || body_has_ann_assign(orelse) {
+                    return true;
+                }
+            }
+            StmtKind::While { body, orelse, .. } => {
+                if body_has_ann_assign(body) || body_has_ann_assign(orelse) {
+                    return true;
+                }
+            }
+            StmtKind::For { body, orelse, .. } => {
+                if body_has_ann_assign(body) || body_has_ann_assign(orelse) {
+                    return true;
+                }
+            }
+            StmtKind::Try {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+            } => {
+                if body_has_ann_assign(body)
+                    || body_has_ann_assign(orelse)
+                    || body_has_ann_assign(finalbody)
+                {
+                    return true;
+                }
+                for handler in handlers {
+                    if body_has_ann_assign(&handler.body) {
+                        return true;
+                    }
+                }
+            }
+            StmtKind::With { body, .. } => {
+                if body_has_ann_assign(body) {
+                    return true;
+                }
+            }
+            StmtKind::FunctionDef { .. } | StmtKind::ClassDef { .. } => {}
+            _ => {}
+        }
+    }
+    false
+}
+
 pub fn compile_module(module: &Module) -> Result<CodeObject, CompileError> {
     compile_module_with_filename(module, "<module>")
 }
@@ -688,6 +762,9 @@ impl Compiler {
     }
 
     fn compile_module(&mut self, module: &Module) -> Result<(), CompileError> {
+        if body_has_ann_assign(&module.body) {
+            self.init_annotations()?;
+        }
         for stmt in &module.body {
             self.compile_stmt(stmt)?;
         }
@@ -707,6 +784,11 @@ impl Compiler {
                 Ok(())
             }
             StmtKind::Assign { target, value } => compiler.compile_assign_target(target, value),
+            StmtKind::AnnAssign {
+                target,
+                annotation,
+                value,
+            } => compiler.compile_ann_assign(target, annotation, value.as_ref()),
             StmtKind::AugAssign { target, op, value } => {
                 compiler.compile_aug_assign(target, op, value)
             }
@@ -719,6 +801,7 @@ impl Compiler {
                 vararg,
                 kwarg,
                 kwonly_params,
+                returns,
                 body,
             } => {
                 let func_code = compiler.compile_function(
@@ -734,6 +817,9 @@ impl Compiler {
                     posonly_params,
                     params,
                     kwonly_params,
+                    vararg,
+                    kwarg,
+                    returns.as_ref(),
                     func_code,
                 )?;
                 compiler.emit_store_name_scoped(name)?;
@@ -895,6 +981,9 @@ impl Compiler {
                     posonly_params,
                     params,
                     kwonly_params,
+                    vararg,
+                    kwarg,
+                    None,
                     func_code,
                 )?;
                 Ok(())
@@ -1061,6 +1150,19 @@ impl Compiler {
         result
     }
 
+    fn ensure_local_name(&mut self, name: &str) {
+        if matches!(self.scope.scope_type, ScopeType::Function | ScopeType::Lambda) {
+            self.scope.locals.insert(name.to_string());
+        }
+    }
+
+    fn init_annotations(&mut self) -> Result<(), CompileError> {
+        self.ensure_local_name("__annotations__");
+        self.emit(Opcode::BuildDict, Some(0));
+        self.emit_store_name_scoped("__annotations__")?;
+        Ok(())
+    }
+
     fn emit(&mut self, opcode: Opcode, arg: Option<u32>) {
         self.code.instructions.push(Instruction::new(opcode, arg));
         self.code
@@ -1128,6 +1230,41 @@ impl Compiler {
         }
         self.emit(Opcode::BuildTuple, Some(freevars.len() as u32));
         Ok(())
+    }
+
+    fn emit_function_annotations(
+        &mut self,
+        posonly_params: &[Parameter],
+        params: &[Parameter],
+        kwonly_params: &[Parameter],
+        vararg: &Option<Parameter>,
+        kwarg: &Option<Parameter>,
+        returns: Option<&Expr>,
+    ) -> Result<bool, CompileError> {
+        let mut items: Vec<(String, &Expr)> = Vec::new();
+        for param in posonly_params.iter().chain(params.iter()).chain(kwonly_params.iter()) {
+            if let Some(annotation) = &param.annotation {
+                items.push((param.name.clone(), annotation.as_ref()));
+            }
+        }
+        for param in vararg.iter().chain(kwarg.iter()) {
+            if let Some(annotation) = &param.annotation {
+                items.push((param.name.clone(), annotation.as_ref()));
+            }
+        }
+        if let Some(annotation) = returns {
+            items.push(("return".to_string(), annotation));
+        }
+        if items.is_empty() {
+            return Ok(false);
+        }
+        let count = items.len();
+        for (name, expr) in items {
+            self.emit_const(Value::Str(name));
+            self.compile_expr(expr)?;
+        }
+        self.emit(Opcode::BuildDict, Some(count as u32));
+        Ok(true)
     }
 
     fn name_kind(&self, name: &str) -> NameKind {
@@ -1250,8 +1387,8 @@ impl Compiler {
         posonly_params: &[Parameter],
         params: &[Parameter],
         kwonly_params: &[Parameter],
-        vararg: &Option<String>,
-        kwarg: &Option<String>,
+        vararg: &Option<Parameter>,
+        kwarg: &Option<Parameter>,
         body: &[Stmt],
     ) -> Result<CodeObject, CompileError> {
         let scope = ScopeInfo::for_function(
@@ -1273,8 +1410,11 @@ impl Compiler {
             .iter()
             .map(|param| param.name.clone())
             .collect();
-        compiler.code.vararg = vararg.clone();
-        compiler.code.kwarg = kwarg.clone();
+        compiler.code.vararg = vararg.as_ref().map(|param| param.name.clone());
+        compiler.code.kwarg = kwarg.as_ref().map(|param| param.name.clone());
+        if body_has_ann_assign(body) {
+            compiler.init_annotations()?;
+        }
         for stmt in body {
             compiler.compile_stmt(stmt)?;
         }
@@ -1286,16 +1426,27 @@ impl Compiler {
         posonly_params: &[Parameter],
         params: &[Parameter],
         kwonly_params: &[Parameter],
+        vararg: &Option<Parameter>,
+        kwarg: &Option<Parameter>,
+        returns: Option<&Expr>,
         func_code: CodeObject,
     ) -> Result<(), CompileError> {
         let needs_closure = !func_code.freevars.is_empty();
         if needs_closure {
             self.emit_closure_tuple(&func_code.freevars)?;
         }
+        let needs_annotations = self.emit_function_annotations(
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg,
+            kwarg,
+            returns,
+        )?;
         let defaults: Vec<&Expr> = posonly_params
             .iter()
             .chain(params.iter())
-            .filter_map(|param| param.default.as_ref())
+            .filter_map(|param| param.default.as_deref())
             .collect();
         for expr in &defaults {
             self.compile_expr(expr)?;
@@ -1312,6 +1463,9 @@ impl Compiler {
         self.emit(Opcode::BuildDict, Some(kwonly_count));
         let const_idx = self.code.add_const(Value::Code(Rc::new(func_code)));
         self.emit(Opcode::MakeFunction, Some(const_idx));
+        if needs_annotations {
+            self.emit(Opcode::SetFunctionAttribute, Some(0x04));
+        }
         if needs_closure {
             self.emit(Opcode::SetFunctionAttribute, Some(0x08));
         }
@@ -1344,6 +1498,9 @@ impl Compiler {
             &self.code.filename,
             scope,
         );
+        if body_has_ann_assign(body) {
+            compiler.init_annotations()?;
+        }
         for stmt in body {
             compiler.compile_stmt(stmt)?;
         }
@@ -1357,6 +1514,35 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         self.compile_expr(value)?;
         self.compile_store_target_from_stack(target)
+    }
+
+    fn compile_ann_assign(
+        &mut self,
+        target: &AssignTarget,
+        annotation: &Expr,
+        value: Option<&Expr>,
+    ) -> Result<(), CompileError> {
+        match target {
+            AssignTarget::Name(name) => {
+                self.ensure_local_name("__annotations__");
+                self.emit_load_name("__annotations__")?;
+                self.emit_const(Value::Str(name.clone()));
+                self.compile_expr(annotation)?;
+                self.emit(Opcode::DictSet, None);
+                self.emit_store_name_scoped("__annotations__")?;
+                if let Some(expr) = value {
+                    self.compile_assign_target(target, expr)?;
+                }
+            }
+            _ => {
+                self.compile_expr(annotation)?;
+                self.emit(Opcode::PopTop, None);
+                if let Some(expr) = value {
+                    self.compile_assign_target(target, expr)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn compile_store_target_from_stack(&mut self, target: &AssignTarget) -> Result<(), CompileError> {

@@ -212,7 +212,10 @@ impl<'a> Lexer<'a> {
                 }
                 '-' => {
                     self.advance();
-                    if self.peek_char() == Some('=') {
+                    if self.peek_char() == Some('>') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::Arrow, "->", offset, line, column));
+                    } else if self.peek_char() == Some('=') {
                         self.advance();
                         tokens.push(Token::new(TokenKind::MinusEqual, "-=", offset, line, column));
                     } else {

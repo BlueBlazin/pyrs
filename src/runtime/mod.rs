@@ -29,6 +29,7 @@ pub struct FunctionObject {
     pub defaults: Vec<Value>,
     pub kwonly_defaults: HashMap<String, Value>,
     pub closure: Vec<ObjRef>,
+    pub annotations: Option<ObjRef>,
 }
 
 impl FunctionObject {
@@ -38,6 +39,7 @@ impl FunctionObject {
         defaults: Vec<Value>,
         kwonly_defaults: HashMap<String, Value>,
         closure: Vec<ObjRef>,
+        annotations: Option<ObjRef>,
     ) -> Self {
         Self {
             code,
@@ -45,6 +47,7 @@ impl FunctionObject {
             defaults,
             kwonly_defaults,
             closure,
+            annotations,
         }
     }
 }
@@ -413,6 +416,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             for cell in &func.closure {
                 stack.push(cell.clone());
             }
+            if let Some(annotations) = &func.annotations {
+                stack.push(annotations.clone());
+            }
             for value in &func.code.constants {
                 trace_value(value, stack, marked);
             }
@@ -463,6 +469,7 @@ fn clear_object_refs(obj: &ObjRef) {
             func.defaults.clear();
             func.kwonly_defaults.clear();
             func.closure.clear();
+            func.annotations = None;
         }
         Object::BoundMethod(_) => {}
         Object::Cell(cell) => {

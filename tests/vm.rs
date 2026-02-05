@@ -1,7 +1,7 @@
 use pyrs::{
     compiler,
     parser,
-    runtime::{ExceptionObject, Object, Value},
+    runtime::{BuiltinFunction, ExceptionObject, Object, Value},
     vm::Vm,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -206,6 +206,63 @@ fn executes_keyword_arguments() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_module_annotations() {
+    let source = "x: int\ny: str = 'a'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        dict_entries(vm.get_global("__annotations__")),
+        Some(vec![
+            (
+                Value::Str("x".to_string()),
+                Value::Builtin(BuiltinFunction::Int)
+            ),
+            (
+                Value::Str("y".to_string()),
+                Value::Builtin(BuiltinFunction::Str)
+            ),
+        ])
+    );
+}
+
+#[test]
+fn executes_function_annotations() {
+    let source = "def f(x: int, y: str = 'a') -> int:\n    z: int\n    return __annotations__\n\nout = f(1)\nann = f.__annotations__\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        dict_entries(vm.get_global("ann")),
+        Some(vec![
+            (
+                Value::Str("x".to_string()),
+                Value::Builtin(BuiltinFunction::Int)
+            ),
+            (
+                Value::Str("y".to_string()),
+                Value::Builtin(BuiltinFunction::Str)
+            ),
+            (
+                Value::Str("return".to_string()),
+                Value::Builtin(BuiltinFunction::Int)
+            ),
+        ])
+    );
+    assert_eq!(
+        dict_entries(vm.get_global("out")),
+        Some(vec![(
+            Value::Str("z".to_string()),
+            Value::Builtin(BuiltinFunction::Int)
+        )])
+    );
 }
 
 #[test]

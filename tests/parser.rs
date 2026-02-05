@@ -46,6 +46,7 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             vararg,
             kwarg,
             kwonly_params,
+            returns,
             body,
         } => StmtKind::FunctionDef {
             name: name.clone(),
@@ -54,6 +55,7 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             vararg: vararg.clone(),
             kwarg: kwarg.clone(),
             kwonly_params: kwonly_params.iter().map(strip_param).collect(),
+            returns: returns.as_ref().map(strip_expr),
             body: body.iter().map(strip_stmt).collect(),
         },
         StmtKind::ClassDef { name, bases, body } => StmtKind::ClassDef {
@@ -105,6 +107,15 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
         },
         StmtKind::Global { names } => StmtKind::Global { names: names.clone() },
         StmtKind::Nonlocal { names } => StmtKind::Nonlocal { names: names.clone() },
+        StmtKind::AnnAssign {
+            target,
+            annotation,
+            value,
+        } => StmtKind::AnnAssign {
+            target: strip_target(target),
+            annotation: strip_expr(annotation),
+            value: value.as_ref().map(strip_expr),
+        },
         StmtKind::With {
             context,
             target,
@@ -213,7 +224,14 @@ fn strip_expr(expr: &Expr) -> Expr {
 fn strip_param(param: &Parameter) -> Parameter {
     Parameter {
         name: param.name.clone(),
-        default: param.default.as_ref().map(strip_expr),
+        default: param
+            .default
+            .as_ref()
+            .map(|expr| Box::new(strip_expr(expr))),
+        annotation: param
+            .annotation
+            .as_ref()
+            .map(|expr| Box::new(strip_expr(expr))),
     }
 }
 
@@ -731,6 +749,7 @@ fn parses_function_definition_and_return() {
             kwarg,
             kwonly_params,
             body,
+            ..
         } => {
             assert!(posonly_params.is_empty());
             assert_eq!(name, "add");
@@ -810,8 +829,8 @@ fn parses_function_definition_with_varargs() {
             assert!(posonly_params.is_empty());
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "a");
-            assert_eq!(vararg.as_deref(), Some("rest"));
-            assert_eq!(kwarg.as_deref(), Some("kw"));
+            assert_eq!(vararg.as_ref().map(|param| param.name.as_str()), Some("rest"));
+            assert_eq!(kwarg.as_ref().map(|param| param.name.as_str()), Some("kw"));
             assert!(kwonly_params.is_empty());
         }
         other => panic!("unexpected stmt: {other:?}"),
@@ -833,9 +852,25 @@ fn parses_lambda_with_varargs() {
             } => {
                 assert!(posonly_params.is_empty());
                 assert!(params.is_empty());
-                assert_eq!(vararg.as_deref(), Some("args"));
-                assert_eq!(kwarg.as_deref(), Some("kw"));
+                assert_eq!(vararg.as_ref().map(|param| param.name.as_str()), Some("args"));
+                assert_eq!(kwarg.as_ref().map(|param| param.name.as_str()), Some("kw"));
                 assert!(kwonly_params.is_empty());
+            }
+            other => panic!("unexpected expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_lambda_with_annotations() {
+    let module = parser::parse_module("lambda x: int: x").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Expr(expr) => match &expr.node {
+            ExprKind::Lambda { params, .. } => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].name, "x");
+                assert!(params[0].annotation.is_some());
             }
             other => panic!("unexpected expr: {other:?}"),
         },
@@ -1094,6 +1129,43 @@ fn parses_nonlocal_statement() {
     match &strip_module(&module)[0].node {
         StmtKind::Nonlocal { names } => {
             assert_eq!(names, &vec!["a".to_string(), "b".to_string()]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_annotated_assignment() {
+    let module = parser::parse_module("x: int = 1").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::AnnAssign {
+            target,
+            annotation,
+            value,
+        } => {
+            assert_eq!(target, &AssignTarget::Name("x".to_string()));
+            assert_eq!(&annotation.node, &ExprKind::Name("int".to_string()));
+            assert!(value.is_some());
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_function_annotations() {
+    let source = "def f(x: int) -> str:\n    return 'ok'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::FunctionDef { params, returns, .. } => {
+            assert_eq!(params.len(), 1);
+            assert!(params[0].annotation.is_some());
+            match returns {
+                Some(expr) => match &expr.node {
+                    ExprKind::Name(name) => assert_eq!(name, "str"),
+                    other => panic!("unexpected return annotation: {other:?}"),
+                },
+                None => panic!("missing return annotation"),
+            }
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
