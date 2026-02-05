@@ -683,6 +683,16 @@ fn executes_class_inheritance() {
 }
 
 #[test]
+fn init_returning_value_raises() {
+    let source = "class Bad:\n    def __init__(self):\n        return 1\nBad()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("__init__() should return None"));
+}
+
+#[test]
 fn executes_assert_statement() {
     let source = "assert 1\nx = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");
