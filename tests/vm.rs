@@ -1,11 +1,22 @@
 use pyrs::{
     compiler,
     parser,
-    runtime::{ExceptionObject, ModuleObject, Value},
+    runtime::{ExceptionObject, Object, Value},
     vm::Vm,
 };
-use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+fn list_values(value: Option<Value>) -> Option<Vec<Value>> {
+    value.and_then(|val| val.as_list())
+}
+
+fn tuple_values(value: Option<Value>) -> Option<Vec<Value>> {
+    value.and_then(|val| val.as_tuple())
+}
+
+fn dict_entries(value: Option<Value>) -> Option<Vec<(Value, Value)>> {
+    value.and_then(|val| val.as_dict())
+}
 
 #[test]
 fn executes_constant_expression() {
@@ -358,33 +369,29 @@ v = s[1:3]\n";
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("a"),
-        Some(Value::List(vec![Value::Int(2), Value::Int(3)]))
+        list_values(vm.get_global("a")),
+        Some(vec![Value::Int(2), Value::Int(3)])
     );
     assert_eq!(
-        vm.get_global("b"),
-        Some(Value::List(vec![Value::Int(1), Value::Int(2)]))
+        list_values(vm.get_global("b")),
+        Some(vec![Value::Int(1), Value::Int(2)])
     );
     assert_eq!(
-        vm.get_global("c"),
-        Some(Value::List(vec![Value::Int(1), Value::Int(3)]))
+        list_values(vm.get_global("c")),
+        Some(vec![Value::Int(1), Value::Int(3)])
     );
     assert_eq!(
-        vm.get_global("d"),
-        Some(Value::List(vec![
+        list_values(vm.get_global("d")),
+        Some(vec![
             Value::Int(4),
             Value::Int(3),
             Value::Int(2),
             Value::Int(1)
-        ]))
+        ])
     );
     assert_eq!(
-        vm.get_global("u"),
-        Some(Value::Tuple(vec![
-            Value::Int(2),
-            Value::Int(3),
-            Value::Int(4)
-        ]))
+        tuple_values(vm.get_global("u")),
+        Some(vec![Value::Int(2), Value::Int(3), Value::Int(4)])
     );
     assert_eq!(
         vm.get_global("v"),
@@ -403,17 +410,17 @@ z = x[slice(None, None, -1)]\n";
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("y"),
-        Some(Value::List(vec![Value::Int(2), Value::Int(3)]))
+        list_values(vm.get_global("y")),
+        Some(vec![Value::Int(2), Value::Int(3)])
     );
     assert_eq!(
-        vm.get_global("z"),
-        Some(Value::List(vec![
+        list_values(vm.get_global("z")),
+        Some(vec![
             Value::Int(4),
             Value::Int(3),
             Value::Int(2),
             Value::Int(1)
-        ]))
+        ])
     );
 }
 
@@ -527,21 +534,21 @@ d = list('ab')\n";
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("a"), Some(Value::List(vec![])));
+    assert_eq!(list_values(vm.get_global("a")), Some(vec![]));
     assert_eq!(
-        vm.get_global("b"),
-        Some(Value::List(vec![Value::Int(1), Value::Int(2)]))
+        list_values(vm.get_global("b")),
+        Some(vec![Value::Int(1), Value::Int(2)])
     );
     assert_eq!(
-        vm.get_global("c"),
-        Some(Value::Tuple(vec![Value::Int(1), Value::Int(2)]))
+        tuple_values(vm.get_global("c")),
+        Some(vec![Value::Int(1), Value::Int(2)])
     );
     assert_eq!(
-        vm.get_global("d"),
-        Some(Value::List(vec![
+        list_values(vm.get_global("d")),
+        Some(vec![
             Value::Str("a".to_string()),
             Value::Str("b".to_string())
-        ]))
+        ])
     );
 }
 
@@ -555,12 +562,12 @@ b = divmod(-7, 3)\n";
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("a"),
-        Some(Value::Tuple(vec![Value::Int(2), Value::Int(1)]))
+        tuple_values(vm.get_global("a")),
+        Some(vec![Value::Int(2), Value::Int(1)])
     );
     assert_eq!(
-        vm.get_global("b"),
-        Some(Value::Tuple(vec![Value::Int(-3), Value::Int(2)]))
+        tuple_values(vm.get_global("b")),
+        Some(vec![Value::Int(-3), Value::Int(2)])
     );
 }
 
@@ -574,15 +581,15 @@ b = sorted(('b', 'a'))\n";
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("a"),
-        Some(Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        list_values(vm.get_global("a")),
+        Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
     assert_eq!(
-        vm.get_global("b"),
-        Some(Value::List(vec![
+        list_values(vm.get_global("b")),
+        Some(vec![
             Value::Str("a".to_string()),
             Value::Str("b".to_string())
-        ]))
+        ])
     );
 }
 
@@ -595,8 +602,8 @@ fn executes_sorted_with_reverse() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("a"),
-        Some(Value::List(vec![Value::Int(3), Value::Int(2), Value::Int(1)]))
+        list_values(vm.get_global("a")),
+        Some(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
     );
 }
 
@@ -610,18 +617,18 @@ b = enumerate('ab', start=1)\n";
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("a"),
-        Some(Value::List(vec![
-            Value::Tuple(vec![Value::Int(0), Value::Int(1)]),
-            Value::Tuple(vec![Value::Int(1), Value::Int(2)])
-        ]))
+        list_values(vm.get_global("a")),
+        Some(vec![
+            vm.alloc_tuple(vec![Value::Int(0), Value::Int(1)]),
+            vm.alloc_tuple(vec![Value::Int(1), Value::Int(2)])
+        ])
     );
     assert_eq!(
-        vm.get_global("b"),
-        Some(Value::List(vec![
-            Value::Tuple(vec![Value::Int(1), Value::Str("a".to_string())]),
-            Value::Tuple(vec![Value::Int(2), Value::Str("b".to_string())])
-        ]))
+        list_values(vm.get_global("b")),
+        Some(vec![
+            vm.alloc_tuple(vec![Value::Int(1), Value::Str("a".to_string())]),
+            vm.alloc_tuple(vec![Value::Int(2), Value::Str("b".to_string())])
+        ])
     );
 }
 
@@ -839,12 +846,15 @@ fn executes_module_attribute_access() {
     let module = parser::parse_module("y = mod.x").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
-    let module_obj = Rc::new(ModuleObject::new("mod"));
-    module_obj
-        .globals
-        .borrow_mut()
-        .insert("x".to_string(), Value::Int(42));
-    vm.set_global("mod", Value::Module(module_obj));
+    let module_value = vm.alloc_module("mod");
+    if let Value::Module(obj) = &module_value {
+        if let pyrs::runtime::Object::Module(module_data) = &mut *obj.kind_mut() {
+            module_data
+                .globals
+                .insert("x".to_string(), Value::Int(42));
+        }
+    }
+    vm.set_global("mod", module_value);
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("y"), Some(Value::Int(42)));
@@ -855,16 +865,19 @@ fn executes_module_attribute_assignment() {
     let module = parser::parse_module("mod.x = 7").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
-    let module_obj = Rc::new(ModuleObject::new("mod"));
-    vm.set_global("mod", Value::Module(module_obj.clone()));
+    let module_value = vm.alloc_module("mod");
+    vm.set_global("mod", module_value);
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
 
     let stored = vm.get_global("mod").expect("module exists");
     match stored {
         Value::Module(module) => {
-            let globals = module.globals.borrow();
-            assert_eq!(globals.get("x"), Some(&Value::Int(7)));
+            if let pyrs::runtime::Object::Module(module_data) = &*module.kind() {
+                assert_eq!(module_data.globals.get("x"), Some(&Value::Int(7)));
+            } else {
+                panic!("expected module data");
+            }
         }
         other => panic!("expected module, got {other:?}"),
     }
@@ -1137,13 +1150,13 @@ fn executes_subscript_assignment() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(Value::List(vec![Value::Int(5), Value::Int(2)])));
     assert_eq!(
-        vm.get_global("d"),
-        Some(Value::Dict(vec![(
-            Value::Str("a".to_string()),
-            Value::Int(3)
-        )]))
+        list_values(vm.get_global("x")),
+        Some(vec![Value::Int(5), Value::Int(2)])
+    );
+    assert_eq!(
+        dict_entries(vm.get_global("d")),
+        Some(vec![(Value::Str("a".to_string()), Value::Int(3))])
     );
 }
 
@@ -1156,12 +1169,8 @@ fn executes_negative_index_assignment() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("x"),
-        Some(Value::List(vec![
-            Value::Int(1),
-            Value::Int(2),
-            Value::Int(9)
-        ]))
+        list_values(vm.get_global("x")),
+        Some(vec![Value::Int(1), Value::Int(2), Value::Int(9)])
     );
 }
 
@@ -1248,6 +1257,47 @@ x = flag
 }
 
 #[test]
+fn executes_id_builtin_and_is_identity() {
+    let source = "a = [1]\n\
+b = a\n\
+c = [1]\n\
+x = id(a) == id(b)\n\
+y = a is b\n\
+z = a is c\n\
+w = a == c\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("y"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("z"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("w"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collects_self_referential_list_cycles() {
+    let mut vm = Vm::new();
+    let before = vm.heap_object_count();
+    {
+        let list_value = vm.alloc_list(Vec::new());
+        let list_obj = match &list_value {
+            Value::List(obj) => obj.clone(),
+            _ => panic!("expected list"),
+        };
+        if let Object::List(values) = &mut *list_obj.kind_mut() {
+            values.push(Value::List(list_obj.clone()));
+        }
+        vm.set_global("tmp", list_value);
+    }
+    vm.set_global("tmp", Value::None);
+    vm.gc_collect();
+    let after = vm.heap_object_count();
+    assert_eq!(after, before);
+}
+
+#[test]
 fn executes_modulo() {
     let source = "x = 5 % 2\ny = 9 % 4\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1291,14 +1341,13 @@ fn executes_multiplication_and_concat() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("a"), Some(Value::Str("hihihi".to_string())));
-    assert_eq!(vm.get_global("b"), Some(Value::List(vec![Value::Int(1), Value::Int(1)])));
     assert_eq!(
-        vm.get_global("c"),
-        Some(Value::Tuple(vec![
-            Value::Int(1),
-            Value::Int(1),
-            Value::Int(1)
-        ]))
+        list_values(vm.get_global("b")),
+        Some(vec![Value::Int(1), Value::Int(1)])
+    );
+    assert_eq!(
+        tuple_values(vm.get_global("c")),
+        Some(vec![Value::Int(1), Value::Int(1), Value::Int(1)])
     );
 }
 
@@ -1311,16 +1360,16 @@ fn executes_range_variants() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("a"),
-        Some(Value::List(vec![Value::Int(0), Value::Int(1), Value::Int(2)]))
+        list_values(vm.get_global("a")),
+        Some(vec![Value::Int(0), Value::Int(1), Value::Int(2)])
     );
     assert_eq!(
-        vm.get_global("b"),
-        Some(Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        list_values(vm.get_global("b")),
+        Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
     assert_eq!(
-        vm.get_global("c"),
-        Some(Value::List(vec![Value::Int(5), Value::Int(3), Value::Int(1)]))
+        list_values(vm.get_global("c")),
+        Some(vec![Value::Int(5), Value::Int(3), Value::Int(1)])
     );
 }
 
@@ -1334,16 +1383,16 @@ fn executes_range_with_keywords() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(
-        vm.get_global("a"),
-        Some(Value::List(vec![Value::Int(0), Value::Int(1), Value::Int(2)]))
+        list_values(vm.get_global("a")),
+        Some(vec![Value::Int(0), Value::Int(1), Value::Int(2)])
     );
     assert_eq!(
-        vm.get_global("b"),
-        Some(Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        list_values(vm.get_global("b")),
+        Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
     assert_eq!(
-        vm.get_global("c"),
-        Some(Value::List(vec![Value::Int(1), Value::Int(3), Value::Int(5)]))
+        list_values(vm.get_global("c")),
+        Some(vec![Value::Int(1), Value::Int(3), Value::Int(5)])
     );
 }
 
