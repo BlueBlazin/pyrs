@@ -1603,6 +1603,7 @@ fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, Ru
 }
 
 struct BoundArguments {
+    posonly: Vec<Value>,
     positional: Vec<Value>,
     kwonly: Vec<Value>,
     vararg: Option<Value>,
@@ -1614,23 +1615,25 @@ fn bind_arguments(
     mut positional: Vec<Value>,
     mut kwargs: HashMap<String, Value>,
 ) -> Result<BoundArguments, RuntimeError> {
+    let posonly_len = func.code.posonly_params.len();
     let params_len = func.code.params.len();
     let kwonly_len = func.code.kwonly_params.len();
     let defaults_len = func.defaults.len();
-    if defaults_len > params_len {
+    let total_positional = posonly_len + params_len;
+    if defaults_len > total_positional {
         return Err(RuntimeError::new("invalid function defaults"));
     }
 
     let mut extra_positional = Vec::new();
-    if positional.len() > params_len {
+    if positional.len() > total_positional {
         if func.code.vararg.is_none() {
             return Err(RuntimeError::new("argument count mismatch"));
         }
-        extra_positional = positional.split_off(params_len);
+        extra_positional = positional.split_off(total_positional);
     }
 
-    let required = params_len - defaults_len;
-    let mut bound: Vec<Option<Value>> = vec![None; params_len];
+    let required = total_positional - defaults_len;
+    let mut bound: Vec<Option<Value>> = vec![None; total_positional];
 
     for (idx, value) in positional.into_iter().enumerate() {
         bound[idx] = Some(value);
@@ -1639,11 +1642,19 @@ fn bind_arguments(
     let mut extra_kwargs: HashMap<String, Value> = HashMap::new();
     let mut kwonly_values: HashMap<String, Value> = HashMap::new();
     for (name, value) in kwargs.drain() {
+        if func
+            .code
+            .posonly_params
+            .iter()
+            .any(|param| param == &name)
+        {
+            return Err(RuntimeError::new("unexpected keyword argument"));
+        }
         if let Some(index) = func.code.params.iter().position(|param| param == &name) {
             if bound[index].is_some() {
                 return Err(RuntimeError::new("multiple values for argument"));
             }
-            bound[index] = Some(value);
+            bound[posonly_len + index] = Some(value);
         } else if func.code.kwonly_params.iter().any(|param| param == &name) {
             if kwonly_values.contains_key(&name) {
                 return Err(RuntimeError::new("multiple values for argument"));
@@ -1659,7 +1670,7 @@ fn bind_arguments(
         }
     }
 
-    for idx in 0..params_len {
+    for idx in 0..total_positional {
         if bound[idx].is_none() {
             if idx < required {
                 return Err(RuntimeError::new("argument count mismatch"));
@@ -1669,7 +1680,16 @@ fn bind_arguments(
         }
     }
 
-    let positional = bound.into_iter().map(|value| value.unwrap()).collect();
+    let posonly = bound[..posonly_len]
+        .iter()
+        .cloned()
+        .map(|value| value.unwrap())
+        .collect();
+    let positional = bound[posonly_len..]
+        .iter()
+        .cloned()
+        .map(|value| value.unwrap())
+        .collect();
     let mut kwonly = Vec::with_capacity(kwonly_len);
     for name in &func.code.kwonly_params {
         if let Some(value) = kwonly_values.remove(name) {
@@ -1694,6 +1714,7 @@ fn bind_arguments(
     });
 
     Ok(BoundArguments {
+        posonly,
         positional,
         kwonly,
         vararg,
@@ -1702,6 +1723,14 @@ fn bind_arguments(
 }
 
 fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments) {
+    for (name, value) in code
+        .posonly_params
+        .iter()
+        .cloned()
+        .zip(bindings.posonly.into_iter())
+    {
+        frame.locals.insert(name, value);
+    }
     for (name, value) in code
         .params
         .iter()

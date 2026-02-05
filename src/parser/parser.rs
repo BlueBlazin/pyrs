@@ -198,12 +198,12 @@ impl Parser {
 
     fn parse_lambda(&mut self, pos: usize) -> ParseResult<Expr> {
         let mut pos = pos + 1;
-        let (params, kwonly_params, vararg, kwarg, next) = if matches!(
+        let (posonly_params, params, kwonly_params, vararg, kwarg, next) = if matches!(
             self.token_at(pos).kind,
             TokenKind::Colon
         )
         {
-            (Vec::new(), Vec::new(), None, None, pos)
+            (Vec::new(), Vec::new(), Vec::new(), None, None, pos)
         } else {
             self.parse_lambda_params(pos)?
         };
@@ -213,6 +213,7 @@ impl Parser {
         let (body, next) = self.parse_expr_at(pos)?;
         Ok((
             Expr::Lambda {
+                posonly_params,
                 params,
                 vararg,
                 kwarg,
@@ -863,7 +864,8 @@ impl Parser {
         let name = name_token.lexeme.clone();
         pos += 1;
         pos = self.expect_kind(pos, TokenKind::LParen)?;
-        let (params, kwonly_params, vararg, kwarg, next) = self.parse_parameters(pos)?;
+        let (posonly_params, params, kwonly_params, vararg, kwarg, next) =
+            self.parse_parameters(pos)?;
         pos = next;
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
@@ -871,6 +873,7 @@ impl Parser {
         Ok((
             Stmt::FunctionDef {
                 name,
+                posonly_params,
                 params,
                 vararg,
                 kwarg,
@@ -1116,6 +1119,7 @@ impl Parser {
         (
             Vec<Parameter>,
             Vec<Parameter>,
+            Vec<Parameter>,
             Option<String>,
             Option<String>,
             usize,
@@ -1123,6 +1127,7 @@ impl Parser {
         ParseError,
     > {
         let mut pos = pos;
+        let mut posonly_params = Vec::new();
         let mut params = Vec::new();
         let mut kwonly_params = Vec::new();
         let mut vararg = None;
@@ -1130,14 +1135,25 @@ impl Parser {
         let mut saw_default = false;
         let mut saw_kwonly_default = false;
         let mut keyword_only = false;
+        let mut saw_slash = false;
 
         if matches!(self.token_at(pos).kind, TokenKind::RParen) {
-            return Ok((params, kwonly_params, None, None, pos + 1));
+            return Ok((posonly_params, params, kwonly_params, None, None, pos + 1));
         }
 
         loop {
             let token = self.token_at(pos);
             match token.kind {
+                TokenKind::Slash => {
+                    if saw_slash {
+                        return Err(self.error_at(pos, "multiple '/' in parameters"));
+                    }
+                    if keyword_only || vararg.is_some() || kwarg.is_some() {
+                        return Err(self.error_at(pos, "invalid '/' position"));
+                    }
+                    saw_slash = true;
+                    pos += 1;
+                }
                 TokenKind::Star => {
                     if vararg.is_some() {
                         return Err(self.error_at(pos, "multiple *args parameters"));
@@ -1196,6 +1212,8 @@ impl Parser {
 
                     if keyword_only {
                         kwonly_params.push(Parameter { name, default });
+                    } else if !saw_slash {
+                        posonly_params.push(Parameter { name, default });
                     } else {
                         params.push(Parameter { name, default });
                     }
@@ -1217,7 +1235,7 @@ impl Parser {
         }
 
         pos = self.expect_kind(pos, TokenKind::RParen)?;
-        Ok((params, kwonly_params, vararg, kwarg, pos))
+        Ok((posonly_params, params, kwonly_params, vararg, kwarg, pos))
     }
 
     fn parse_lambda_params(
@@ -1227,6 +1245,7 @@ impl Parser {
         (
             Vec<Parameter>,
             Vec<Parameter>,
+            Vec<Parameter>,
             Option<String>,
             Option<String>,
             usize,
@@ -1234,6 +1253,7 @@ impl Parser {
         ParseError,
     > {
         let mut pos = pos;
+        let mut posonly_params = Vec::new();
         let mut params = Vec::new();
         let mut kwonly_params = Vec::new();
         let mut vararg = None;
@@ -1241,10 +1261,21 @@ impl Parser {
         let mut saw_default = false;
         let mut saw_kwonly_default = false;
         let mut keyword_only = false;
+        let mut saw_slash = false;
 
         loop {
             let token = self.token_at(pos);
             match token.kind {
+                TokenKind::Slash => {
+                    if saw_slash {
+                        return Err(self.error_at(pos, "multiple '/' in parameters"));
+                    }
+                    if keyword_only || vararg.is_some() || kwarg.is_some() {
+                        return Err(self.error_at(pos, "invalid '/' position"));
+                    }
+                    saw_slash = true;
+                    pos += 1;
+                }
                 TokenKind::Star => {
                     if vararg.is_some() {
                         return Err(self.error_at(pos, "multiple *args parameters"));
@@ -1303,6 +1334,8 @@ impl Parser {
 
                     if keyword_only {
                         kwonly_params.push(Parameter { name, default });
+                    } else if !saw_slash {
+                        posonly_params.push(Parameter { name, default });
                     } else {
                         params.push(Parameter { name, default });
                     }
@@ -1323,7 +1356,7 @@ impl Parser {
             break;
         }
 
-        Ok((params, kwonly_params, vararg, kwarg, pos))
+        Ok((posonly_params, params, kwonly_params, vararg, kwarg, pos))
     }
 
     fn parse_block_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {

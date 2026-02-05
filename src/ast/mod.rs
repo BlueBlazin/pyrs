@@ -40,6 +40,7 @@ pub enum Stmt {
     },
     FunctionDef {
         name: String,
+        posonly_params: Vec<Parameter>,
         params: Vec<Parameter>,
         vararg: Option<String>,
         kwarg: Option<String>,
@@ -150,6 +151,7 @@ pub enum Expr {
         orelse: Box<Expr>,
     },
     Lambda {
+        posonly_params: Vec<Parameter>,
         params: Vec<Parameter>,
         vararg: Option<String>,
         kwarg: Option<String>,

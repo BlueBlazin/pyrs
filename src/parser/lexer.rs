@@ -271,12 +271,7 @@ impl<'a> Lexer<'a> {
                             ));
                         }
                     } else {
-                        return Err(LexError::new(
-                            "unexpected character: /",
-                            offset,
-                            line,
-                            column,
-                        ));
+                        tokens.push(Token::new(TokenKind::Slash, "/", offset, line, column));
                     }
                 }
                 '%' => {

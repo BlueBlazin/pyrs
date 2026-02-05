@@ -130,15 +130,23 @@ impl Compiler {
             Stmt::While { test, body, orelse } => self.compile_while(test, body, orelse),
             Stmt::FunctionDef {
                 name,
+                posonly_params,
                 params,
                 vararg,
                 kwarg,
                 kwonly_params,
                 body,
             } => {
-                let func_code =
-                    self.compile_function(name, params, kwonly_params, vararg, kwarg, body)?;
-                self.emit_function_with_defaults(params, kwonly_params, func_code)?;
+                let func_code = self.compile_function(
+                    name,
+                    posonly_params,
+                    params,
+                    kwonly_params,
+                    vararg,
+                    kwarg,
+                    body,
+                )?;
+                self.emit_function_with_defaults(posonly_params, params, kwonly_params, func_code)?;
                 self.emit_store_name_scoped(name);
                 Ok(())
             }
@@ -270,6 +278,7 @@ impl Compiler {
                 self.compile_if_expr(test, body, orelse)
             }
             Expr::Lambda {
+                posonly_params,
                 params,
                 vararg,
                 kwarg,
@@ -281,13 +290,14 @@ impl Compiler {
                 };
                 let func_code = self.compile_function(
                     "<lambda>",
+                    posonly_params,
                     params,
                     kwonly_params,
                     vararg,
                     kwarg,
                     &[return_stmt],
                 )?;
-                self.emit_function_with_defaults(params, kwonly_params, func_code)?;
+                self.emit_function_with_defaults(posonly_params, params, kwonly_params, func_code)?;
                 Ok(())
             }
             Expr::Call { func, args } => {
@@ -573,6 +583,7 @@ impl Compiler {
     fn compile_function(
         &mut self,
         name: &str,
+        posonly_params: &[Parameter],
         params: &[Parameter],
         kwonly_params: &[Parameter],
         vararg: &Option<String>,
@@ -585,6 +596,10 @@ impl Compiler {
             loop_stack: Vec::new(),
             global_names: HashSet::new(),
         };
+        compiler.code.posonly_params = posonly_params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
         compiler.code.params = params.iter().map(|param| param.name.clone()).collect();
         compiler.code.kwonly_params = kwonly_params
             .iter()
@@ -600,12 +615,14 @@ impl Compiler {
 
     fn emit_function_with_defaults(
         &mut self,
+        posonly_params: &[Parameter],
         params: &[Parameter],
         kwonly_params: &[Parameter],
         func_code: CodeObject,
     ) -> Result<(), CompileError> {
-        let defaults: Vec<&Expr> = params
+        let defaults: Vec<&Expr> = posonly_params
             .iter()
+            .chain(params.iter())
             .filter_map(|param| param.default.as_ref())
             .collect();
         for expr in &defaults {
