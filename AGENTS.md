@@ -58,19 +58,19 @@ We measure success by:
 - Roadmap: `docs/ROADMAP.md`
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - CPython vendor sync script: `scripts/sync_cpython.py`
-- Vendor snapshot: CPython 3.14.3 grammar + opcode sources synced into `vendor/cpython-3.14/` (opcode table CSV still pending).
+- Vendor snapshot: CPython 3.14.3 grammar + opcode sources synced into `vendor/cpython-3.14/` (opcode table CSV generated).
 
 ## Current Scaffolding (Early Stage)
 - Parser: packrat-style memoization with a minimal lexer, indentation tokens, `if`/`elif`/`else`/`while`/`for`, `break`/`continue`, `with`, function defs, returns, calls, and tuple/list destructuring targets.
-- Bytecode: minimal opcodes for constants/names + metadata loader (`opcode_table.csv` from CPython 3.14).
+- Bytecode: minimal opcodes for source compiler plus CPython 3.14 decoder/translator (`opcode_table.csv` from CPython 3.14).
 - Compiler/VM: emits and executes bytecode for `pass`, assignments (including tuple/list destructuring, name-based subscripts with negative index assignment, module attribute assignment, and augmented `+=`, `-=`, `*=`, `%=`, `//=`, `**=`), literals (`True`, `False`, `None`), unary ops (`+`, `-`, `not`), binary ops (`+`, `-`, `*`, `**`, `//`, `%`), comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`), boolean ops (`and`, `or`), conditional expressions (`a if cond else b`), lambdas, `if/else`/`elif`, `while/for` (with `else` clauses and tuple/list targets), `break`/`continue`, `raise`, `assert`, `try/except/else`, `try/finally`, `try/except/finally`, `with` (calls `__enter__`/`__exit__`), functions with positional-only params (`/`), positional/defaults, keyword-only params, and `*args`/`**kwargs` in definitions, keyword arguments at call sites, `*args`/`**kwargs` call expansion, basic class definitions with single inheritance, instance attributes and bound methods (enforces `__init__` returns `None`), list/tuple/dict literals, subscripts with negative indexing plus slicing for list/tuple/str, attribute access (`module.attr`, `instance.attr`, `Class.attr`), and basic `import` / `from ... import ...` statements with optional `as` aliases (dotted module names supported). Builtins: `print` (supports `sep`/`end` keywords), `len` (strings, lists, tuples, dicts, `obj` keyword), `range` (1-3 args, keyword args), `slice`, `bool`, `int`, `str`, `abs`, `sum` (supports `start` keyword), `min`, `max`, `all`, `any`, `pow`, `list`, `tuple`, `divmod`, `sorted` (supports `reverse` keyword), `enumerate` (supports `start` keyword), `id`, and basic exception types (`Exception`, `ValueError`, `TypeError`, `IndexError`, `KeyError`, `AssertionError`, `RuntimeError`, `NameError`, `AttributeError`, `ZeroDivisionError`).
 - Exceptions: `try/except` handles explicit `raise`; VM runtime errors are mapped to coarse exception types (`RuntimeError`, `TypeError`, `IndexError`, `KeyError`, `ZeroDivisionError`, `NameError`, `AttributeError`) based on message heuristics.
 - Identity: `id()` builtin returns stable ids; `is`/`is not` are identity-based (heap objects carry stable ids).
 - Classes: class bodies execute in a class namespace module while resolving missing names against the defining module; methods capture the defining module as globals.
-- TODO: implement CPython `.pyc` code object decoding and opcode execution parity.
+- CPython bytecode: marshal reader + `.pyc` loader, decoder, and translator covering a core opcode subset (`RESUME`, `LOAD_CONST`, `LOAD_SMALL_INT`, `LOAD_NAME`, `LOAD_GLOBAL`, `LOAD_FAST`, `LOAD_ATTR` with encoded null flag, `STORE_*`, `BINARY_OP`, `COMPARE_OP`, `CONTAINS_OP`, `IS_OP`, `CALL`/`CALL_KW`, `MAKE_FUNCTION`, `SET_FUNCTION_ATTRIBUTE`, `LOAD_BUILD_CLASS`, `PUSH_NULL`, `GET_ITER`/`FOR_ITER`, jumps, `RETURN_*`). Extra opcodes mapped to `Nop` pending parity. Attribute load encodes `push_null` flag in low bit (`arg = name_idx << 1 | flag`).
 - Modules: new `Value::Module` with per-module globals; VM maintains module cache and search paths (default CWD, configurable via `Vm::add_module_path`). Import loads `<name>.py` (or package `__init__.py`) into a module frame, returning module objects; module attribute access attempts to lazy-load submodules; functions capture defining module globals.
 - Numeric compatibility: `bool` participates in int arithmetic/comparisons (`True == 1`, `True + 1`, etc.).
 - Scoping: `global` statements supported inside functions; assignments to globals emit `StoreGlobal`.
-- `.pyc` header parser stub (hash-based and timestamp-based variants).
-- Tests: parser smoke tests, bytecode metadata loader test, and pyc header tests.
-- CLI: `--ast` and `--bytecode` flags to inspect parsed AST and bytecode.
+- `.pyc` header parsing (hash-based + timestamp) + executor (`Vm::execute_pyc_*`), with CLI support for `.pyc` paths.
+- Tests: parser smoke tests, bytecode metadata loader test, pyc header tests, and a CPython `.pyc` execution smoke test.
+- CLI: `--ast`, `--bytecode`, and `.pyc` execution by file extension.

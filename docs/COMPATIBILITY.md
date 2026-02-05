@@ -15,8 +15,10 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [x] Opcode table synced from CPython 3.14 (generated `opcode_table.csv`)
 - [x] Internal bytecode IR + compiler for subset (non-CPython)
 - [x] `.pyc` header parsing
-- [ ] CPython bytecode decoder/encoder
-- [ ] Opcode execution parity
+- [x] CPython bytecode decoder + translator for supported opcode subset
+- [x] `.pyc` loader + executor for supported opcode subset
+- [ ] CPython bytecode encoder
+- [ ] Opcode execution parity (full 3.14 coverage)
 
 ## Runtime & Object Model
 - [x] Core types subset (None, bool, int, str, tuple, list, dict)
@@ -51,8 +53,9 @@ Status flags: `[ ]` not started, `[x]` complete.
 ### P0 (Production Blocking)
 - [x] Object identity + stable headers (`id`, `is` semantics).
 - [x] Reference counting + cycle GC.
-- [ ] CPython opcode table decoder/encoder (3.14).
-- [ ] `.pyc` load/serialize parity with CPython 3.14.
+- [x] CPython opcode table decoder (3.14).
+- [ ] CPython opcode encoder (3.14).
+- [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [ ] Closures + `nonlocal` (cell/free vars).
 - [ ] Generators (`yield`, `yield from`) + protocol.
 - [ ] Tracebacks + accurate frames (file/line/col).

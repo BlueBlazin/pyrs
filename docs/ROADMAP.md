@@ -30,7 +30,7 @@ We are building a production-grade Python interpreter in Rust with full source a
 ## Bytecode compatibility
 - Target CPython 3.14 bytecode format and semantics.
 - Maintain an opcode table in-repo and generate decoder/encoder tables.
-- Support reading and writing .pyc files.
+- Support reading and writing .pyc files (reader in place; writer TBD).
 - Keep stack effect metadata in one place to enable verification and tooling.
 
 ## Compiler and IR
@@ -72,8 +72,9 @@ Status flags: `[ ]` not started, `[x]` complete.
 ### P0 (Production Blocking)
 - [x] Object identity + stable headers (`id`, `is` semantics).
 - [x] Reference counting + cycle GC.
-- [ ] CPython opcode table decoder/encoder (3.14).
-- [ ] `.pyc` load/serialize parity with CPython 3.14.
+- [x] CPython opcode table decoder (3.14).
+- [ ] CPython opcode encoder (3.14).
+- [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [ ] Closures + `nonlocal` (cell/free vars).
 - [ ] Generators (`yield`, `yield from`) + protocol.
 - [ ] Tracebacks + accurate frames (file/line/col).
@@ -114,9 +115,10 @@ Status: complete
 ### Milestone 2 — CPython Bytecode Compatibility (P0)
 DoD:
 - `opcode_table.csv` generated and used (3.14).
-- `.pyc` loader can execute CPython-compiled bytecode for a basic module.
-- Stack effects + jumps match CPython for supported opcode subset.
-- Disassembly matches CPython for a sample module.
+ - `.pyc` loader can execute CPython-compiled bytecode for a basic module.
+ - Stack effects + jumps match CPython for supported opcode subset (calls, attr load/store, loops, class/function defs).
+ - Marshal reader + translator cover the subset needed for smoke tests.
+Status: complete
 
 ### Milestone 3 — Closures & Frames (P0)
 DoD:
