@@ -152,6 +152,17 @@ fn executes_keyword_only_parameters() {
 }
 
 #[test]
+fn executes_positional_only_parameters() {
+    let source = "def add(a, /, b):\n    return a + b\nx = add(1, 2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
 fn executes_keyword_arguments() {
     let source = "def add(a, b):\n    return a + b\nx = add(b=2, a=1)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

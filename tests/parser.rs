@@ -243,12 +243,14 @@ fn parses_lambda_expression() {
     let module = parser::parse_module("lambda x: x + 1").expect("parse should succeed");
     match &module.body[0] {
         Stmt::Expr(Expr::Lambda {
+            posonly_params,
             params,
             vararg,
             kwarg,
             kwonly_params,
             body,
         }) => {
+            assert!(posonly_params.is_empty());
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "x");
             assert!(params[0].default.is_none());
@@ -404,12 +406,14 @@ fn parses_function_definition_and_return() {
     match &module.body[0] {
         Stmt::FunctionDef {
             name,
+            posonly_params,
             params,
             vararg,
             kwarg,
             kwonly_params,
             body,
         } => {
+            assert!(posonly_params.is_empty());
             assert_eq!(name, "add");
             assert_eq!(params.len(), 2);
             assert_eq!(params[0].name, "a");
@@ -468,12 +472,14 @@ fn parses_function_definition_with_varargs() {
     let module = parser::parse_module(source).expect("parse should succeed");
     match &module.body[0] {
         Stmt::FunctionDef {
+            posonly_params,
             params,
             vararg,
             kwarg,
             kwonly_params,
             ..
         } => {
+            assert!(posonly_params.is_empty());
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "a");
             assert_eq!(vararg.as_deref(), Some("rest"));
@@ -489,12 +495,14 @@ fn parses_lambda_with_varargs() {
     let module = parser::parse_module("lambda *args, **kw: args").expect("parse should succeed");
     match &module.body[0] {
         Stmt::Expr(Expr::Lambda {
+            posonly_params,
             params,
             vararg,
             kwarg,
             kwonly_params,
             ..
         }) => {
+            assert!(posonly_params.is_empty());
             assert!(params.is_empty());
             assert_eq!(vararg.as_deref(), Some("args"));
             assert_eq!(kwarg.as_deref(), Some("kw"));
@@ -531,6 +539,28 @@ fn parses_keyword_only_parameters() {
 }
 
 #[test]
+fn parses_positional_only_parameters() {
+    let module =
+        parser::parse_module("def f(a, b=1, /, c=2):\n    return a\n").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::FunctionDef {
+            posonly_params,
+            params,
+            kwonly_params,
+            ..
+        } => {
+            assert_eq!(posonly_params.len(), 2);
+            assert_eq!(posonly_params[0].name, "a");
+            assert_eq!(posonly_params[1].name, "b");
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "c");
+            assert!(kwonly_params.is_empty());
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_lambda_with_keyword_only() {
     let module = parser::parse_module("lambda *, b=3: b").expect("parse should succeed");
     match &module.body[0] {
@@ -547,6 +577,26 @@ fn parses_lambda_with_keyword_only() {
             assert_eq!(kwonly_params.len(), 1);
             assert_eq!(kwonly_params[0].name, "b");
             assert!(kwonly_params[0].default.is_some());
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_lambda_with_positional_only() {
+    let module = parser::parse_module("lambda a, /, b: b").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Lambda {
+            posonly_params,
+            params,
+            kwonly_params,
+            ..
+        }) => {
+            assert_eq!(posonly_params.len(), 1);
+            assert_eq!(posonly_params[0].name, "a");
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "b");
+            assert!(kwonly_params.is_empty());
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
