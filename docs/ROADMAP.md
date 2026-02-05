@@ -84,6 +84,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] Async/await + async generators.
 - [ ] Comprehensions with correct scoping.
 - [ ] Pattern matching (`match`/`case`).
+- [ ] Type annotations (parse + `__annotations__` on modules/classes/functions).
 - [ ] Exception chaining (`__cause__`, `__context__`, suppression).
 - [ ] Descriptor protocol + attribute lookup parity.
 - [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.
