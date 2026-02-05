@@ -21,7 +21,7 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 ## Runtime & Object Model
 - [x] Core types subset (None, bool, int, str, tuple, list, dict)
 - [ ] bytes, set, frozenset, memoryview, complex, etc.
-- [x] Function + frame model (positional params, defaults, keyword args, *args/**kwargs; no closures)
+- [x] Function + frame model (positional params, defaults, keyword args, keyword-only params, *args/**kwargs; no closures)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [ ] Tracebacks + exception chaining
 - [x] Module/import system (simple module names, file-based)
