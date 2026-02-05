@@ -930,6 +930,17 @@ fn executes_len_on_list() {
 }
 
 #[test]
+fn executes_len_with_keyword() {
+    let source = "x = len(obj=[1, 2])";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1086,6 +1097,39 @@ fn executes_range_variants() {
         vm.get_global("c"),
         Some(Value::List(vec![Value::Int(5), Value::Int(3), Value::Int(1)]))
     );
+}
+
+#[test]
+fn executes_range_with_keywords() {
+    let source =
+        "a = range(stop=3)\nb = range(start=1, stop=4)\nc = range(start=1, stop=6, step=2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("a"),
+        Some(Value::List(vec![Value::Int(0), Value::Int(1), Value::Int(2)]))
+    );
+    assert_eq!(
+        vm.get_global("b"),
+        Some(Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+    );
+    assert_eq!(
+        vm.get_global("c"),
+        Some(Value::List(vec![Value::Int(1), Value::Int(3), Value::Int(5)]))
+    );
+}
+
+#[test]
+fn executes_print_with_keywords() {
+    let module =
+        parser::parse_module("print(1, 2, sep='-', end='!')").expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
 }
 
 #[test]
