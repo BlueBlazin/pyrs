@@ -864,6 +864,35 @@ fn executes_dotted_import_statement() {
 }
 
 #[test]
+fn executes_import_submodule_attribute() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_import_pkg_{unique}"));
+    let pkg_dir = temp_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp dir");
+    std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
+
+    let module_path = pkg_dir.join("sub.py");
+    std::fs::write(&module_path, "value = 19\n").expect("write module");
+
+    let source = "import pkg\nx = pkg.sub.value\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(19)));
+
+    let _ = std::fs::remove_file(&module_path);
+    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
+    let _ = std::fs::remove_dir(&pkg_dir);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn executes_from_import_statement() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -912,6 +941,35 @@ fn executes_from_dotted_import_statement() {
     assert_eq!(vm.get_global("x"), Some(Value::Int(17)));
 
     let _ = std::fs::remove_file(&module_path);
+    let _ = std::fs::remove_dir(&pkg_dir);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn executes_from_import_submodule() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_from_import_pkg_{unique}"));
+    let pkg_dir = temp_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp dir");
+    std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
+
+    let module_path = pkg_dir.join("sub.py");
+    std::fs::write(&module_path, "value = 23\n").expect("write module");
+
+    let source = "from pkg import sub\nx = sub.value\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(23)));
+
+    let _ = std::fs::remove_file(&module_path);
+    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
     let _ = std::fs::remove_dir(&pkg_dir);
     let _ = std::fs::remove_dir(&temp_dir);
 }
