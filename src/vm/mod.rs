@@ -34,10 +34,16 @@ struct Frame {
     class_bases: Vec<Rc<ClassObject>>,
     blocks: Vec<Block>,
     active_exception: Option<Value>,
+    expect_none_return: bool,
 }
 
 impl Frame {
-    fn new(code: Rc<CodeObject>, module: Rc<ModuleObject>, is_module: bool, return_module: bool) -> Self {
+    fn new(
+        code: Rc<CodeObject>,
+        module: Rc<ModuleObject>,
+        is_module: bool,
+        return_module: bool,
+    ) -> Self {
         Self {
             code,
             ip: 0,
@@ -53,6 +59,7 @@ impl Frame {
             class_bases: Vec::new(),
             blocks: Vec::new(),
             active_exception: None,
+            expect_none_return: false,
         }
     }
 }
@@ -1003,6 +1010,7 @@ impl Vm {
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
+                                frame.expect_none_return = true;
                                 apply_bindings(&mut frame, &init_func.code, bindings);
                                 self.frames.push(frame);
                             } else {
@@ -1089,6 +1097,7 @@ impl Vm {
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
+                                frame.expect_none_return = true;
                                 apply_bindings(&mut frame, &init_func.code, bindings);
                                 self.frames.push(frame);
                             } else {
@@ -1191,6 +1200,7 @@ impl Vm {
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
+                                frame.expect_none_return = true;
                                 apply_bindings(&mut frame, &init_func.code, bindings);
                                 self.frames.push(frame);
                             } else {
@@ -1345,6 +1355,11 @@ impl Vm {
                 Opcode::ReturnValue => {
                     let value = self.pop_value().unwrap_or(Value::None);
                     let frame = self.frames.pop().expect("frame exists");
+                    if frame.expect_none_return && value != Value::None {
+                        return Err(RuntimeError::new(
+                            "__init__() should return None",
+                        ));
+                    }
                     let value = if frame.return_class {
                         self.class_value_from_module(&frame.module, frame.class_bases)
                     } else if let Some(instance) = frame.return_instance {
@@ -1932,6 +1947,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     }
     if message.contains("has no attribute") {
         return "AttributeError";
+    }
+    if message.contains("__init__() should return None") {
+        return "TypeError";
     }
     if message.contains("unsupported operand type") || message.contains("expects") {
         return "TypeError";
