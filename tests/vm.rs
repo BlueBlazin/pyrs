@@ -151,6 +151,28 @@ fn executes_keyword_arguments() {
 }
 
 #[test]
+fn executes_star_args() {
+    let source = "def add(a, b):\n    return a + b\nargs = [1, 2]\nx = add(*args)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_double_star_kwargs() {
+    let source = "def add(a, b):\n    return a + b\nkwargs = {'a': 1, 'b': 2}\nx = add(**kwargs)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
 fn executes_default_from_global() {
     let source = "x = 5\n\ndef f(a=x):\n    return a\n\ny = f()\n";
     let module = parser::parse_module(source).expect("parse should succeed");

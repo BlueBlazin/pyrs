@@ -448,6 +448,23 @@ fn parses_call_with_keywords() {
 }
 
 #[test]
+fn parses_call_with_star_args() {
+    let module = parser::parse_module("f(*args, **kwargs)").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Call { args, .. }) => {
+            assert_eq!(
+                args,
+                &vec![
+                    pyrs::ast::CallArg::Star(Expr::Name("args".to_string())),
+                    pyrs::ast::CallArg::DoubleStar(Expr::Name("kwargs".to_string())),
+                ]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_list_literal_and_subscript() {
     let module = parser::parse_module("[1, 2][0]").expect("parse should succeed");
     match &module.body[0] {
