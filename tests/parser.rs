@@ -95,6 +95,30 @@ fn parses_floor_div_expression() {
 }
 
 #[test]
+fn parses_power_expression() {
+    let module = parser::parse_module("2 ** 3 ** 2").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Binary { op, left, right }) => {
+            assert_eq!(*op, pyrs::ast::BinaryOp::Pow);
+            assert_eq!(**left, Expr::Constant(Constant::Int(2)));
+            match &**right {
+                Expr::Binary {
+                    op: rhs_op,
+                    left: rhs_left,
+                    right: rhs_right,
+                } => {
+                    assert_eq!(*rhs_op, pyrs::ast::BinaryOp::Pow);
+                    assert_eq!(**rhs_left, Expr::Constant(Constant::Int(3)));
+                    assert_eq!(**rhs_right, Expr::Constant(Constant::Int(2)));
+                }
+                other => panic!("unexpected rhs: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_comparison_expression() {
     let module = parser::parse_module("1 < 2 + 3").expect("parse should succeed");
     let expected = Stmt::Expr(Expr::Binary {

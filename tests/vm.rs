@@ -971,6 +971,17 @@ fn executes_floor_division() {
 }
 
 #[test]
+fn executes_power_expression() {
+    let source = "x = 2 ** 3 ** 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(512)));
+}
+
+#[test]
 fn executes_multiplication_and_concat() {
     let source = "a = 'hi' * 3\nb = [1] * 2\nc = (1,) * 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");
