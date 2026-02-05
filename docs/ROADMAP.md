@@ -66,6 +66,112 @@ We are building a production-grade Python interpreter in Rust with full source a
 4. Milestone 3: Stdlib expansion + CPython test suite integration.
 5. Milestone 4: Performance profiling + tooling and hardening.
 
+## Production Readiness Checklist (Living)
+Status flags: `[ ]` not started, `[x]` complete.
+
+### P0 (Production Blocking)
+- [ ] Object identity + stable headers (`id`, `is` semantics).
+- [ ] Reference counting + cycle GC.
+- [ ] CPython opcode table decoder/encoder (3.14).
+- [ ] `.pyc` load/serialize parity with CPython 3.14.
+- [ ] Closures + `nonlocal` (cell/free vars).
+- [ ] Generators (`yield`, `yield from`) + protocol.
+- [ ] Tracebacks + accurate frames (file/line/col).
+- [ ] Import system parity (`importlib`, specs, hooks).
+
+### P1 (Major Ecosystem Enablers)
+- [ ] Async/await + async generators.
+- [ ] Comprehensions with correct scoping.
+- [ ] Pattern matching (`match`/`case`).
+- [ ] Exception chaining (`__cause__`, `__context__`, suppression).
+- [ ] Descriptor protocol + attribute lookup parity.
+- [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.
+- [ ] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
+
+### P2 (Performance & QoL)
+- [ ] Peephole / constant-folding bytecode optimizations.
+- [ ] Attribute lookup caches.
+- [ ] Efficient list/tuple/dict internals.
+- [ ] Stable REPL + improved error messages.
+- [ ] CPython `Lib/test` subset runner.
+
+### P3 (Future-Proofing)
+- [ ] ABI-stable extension story (HPy or limited C-API).
+- [ ] JIT hooks in IR/VM boundaries (no implementation).
+- [ ] Debug hooks (`sys.settrace`, `sys.setprofile`).
+- [ ] Profiling/benchmark harness.
+
+## Milestone Definitions of Done (DoD)
+
+### Milestone 1 — Runtime Core & Identity (P0)
+DoD:
+- `id()` returns stable values across object lifetime.
+- `is`/`is not` are identity-based.
+- Refcounting correct for all objects; deterministic dealloc in tests.
+- Cycle GC handles self-referential containers.
+
+### Milestone 2 — CPython Bytecode Compatibility (P0)
+DoD:
+- `opcode_table.csv` generated and used (3.14).
+- `.pyc` loader can execute CPython-compiled bytecode for a basic module.
+- Stack effects + jumps match CPython for supported opcode subset.
+- Disassembly matches CPython for a sample module.
+
+### Milestone 3 — Closures & Frames (P0)
+DoD:
+- `nonlocal` works in nested functions.
+- Cells/free vars capture correctly across calls.
+- Tracebacks show filename/line/column and frame names.
+- `locals()`/`globals()` reflect correct scopes.
+
+### Milestone 4 — Generators & Iteration (P0)
+DoD:
+- `yield` and `yield from` match CPython for basic cases.
+- Generator `send`/`throw`/`close` behave correctly.
+- `for` loops iterate over generators and custom iterators.
+
+### Milestone 5 — Import System Parity (P0)
+DoD:
+- `importlib` can import pure-Python stdlib modules.
+- `sys.path`, `sys.meta_path`, `sys.path_hooks` are functional.
+- Packages with `__init__.py` and submodules load correctly.
+- `__spec__`, `__package__`, `__loader__` populated.
+
+### Milestone 6 — P1 Language Features
+DoD:
+- Comprehensions (list/dict/set/gen) with correct scoping.
+- Pattern matching parses and executes core patterns.
+- Exception chaining semantics match CPython.
+
+### Milestone 7 — Async & Concurrency (P1)
+DoD:
+- `async def`, `await`, `async for`, `async with` work with a minimal loop.
+- Async generators conform to protocol.
+- Basic `asyncio` tasks can run simple coroutines.
+
+### Milestone 8 — Stdlib Core (P1)
+DoD:
+- `sys`, `types`, `inspect`, `io` minimally functional.
+- `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math` run basics.
+- Pure-Python package installs can execute (no C-extensions).
+
+### Milestone 9 — Performance Baseline (P2)
+DoD:
+- Peephole optimization pass implemented.
+- Attribute lookup cache measurable in microbench.
+- Baseline benchmark suite established.
+
+### Milestone 10 — Testing & Hardening (P2)
+DoD:
+- CPython `Lib/test` subset runner.
+- ≥ 500 tests passing in CI or local harness.
+- Crash-free on curated real-world scripts.
+
+### Milestone 11 — Ecosystem Reach (P3)
+DoD:
+- ABI-stable extension plan documented.
+- JIT hooks documented in IR + VM pipeline.
+
 ## Immediate next steps
 - Create crate layout for parser, AST, compiler, VM, runtime, stdlib, CLI.
 - Add a vendor area for CPython 3.14 grammar and opcode metadata.

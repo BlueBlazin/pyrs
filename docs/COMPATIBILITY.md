@@ -44,3 +44,38 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [ ] CLI tools (simple)
 - [ ] Web apps (minimal framework)
 - [ ] Data processing (pure Python)
+
+## Production Readiness Checklist (Living)
+Status flags: `[ ]` not started, `[x]` complete.
+
+### P0 (Production Blocking)
+- [ ] Object identity + stable headers (`id`, `is` semantics).
+- [ ] Reference counting + cycle GC.
+- [ ] CPython opcode table decoder/encoder (3.14).
+- [ ] `.pyc` load/serialize parity with CPython 3.14.
+- [ ] Closures + `nonlocal` (cell/free vars).
+- [ ] Generators (`yield`, `yield from`) + protocol.
+- [ ] Tracebacks + accurate frames (file/line/col).
+- [ ] Import system parity (`importlib`, specs, hooks).
+
+### P1 (Major Ecosystem Enablers)
+- [ ] Async/await + async generators.
+- [ ] Comprehensions with correct scoping.
+- [ ] Pattern matching (`match`/`case`).
+- [ ] Exception chaining (`__cause__`, `__context__`, suppression).
+- [ ] Descriptor protocol + attribute lookup parity.
+- [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.
+- [ ] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
+
+### P2 (Performance & QoL)
+- [ ] Peephole / constant-folding bytecode optimizations.
+- [ ] Attribute lookup caches.
+- [ ] Efficient list/tuple/dict internals.
+- [ ] Stable REPL + improved error messages.
+- [ ] CPython `Lib/test` subset runner.
+
+### P3 (Future-Proofing)
+- [ ] ABI-stable extension story (HPy or limited C-API).
+- [ ] JIT hooks in IR/VM boundaries (no implementation).
+- [ ] Debug hooks (`sys.settrace`, `sys.setprofile`).
+- [ ] Profiling/benchmark harness.
