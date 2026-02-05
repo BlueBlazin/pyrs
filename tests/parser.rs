@@ -246,6 +246,7 @@ fn parses_lambda_expression() {
             params,
             vararg,
             kwarg,
+            kwonly_params,
             body,
         }) => {
             assert_eq!(params.len(), 1);
@@ -253,6 +254,7 @@ fn parses_lambda_expression() {
             assert!(params[0].default.is_none());
             assert!(vararg.is_none());
             assert!(kwarg.is_none());
+            assert!(kwonly_params.is_empty());
             match &**body {
                 Expr::Binary { .. } => {}
                 other => panic!("unexpected body: {other:?}"),
@@ -405,6 +407,7 @@ fn parses_function_definition_and_return() {
             params,
             vararg,
             kwarg,
+            kwonly_params,
             body,
         } => {
             assert_eq!(name, "add");
@@ -415,6 +418,7 @@ fn parses_function_definition_and_return() {
             assert!(params[1].default.is_none());
             assert!(vararg.is_none());
             assert!(kwarg.is_none());
+            assert!(kwonly_params.is_empty());
             match &body[0] {
                 Stmt::Return { value } => {
                     assert!(value.is_some());
@@ -467,12 +471,14 @@ fn parses_function_definition_with_varargs() {
             params,
             vararg,
             kwarg,
+            kwonly_params,
             ..
         } => {
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "a");
             assert_eq!(vararg.as_deref(), Some("rest"));
             assert_eq!(kwarg.as_deref(), Some("kw"));
+            assert!(kwonly_params.is_empty());
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
@@ -486,11 +492,61 @@ fn parses_lambda_with_varargs() {
             params,
             vararg,
             kwarg,
+            kwonly_params,
             ..
         }) => {
             assert!(params.is_empty());
             assert_eq!(vararg.as_deref(), Some("args"));
             assert_eq!(kwarg.as_deref(), Some("kw"));
+            assert!(kwonly_params.is_empty());
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_keyword_only_parameters() {
+    let module =
+        parser::parse_module("def f(a, *, b, c=2):\n    return a\n").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::FunctionDef {
+            params,
+            kwonly_params,
+            vararg,
+            kwarg,
+            ..
+        } => {
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "a");
+            assert!(vararg.is_none());
+            assert!(kwarg.is_none());
+            assert_eq!(kwonly_params.len(), 2);
+            assert_eq!(kwonly_params[0].name, "b");
+            assert!(kwonly_params[0].default.is_none());
+            assert_eq!(kwonly_params[1].name, "c");
+            assert!(kwonly_params[1].default.is_some());
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_lambda_with_keyword_only() {
+    let module = parser::parse_module("lambda *, b=3: b").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Lambda {
+            params,
+            kwonly_params,
+            vararg,
+            kwarg,
+            ..
+        }) => {
+            assert!(params.is_empty());
+            assert!(vararg.is_none());
+            assert!(kwarg.is_none());
+            assert_eq!(kwonly_params.len(), 1);
+            assert_eq!(kwonly_params[0].name, "b");
+            assert!(kwonly_params[0].default.is_some());
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
