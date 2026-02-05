@@ -24,7 +24,7 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [x] Function + frame model (positional-only params, positional params, defaults, keyword args, keyword-only params, *args/**kwargs; no closures)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [ ] Tracebacks + exception chaining
-- [x] Module/import system (simple module names, file-based)
+- [x] Module/import system (file-based, dotted modules, lazy submodule loading on attribute access)
 - [x] Classes subset (single inheritance, instance attrs + bound methods)
 - [ ] Reference counting + cycle handling
 

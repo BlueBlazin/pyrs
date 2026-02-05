@@ -67,7 +67,7 @@ We measure success by:
 - Identity: `is`/`is not` currently reuse `Value` equality (no stable object identity yet).
 - Classes: class bodies execute in a class namespace module while resolving missing names against the defining module; methods capture the defining module as globals.
 - TODO: generate `vendor/cpython-3.14/opcode/opcode_table.csv` from synced opcode sources.
-- Modules: new `Value::Module` with per-module globals; VM maintains module cache and search paths (default CWD, configurable via `Vm::add_module_path`). Import loads `<name>.py` into a module frame, returning module objects; functions capture defining module globals.
+- Modules: new `Value::Module` with per-module globals; VM maintains module cache and search paths (default CWD, configurable via `Vm::add_module_path`). Import loads `<name>.py` (or package `__init__.py`) into a module frame, returning module objects; module attribute access attempts to lazy-load submodules; functions capture defining module globals.
 - Numeric compatibility: `bool` participates in int arithmetic/comparisons (`True == 1`, `True + 1`, etc.).
 - Scoping: `global` statements supported inside functions; assignments to globals emit `StoreGlobal`.
 - `.pyc` header parser stub (hash-based and timestamp-based variants).
