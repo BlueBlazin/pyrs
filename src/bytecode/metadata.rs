@@ -50,6 +50,9 @@ impl OpcodeMetadata {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
+            if line_no == 0 && line.to_lowercase().starts_with("opcode") {
+                continue;
+            }
 
             let parts: Vec<&str> = line.split(',').map(|part| part.trim()).collect();
             if parts.len() < 3 {

@@ -8,7 +8,7 @@ use crate::stdlib;
 use crate::vm::Vm;
 use crate::VERSION;
 
-const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs <file.py>          Run a Python file\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
+const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
 
 pub fn run() -> i32 {
     let mut args = env::args().skip(1);
@@ -66,8 +66,15 @@ fn print_help() {
 }
 
 fn run_file(path: &str) -> Result<(), String> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {path}: {err}"))?;
+    if path.ends_with(".pyc") {
+        let mut vm = Vm::new();
+        vm.execute_pyc_file(path)
+            .map_err(|err| format!("runtime error: {}", err.message))?;
+        return Ok(());
+    }
+
+    let source =
+        std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
 
     stdlib::initialize();
 

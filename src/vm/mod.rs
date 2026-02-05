@@ -6,11 +6,13 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::bytecode::{CodeObject, Opcode};
+use crate::bytecode::cpython;
 use crate::compiler;
 use crate::parser;
 use crate::runtime::{
     format_value, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
-    Heap, InstanceObject, ModuleObject, Object, ObjRef, RuntimeError, Value,
+    Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject, Object, ObjRef,
+    RuntimeError, Value,
 };
 
 #[derive(Debug, Clone)]
@@ -180,6 +182,19 @@ impl Vm {
             false,
         ));
         self.run()
+    }
+
+    pub fn execute_pyc_bytes(&mut self, bytes: &[u8]) -> Result<Value, RuntimeError> {
+        let pyc = cpython::load_pyc(bytes).map_err(|err| RuntimeError::new(err.message))?;
+        let code =
+            cpython::translate_code(&pyc, &mut self.heap).map_err(|err| RuntimeError::new(err.message))?;
+        self.execute(&code)
+    }
+
+    pub fn execute_pyc_file(&mut self, path: &str) -> Result<Value, RuntimeError> {
+        let bytes = std::fs::read(path)
+            .map_err(|err| RuntimeError::new(format!("failed to read {path}: {err}")))?;
+        self.execute_pyc_bytes(&bytes)
     }
 
     fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
@@ -387,11 +402,132 @@ impl Vm {
                         .stack
                         .push(value);
                 }
-                Opcode::LoadAttr => {
+                Opcode::LoadFast => {
                     let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing local argument"))?
+                        as usize;
+                    let name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.locals.get(&name).cloned())
+                        .ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
+                    self.push_value(value);
+                }
+                Opcode::LoadFast2 => {
+                    let arg = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing locals argument"))?;
+                    let first = (arg >> 16) as usize;
+                    let second = (arg & 0xFFFF) as usize;
+                    let (first_name, second_name) = {
+                        let frame = self.frames.last().expect("frame exists");
+                        let first = frame
+                            .code
+                            .names
+                            .get(first)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone();
+                        let second = frame
+                            .code
+                            .names
+                            .get(second)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone();
+                        (first, second)
+                    };
+                    let (first_value, second_value) = {
+                        let frame = self.frames.last().expect("frame exists");
+                        let first = frame.locals.get(&first_name).cloned();
+                        let second = frame.locals.get(&second_name).cloned();
+                        (first, second)
+                    };
+                    let first_value = first_value
+                        .ok_or_else(|| RuntimeError::new(format!("local '{first_name}' not set")))?;
+                    let second_value = second_value.ok_or_else(|| {
+                        RuntimeError::new(format!("local '{second_name}' not set"))
+                    })?;
+                    self.push_value(first_value);
+                    self.push_value(second_value);
+                }
+                Opcode::LoadFastAndClear => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing local argument"))?
+                        as usize;
+                    let name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = self
+                        .frames
+                        .last_mut()
+                        .and_then(|frame| frame.locals.remove(&name))
+                        .ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
+                    self.push_value(value);
+                }
+                Opcode::LoadGlobal => {
+                    let raw = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing global argument"))?
+                        as usize;
+                    let push_null = raw & 1 == 1;
+                    let idx = raw >> 1;
+                    let name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = {
+                        let frame = self.frames.last().expect("frame exists");
+                        if let Object::Module(module_data) = &*frame.function_globals.kind() {
+                            if let Some(value) = module_data.globals.get(&name) {
+                                Some(value.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    .or_else(|| self.builtins.get(&name).cloned())
+                    .ok_or_else(|| RuntimeError::new(format!("name '{name}' is not defined")))?;
+                    if push_null {
+                        self.push_value(Value::None);
+                    }
+                    self.push_value(value);
+                }
+                Opcode::LoadBuildClass => {
+                    self.push_value(Value::Builtin(BuiltinFunction::BuildClass));
+                }
+                Opcode::PushNull => {
+                    self.push_value(Value::None);
+                }
+                Opcode::LoadAttr => {
+                    let raw = instr
                         .arg
                         .ok_or_else(|| RuntimeError::new("missing attribute argument"))?
                         as usize;
+                    let push_null = raw & 1 == 1;
+                    let idx = raw >> 1;
                     let attr_name = {
                         let frame = self.frames.last().expect("frame exists");
                         frame
@@ -440,6 +576,9 @@ impl Vm {
                                     module_name, attr_name
                                 ))
                             })?;
+                            if push_null {
+                                self.push_value(Value::None);
+                            }
                             self.push_value(attr);
                         }
                         Value::Class(class) => {
@@ -453,6 +592,9 @@ impl Vm {
                                     class_name, attr_name
                                 ))
                             })?;
+                            if push_null {
+                                self.push_value(Value::None);
+                            }
                             self.push_value(attr);
                         }
                         Value::Instance(instance) => {
@@ -460,6 +602,9 @@ impl Vm {
                                 if let Some(attr) =
                                     instance_data.attrs.get(&attr_name).cloned()
                                 {
+                                    if push_null {
+                                        self.push_value(Value::None);
+                                    }
                                     self.push_value(attr);
                                     return Ok(None);
                                 }
@@ -476,8 +621,14 @@ impl Vm {
                                 if let Value::Function(func) = attr {
                                     let bound = BoundMethod::new(func, instance.clone());
                                     let bound_value = self.heap.alloc_bound_method(bound);
+                                    if push_null {
+                                        self.push_value(Value::None);
+                                    }
                                     self.push_value(bound_value);
                                 } else {
+                                    if push_null {
+                                        self.push_value(Value::None);
+                                    }
                                     self.push_value(attr);
                                 }
                                 return Ok(None);
@@ -521,6 +672,91 @@ impl Vm {
                     };
                     self.store_name(name, value);
                 }
+                Opcode::StoreFast => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing local argument"))?
+                        as usize;
+                    let name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let value = self.pop_value()?;
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.locals.insert(name, value);
+                    }
+                }
+                Opcode::StoreFastLoadFast => {
+                    let arg = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing locals argument"))?;
+                    let first = (arg >> 16) as usize;
+                    let second = (arg & 0xFFFF) as usize;
+                    let (first_name, second_name) = {
+                        let frame = self.frames.last().expect("frame exists");
+                        let first = frame
+                            .code
+                            .names
+                            .get(first)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone();
+                        let second = frame
+                            .code
+                            .names
+                            .get(second)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone();
+                        (first, second)
+                    };
+                    let value = self.pop_value()?;
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.locals.insert(first_name, value);
+                        let value = frame
+                            .locals
+                            .get(&second_name)
+                            .cloned()
+                            .ok_or_else(|| {
+                                RuntimeError::new(format!(
+                                    "local '{second_name}' not set"
+                                ))
+                            })?;
+                        self.push_value(value);
+                    }
+                }
+                Opcode::StoreFastStoreFast => {
+                    let arg = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing locals argument"))?;
+                    let first = (arg >> 16) as usize;
+                    let second = (arg & 0xFFFF) as usize;
+                    let (first_name, second_name) = {
+                        let frame = self.frames.last().expect("frame exists");
+                        let first = frame
+                            .code
+                            .names
+                            .get(first)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone();
+                        let second = frame
+                            .code
+                            .names
+                            .get(second)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone();
+                        (first, second)
+                    };
+                    let value2 = self.pop_value()?;
+                    let value1 = self.pop_value()?;
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.locals.insert(first_name, value1);
+                        frame.locals.insert(second_name, value2);
+                    }
+                }
                 Opcode::StoreAttr => {
                     let idx = instr
                         .arg
@@ -560,6 +796,45 @@ impl Vm {
                         }
                     }
                 }
+                Opcode::StoreAttrCpython => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing attribute argument"))?
+                        as usize;
+                    let attr_name = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .names
+                            .get(idx)
+                            .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                            .clone()
+                    };
+                    let target = self.pop_value()?;
+                    let value = self.pop_value()?;
+                    match target {
+                        Value::Module(module) => {
+                            if let Object::Module(module_data) = &mut *module.kind_mut() {
+                                module_data.globals.insert(attr_name, value);
+                            }
+                        }
+                        Value::Instance(instance) => {
+                            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                                instance_data.attrs.insert(attr_name, value);
+                            }
+                        }
+                        Value::Class(class) => {
+                            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                                class_data.attrs.insert(attr_name, value);
+                            }
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "attribute assignment unsupported type",
+                            ))
+                        }
+                    }
+                }
                 Opcode::StoreGlobal => {
                     let idx = instr
                         .arg
@@ -576,7 +851,8 @@ impl Vm {
                     };
                     let value = self.pop_value()?;
                     if let Some(frame) = self.frames.last() {
-                        if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                        if let Object::Module(module_data) = &mut *frame.function_globals.kind_mut()
+                        {
                             module_data.globals.insert(name, value);
                         }
                     }
@@ -1188,9 +1464,95 @@ impl Vm {
                     let mut frame = Frame::new(code, class_module, true, false);
                     frame.function_globals = outer_globals.clone();
                     frame.globals_fallback = Some(outer_globals);
+                    frame.locals.insert(
+                        "__classdict__".to_string(),
+                        self.heap.alloc_dict(Vec::new()),
+                    );
                     frame.return_class = true;
                     frame.class_bases = base_classes;
                     self.frames.push(frame);
+                }
+                Opcode::MakeFunctionStack => {
+                    let value = self.pop_value()?;
+                    let code = match value {
+                        Value::Code(code) => code,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "expected code object for function",
+                            ))
+                        }
+                    };
+                    let module = self
+                        .frames
+                        .last()
+                        .expect("frame exists")
+                        .function_globals
+                        .clone();
+                    let func = FunctionObject::new(code, module, Vec::new(), HashMap::new());
+                    self.push_value(self.heap.alloc_function(func));
+                }
+                Opcode::SetFunctionAttribute => {
+                    let func_value = self.pop_value()?;
+                    let attr = self.pop_value()?;
+                    let func = match func_value {
+                        Value::Function(func) => func,
+                        _ => return Err(RuntimeError::new("expected function")),
+                    };
+                    let attr_kind = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing function attribute kind"))?;
+                    match attr_kind {
+                        0x01 => {
+                            let defaults = match attr {
+                                Value::Tuple(obj) => match &*obj.kind() {
+                                    Object::Tuple(values) => values.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "defaults must be tuple",
+                                        ))
+                                    }
+                                },
+                                _ => return Err(RuntimeError::new("defaults must be tuple")),
+                            };
+                            if let Object::Function(func_data) = &mut *func.kind_mut() {
+                                func_data.defaults = defaults;
+                            }
+                        }
+                        0x02 => {
+                            let kwonly = match attr {
+                                Value::Dict(obj) => match &*obj.kind() {
+                                    Object::Dict(entries) => {
+                                        let mut map = HashMap::new();
+                                        for (key, value) in entries {
+                                            let name = match key {
+                                                Value::Str(name) => name.clone(),
+                                                _ => {
+                                                    return Err(RuntimeError::new(
+                                                        "kwonly default name must be string",
+                                                    ))
+                                                }
+                                            };
+                                            map.insert(name, value.clone());
+                                        }
+                                        map
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "kwonly defaults must be dict",
+                                        ))
+                                    }
+                                },
+                                _ => return Err(RuntimeError::new("kwonly defaults must be dict")),
+                            };
+                            if let Object::Function(func_data) = &mut *func.kind_mut() {
+                                func_data.kwonly_defaults = kwonly;
+                            }
+                        }
+                        _ => {
+                            // ignore annotations/closure for now
+                        }
+                    }
+                    self.push_value(Value::Function(func));
                 }
                 Opcode::CallFunction => {
                     let argc = instr
@@ -1298,6 +1660,392 @@ impl Vm {
                                 self.frames.push(frame);
                             } else {
                                 self.push_value(Value::Instance(instance));
+                            }
+                        }
+                        Value::Builtin(builtin) => {
+                            let result = builtin.call(&self.heap, args)?;
+                            self.push_value(result);
+                        }
+                        Value::ExceptionType(name) => {
+                            let message = match args.as_slice() {
+                                [] => None,
+                                [value] => Some(format_value(value)),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "exception constructor expects at most one argument",
+                                    ))
+                                }
+                            };
+                            self.push_value(Value::Exception(ExceptionObject { name, message }));
+                        }
+                        _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    }
+                }
+                Opcode::CallCpython => {
+                    let arg = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing call argument"))?;
+                    let pos_count = (arg & 0xFFFF) as usize;
+                    let kw_idx = (arg >> 16) as u16;
+                    let kw_names = if kw_idx == u16::MAX {
+                        None
+                    } else {
+                        let idx = kw_idx as usize;
+                        let value = {
+                            let frame = self.frames.last().expect("frame exists");
+                            frame
+                                .code
+                                .constants
+                                .get(idx)
+                                .cloned()
+                                .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                        };
+                        Some(value)
+                    };
+
+                    let kw_names = if let Some(value) = kw_names {
+                        match value {
+                            Value::Tuple(obj) => match &*obj.kind() {
+                                Object::Tuple(values) => {
+                                    let mut names = Vec::new();
+                                    for value in values {
+                                        match value {
+                                            Value::Str(name) => names.push(name.clone()),
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "kw_names must be tuple of strings",
+                                                ))
+                                            }
+                                        }
+                                    }
+                                    Some(names)
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "kw_names must be tuple of strings",
+                                    ))
+                                }
+                            },
+                            Value::None => None,
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "kw_names must be tuple of strings",
+                                ))
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    let kw_count = kw_names.as_ref().map(|names| names.len()).unwrap_or(0);
+                    if pos_count < kw_count {
+                        return Err(RuntimeError::new("call arg count mismatch"));
+                    }
+                    let mut kwargs = HashMap::new();
+                    for idx in (0..kw_count).rev() {
+                        let value = self.pop_value()?;
+                        let name = kw_names
+                            .as_ref()
+                            .expect("kw names")
+                            .get(idx)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("kw name index out of range"))?;
+                        kwargs.insert(name, value);
+                    }
+                    let mut args = Vec::with_capacity(pos_count - kw_count);
+                    for _ in 0..(pos_count - kw_count) {
+                        args.push(self.pop_value()?);
+                    }
+                    args.reverse();
+                    let mut func = self.pop_value()?;
+                    if matches!(func, Value::None) {
+                        func = self.pop_value()?;
+                    }
+                    if let Some(Value::None) =
+                        self.frames.last().and_then(|frame| frame.stack.last()).cloned()
+                    {
+                        let _ = self.pop_value();
+                    }
+
+                    match func {
+                        Value::Function(func) => {
+                            let func_data = match &*func.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
+                            let mut frame = Frame::new(
+                                func_data.code.clone(),
+                                func_data.module.clone(),
+                                false,
+                                false,
+                            );
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                            self.frames.push(frame);
+                        }
+                        Value::BoundMethod(method) => {
+                            let method_data = match &*method.kind() {
+                                Object::BoundMethod(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let func_data = match &*method_data.function.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(Value::Instance(method_data.receiver.clone()));
+                            bound_args.extend(args);
+                            let bindings = bind_arguments(
+                                &func_data,
+                                &self.heap,
+                                bound_args,
+                                kwargs,
+                            )?;
+                            let mut frame = Frame::new(
+                                func_data.code.clone(),
+                                func_data.module.clone(),
+                                false,
+                                false,
+                            );
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                            self.frames.push(frame);
+                        }
+                        Value::Class(class) => {
+                            let instance = match self
+                                .heap
+                                .alloc_instance(InstanceObject::new(class.clone()))
+                            {
+                                Value::Instance(obj) => obj,
+                                _ => unreachable!(),
+                            };
+                            let init = class_attr_lookup(&class, "__init__");
+                            if let Some(Value::Function(init_func)) = init {
+                                let func_data = match &*init_func.kind() {
+                                    Object::Function(data) => data.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "attempted to call non-function",
+                                        ))
+                                    }
+                                };
+                                let mut init_args = Vec::with_capacity(args.len() + 1);
+                                init_args.push(Value::Instance(instance.clone()));
+                                init_args.extend(args);
+                                let bindings = bind_arguments(
+                                    &func_data,
+                                    &self.heap,
+                                    init_args,
+                                    kwargs,
+                                )?;
+                                let mut frame = Frame::new(
+                                    func_data.code.clone(),
+                                    func_data.module.clone(),
+                                    false,
+                                    false,
+                                );
+                                frame.return_instance = Some(instance);
+                                frame.expect_none_return = true;
+                                apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                                self.frames.push(frame);
+                            } else {
+                                self.push_value(Value::Instance(instance));
+                            }
+                        }
+                        Value::Builtin(BuiltinFunction::BuildClass) => {
+                            let class_value = self.call_build_class(args, kwargs)?;
+                            if let Some(value) = class_value {
+                                self.push_value(value);
+                            }
+                        }
+                        Value::Builtin(builtin) => {
+                            let result = builtin.call(&self.heap, args)?;
+                            self.push_value(result);
+                        }
+                        Value::ExceptionType(name) => {
+                            let message = match args.as_slice() {
+                                [] => None,
+                                [value] => Some(format_value(value)),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "exception constructor expects at most one argument",
+                                    ))
+                                }
+                            };
+                            self.push_value(Value::Exception(ExceptionObject { name, message }));
+                        }
+                        _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    }
+                }
+                Opcode::CallCpythonKwStack => {
+                    let pos_total = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing call argument"))?
+                        as usize;
+                    let kw_names_value = self.pop_value()?;
+                    let kw_names = match kw_names_value {
+                        Value::Tuple(obj) => match &*obj.kind() {
+                            Object::Tuple(values) => {
+                                let mut names = Vec::new();
+                                for value in values {
+                                    match value {
+                                        Value::Str(name) => names.push(name.clone()),
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "kw names must be strings",
+                                            ))
+                                        }
+                                    }
+                                }
+                                names
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "kw names must be tuple",
+                                ))
+                            }
+                        },
+                        _ => return Err(RuntimeError::new("kw names must be tuple")),
+                    };
+                    let kw_count = kw_names.len();
+                    if pos_total < kw_count {
+                        return Err(RuntimeError::new("call arg count mismatch"));
+                    }
+                    let mut kwargs = HashMap::new();
+                    for idx in (0..kw_count).rev() {
+                        let value = self.pop_value()?;
+                        let name = kw_names
+                            .get(idx)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("kw name index out of range"))?;
+                        kwargs.insert(name, value);
+                    }
+                    let mut args = Vec::with_capacity(pos_total - kw_count);
+                    for _ in 0..(pos_total - kw_count) {
+                        args.push(self.pop_value()?);
+                    }
+                    args.reverse();
+                    let mut func = self.pop_value()?;
+                    if matches!(func, Value::None) {
+                        func = self.pop_value()?;
+                    }
+                    if let Some(Value::None) =
+                        self.frames.last().and_then(|frame| frame.stack.last()).cloned()
+                    {
+                        let _ = self.pop_value();
+                    }
+
+                    match func {
+                        Value::Function(func) => {
+                            let func_data = match &*func.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
+                            let mut frame = Frame::new(
+                                func_data.code.clone(),
+                                func_data.module.clone(),
+                                false,
+                                false,
+                            );
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                            self.frames.push(frame);
+                        }
+                        Value::BoundMethod(method) => {
+                            let method_data = match &*method.kind() {
+                                Object::BoundMethod(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let func_data = match &*method_data.function.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(Value::Instance(method_data.receiver.clone()));
+                            bound_args.extend(args);
+                            let bindings = bind_arguments(
+                                &func_data,
+                                &self.heap,
+                                bound_args,
+                                kwargs,
+                            )?;
+                            let mut frame = Frame::new(
+                                func_data.code.clone(),
+                                func_data.module.clone(),
+                                false,
+                                false,
+                            );
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                            self.frames.push(frame);
+                        }
+                        Value::Class(class) => {
+                            let instance = match self
+                                .heap
+                                .alloc_instance(InstanceObject::new(class.clone()))
+                            {
+                                Value::Instance(obj) => obj,
+                                _ => unreachable!(),
+                            };
+                            let init = class_attr_lookup(&class, "__init__");
+                            if let Some(Value::Function(init_func)) = init {
+                                let func_data = match &*init_func.kind() {
+                                    Object::Function(data) => data.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "attempted to call non-function",
+                                        ))
+                                    }
+                                };
+                                let mut init_args = Vec::with_capacity(args.len() + 1);
+                                init_args.push(Value::Instance(instance.clone()));
+                                init_args.extend(args);
+                                let bindings = bind_arguments(
+                                    &func_data,
+                                    &self.heap,
+                                    init_args,
+                                    kwargs,
+                                )?;
+                                let mut frame = Frame::new(
+                                    func_data.code.clone(),
+                                    func_data.module.clone(),
+                                    false,
+                                    false,
+                                );
+                                frame.return_instance = Some(instance);
+                                frame.expect_none_return = true;
+                                apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                                self.frames.push(frame);
+                            } else {
+                                self.push_value(Value::Instance(instance));
+                            }
+                        }
+                        Value::Builtin(BuiltinFunction::BuildClass) => {
+                            let class_value = self.call_build_class(args, kwargs)?;
+                            if let Some(value) = class_value {
+                                self.push_value(value);
                             }
                         }
                         Value::Builtin(builtin) => {
@@ -1699,6 +2447,109 @@ impl Vm {
                     let frame = self.frames.last_mut().expect("frame exists");
                     frame.ip = target;
                 }
+                Opcode::EndFor => {
+                    // END_FOR is a sentinel in CPython; no-op for now.
+                }
+                Opcode::GetIter => {
+                    let value = self.pop_value()?;
+                    let iterator = match value {
+                        Value::List(obj) => IteratorObject {
+                            kind: IteratorKind::List(obj),
+                            index: 0,
+                        },
+                        Value::Tuple(obj) => IteratorObject {
+                            kind: IteratorKind::Tuple(obj),
+                            index: 0,
+                        },
+                        Value::Str(value) => IteratorObject {
+                            kind: IteratorKind::Str(value),
+                            index: 0,
+                        },
+                        Value::Dict(obj) => IteratorObject {
+                            kind: IteratorKind::Dict(obj),
+                            index: 0,
+                        },
+                        Value::Iterator(obj) => {
+                            self.push_value(Value::Iterator(obj));
+                            return Ok(None);
+                        }
+                        _ => return Err(RuntimeError::new("object is not iterable")),
+                    };
+                    let value = self.heap.alloc_iterator(iterator);
+                    self.push_value(value);
+                }
+                Opcode::ForIter => {
+                    let target = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing jump target"))?
+                        as usize;
+                    let iterator_value = self.pop_value()?;
+                    let iterator_ref = match iterator_value {
+                        Value::Iterator(obj) => obj,
+                        _ => return Err(RuntimeError::new("FOR_ITER expects iterator")),
+                    };
+                    let next_value = {
+                        let mut iter = iterator_ref.kind_mut();
+                        match &mut *iter {
+                            Object::Iterator(state) => match &mut state.kind {
+                                IteratorKind::List(list) => match &*list.kind() {
+                                    Object::List(values) => {
+                                        if state.index >= values.len() {
+                                            None
+                                        } else {
+                                            let value = values[state.index].clone();
+                                            state.index += 1;
+                                            Some(value)
+                                        }
+                                    }
+                                    _ => None,
+                                },
+                                IteratorKind::Tuple(list) => match &*list.kind() {
+                                    Object::Tuple(values) => {
+                                        if state.index >= values.len() {
+                                            None
+                                        } else {
+                                            let value = values[state.index].clone();
+                                            state.index += 1;
+                                            Some(value)
+                                        }
+                                    }
+                                    _ => None,
+                                },
+                                IteratorKind::Str(text) => {
+                                    let chars: Vec<char> = text.chars().collect();
+                                    if state.index >= chars.len() {
+                                        None
+                                    } else {
+                                        let ch = chars[state.index];
+                                        state.index += 1;
+                                        Some(Value::Str(ch.to_string()))
+                                    }
+                                }
+                                IteratorKind::Dict(dict) => match &*dict.kind() {
+                                    Object::Dict(entries) => {
+                                        if state.index >= entries.len() {
+                                            None
+                                        } else {
+                                            let value = entries[state.index].0.clone();
+                                            state.index += 1;
+                                            Some(value)
+                                        }
+                                    }
+                                    _ => None,
+                                },
+                            },
+                            _ => None,
+                        }
+                    };
+                    if let Some(value) = next_value {
+                        self.push_value(Value::Iterator(iterator_ref));
+                        self.push_value(value);
+                    } else {
+                        let frame = self.frames.last_mut().expect("frame exists");
+                        frame.ip = target;
+                    }
+                }
                 Opcode::SetupExcept => {
                     let handler = instr
                         .arg
@@ -1741,6 +2592,39 @@ impl Vm {
                 }
                 Opcode::PopTop => {
                     let _ = self.pop_value()?;
+                }
+                Opcode::ReturnConst => {
+                    let idx = instr
+                        .arg
+                        .ok_or_else(|| RuntimeError::new("missing const argument"))?
+                        as usize;
+                    let value = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .code
+                            .constants
+                            .get(idx)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                    };
+                    let frame = self.frames.pop().expect("frame exists");
+                    if frame.expect_none_return && value != Value::None {
+                        return Err(RuntimeError::new("__init__() should return None"));
+                    }
+                    let value = if frame.return_class {
+                        self.class_value_from_module(&frame.module, frame.class_bases)
+                    } else if let Some(instance) = frame.return_instance {
+                        Value::Instance(instance)
+                    } else if frame.return_module {
+                        Value::Module(frame.module.clone())
+                    } else {
+                        value
+                    };
+                    if let Some(caller) = self.frames.last_mut() {
+                        caller.stack.push(value);
+                        return Ok(None);
+                    }
+                    return Ok(Some(value));
                 }
                 Opcode::ReturnValue => {
                     let value = self.pop_value().unwrap_or(Value::None);
@@ -1957,6 +2841,67 @@ impl Vm {
         self.builtins
             .insert("RuntimeError".to_string(), Value::ExceptionType("RuntimeError".to_string()));
     }
+
+    fn call_build_class(
+        &mut self,
+        mut args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if args.len() < 2 {
+            return Err(RuntimeError::new(
+                "__build_class__ expects at least a function and a name",
+            ));
+        }
+        let name = match args.remove(1) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("class name must be a string")),
+        };
+        let func = match args.remove(0) {
+            Value::Function(func) => func,
+            _ => return Err(RuntimeError::new("class body must be a function")),
+        };
+        let func_data = match &*func.kind() {
+            Object::Function(data) => data.clone(),
+            _ => return Err(RuntimeError::new("class body must be a function")),
+        };
+        let mut base_classes = Vec::new();
+        for base in args {
+            match base {
+                Value::Class(class) => base_classes.push(class),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "class base must be a class object",
+                    ))
+                }
+            }
+        }
+
+        let class_module = match self
+            .heap
+            .alloc_module(ModuleObject::new(name.clone()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *class_module.kind_mut() {
+            module_data
+                .globals
+                .insert("__name__".to_string(), Value::Str(name));
+        }
+
+        let outer_globals = func_data.module.clone();
+        let mut frame = Frame::new(func_data.code.clone(), class_module, true, false);
+        frame.function_globals = outer_globals.clone();
+        frame.globals_fallback = Some(outer_globals);
+        frame.locals.insert(
+            "__classdict__".to_string(),
+            self.heap.alloc_dict(Vec::new()),
+        );
+        frame.return_class = true;
+        frame.class_bases = base_classes;
+        self.frames.push(frame);
+        Ok(None)
+    }
 }
 
 fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
@@ -2020,6 +2965,7 @@ fn is_truthy(value: &Value) -> bool {
             Object::Dict(values) => !values.is_empty(),
             _ => true,
         },
+        Value::Iterator(_) => true,
         Value::Slice { .. } => true,
         Value::Module(_)
         | Value::Class(_)

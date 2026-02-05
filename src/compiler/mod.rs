@@ -151,7 +151,7 @@ impl Compiler {
                 for alias in names {
                     self.emit(Opcode::DupTop, None);
                     let attr_idx = self.code.add_name(alias.name.clone());
-                    self.emit(Opcode::LoadAttr, Some(attr_idx));
+                    self.emit(Opcode::LoadAttr, Some(attr_idx << 1));
                     let target = alias.asname.as_deref().unwrap_or(&alias.name);
                     self.emit_store_name_scoped(target);
                 }
@@ -179,7 +179,7 @@ impl Compiler {
         let _root = parts.next();
         for part in parts {
             let attr_idx = self.code.add_name(part.to_string());
-            self.emit(Opcode::LoadAttr, Some(attr_idx));
+            self.emit(Opcode::LoadAttr, Some(attr_idx << 1));
         }
         Ok(())
     }
@@ -396,7 +396,7 @@ impl Compiler {
             Expr::Attribute { value, name } => {
                 self.compile_expr(value)?;
                 let idx = self.code.add_name(name.clone());
-                self.emit(Opcode::LoadAttr, Some(idx));
+                self.emit(Opcode::LoadAttr, Some(idx << 1));
                 Ok(())
             }
             Expr::Slice { lower, upper, step } => {
@@ -737,7 +737,7 @@ impl Compiler {
                 self.emit_store_name(&temp);
                 self.emit_load_name(&temp);
                 let idx = self.code.add_name(name.clone());
-                self.emit(Opcode::LoadAttr, Some(idx));
+                self.emit(Opcode::LoadAttr, Some(idx << 1));
                 self.compile_expr(value)?;
                 let opcode = match op {
                     crate::ast::AugOp::Add => Opcode::BinaryAdd,
@@ -836,7 +836,7 @@ impl Compiler {
 
         self.emit_load_name(&ctx_temp);
         let enter_idx = self.code.add_name("__enter__".to_string());
-        self.emit(Opcode::LoadAttr, Some(enter_idx));
+        self.emit(Opcode::LoadAttr, Some(enter_idx << 1));
         self.emit(Opcode::CallFunction, Some(0));
         if let Some(target) = target {
             self.compile_store_target_from_stack(target)?;
@@ -866,7 +866,7 @@ impl Compiler {
     fn emit_with_exit(&mut self, ctx_temp: &str) -> Result<(), CompileError> {
         self.emit_load_name(ctx_temp);
         let exit_idx = self.code.add_name("__exit__".to_string());
-        self.emit(Opcode::LoadAttr, Some(exit_idx));
+        self.emit(Opcode::LoadAttr, Some(exit_idx << 1));
         self.emit(Opcode::LoadConst, Some(0));
         self.emit(Opcode::LoadConst, Some(0));
         self.emit(Opcode::LoadConst, Some(0));

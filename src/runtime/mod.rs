@@ -130,11 +130,26 @@ pub enum Object {
     List(Vec<Value>),
     Tuple(Vec<Value>),
     Dict(Vec<(Value, Value)>),
+    Iterator(IteratorObject),
     Module(ModuleObject),
     Class(ClassObject),
     Instance(InstanceObject),
     BoundMethod(BoundMethod),
     Function(FunctionObject),
+}
+
+#[derive(Debug, Clone)]
+pub struct IteratorObject {
+    pub kind: IteratorKind,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum IteratorKind {
+    List(ObjRef),
+    Tuple(ObjRef),
+    Str(String),
+    Dict(ObjRef),
 }
 
 #[derive(Debug)]
@@ -214,6 +229,10 @@ impl Heap {
         Value::BoundMethod(self.alloc(Object::BoundMethod(method)))
     }
 
+    pub fn alloc_iterator(&self, iterator: IteratorObject) -> Value {
+        Value::Iterator(self.alloc(Object::Iterator(iterator)))
+    }
+
     pub fn id_of(&self, value: &Value) -> u64 {
         match value {
             Value::None => self.id_for_immediate(ImmediateKey::None),
@@ -223,6 +242,7 @@ impl Heap {
             Value::List(obj)
             | Value::Tuple(obj)
             | Value::Dict(obj)
+            | Value::Iterator(obj)
             | Value::Module(obj)
             | Value::Class(obj)
             | Value::Instance(obj)
@@ -300,6 +320,7 @@ fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         Value::List(obj)
         | Value::Tuple(obj)
         | Value::Dict(obj)
+        | Value::Iterator(obj)
         | Value::Module(obj)
         | Value::Class(obj)
         | Value::Instance(obj)
@@ -329,6 +350,14 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 }
             }
         }
+        Object::Iterator(iterator) => match &iterator.kind {
+            IteratorKind::List(list)
+            | IteratorKind::Tuple(list)
+            | IteratorKind::Dict(list) => {
+                stack.push(list.clone());
+            }
+            IteratorKind::Str(_) => {}
+        },
         Object::Module(module) => {
             for value in module.globals.values() {
                 trace_value(value, stack, marked);
@@ -375,6 +404,18 @@ fn clear_object_refs(obj: &ObjRef) {
         Object::Dict(entries) => {
             entries.clear();
         }
+        Object::Iterator(iterator) => match &mut iterator.kind {
+            IteratorKind::List(_)
+            | IteratorKind::Tuple(_)
+            | IteratorKind::Dict(_) => {
+                iterator.kind = IteratorKind::Str(String::new());
+                iterator.index = 0;
+            }
+            IteratorKind::Str(value) => {
+                value.clear();
+                iterator.index = 0;
+            }
+        },
         Object::Module(module) => {
             module.globals.clear();
         }
@@ -402,6 +443,7 @@ pub enum Value {
     List(ObjRef),
     Tuple(ObjRef),
     Dict(ObjRef),
+    Iterator(ObjRef),
     Module(ObjRef),
     Class(ObjRef),
     Instance(ObjRef),
@@ -477,6 +519,7 @@ impl PartialEq for Value {
                 (Object::Dict(left), Object::Dict(right)) => left == right,
                 _ => false,
             },
+            (Value::Iterator(a), Value::Iterator(b)) => a.id() == b.id(),
             (Value::Module(a), Value::Module(b))
             | (Value::Class(a), Value::Class(b))
             | (Value::Instance(a), Value::Instance(b))
@@ -526,6 +569,7 @@ pub enum BuiltinFunction {
     DivMod,
     Sorted,
     Enumerate,
+    BuildClass,
     Id,
 }
 
@@ -885,6 +929,9 @@ impl BuiltinFunction {
                 }
                 Ok(heap.alloc_list(entries))
             }
+            BuiltinFunction::BuildClass => Err(RuntimeError::new(
+                "__build_class__ is only available in the VM",
+            )),
             BuiltinFunction::Id => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("id() expects one argument"));
@@ -1051,6 +1098,7 @@ pub fn format_value(value: &Value) -> String {
             }
             _ => "<dict>".to_string(),
         },
+        Value::Iterator(_) => "<iterator>".to_string(),
         Value::Module(obj) => match &*obj.kind() {
             Object::Module(module) => format!("<module {}>", module.name),
             _ => "<module ?>".to_string(),
@@ -1108,6 +1156,7 @@ fn is_truthy_value(value: &Value) -> bool {
             Object::Dict(values) => !values.is_empty(),
             _ => true,
         },
+        Value::Iterator(_) => true,
         Value::Slice { .. } => true,
         Value::Module(_)
         | Value::Class(_)

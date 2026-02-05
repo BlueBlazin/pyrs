@@ -2,15 +2,26 @@
 
 pub mod metadata;
 pub mod pyc;
+pub mod cpython;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     Nop,
     LoadConst,
     LoadName,
+    LoadFast,
+    LoadFast2,
+    LoadFastAndClear,
+    LoadGlobal,
+    LoadBuildClass,
+    PushNull,
     LoadAttr,
     StoreName,
+    StoreFast,
+    StoreFastLoadFast,
+    StoreFastStoreFast,
     StoreAttr,
+    StoreAttrCpython,
     StoreGlobal,
     BinaryAdd,
     BinarySub,
@@ -58,6 +69,14 @@ pub enum Opcode {
     MatchException,
     ClearException,
     PopTop,
+    EndFor,
+    GetIter,
+    ForIter,
+    CallCpython,
+    CallCpythonKwStack,
+    MakeFunctionStack,
+    SetFunctionAttribute,
+    ReturnConst,
     ReturnValue,
 }
 
