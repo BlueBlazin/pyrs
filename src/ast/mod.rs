@@ -207,6 +207,9 @@ pub enum AugOp {
     Add,
     Sub,
     Mul,
+    Mod,
+    FloorDiv,
+    Pow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -223,7 +223,24 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     if self.peek_char() == Some('*') {
                         self.advance();
-                        tokens.push(Token::new(TokenKind::DoubleStar, "**", offset, line, column));
+                        if self.peek_char() == Some('=') {
+                            self.advance();
+                            tokens.push(Token::new(
+                                TokenKind::DoubleStarEqual,
+                                "**=",
+                                offset,
+                                line,
+                                column,
+                            ));
+                        } else {
+                            tokens.push(Token::new(
+                                TokenKind::DoubleStar,
+                                "**",
+                                offset,
+                                line,
+                                column,
+                            ));
+                        }
                     } else if self.peek_char() == Some('=') {
                         self.advance();
                         tokens.push(Token::new(TokenKind::StarEqual, "*=", offset, line, column));
@@ -235,7 +252,24 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     if self.peek_char() == Some('/') {
                         self.advance();
-                        tokens.push(Token::new(TokenKind::DoubleSlash, "//", offset, line, column));
+                        if self.peek_char() == Some('=') {
+                            self.advance();
+                            tokens.push(Token::new(
+                                TokenKind::DoubleSlashEqual,
+                                "//=",
+                                offset,
+                                line,
+                                column,
+                            ));
+                        } else {
+                            tokens.push(Token::new(
+                                TokenKind::DoubleSlash,
+                                "//",
+                                offset,
+                                line,
+                                column,
+                            ));
+                        }
                     } else {
                         return Err(LexError::new(
                             "unexpected character: /",
@@ -247,7 +281,18 @@ impl<'a> Lexer<'a> {
                 }
                 '%' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::Percent, "%", offset, line, column));
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(
+                            TokenKind::PercentEqual,
+                            "%=",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Percent, "%", offset, line, column));
+                    }
                 }
                 '\'' | '"' => {
                     let lexeme = self.consume_string(ch)?;

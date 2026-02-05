@@ -139,11 +139,14 @@ impl Parser {
             }
 
             let aug_op = match kind {
-                TokenKind::PlusEqual => Some(crate::ast::AugOp::Add),
-                TokenKind::MinusEqual => Some(crate::ast::AugOp::Sub),
-                TokenKind::StarEqual => Some(crate::ast::AugOp::Mul),
-                _ => None,
-            };
+            TokenKind::PlusEqual => Some(crate::ast::AugOp::Add),
+            TokenKind::MinusEqual => Some(crate::ast::AugOp::Sub),
+            TokenKind::StarEqual => Some(crate::ast::AugOp::Mul),
+            TokenKind::PercentEqual => Some(crate::ast::AugOp::Mod),
+            TokenKind::DoubleSlashEqual => Some(crate::ast::AugOp::FloorDiv),
+            TokenKind::DoubleStarEqual => Some(crate::ast::AugOp::Pow),
+            _ => None,
+        };
 
             if let Some(op) = aug_op {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;

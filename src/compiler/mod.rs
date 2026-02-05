@@ -113,6 +113,9 @@ impl Compiler {
                         crate::ast::AugOp::Add => Opcode::BinaryAdd,
                         crate::ast::AugOp::Sub => Opcode::BinarySub,
                         crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                        crate::ast::AugOp::Mod => Opcode::BinaryMod,
+                        crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
+                        crate::ast::AugOp::Pow => Opcode::BinaryPow,
                     };
                     self.emit(opcode, None);
                     self.emit_store_name_scoped(name);
