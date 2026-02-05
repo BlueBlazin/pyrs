@@ -29,7 +29,7 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [ ] Reference counting + cycle handling
 
 ## Stdlib Coverage
-- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, slice, bool/int/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted)
+- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted)
 - [ ] `sys`, `types`, `inspect`
 - [ ] `os`, `pathlib`, `io`
 - [ ] `math`, `random`, `itertools`
