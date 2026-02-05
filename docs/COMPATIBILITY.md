@@ -6,7 +6,7 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
 - [x] Indentation + basic tokenization (names, ints, strings, operators, keywords for implemented subset)
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
-- [x] Statements subset: pass, expr, assign/augassign, if/elif/else, while/for/else, break/continue, def/return, import/from, global, raise, assert, try/except/else, class (no bases)
+- [x] Statements subset: pass, expr, assign/augassign, if/elif/else, while/for/else, break/continue, def/return, import/from, global, raise, assert, try/except/else, class (bases supported, no keywords)
 - [x] Expressions subset: arithmetic, comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda
 - [ ] Comprehensions, generators, pattern matching, async/await, with, etc.
 
@@ -21,11 +21,11 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 ## Runtime & Object Model
 - [x] Core types subset (None, bool, int, str, tuple, list, dict)
 - [ ] bytes, set, frozenset, memoryview, complex, etc.
-- [x] Function + frame model (positional params only; no closures/defaults)
+- [x] Function + frame model (positional params, defaults, keyword args, *args/**kwargs; no closures)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [ ] Tracebacks + exception chaining
 - [x] Module/import system (simple module names, file-based)
-- [x] Classes subset (no inheritance; instance attrs + bound methods)
+- [x] Classes subset (single inheritance, instance attrs + bound methods)
 - [ ] Reference counting + cycle handling
 
 ## Stdlib Coverage
