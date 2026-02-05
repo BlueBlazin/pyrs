@@ -173,6 +173,39 @@ fn executes_double_star_kwargs() {
 }
 
 #[test]
+fn executes_varargs_definition() {
+    let source = "def total(*args):\n    s = 0\n    for v in args:\n        s = s + v\n    return s\nx = total(1, 2, 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(6)));
+}
+
+#[test]
+fn executes_kwargs_definition() {
+    let source = "def pick(**kw):\n    return kw['a']\nx = pick(a=3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_varargs_and_kwargs_definition() {
+    let source = "def collect(a, *rest, **kw):\n    return len(rest) + kw['b'] + a\nx = collect(1, 2, 3, b=4)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(7)));
+}
+
+#[test]
 fn executes_default_from_global() {
     let source = "x = 5\n\ndef f(a=x):\n    return a\n\ny = f()\n";
     let module = parser::parse_module(source).expect("parse should succeed");

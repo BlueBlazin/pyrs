@@ -205,10 +205,17 @@ fn parses_unary_plus() {
 fn parses_lambda_expression() {
     let module = parser::parse_module("lambda x: x + 1").expect("parse should succeed");
     match &module.body[0] {
-        Stmt::Expr(Expr::Lambda { params, body }) => {
+        Stmt::Expr(Expr::Lambda {
+            params,
+            vararg,
+            kwarg,
+            body,
+        }) => {
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "x");
             assert!(params[0].default.is_none());
+            assert!(vararg.is_none());
+            assert!(kwarg.is_none());
             match &**body {
                 Expr::Binary { .. } => {}
                 other => panic!("unexpected body: {other:?}"),
@@ -356,13 +363,21 @@ fn parses_function_definition_and_return() {
     let source = "def add(a, b):\n    return a + b\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &module.body[0] {
-        Stmt::FunctionDef { name, params, body } => {
+        Stmt::FunctionDef {
+            name,
+            params,
+            vararg,
+            kwarg,
+            body,
+        } => {
             assert_eq!(name, "add");
             assert_eq!(params.len(), 2);
             assert_eq!(params[0].name, "a");
             assert!(params[0].default.is_none());
             assert_eq!(params[1].name, "b");
             assert!(params[1].default.is_none());
+            assert!(vararg.is_none());
+            assert!(kwarg.is_none());
             match &body[0] {
                 Stmt::Return { value } => {
                     assert!(value.is_some());
@@ -401,6 +416,44 @@ fn parses_lambda_with_default() {
                 Some(Expr::Constant(Constant::Int(value))) => assert_eq!(*value, 1),
                 other => panic!("unexpected default: {other:?}"),
             }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_function_definition_with_varargs() {
+    let source = "def collect(a, *rest, **kw):\n    return a\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::FunctionDef {
+            params,
+            vararg,
+            kwarg,
+            ..
+        } => {
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "a");
+            assert_eq!(vararg.as_deref(), Some("rest"));
+            assert_eq!(kwarg.as_deref(), Some("kw"));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_lambda_with_varargs() {
+    let module = parser::parse_module("lambda *args, **kw: args").expect("parse should succeed");
+    match &module.body[0] {
+        Stmt::Expr(Expr::Lambda {
+            params,
+            vararg,
+            kwarg,
+            ..
+        }) => {
+            assert!(params.is_empty());
+            assert_eq!(vararg.as_deref(), Some("args"));
+            assert_eq!(kwarg.as_deref(), Some("kw"));
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
