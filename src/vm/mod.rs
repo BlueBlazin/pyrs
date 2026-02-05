@@ -1054,12 +1054,7 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            if !kwargs.is_empty() {
-                                return Err(RuntimeError::new(
-                                    "keyword arguments not supported for builtin",
-                                ));
-                            }
-                            let result = builtin.call(args)?;
+                            let result = call_builtin_with_kwargs(builtin, args, kwargs)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -1161,12 +1156,7 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            if !kwargs.is_empty() {
-                                return Err(RuntimeError::new(
-                                    "keyword arguments not supported for builtin",
-                                ));
-                            }
-                            let result = builtin.call(args)?;
+                            let result = call_builtin_with_kwargs(builtin, args, kwargs)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -1687,6 +1677,122 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
     if let Some(name) = code.kwarg.as_ref() {
         let value = bindings.kwarg.unwrap_or_else(|| Value::Dict(Vec::new()));
         frame.locals.insert(name.clone(), value);
+    }
+}
+
+fn call_builtin_with_kwargs(
+    builtin: BuiltinFunction,
+    mut args: Vec<Value>,
+    mut kwargs: HashMap<String, Value>,
+) -> Result<Value, RuntimeError> {
+    match builtin {
+        BuiltinFunction::Print => {
+            let sep = kwargs
+                .remove("sep")
+                .map(|value| format_value(&value))
+                .unwrap_or_else(|| " ".to_string());
+            let end = kwargs
+                .remove("end")
+                .map(|value| format_value(&value))
+                .unwrap_or_else(|| "\n".to_string());
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "print() got an unexpected keyword argument",
+                ));
+            }
+            let mut parts = Vec::new();
+            for value in args {
+                parts.push(format_value(&value));
+            }
+            print!("{}{}", parts.join(&sep), end);
+            Ok(Value::None)
+        }
+        BuiltinFunction::Len => {
+            if let Some(value) = kwargs.remove("obj") {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("len() got multiple values"));
+                }
+                args.push(value);
+            }
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "len() got an unexpected keyword argument",
+                ));
+            }
+            builtin.call(args)
+        }
+        BuiltinFunction::Range => {
+            let mut start = kwargs.remove("start");
+            let mut stop = kwargs.remove("stop");
+            let mut step = kwargs.remove("step");
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "range() got an unexpected keyword argument",
+                ));
+            }
+
+            match args.len() {
+                0 => {}
+                1 => {
+                    if stop.is_some() {
+                        return Err(RuntimeError::new("range() got multiple values"));
+                    }
+                    stop = Some(args.remove(0));
+                }
+                2 => {
+                    if start.is_some() || stop.is_some() {
+                        return Err(RuntimeError::new("range() got multiple values"));
+                    }
+                    start = Some(args.remove(0));
+                    stop = Some(args.remove(0));
+                }
+                3 => {
+                    if start.is_some() || stop.is_some() || step.is_some() {
+                        return Err(RuntimeError::new("range() got multiple values"));
+                    }
+                    start = Some(args.remove(0));
+                    stop = Some(args.remove(0));
+                    step = Some(args.remove(0));
+                }
+                _ => return Err(RuntimeError::new("range() expects 1-3 arguments")),
+            }
+
+            let stop = stop.ok_or_else(|| RuntimeError::new("range() missing stop"))?;
+            let start = start.unwrap_or(Value::Int(0));
+            let step = step.unwrap_or(Value::Int(1));
+
+            let start = value_to_int(start)?;
+            let stop = value_to_int(stop)?;
+            let step = value_to_int(step)?;
+
+            if step == 0 {
+                return Err(RuntimeError::new("range() step cannot be zero"));
+            }
+
+            let mut values = Vec::new();
+            let mut i = start;
+            if step > 0 {
+                while i < stop {
+                    values.push(Value::Int(i));
+                    i += step;
+                }
+            } else {
+                while i > stop {
+                    values.push(Value::Int(i));
+                    i += step;
+                }
+            }
+
+            Ok(Value::List(values))
+        }
+        _ => {
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "keyword arguments not supported for builtin",
+                ));
+            }
+            builtin.call(args)
+        }
     }
 }
 
