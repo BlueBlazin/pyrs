@@ -10,7 +10,7 @@ use crate::compiler;
 use crate::parser;
 use crate::runtime::{
     format_value, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
-    InstanceObject, ModuleObject, RuntimeError, Value,
+    Heap, InstanceObject, ModuleObject, Object, ObjRef, RuntimeError, Value,
 };
 
 #[derive(Debug, Clone)]
@@ -24,26 +24,21 @@ struct Frame {
     ip: usize,
     stack: Vec<Value>,
     locals: HashMap<String, Value>,
-    module: Rc<ModuleObject>,
-    function_globals: Rc<ModuleObject>,
-    globals_fallback: Option<Rc<ModuleObject>>,
+    module: ObjRef,
+    function_globals: ObjRef,
+    globals_fallback: Option<ObjRef>,
     is_module: bool,
     return_module: bool,
-    return_instance: Option<Rc<InstanceObject>>,
+    return_instance: Option<ObjRef>,
     return_class: bool,
-    class_bases: Vec<Rc<ClassObject>>,
+    class_bases: Vec<ObjRef>,
     blocks: Vec<Block>,
     active_exception: Option<Value>,
     expect_none_return: bool,
 }
 
 impl Frame {
-    fn new(
-        code: Rc<CodeObject>,
-        module: Rc<ModuleObject>,
-        is_module: bool,
-        return_module: bool,
-    ) -> Self {
+    fn new(code: Rc<CodeObject>, module: ObjRef, is_module: bool, return_module: bool) -> Self {
         Self {
             code,
             ip: 0,
@@ -67,18 +62,24 @@ impl Frame {
 pub struct Vm {
     frames: Vec<Frame>,
     builtins: HashMap<String, Value>,
-    modules: HashMap<String, Rc<ModuleObject>>,
-    main_module: Rc<ModuleObject>,
+    modules: HashMap<String, ObjRef>,
+    main_module: ObjRef,
     module_paths: Vec<PathBuf>,
+    heap: Heap,
 }
 
 impl Vm {
     pub fn new() -> Self {
-        let main_module = Rc::new(ModuleObject::new("__main__"));
-        main_module.globals.borrow_mut().insert(
-            "__name__".to_string(),
-            Value::Str("__main__".to_string()),
-        );
+        let heap = Heap::new();
+        let main_module = match heap.alloc_module(ModuleObject::new("__main__")) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module) = &mut *main_module.kind_mut() {
+            module
+                .globals
+                .insert("__name__".to_string(), Value::Str("__main__".to_string()));
+        }
 
         let mut modules = HashMap::new();
         modules.insert("__main__".to_string(), main_module.clone());
@@ -92,25 +93,81 @@ impl Vm {
             modules,
             main_module,
             module_paths,
+            heap,
         };
         vm.install_builtins();
         vm
     }
 
     pub fn set_global(&mut self, name: impl Into<String>, value: Value) {
-        self.main_module
-            .globals
-            .borrow_mut()
-            .insert(name.into(), value);
+        if let Object::Module(module) = &mut *self.main_module.kind_mut() {
+            module.globals.insert(name.into(), value);
+        }
     }
 
     pub fn get_global(&self, name: &str) -> Option<Value> {
-        let globals = self.main_module.globals.borrow();
-        globals.get(name).cloned()
+        if let Object::Module(module) = &*self.main_module.kind() {
+            return module.globals.get(name).cloned();
+        }
+        None
     }
 
     pub fn add_module_path(&mut self, path: impl Into<PathBuf>) {
         self.module_paths.push(path.into());
+    }
+
+    pub fn id_of(&self, value: &Value) -> u64 {
+        self.heap.id_of(value)
+    }
+
+    pub fn alloc_module(&mut self, name: impl Into<String>) -> Value {
+        self.heap.alloc_module(ModuleObject::new(name))
+    }
+
+    pub fn alloc_list(&mut self, values: Vec<Value>) -> Value {
+        self.heap.alloc_list(values)
+    }
+
+    pub fn alloc_tuple(&mut self, values: Vec<Value>) -> Value {
+        self.heap.alloc_tuple(values)
+    }
+
+    pub fn alloc_dict(&mut self, values: Vec<(Value, Value)>) -> Value {
+        self.heap.alloc_dict(values)
+    }
+
+    pub fn heap_object_count(&self) -> usize {
+        self.heap.live_objects_count()
+    }
+
+    pub fn gc_collect(&mut self) {
+        let mut roots = Vec::new();
+        for value in self.builtins.values() {
+            roots.push(value.clone());
+        }
+        for module in self.modules.values() {
+            roots.push(Value::Module(module.clone()));
+        }
+        roots.push(Value::Module(self.main_module.clone()));
+        for frame in &self.frames {
+            roots.extend(frame.stack.iter().cloned());
+            roots.extend(frame.locals.values().cloned());
+            roots.push(Value::Module(frame.module.clone()));
+            roots.push(Value::Module(frame.function_globals.clone()));
+            if let Some(fallback) = &frame.globals_fallback {
+                roots.push(Value::Module(fallback.clone()));
+            }
+            if let Some(instance) = &frame.return_instance {
+                roots.push(Value::Instance(instance.clone()));
+            }
+            for base in &frame.class_bases {
+                roots.push(Value::Class(base.clone()));
+            }
+            if let Some(exc) = &frame.active_exception {
+                roots.push(exc.clone());
+            }
+        }
+        self.heap.collect_cycles(&roots);
     }
 
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {
@@ -125,7 +182,7 @@ impl Vm {
         self.run()
     }
 
-    fn load_module(&mut self, name: &str) -> Result<Rc<ModuleObject>, RuntimeError> {
+    fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
         if let Some(module) = self.modules.get(name).cloned() {
             return Ok(module);
         }
@@ -138,11 +195,15 @@ impl Vm {
             RuntimeError::new(format!("failed to read module '{name}': {err}"))
         })?;
 
-        let module = Rc::new(ModuleObject::new(name));
-        {
-            let mut globals = module.globals.borrow_mut();
-            globals.insert("__name__".to_string(), Value::Str(name.to_string()));
-            globals.insert(
+        let module = match self.heap.alloc_module(ModuleObject::new(name)) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .insert("__name__".to_string(), Value::Str(name.to_string()));
+            module_data.globals.insert(
                 "__file__".to_string(),
                 Value::Str(path.to_string_lossy().to_string()),
             );
@@ -181,41 +242,46 @@ impl Vm {
         None
     }
 
-    fn load_submodule(
-        &mut self,
-        parent: &Rc<ModuleObject>,
-        attr_name: &str,
-    ) -> Option<Rc<ModuleObject>> {
-        let full_name = format!("{}.{}", parent.name, attr_name);
+    fn load_submodule(&mut self, parent: &ObjRef, attr_name: &str) -> Option<ObjRef> {
+        let parent_name = match &*parent.kind() {
+            Object::Module(module) => module.name.clone(),
+            _ => return None,
+        };
+        let full_name = format!("{}.{}", parent_name, attr_name);
         if let Some(module) = self.modules.get(&full_name).cloned() {
             return Some(module);
         }
         if self.find_module_file(&full_name).is_some() {
             if let Ok(module) = self.load_module(&full_name) {
-                parent
-                    .globals
-                    .borrow_mut()
-                    .insert(attr_name.to_string(), Value::Module(module.clone()));
+                if let Object::Module(module_data) = &mut *parent.kind_mut() {
+                    module_data
+                        .globals
+                        .insert(attr_name.to_string(), Value::Module(module.clone()));
+                }
                 return Some(module);
             }
         }
         None
     }
 
-    fn ensure_module(&mut self, name: &str) -> Rc<ModuleObject> {
+    fn ensure_module(&mut self, name: &str) -> ObjRef {
         if let Some(module) = self.modules.get(name).cloned() {
             return module;
         }
-        let module = Rc::new(ModuleObject::new(name));
-        module
-            .globals
-            .borrow_mut()
-            .insert("__name__".to_string(), Value::Str(name.to_string()));
+        let module = match self.heap.alloc_module(ModuleObject::new(name)) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .insert("__name__".to_string(), Value::Str(name.to_string()));
+        }
         self.modules.insert(name.to_string(), module.clone());
         module
     }
 
-    fn link_module_chain(&mut self, name: &str, module: Rc<ModuleObject>) {
+    fn link_module_chain(&mut self, name: &str, module: ObjRef) {
         let parts: Vec<&str> = name.split('.').collect();
         if parts.len() <= 1 {
             return;
@@ -231,10 +297,11 @@ impl Vm {
             } else {
                 self.ensure_module(&child_name)
             };
-            current_module
-                .globals
-                .borrow_mut()
-                .insert(part.to_string(), Value::Module(child_module.clone()));
+            if let Object::Module(module_data) = &mut *current_module.kind_mut() {
+                module_data
+                    .globals
+                    .insert(part.to_string(), Value::Module(child_module.clone()));
+            }
             current_module = child_module;
             current_name = child_name;
         }
@@ -337,12 +404,22 @@ impl Vm {
                     let value = self.pop_value()?;
                     match value {
                         Value::Module(module) => {
-                            let attr = module.globals.borrow().get(&attr_name).cloned();
+                            let (module_name, attr) = match &*module.kind() {
+                                Object::Module(module_data) => {
+                                    let attr = module_data.globals.get(&attr_name).cloned();
+                                    let module_name = module_data.name.clone();
+                                    (module_name, attr)
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attribute access unsupported type",
+                                    ))
+                                }
+                            };
                             let attr = if let Some(attr) = attr {
                                 Some(attr)
                             } else {
-                                module
-                                    .name
+                                module_name
                                     .split('.')
                                     .last()
                                     .and_then(|suffix| {
@@ -360,37 +437,58 @@ impl Vm {
                             .ok_or_else(|| {
                                 RuntimeError::new(format!(
                                     "module '{}' has no attribute '{}'",
-                                    module.name, attr_name
+                                    module_name, attr_name
                                 ))
                             })?;
                             self.push_value(attr);
                         }
                         Value::Class(class) => {
+                            let class_name = match &*class.kind() {
+                                Object::Class(class_data) => class_data.name.clone(),
+                                _ => "<class>".to_string(),
+                            };
                             let attr = class_attr_lookup(&class, &attr_name).ok_or_else(|| {
                                 RuntimeError::new(format!(
                                     "class '{}' has no attribute '{}'",
-                                    class.name, attr_name
+                                    class_name, attr_name
                                 ))
                             })?;
                             self.push_value(attr);
                         }
                         Value::Instance(instance) => {
-                            if let Some(attr) = instance.attrs.borrow().get(&attr_name).cloned() {
-                                self.push_value(attr);
-                                return Ok(None);
+                            if let Object::Instance(instance_data) = &*instance.kind() {
+                                if let Some(attr) =
+                                    instance_data.attrs.get(&attr_name).cloned()
+                                {
+                                    self.push_value(attr);
+                                    return Ok(None);
+                                }
                             }
-                            if let Some(attr) = class_attr_lookup(&instance.class, &attr_name) {
+                            let class_ref = match &*instance.kind() {
+                                Object::Instance(instance_data) => instance_data.class.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attribute access unsupported type",
+                                    ))
+                                }
+                            };
+                            if let Some(attr) = class_attr_lookup(&class_ref, &attr_name) {
                                 if let Value::Function(func) = attr {
                                     let bound = BoundMethod::new(func, instance.clone());
-                                    self.push_value(Value::BoundMethod(Rc::new(bound)));
+                                    let bound_value = self.heap.alloc_bound_method(bound);
+                                    self.push_value(bound_value);
                                 } else {
                                     self.push_value(attr);
                                 }
                                 return Ok(None);
                             }
+                            let class_name = match &*class_ref.kind() {
+                                Object::Class(class_data) => class_data.name.clone(),
+                                _ => "<class>".to_string(),
+                            };
                             return Err(RuntimeError::new(format!(
                                 "'{}' object has no attribute '{}'",
-                                instance.class.name, attr_name
+                                class_name, attr_name
                             )));
                         }
                         _ => {
@@ -441,13 +539,19 @@ impl Vm {
                     let target = self.pop_value()?;
                     match target {
                         Value::Module(module) => {
-                            module.globals.borrow_mut().insert(attr_name, value);
+                            if let Object::Module(module_data) = &mut *module.kind_mut() {
+                                module_data.globals.insert(attr_name, value);
+                            }
                         }
                         Value::Instance(instance) => {
-                            instance.attrs.borrow_mut().insert(attr_name, value);
+                            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                                instance_data.attrs.insert(attr_name, value);
+                            }
                         }
                         Value::Class(class) => {
-                            class.attrs.borrow_mut().insert(attr_name, value);
+                            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                                class_data.attrs.insert(attr_name, value);
+                            }
                         }
                         _ => {
                             return Err(RuntimeError::new(
@@ -472,13 +576,15 @@ impl Vm {
                     };
                     let value = self.pop_value()?;
                     if let Some(frame) = self.frames.last() {
-                        frame.module.globals.borrow_mut().insert(name, value);
+                        if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                            module_data.globals.insert(name, value);
+                        }
                     }
                 }
                 Opcode::BinaryAdd => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.push_value(add_values(left, right)?);
+                    self.push_value(add_values(left, right, &self.heap)?);
                 }
                 Opcode::BinarySub => {
                     let (left, right) = self.pop_int_pair()?;
@@ -487,7 +593,7 @@ impl Vm {
                 Opcode::BinaryMul => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.push_value(mul_values(left, right)?);
+                    self.push_value(mul_values(left, right, &self.heap)?);
                 }
                 Opcode::BinaryPow => {
                     let right = self.pop_value()?;
@@ -562,12 +668,14 @@ impl Vm {
                 Opcode::CompareIs => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.push_value(Value::Bool(left == right));
+                    let same = self.heap.id_of(&left) == self.heap.id_of(&right);
+                    self.push_value(Value::Bool(same));
                 }
                 Opcode::CompareIsNot => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.push_value(Value::Bool(left != right));
+                    let same = self.heap.id_of(&left) == self.heap.id_of(&right);
+                    self.push_value(Value::Bool(!same));
                 }
                 Opcode::UnaryNeg => {
                     let value = self.pop_value()?;
@@ -596,7 +704,7 @@ impl Vm {
                         values.push(self.pop_value()?);
                     }
                     values.reverse();
-                    self.push_value(Value::List(values));
+                    self.push_value(self.heap.alloc_list(values));
                 }
                 Opcode::BuildTuple => {
                     let count = instr
@@ -608,7 +716,7 @@ impl Vm {
                         values.push(self.pop_value()?);
                     }
                     values.reverse();
-                    self.push_value(Value::Tuple(values));
+                    self.push_value(self.heap.alloc_tuple(values));
                 }
                 Opcode::BuildDict => {
                     let count = instr
@@ -622,7 +730,7 @@ impl Vm {
                         values.push((key, value));
                     }
                     values.reverse();
-                    self.push_value(Value::Dict(values));
+                    self.push_value(self.heap.alloc_dict(values));
                 }
                 Opcode::UnpackSequence => {
                     let count = instr
@@ -631,8 +739,22 @@ impl Vm {
                         as usize;
                     let value = self.pop_value()?;
                     let items = match value {
-                        Value::List(values) => values,
-                        Value::Tuple(values) => values,
+                        Value::List(obj) => match &*obj.kind() {
+                            Object::List(values) => values.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "unpack expects list or tuple",
+                                ))
+                            }
+                        },
+                        Value::Tuple(obj) => match &*obj.kind() {
+                            Object::Tuple(values) => values.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "unpack expects list or tuple",
+                                ))
+                            }
+                        },
                         _ => {
                             return Err(RuntimeError::new(
                                 "unpack expects list or tuple",
@@ -650,9 +772,11 @@ impl Vm {
                     let value = self.pop_value()?;
                     let list = self.pop_value()?;
                     match list {
-                        Value::List(mut values) => {
-                            values.push(value);
-                            self.push_value(Value::List(values));
+                        Value::List(obj) => {
+                            if let Object::List(values) = &mut *obj.kind_mut() {
+                                values.push(value);
+                            }
+                            self.push_value(Value::List(obj));
                         }
                         _ => return Err(RuntimeError::new("list append expects list")),
                     }
@@ -661,18 +785,38 @@ impl Vm {
                     let other = self.pop_value()?;
                     let list = self.pop_value()?;
                     match list {
-                        Value::List(mut values) => {
-                            match other {
-                                Value::List(items) => values.extend(items),
-                                Value::Tuple(items) => values.extend(items),
-                                Value::Str(text) => {
-                                    for ch in text.chars() {
-                                        values.push(Value::Str(ch.to_string()));
+                        Value::List(obj) => {
+                            if let Object::List(values) = &mut *obj.kind_mut() {
+                                match other {
+                                    Value::List(items) => match &*items.kind() {
+                                        Object::List(items) => values.extend(items.clone()),
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "list extend expects iterable",
+                                            ))
+                                        }
+                                    },
+                                    Value::Tuple(items) => match &*items.kind() {
+                                        Object::Tuple(items) => values.extend(items.clone()),
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "list extend expects iterable",
+                                            ))
+                                        }
+                                    },
+                                    Value::Str(text) => {
+                                        for ch in text.chars() {
+                                            values.push(Value::Str(ch.to_string()));
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "list extend expects iterable",
+                                        ))
                                     }
                                 }
-                                _ => return Err(RuntimeError::new("list extend expects iterable")),
                             }
-                            self.push_value(Value::List(values));
+                            self.push_value(Value::List(obj));
                         }
                         _ => return Err(RuntimeError::new("list extend expects list")),
                     }
@@ -682,29 +826,8 @@ impl Vm {
                     let key = self.pop_value()?;
                     let dict = self.pop_value()?;
                     match dict {
-                        Value::Dict(mut entries) => {
-                            let mut found = false;
-                            for (stored_key, stored_value) in entries.iter_mut() {
-                                if *stored_key == key {
-                                    *stored_value = value.clone();
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if !found {
-                                entries.push((key, value));
-                            }
-                            self.push_value(Value::Dict(entries));
-                        }
-                        _ => return Err(RuntimeError::new("dict set expects dict")),
-                    }
-                }
-                Opcode::DictUpdate => {
-                    let other = self.pop_value()?;
-                    let dict = self.pop_value()?;
-                    match (dict, other) {
-                        (Value::Dict(mut entries), Value::Dict(other_entries)) => {
-                            for (key, value) in other_entries {
+                        Value::Dict(obj) => {
+                            if let Object::Dict(entries) = &mut *obj.kind_mut() {
                                 let mut found = false;
                                 for (stored_key, stored_value) in entries.iter_mut() {
                                     if *stored_key == key {
@@ -717,7 +840,40 @@ impl Vm {
                                     entries.push((key, value));
                                 }
                             }
-                            self.push_value(Value::Dict(entries));
+                            self.push_value(Value::Dict(obj));
+                        }
+                        _ => return Err(RuntimeError::new("dict set expects dict")),
+                    }
+                }
+                Opcode::DictUpdate => {
+                    let other = self.pop_value()?;
+                    let dict = self.pop_value()?;
+                    match (dict, other) {
+                        (Value::Dict(obj), Value::Dict(other)) => {
+                            let other_entries = match &*other.kind() {
+                                Object::Dict(entries) => entries.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "dict update expects dict",
+                                    ))
+                                }
+                            };
+                            if let Object::Dict(entries) = &mut *obj.kind_mut() {
+                                for (key, value) in other_entries {
+                                    let mut found = false;
+                                    for (stored_key, stored_value) in entries.iter_mut() {
+                                        if *stored_key == key {
+                                            *stored_value = value.clone();
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if !found {
+                                        entries.push((key, value));
+                                    }
+                                }
+                            }
+                            self.push_value(Value::Dict(obj));
                         }
                         _ => return Err(RuntimeError::new("dict update expects dict")),
                     }
@@ -736,22 +892,30 @@ impl Vm {
                     let value = self.pop_value()?;
                     match index {
                         Value::Slice { lower, upper, step } => match value {
-                            Value::List(values) => {
-                                let indices = slice_indices(values.len(), lower, upper, step)?;
-                                let mut result = Vec::with_capacity(indices.len());
-                                for idx in indices {
-                                    result.push(values[idx].clone());
+                            Value::List(obj) => match &*obj.kind() {
+                                Object::List(values) => {
+                                    let indices =
+                                        slice_indices(values.len(), lower, upper, step)?;
+                                    let mut result = Vec::with_capacity(indices.len());
+                                    for idx in indices {
+                                        result.push(values[idx].clone());
+                                    }
+                                    self.push_value(self.heap.alloc_list(result));
                                 }
-                                self.push_value(Value::List(result));
-                            }
-                            Value::Tuple(values) => {
-                                let indices = slice_indices(values.len(), lower, upper, step)?;
-                                let mut result = Vec::with_capacity(indices.len());
-                                for idx in indices {
-                                    result.push(values[idx].clone());
+                                _ => return Err(RuntimeError::new("subscript unsupported type")),
+                            },
+                            Value::Tuple(obj) => match &*obj.kind() {
+                                Object::Tuple(values) => {
+                                    let indices =
+                                        slice_indices(values.len(), lower, upper, step)?;
+                                    let mut result = Vec::with_capacity(indices.len());
+                                    for idx in indices {
+                                        result.push(values[idx].clone());
+                                    }
+                                    self.push_value(self.heap.alloc_tuple(result));
                                 }
-                                self.push_value(Value::Tuple(result));
-                            }
+                                _ => return Err(RuntimeError::new("subscript unsupported type")),
+                            },
                             Value::Str(value) => {
                                 let chars: Vec<char> = value.chars().collect();
                                 let indices = slice_indices(chars.len(), lower, upper, step)?;
@@ -767,26 +931,40 @@ impl Vm {
                             _ => return Err(RuntimeError::new("subscript unsupported type")),
                         },
                         index => match value {
-                            Value::List(values) => {
-                                let mut index_int = value_to_int(index)? as isize;
-                                if index_int < 0 {
-                                    index_int += values.len() as isize;
+                            Value::List(obj) => match &*obj.kind() {
+                                Object::List(values) => {
+                                    let mut index_int = value_to_int(index)? as isize;
+                                    if index_int < 0 {
+                                        index_int += values.len() as isize;
+                                    }
+                                    if index_int < 0 || index_int as usize >= values.len() {
+                                        return Err(RuntimeError::new("list index out of range"));
+                                    }
+                                    self.push_value(values[index_int as usize].clone());
                                 }
-                                if index_int < 0 || index_int as usize >= values.len() {
-                                    return Err(RuntimeError::new("list index out of range"));
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "subscript unsupported type",
+                                    ))
                                 }
-                                self.push_value(values[index_int as usize].clone());
-                            }
-                            Value::Tuple(values) => {
-                                let mut index_int = value_to_int(index)? as isize;
-                                if index_int < 0 {
-                                    index_int += values.len() as isize;
+                            },
+                            Value::Tuple(obj) => match &*obj.kind() {
+                                Object::Tuple(values) => {
+                                    let mut index_int = value_to_int(index)? as isize;
+                                    if index_int < 0 {
+                                        index_int += values.len() as isize;
+                                    }
+                                    if index_int < 0 || index_int as usize >= values.len() {
+                                        return Err(RuntimeError::new("tuple index out of range"));
+                                    }
+                                    self.push_value(values[index_int as usize].clone());
                                 }
-                                if index_int < 0 || index_int as usize >= values.len() {
-                                    return Err(RuntimeError::new("tuple index out of range"));
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "subscript unsupported type",
+                                    ))
                                 }
-                                self.push_value(values[index_int as usize].clone());
-                            }
+                            },
                             Value::Str(value) => {
                                 let mut index_int = value_to_int(index)? as isize;
                                 let chars: Vec<char> = value.chars().collect();
@@ -798,20 +976,27 @@ impl Vm {
                                 }
                                 self.push_value(Value::Str(chars[index_int as usize].to_string()));
                             }
-                            Value::Dict(entries) => {
-                                let mut found = None;
-                                for (key, value) in entries {
-                                    if key == index {
-                                        found = Some(value);
-                                        break;
+                            Value::Dict(obj) => match &*obj.kind() {
+                                Object::Dict(entries) => {
+                                    let mut found = None;
+                                    for (key, value) in entries {
+                                        if *key == index {
+                                            found = Some(value.clone());
+                                            break;
+                                        }
+                                    }
+                                    if let Some(value) = found {
+                                        self.push_value(value);
+                                    } else {
+                                        return Err(RuntimeError::new("key not found"));
                                     }
                                 }
-                                if let Some(value) = found {
-                                    self.push_value(value);
-                                } else {
-                                    return Err(RuntimeError::new("key not found"));
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "subscript unsupported type",
+                                    ))
                                 }
-                            }
+                            },
                             _ => return Err(RuntimeError::new("subscript unsupported type")),
                         },
                     }
@@ -825,30 +1010,34 @@ impl Vm {
                             return Err(RuntimeError::new("slice assignment not supported"))
                         }
                         index => match target {
-                            Value::List(mut values) => {
-                                let mut idx = value_to_int(index)? as isize;
-                                if idx < 0 {
-                                    idx += values.len() as isize;
+                            Value::List(obj) => {
+                                if let Object::List(values) = &mut *obj.kind_mut() {
+                                    let mut idx = value_to_int(index)? as isize;
+                                    if idx < 0 {
+                                        idx += values.len() as isize;
+                                    }
+                                    if idx < 0 || idx as usize >= values.len() {
+                                        return Err(RuntimeError::new("list index out of range"));
+                                    }
+                                    values[idx as usize] = value;
                                 }
-                                if idx < 0 || idx as usize >= values.len() {
-                                    return Err(RuntimeError::new("list index out of range"));
-                                }
-                                values[idx as usize] = value;
-                                self.push_value(Value::List(values));
+                                self.push_value(Value::List(obj));
                             }
-                            Value::Dict(mut entries) => {
-                                let mut found = false;
-                                for (key, stored) in entries.iter_mut() {
-                                    if *key == index {
-                                        *stored = value.clone();
-                                        found = true;
-                                        break;
+                            Value::Dict(obj) => {
+                                if let Object::Dict(entries) = &mut *obj.kind_mut() {
+                                    let mut found = false;
+                                    for (key, stored) in entries.iter_mut() {
+                                        if *key == index {
+                                            *stored = value.clone();
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if !found {
+                                        entries.push((index, value));
                                     }
                                 }
-                                if !found {
-                                    entries.push((index, value));
-                                }
-                                self.push_value(Value::Dict(entries));
+                                self.push_value(Value::Dict(obj));
                             }
                             _ => return Err(RuntimeError::new("store subscript unsupported type")),
                         },
@@ -878,21 +1067,28 @@ impl Vm {
                     };
                     let kwonly_value = self.pop_value()?;
                     let kwonly_defaults = match kwonly_value {
-                        Value::Dict(entries) => {
-                            let mut map = HashMap::new();
-                            for (key, value) in entries {
-                                let key = match key {
-                                    Value::Str(name) => name,
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "kwonly default name must be string",
-                                        ))
-                                    }
-                                };
-                                map.insert(key, value);
+                        Value::Dict(obj) => match &*obj.kind() {
+                            Object::Dict(entries) => {
+                                let mut map = HashMap::new();
+                                for (key, value) in entries {
+                                    let key = match key {
+                                        Value::Str(name) => name.clone(),
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "kwonly default name must be string",
+                                            ))
+                                        }
+                                    };
+                                    map.insert(key, value.clone());
+                                }
+                                map
                             }
-                            map
-                        }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "expected kwonly defaults dict for function",
+                                ))
+                            }
+                        },
                         _ => {
                             return Err(RuntimeError::new(
                                 "expected kwonly defaults dict for function",
@@ -901,7 +1097,14 @@ impl Vm {
                     };
                     let defaults_value = self.pop_value()?;
                     let defaults = match defaults_value {
-                        Value::Tuple(values) => values,
+                        Value::Tuple(obj) => match &*obj.kind() {
+                            Object::Tuple(values) => values.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "expected defaults tuple for function",
+                                ))
+                            }
+                        },
                         _ => {
                             return Err(RuntimeError::new(
                                 "expected defaults tuple for function",
@@ -915,7 +1118,7 @@ impl Vm {
                         .function_globals
                         .clone();
                     let func = FunctionObject::new(code, module, defaults, kwonly_defaults);
-                    self.push_value(Value::Function(Rc::new(func)));
+                    self.push_value(self.heap.alloc_function(func));
                 }
                 Opcode::BuildClass => {
                     let idx = instr
@@ -946,7 +1149,10 @@ impl Vm {
                         _ => return Err(RuntimeError::new("class name must be a string")),
                     };
                     let bases = match bases_value {
-                        Value::Tuple(values) => values,
+                        Value::Tuple(obj) => match &*obj.kind() {
+                            Object::Tuple(values) => values.clone(),
+                            _ => return Err(RuntimeError::new("class bases must be a tuple")),
+                        },
                         _ => return Err(RuntimeError::new("class bases must be a tuple")),
                     };
                     let mut base_classes = Vec::new();
@@ -961,11 +1167,18 @@ impl Vm {
                         }
                     }
 
-                    let class_module = Rc::new(ModuleObject::new(class_name.clone()));
-                    class_module.globals.borrow_mut().insert(
-                        "__name__".to_string(),
-                        Value::Str(class_name),
-                    );
+                    let class_module = match self
+                        .heap
+                        .alloc_module(ModuleObject::new(class_name.clone()))
+                    {
+                        Value::Module(obj) => obj,
+                        _ => unreachable!(),
+                    };
+                    if let Object::Module(module_data) = &mut *class_module.kind_mut() {
+                        module_data
+                            .globals
+                            .insert("__name__".to_string(), Value::Str(class_name));
+                    }
 
                     let outer_globals = self
                         .frames
@@ -992,55 +1205,103 @@ impl Vm {
                     let func = self.pop_value()?;
                     match func {
                         Value::Function(func) => {
-                            let bindings = bind_arguments(&func, args, HashMap::new())?;
-                            let mut frame =
-                                Frame::new(func.code.clone(), func.module.clone(), false, false);
-                            apply_bindings(&mut frame, &func.code, bindings);
+                            let func_data = match &*func.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let bindings =
+                                bind_arguments(&func_data, &self.heap, args, HashMap::new())?;
+                            let mut frame = Frame::new(
+                                func_data.code.clone(),
+                                func_data.module.clone(),
+                                false,
+                                false,
+                            );
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
                         }
                         Value::BoundMethod(method) => {
+                            let method_data = match &*method.kind() {
+                                Object::BoundMethod(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let func_data = match &*method_data.function.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
                             let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(Value::Instance(method.receiver.clone()));
+                            bound_args.push(Value::Instance(method_data.receiver.clone()));
                             bound_args.extend(args);
                             let bindings = bind_arguments(
-                                &method.function,
+                                &func_data,
+                                &self.heap,
                                 bound_args,
                                 HashMap::new(),
                             )?;
                             let mut frame = Frame::new(
-                                method.function.code.clone(),
-                                method.function.module.clone(),
+                                func_data.code.clone(),
+                                func_data.module.clone(),
                                 false,
                                 false,
                             );
-                            apply_bindings(&mut frame, &method.function.code, bindings);
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
                         }
                         Value::Class(class) => {
-                            let instance = Rc::new(InstanceObject::new(class.clone()));
+                            let instance = match self
+                                .heap
+                                .alloc_instance(InstanceObject::new(class.clone()))
+                            {
+                                Value::Instance(obj) => obj,
+                                _ => unreachable!(),
+                            };
                             let init = class_attr_lookup(&class, "__init__");
                             if let Some(Value::Function(init_func)) = init {
+                                let func_data = match &*init_func.kind() {
+                                    Object::Function(data) => data.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "attempted to call non-function",
+                                        ))
+                                    }
+                                };
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
                                 init_args.extend(args);
-                                let bindings =
-                                    bind_arguments(&init_func, init_args, HashMap::new())?;
+                                let bindings = bind_arguments(
+                                    &func_data,
+                                    &self.heap,
+                                    init_args,
+                                    HashMap::new(),
+                                )?;
                                 let mut frame = Frame::new(
-                                    init_func.code.clone(),
-                                    init_func.module.clone(),
+                                    func_data.code.clone(),
+                                    func_data.module.clone(),
                                     false,
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
                                 frame.expect_none_return = true;
-                                apply_bindings(&mut frame, &init_func.code, bindings);
+                                apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                                 self.frames.push(frame);
                             } else {
                                 self.push_value(Value::Instance(instance));
                             }
                         }
                         Value::Builtin(builtin) => {
-                            let result = builtin.call(args)?;
+                            let result = builtin.call(&self.heap, args)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -1084,43 +1345,87 @@ impl Vm {
                     let func = self.pop_value()?;
                     match func {
                         Value::Function(func) => {
-                            let bindings = bind_arguments(&func, args, kwargs)?;
-                            let mut frame =
-                                Frame::new(func.code.clone(), func.module.clone(), false, false);
-                            apply_bindings(&mut frame, &func.code, bindings);
-                            self.frames.push(frame);
-                        }
-                        Value::BoundMethod(method) => {
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(Value::Instance(method.receiver.clone()));
-                            bound_args.extend(args);
-                            let bindings = bind_arguments(&method.function, bound_args, kwargs)?;
+                            let func_data = match &*func.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
                             let mut frame = Frame::new(
-                                method.function.code.clone(),
-                                method.function.module.clone(),
+                                func_data.code.clone(),
+                                func_data.module.clone(),
                                 false,
                                 false,
                             );
-                            apply_bindings(&mut frame, &method.function.code, bindings);
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                            self.frames.push(frame);
+                        }
+                        Value::BoundMethod(method) => {
+                            let method_data = match &*method.kind() {
+                                Object::BoundMethod(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let func_data = match &*method_data.function.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(Value::Instance(method_data.receiver.clone()));
+                            bound_args.extend(args);
+                            let bindings =
+                                bind_arguments(&func_data, &self.heap, bound_args, kwargs)?;
+                            let mut frame = Frame::new(
+                                func_data.code.clone(),
+                                func_data.module.clone(),
+                                false,
+                                false,
+                            );
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
                         }
                         Value::Class(class) => {
-                            let instance = Rc::new(InstanceObject::new(class.clone()));
+                            let instance = match self
+                                .heap
+                                .alloc_instance(InstanceObject::new(class.clone()))
+                            {
+                                Value::Instance(obj) => obj,
+                                _ => unreachable!(),
+                            };
                             let init = class_attr_lookup(&class, "__init__");
                             if let Some(Value::Function(init_func)) = init {
+                                let func_data = match &*init_func.kind() {
+                                    Object::Function(data) => data.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "attempted to call non-function",
+                                        ))
+                                    }
+                                };
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
                                 init_args.extend(args);
-                                let bindings = bind_arguments(&init_func, init_args, kwargs)?;
+                                let bindings =
+                                    bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
                                 let mut frame = Frame::new(
-                                    init_func.code.clone(),
-                                    init_func.module.clone(),
+                                    func_data.code.clone(),
+                                    func_data.module.clone(),
                                     false,
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
                                 frame.expect_none_return = true;
-                                apply_bindings(&mut frame, &init_func.code, bindings);
+                                apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                                 self.frames.push(frame);
                             } else {
                                 if !kwargs.is_empty() {
@@ -1132,7 +1437,8 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            let result = call_builtin_with_kwargs(builtin, args, kwargs)?;
+                            let result =
+                                call_builtin_with_kwargs(&self.heap, builtin, args, kwargs)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -1160,70 +1466,122 @@ impl Vm {
                     let args_value = self.pop_value()?;
                     let func = self.pop_value()?;
                     let kwargs = match kwargs_value {
-                        Value::Dict(entries) => {
-                            let mut map = HashMap::new();
-                            for (key, value) in entries {
-                                let key = match key {
-                                    Value::Str(name) => name,
-                                    _ => {
+                        Value::Dict(obj) => match &*obj.kind() {
+                            Object::Dict(entries) => {
+                                let mut map = HashMap::new();
+                                for (key, value) in entries {
+                                    let key = match key {
+                                        Value::Str(name) => name.clone(),
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "keyword name must be string",
+                                            ))
+                                        }
+                                    };
+                                    if map.contains_key(&key) {
                                         return Err(RuntimeError::new(
-                                            "keyword name must be string",
-                                        ))
+                                            "duplicate keyword argument",
+                                        ));
                                     }
-                                };
-                                if map.contains_key(&key) {
-                                    return Err(RuntimeError::new("duplicate keyword argument"));
+                                    map.insert(key, value.clone());
                                 }
-                                map.insert(key, value);
+                                map
                             }
-                            map
-                        }
+                            _ => return Err(RuntimeError::new("call kwargs must be dict")),
+                        },
                         _ => return Err(RuntimeError::new("call kwargs must be dict")),
                     };
                     let args = match args_value {
-                        Value::List(values) => values,
+                        Value::List(obj) => match &*obj.kind() {
+                            Object::List(values) => values.clone(),
+                            _ => return Err(RuntimeError::new("call args must be list")),
+                        },
                         _ => return Err(RuntimeError::new("call args must be list")),
                     };
 
                     match func {
                         Value::Function(func) => {
-                            let bindings = bind_arguments(&func, args, kwargs)?;
-                            let mut frame =
-                                Frame::new(func.code.clone(), func.module.clone(), false, false);
-                            apply_bindings(&mut frame, &func.code, bindings);
-                            self.frames.push(frame);
-                        }
-                        Value::BoundMethod(method) => {
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(Value::Instance(method.receiver.clone()));
-                            bound_args.extend(args);
-                            let bindings = bind_arguments(&method.function, bound_args, kwargs)?;
+                            let func_data = match &*func.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
                             let mut frame = Frame::new(
-                                method.function.code.clone(),
-                                method.function.module.clone(),
+                                func_data.code.clone(),
+                                func_data.module.clone(),
                                 false,
                                 false,
                             );
-                            apply_bindings(&mut frame, &method.function.code, bindings);
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                            self.frames.push(frame);
+                        }
+                        Value::BoundMethod(method) => {
+                            let method_data = match &*method.kind() {
+                                Object::BoundMethod(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let func_data = match &*method_data.function.kind() {
+                                Object::Function(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ))
+                                }
+                            };
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(Value::Instance(method_data.receiver.clone()));
+                            bound_args.extend(args);
+                            let bindings =
+                                bind_arguments(&func_data, &self.heap, bound_args, kwargs)?;
+                            let mut frame = Frame::new(
+                                func_data.code.clone(),
+                                func_data.module.clone(),
+                                false,
+                                false,
+                            );
+                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                             self.frames.push(frame);
                         }
                         Value::Class(class) => {
-                            let instance = Rc::new(InstanceObject::new(class.clone()));
+                            let instance = match self
+                                .heap
+                                .alloc_instance(InstanceObject::new(class.clone()))
+                            {
+                                Value::Instance(obj) => obj,
+                                _ => unreachable!(),
+                            };
                             let init = class_attr_lookup(&class, "__init__");
                             if let Some(Value::Function(init_func)) = init {
+                                let func_data = match &*init_func.kind() {
+                                    Object::Function(data) => data.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "attempted to call non-function",
+                                        ))
+                                    }
+                                };
                                 let mut init_args = Vec::with_capacity(args.len() + 1);
                                 init_args.push(Value::Instance(instance.clone()));
                                 init_args.extend(args);
-                                let bindings = bind_arguments(&init_func, init_args, kwargs)?;
+                                let bindings =
+                                    bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
                                 let mut frame = Frame::new(
-                                    init_func.code.clone(),
-                                    init_func.module.clone(),
+                                    func_data.code.clone(),
+                                    func_data.module.clone(),
                                     false,
                                     false,
                                 );
                                 frame.return_instance = Some(instance);
                                 frame.expect_none_return = true;
-                                apply_bindings(&mut frame, &init_func.code, bindings);
+                                apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                                 self.frames.push(frame);
                             } else {
                                 if !kwargs.is_empty() {
@@ -1235,7 +1593,8 @@ impl Vm {
                             }
                         }
                         Value::Builtin(builtin) => {
-                            let result = call_builtin_with_kwargs(builtin, args, kwargs)?;
+                            let result =
+                                call_builtin_with_kwargs(&self.heap, builtin, args, kwargs)?;
                             self.push_value(result);
                         }
                         Value::ExceptionType(name) => {
@@ -1283,9 +1642,18 @@ impl Vm {
                     };
                     let result_module = if let Some((root, _)) = name.split_once('.') {
                         self.link_module_chain(&name, module.clone());
-                        match self.modules.get(root).cloned() {
-                            Some(module) if module.name == root => module,
-                            _ => self.ensure_module(root),
+                        if let Some(module) = self.modules.get(root).cloned() {
+                            let is_root = match &*module.kind() {
+                                Object::Module(module_data) => module_data.name == root,
+                                _ => false,
+                            };
+                            if is_root {
+                                module
+                            } else {
+                                self.ensure_module(root)
+                            }
+                        } else {
+                            self.ensure_module(root)
                         }
                     } else {
                         module
@@ -1447,13 +1815,21 @@ impl Vm {
 
     fn class_value_from_module(
         &self,
-        module: &ModuleObject,
-        bases: Vec<Rc<ClassObject>>,
+        module: &ObjRef,
+        bases: Vec<ObjRef>,
     ) -> Value {
-        let class = Rc::new(ClassObject::new(module.name.clone(), bases));
-        let attrs = module.globals.borrow().clone();
-        class.attrs.borrow_mut().extend(attrs);
-        Value::Class(class)
+        let (name, attrs) = match &*module.kind() {
+            Object::Module(module_data) => (module_data.name.clone(), module_data.globals.clone()),
+            _ => ("<class>".to_string(), HashMap::new()),
+        };
+        let class = ClassObject::new(name, bases);
+        let class_value = self.heap.alloc_class(class);
+        if let Value::Class(class_ref) = &class_value {
+            if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                class_data.attrs.extend(attrs);
+            }
+        }
+        class_value
     }
 
     fn pop_value(&mut self) -> Result<Value, RuntimeError> {
@@ -1480,12 +1856,16 @@ impl Vm {
             if let Some(value) = frame.locals.get(name) {
                 return Ok(value.clone());
             }
-            if let Some(value) = frame.module.globals.borrow().get(name) {
-                return Ok(value.clone());
+            if let Object::Module(module_data) = &*frame.module.kind() {
+                if let Some(value) = module_data.globals.get(name) {
+                    return Ok(value.clone());
+                }
             }
             if let Some(fallback) = &frame.globals_fallback {
-                if let Some(value) = fallback.globals.borrow().get(name) {
-                    return Ok(value.clone());
+                if let Object::Module(module_data) = &*fallback.kind() {
+                    if let Some(value) = module_data.globals.get(name) {
+                        return Ok(value.clone());
+                    }
                 }
             }
         }
@@ -1498,7 +1878,9 @@ impl Vm {
     fn store_name(&mut self, name: String, value: Value) {
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
-                frame.module.globals.borrow_mut().insert(name, value);
+                if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                    module_data.globals.insert(name, value);
+                }
             } else {
                 frame.locals.insert(name, value);
             }
@@ -1546,6 +1928,8 @@ impl Vm {
             "enumerate".to_string(),
             Value::Builtin(BuiltinFunction::Enumerate),
         );
+        self.builtins
+            .insert("id".to_string(), Value::Builtin(BuiltinFunction::Id));
         self.builtins
             .insert("Exception".to_string(), Value::ExceptionType("Exception".to_string()));
         self.builtins
@@ -1624,9 +2008,18 @@ fn is_truthy(value: &Value) -> bool {
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
         Value::Str(value) => !value.is_empty(),
-        Value::List(values) => !values.is_empty(),
-        Value::Tuple(values) => !values.is_empty(),
-        Value::Dict(values) => !values.is_empty(),
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(values) => !values.is_empty(),
+            _ => true,
+        },
         Value::Slice { .. } => true,
         Value::Module(_)
         | Value::Class(_)
@@ -1677,6 +2070,7 @@ struct BoundArguments {
 
 fn bind_arguments(
     func: &FunctionObject,
+    heap: &Heap,
     mut positional: Vec<Value>,
     mut kwargs: HashMap<String, Value>,
 ) -> Result<BoundArguments, RuntimeError> {
@@ -1769,13 +2163,13 @@ fn bind_arguments(
         .code
         .vararg
         .as_ref()
-        .map(|_| Value::List(extra_positional));
+        .map(|_| heap.alloc_list(extra_positional));
     let kwarg = func.code.kwarg.as_ref().map(|_| {
         let mut entries = Vec::with_capacity(extra_kwargs.len());
         for (key, value) in extra_kwargs {
             entries.push((Value::Str(key), value));
         }
-        Value::Dict(entries)
+        heap.alloc_dict(entries)
     });
 
     Ok(BoundArguments {
@@ -1787,7 +2181,7 @@ fn bind_arguments(
     })
 }
 
-fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments) {
+fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments, heap: &Heap) {
     for (name, value) in code
         .posonly_params
         .iter()
@@ -1814,17 +2208,22 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
     }
 
     if let Some(name) = code.vararg.as_ref() {
-        let value = bindings.vararg.unwrap_or_else(|| Value::List(Vec::new()));
+        let value = bindings
+            .vararg
+            .unwrap_or_else(|| heap.alloc_list(Vec::new()));
         frame.locals.insert(name.clone(), value);
     }
 
     if let Some(name) = code.kwarg.as_ref() {
-        let value = bindings.kwarg.unwrap_or_else(|| Value::Dict(Vec::new()));
+        let value = bindings
+            .kwarg
+            .unwrap_or_else(|| heap.alloc_dict(Vec::new()));
         frame.locals.insert(name.clone(), value);
     }
 }
 
 fn call_builtin_with_kwargs(
+    heap: &Heap,
     builtin: BuiltinFunction,
     mut args: Vec<Value>,
     mut kwargs: HashMap<String, Value>,
@@ -1863,7 +2262,7 @@ fn call_builtin_with_kwargs(
                     "len() got an unexpected keyword argument",
                 ));
             }
-            builtin.call(args)
+            builtin.call(heap, args)
         }
         BuiltinFunction::Range => {
             let mut start = kwargs.remove("start");
@@ -1927,7 +2326,7 @@ fn call_builtin_with_kwargs(
                 }
             }
 
-            Ok(Value::List(values))
+            Ok(heap.alloc_list(values))
         }
         BuiltinFunction::Sum => {
             let start = kwargs.remove("start");
@@ -1942,7 +2341,7 @@ fn call_builtin_with_kwargs(
                 }
                 args.push(value);
             }
-            builtin.call(args)
+            builtin.call(heap, args)
         }
         BuiltinFunction::Sorted => {
             let reverse = kwargs
@@ -1954,12 +2353,14 @@ fn call_builtin_with_kwargs(
                     "sorted() got an unexpected keyword argument",
                 ));
             }
-            let result = builtin.call(args)?;
+            let result = builtin.call(heap, args)?;
             if reverse {
                 match result {
-                    Value::List(mut values) => {
-                        values.reverse();
-                        Ok(Value::List(values))
+                    Value::List(obj) => {
+                        if let Object::List(values) = &mut *obj.kind_mut() {
+                            values.reverse();
+                        }
+                        Ok(Value::List(obj))
                     }
                     other => Ok(other),
                 }
@@ -1980,7 +2381,7 @@ fn call_builtin_with_kwargs(
                 }
                 args.push(value);
             }
-            builtin.call(args)
+            builtin.call(heap, args)
         }
         _ => {
             if !kwargs.is_empty() {
@@ -1988,7 +2389,7 @@ fn call_builtin_with_kwargs(
                     "keyword arguments not supported for builtin",
                 ));
             }
-            builtin.call(args)
+            builtin.call(heap, args)
         }
     }
 }
@@ -1999,11 +2400,16 @@ fn decode_call_counts(arg: u32) -> (usize, usize) {
     (pos, kw)
 }
 
-fn class_attr_lookup(class: &Rc<ClassObject>, name: &str) -> Option<Value> {
-    if let Some(value) = class.attrs.borrow().get(name).cloned() {
+fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
+    let class_kind = class.kind();
+    let (attrs, bases) = match &*class_kind {
+        Object::Class(class_data) => (&class_data.attrs, &class_data.bases),
+        _ => return None,
+    };
+    if let Some(value) = attrs.get(name).cloned() {
         return Some(value);
     }
-    for base in &class.bases {
+    for base in bases {
         if let Some(value) = class_attr_lookup(base, name) {
             return Some(value);
         }
@@ -2036,21 +2442,29 @@ fn classify_runtime_error(message: &str) -> &'static str {
     "RuntimeError"
 }
 
-fn add_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return Ok(Value::Int(left + right));
     }
 
     match (left, right) {
         (Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{a}{b}"))),
-        (Value::List(mut a), Value::List(b)) => {
-            a.extend(b);
-            Ok(Value::List(a))
-        }
-        (Value::Tuple(mut a), Value::Tuple(b)) => {
-            a.extend(b);
-            Ok(Value::Tuple(a))
-        }
+        (Value::List(a), Value::List(b)) => match (&*a.kind(), &*b.kind()) {
+            (Object::List(left), Object::List(right)) => {
+                let mut result = left.clone();
+                result.extend(right.clone());
+                Ok(heap.alloc_list(result))
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for +")),
+        },
+        (Value::Tuple(a), Value::Tuple(b)) => match (&*a.kind(), &*b.kind()) {
+            (Object::Tuple(left), Object::Tuple(right)) => {
+                let mut result = left.clone();
+                result.extend(right.clone());
+                Ok(heap.alloc_tuple(result))
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for +")),
+        },
         _ => Err(RuntimeError::new("unsupported operand type for +")),
     }
 }
@@ -2092,9 +2506,18 @@ fn compare_ge(left: Value, right: Value) -> Result<Value, RuntimeError> {
 
 fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeError> {
     match right {
-        Value::List(values) => Ok(values.iter().any(|value| value == left)),
-        Value::Tuple(values) => Ok(values.iter().any(|value| value == left)),
-        Value::Dict(entries) => Ok(entries.iter().any(|(key, _)| key == left)),
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => Ok(values.iter().any(|value| value == left)),
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => Ok(values.iter().any(|value| value == left)),
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
+        },
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(entries) => Ok(entries.iter().any(|(key, _)| key == left)),
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
+        },
         Value::Str(haystack) => match left {
             Value::Str(needle) => Ok(haystack.contains(needle)),
             _ => Err(RuntimeError::new("in expects string on left")),
@@ -2103,7 +2526,7 @@ fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-fn mul_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return Ok(Value::Int(left * right));
     }
@@ -2116,27 +2539,35 @@ fn mul_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
             }
             Ok(Value::Str(s.repeat(count as usize)))
         }
-        (Value::List(values), other) | (other, Value::List(values)) => {
+        (Value::List(obj), other) | (other, Value::List(obj)) => {
             let count = value_to_int(other)?;
             if count <= 0 {
-                return Ok(Value::List(Vec::new()));
+                return Ok(heap.alloc_list(Vec::new()));
             }
+            let values = match &*obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("unsupported operand type for *")),
+            };
             let mut result = Vec::new();
             for _ in 0..count {
                 result.extend(values.clone());
             }
-            Ok(Value::List(result))
+            Ok(heap.alloc_list(result))
         }
-        (Value::Tuple(values), other) | (other, Value::Tuple(values)) => {
+        (Value::Tuple(obj), other) | (other, Value::Tuple(obj)) => {
             let count = value_to_int(other)?;
             if count <= 0 {
-                return Ok(Value::Tuple(Vec::new()));
+                return Ok(heap.alloc_tuple(Vec::new()));
             }
+            let values = match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("unsupported operand type for *")),
+            };
             let mut result = Vec::new();
             for _ in 0..count {
                 result.extend(values.clone());
             }
-            Ok(Value::Tuple(result))
+            Ok(heap.alloc_tuple(result))
         }
         _ => Err(RuntimeError::new("unsupported operand type for *")),
     }

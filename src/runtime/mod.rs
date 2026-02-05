@@ -1,31 +1,31 @@
 //! Runtime object model (stubbed).
 
-use std::cell::RefCell;
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::bytecode::CodeObject;
 
 #[derive(Debug)]
 pub struct ModuleObject {
     pub name: String,
-    pub globals: RefCell<HashMap<String, Value>>,
+    pub globals: HashMap<String, Value>,
 }
 
 impl ModuleObject {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            globals: RefCell::new(HashMap::new()),
+            globals: HashMap::new(),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FunctionObject {
     pub code: Rc<CodeObject>,
-    pub module: Rc<ModuleObject>,
+    pub module: ObjRef,
     pub defaults: Vec<Value>,
     pub kwonly_defaults: HashMap<String, Value>,
 }
@@ -33,7 +33,7 @@ pub struct FunctionObject {
 impl FunctionObject {
     pub fn new(
         code: Rc<CodeObject>,
-        module: Rc<ModuleObject>,
+        module: ObjRef,
         defaults: Vec<Value>,
         kwonly_defaults: HashMap<String, Value>,
     ) -> Self {
@@ -49,44 +49,347 @@ impl FunctionObject {
 #[derive(Debug)]
 pub struct ClassObject {
     pub name: String,
-    pub bases: Vec<Rc<ClassObject>>,
-    pub attrs: RefCell<HashMap<String, Value>>,
+    pub bases: Vec<ObjRef>,
+    pub attrs: HashMap<String, Value>,
 }
 
 impl ClassObject {
-    pub fn new(name: impl Into<String>, bases: Vec<Rc<ClassObject>>) -> Self {
+    pub fn new(name: impl Into<String>, bases: Vec<ObjRef>) -> Self {
         Self {
             name: name.into(),
             bases,
-            attrs: RefCell::new(HashMap::new()),
+            attrs: HashMap::new(),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct InstanceObject {
-    pub class: Rc<ClassObject>,
-    pub attrs: RefCell<HashMap<String, Value>>,
+    pub class: ObjRef,
+    pub attrs: HashMap<String, Value>,
 }
 
 impl InstanceObject {
-    pub fn new(class: Rc<ClassObject>) -> Self {
+    pub fn new(class: ObjRef) -> Self {
         Self {
             class,
-            attrs: RefCell::new(HashMap::new()),
+            attrs: HashMap::new(),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BoundMethod {
-    pub function: Rc<FunctionObject>,
-    pub receiver: Rc<InstanceObject>,
+    pub function: ObjRef,
+    pub receiver: ObjRef,
 }
 
 impl BoundMethod {
-    pub fn new(function: Rc<FunctionObject>, receiver: Rc<InstanceObject>) -> Self {
+    pub fn new(function: ObjRef, receiver: ObjRef) -> Self {
         Self { function, receiver }
+    }
+}
+
+#[derive(Debug)]
+pub struct Obj {
+    id: u64,
+    kind: RefCell<Object>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObjRef(Rc<Obj>);
+
+impl ObjRef {
+    pub fn id(&self) -> u64 {
+        self.0.id
+    }
+
+    pub fn kind(&self) -> Ref<'_, Object> {
+        self.0.kind.borrow()
+    }
+
+    pub fn kind_mut(&self) -> RefMut<'_, Object> {
+        self.0.kind.borrow_mut()
+    }
+
+    pub fn strong_count(&self) -> usize {
+        Rc::strong_count(&self.0)
+    }
+
+    pub fn downgrade(&self) -> Weak<Obj> {
+        Rc::downgrade(&self.0)
+    }
+
+    pub fn from_rc(rc: Rc<Obj>) -> Self {
+        Self(rc)
+    }
+}
+
+#[derive(Debug)]
+pub enum Object {
+    List(Vec<Value>),
+    Tuple(Vec<Value>),
+    Dict(Vec<(Value, Value)>),
+    Module(ModuleObject),
+    Class(ClassObject),
+    Instance(InstanceObject),
+    BoundMethod(BoundMethod),
+    Function(FunctionObject),
+}
+
+#[derive(Debug)]
+pub struct Heap {
+    next_id: Cell<u64>,
+    registry: RefCell<Vec<Weak<Obj>>>,
+    immediate_ids: RefCell<HashMap<ImmediateKey, u64>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ImmediateKey {
+    None,
+    Bool(bool),
+    Int(i64),
+    Str(String),
+    Code(u64),
+    Exception(String, Option<String>),
+    ExceptionType(String),
+    Slice(Option<i64>, Option<i64>, Option<i64>),
+    Builtin(BuiltinFunction),
+}
+
+impl Heap {
+    pub fn new() -> Self {
+        Self {
+            next_id: Cell::new(1),
+            registry: RefCell::new(Vec::new()),
+            immediate_ids: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn next_id(&self) -> u64 {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        id
+    }
+
+    pub fn alloc(&self, kind: Object) -> ObjRef {
+        let id = self.next_id();
+        let obj = Rc::new(Obj {
+            id,
+            kind: RefCell::new(kind),
+        });
+        self.registry.borrow_mut().push(Rc::downgrade(&obj));
+        ObjRef(obj)
+    }
+
+    pub fn alloc_list(&self, values: Vec<Value>) -> Value {
+        Value::List(self.alloc(Object::List(values)))
+    }
+
+    pub fn alloc_tuple(&self, values: Vec<Value>) -> Value {
+        Value::Tuple(self.alloc(Object::Tuple(values)))
+    }
+
+    pub fn alloc_dict(&self, values: Vec<(Value, Value)>) -> Value {
+        Value::Dict(self.alloc(Object::Dict(values)))
+    }
+
+    pub fn alloc_module(&self, module: ModuleObject) -> Value {
+        Value::Module(self.alloc(Object::Module(module)))
+    }
+
+    pub fn alloc_class(&self, class: ClassObject) -> Value {
+        Value::Class(self.alloc(Object::Class(class)))
+    }
+
+    pub fn alloc_instance(&self, instance: InstanceObject) -> Value {
+        Value::Instance(self.alloc(Object::Instance(instance)))
+    }
+
+    pub fn alloc_function(&self, function: FunctionObject) -> Value {
+        Value::Function(self.alloc(Object::Function(function)))
+    }
+
+    pub fn alloc_bound_method(&self, method: BoundMethod) -> Value {
+        Value::BoundMethod(self.alloc(Object::BoundMethod(method)))
+    }
+
+    pub fn id_of(&self, value: &Value) -> u64 {
+        match value {
+            Value::None => self.id_for_immediate(ImmediateKey::None),
+            Value::Bool(value) => self.id_for_immediate(ImmediateKey::Bool(*value)),
+            Value::Int(value) => self.id_for_immediate(ImmediateKey::Int(*value)),
+            Value::Str(value) => self.id_for_immediate(ImmediateKey::Str(value.clone())),
+            Value::List(obj)
+            | Value::Tuple(obj)
+            | Value::Dict(obj)
+            | Value::Module(obj)
+            | Value::Class(obj)
+            | Value::Instance(obj)
+            | Value::Function(obj)
+            | Value::BoundMethod(obj) => obj.id(),
+            Value::Exception(exception) => {
+                self.id_for_immediate(ImmediateKey::Exception(
+                    exception.name.clone(),
+                    exception.message.clone(),
+                ))
+            }
+            Value::ExceptionType(name) => {
+                self.id_for_immediate(ImmediateKey::ExceptionType(name.clone()))
+            }
+            Value::Slice { lower, upper, step } => {
+                self.id_for_immediate(ImmediateKey::Slice(*lower, *upper, *step))
+            }
+            Value::Builtin(builtin) => self.id_for_immediate(ImmediateKey::Builtin(*builtin)),
+            Value::Code(code) => {
+                let addr = Rc::as_ptr(code) as usize as u64;
+                self.id_for_immediate(ImmediateKey::Code(addr))
+            }
+        }
+    }
+
+    fn id_for_immediate(&self, key: ImmediateKey) -> u64 {
+        let mut map = self.immediate_ids.borrow_mut();
+        if let Some(id) = map.get(&key) {
+            return *id;
+        }
+        let id = self.next_id();
+        map.insert(key, id);
+        id
+    }
+
+    pub fn collect_cycles(&self, roots: &[Value]) {
+        let mut marked = HashMap::new();
+        let mut stack: Vec<ObjRef> = Vec::new();
+
+        for value in roots {
+            trace_value(value, &mut stack, &mut marked);
+        }
+
+        while let Some(obj) = stack.pop() {
+            let id = obj.id();
+            if marked.insert(id, true).is_some() {
+                continue;
+            }
+            trace_object(&obj, &mut stack, &mut marked);
+        }
+
+        let mut registry = self.registry.borrow_mut();
+        registry.retain(|weak| weak.strong_count() > 0);
+        for weak in registry.iter() {
+            if let Some(obj) = weak.upgrade() {
+                let obj_ref = ObjRef::from_rc(obj);
+                if !marked.contains_key(&obj_ref.id()) {
+                    clear_object_refs(&obj_ref);
+                }
+            }
+        }
+    }
+
+    pub fn live_objects_count(&self) -> usize {
+        self.registry
+            .borrow()
+            .iter()
+            .filter(|weak| weak.strong_count() > 0)
+            .count()
+    }
+}
+
+fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64, bool>) {
+    match value {
+        Value::List(obj)
+        | Value::Tuple(obj)
+        | Value::Dict(obj)
+        | Value::Module(obj)
+        | Value::Class(obj)
+        | Value::Instance(obj)
+        | Value::Function(obj)
+        | Value::BoundMethod(obj) => {
+            let id = obj.id();
+            if marked.contains_key(&id) {
+                return;
+            }
+            stack.push(obj.clone());
+        }
+        _ => {}
+    }
+}
+
+fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64, bool>) {
+    match &*obj.kind() {
+        Object::List(values) | Object::Tuple(values) => {
+            for value in values {
+                trace_value(value, stack, marked);
+            }
+        }
+        Object::Dict(entries) => {
+            for (key, value) in entries {
+                for item in [key, value] {
+                    trace_value(item, stack, marked);
+                }
+            }
+        }
+        Object::Module(module) => {
+            for value in module.globals.values() {
+                trace_value(value, stack, marked);
+            }
+        }
+        Object::Class(class) => {
+            for base in &class.bases {
+                stack.push(base.clone());
+            }
+            for value in class.attrs.values() {
+                trace_value(value, stack, marked);
+            }
+        }
+        Object::Instance(instance) => {
+            stack.push(instance.class.clone());
+            for value in instance.attrs.values() {
+                trace_value(value, stack, marked);
+            }
+        }
+        Object::Function(func) => {
+            stack.push(func.module.clone());
+            for value in &func.defaults {
+                trace_value(value, stack, marked);
+            }
+            for value in func.kwonly_defaults.values() {
+                trace_value(value, stack, marked);
+            }
+            for value in &func.code.constants {
+                trace_value(value, stack, marked);
+            }
+        }
+        Object::BoundMethod(method) => {
+            stack.push(method.function.clone());
+            stack.push(method.receiver.clone());
+        }
+    }
+}
+
+fn clear_object_refs(obj: &ObjRef) {
+    match &mut *obj.kind_mut() {
+        Object::List(values) | Object::Tuple(values) => {
+            values.clear();
+        }
+        Object::Dict(entries) => {
+            entries.clear();
+        }
+        Object::Module(module) => {
+            module.globals.clear();
+        }
+        Object::Class(class) => {
+            class.bases.clear();
+            class.attrs.clear();
+        }
+        Object::Instance(instance) => {
+            instance.attrs.clear();
+        }
+        Object::Function(func) => {
+            func.defaults.clear();
+            func.kwonly_defaults.clear();
+        }
+        Object::BoundMethod(_) => {}
     }
 }
 
@@ -96,13 +399,14 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Str(String),
-    List(Vec<Value>),
-    Tuple(Vec<Value>),
-    Dict(Vec<(Value, Value)>),
-    Module(Rc<ModuleObject>),
-    Class(Rc<ClassObject>),
-    Instance(Rc<InstanceObject>),
-    BoundMethod(Rc<BoundMethod>),
+    List(ObjRef),
+    Tuple(ObjRef),
+    Dict(ObjRef),
+    Module(ObjRef),
+    Class(ObjRef),
+    Instance(ObjRef),
+    BoundMethod(ObjRef),
+    Function(ObjRef),
     Exception(ExceptionObject),
     ExceptionType(String),
     Slice {
@@ -111,8 +415,39 @@ pub enum Value {
         step: Option<i64>,
     },
     Code(Rc<CodeObject>),
-    Function(Rc<FunctionObject>),
     Builtin(BuiltinFunction),
+}
+
+impl Value {
+    pub fn as_list(&self) -> Option<Vec<Value>> {
+        match self {
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => Some(values.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_tuple(&self) -> Option<Vec<Value>> {
+        match self {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => Some(values.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_dict(&self) -> Option<Vec<(Value, Value)>> {
+        match self {
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(values) => Some(values.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,13 +465,23 @@ impl PartialEq for Value {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Int(a), Value::Bool(b)) => *a == (*b as i64),
             (Value::Str(a), Value::Str(b)) => a == b,
-            (Value::List(a), Value::List(b)) => a == b,
-            (Value::Tuple(a), Value::Tuple(b)) => a == b,
-            (Value::Dict(a), Value::Dict(b)) => a == b,
-            (Value::Module(a), Value::Module(b)) => Rc::ptr_eq(a, b),
-            (Value::Class(a), Value::Class(b)) => Rc::ptr_eq(a, b),
-            (Value::Instance(a), Value::Instance(b)) => Rc::ptr_eq(a, b),
-            (Value::BoundMethod(a), Value::BoundMethod(b)) => Rc::ptr_eq(a, b),
+            (Value::List(a), Value::List(b)) => match (&*a.kind(), &*b.kind()) {
+                (Object::List(left), Object::List(right)) => left == right,
+                _ => false,
+            },
+            (Value::Tuple(a), Value::Tuple(b)) => match (&*a.kind(), &*b.kind()) {
+                (Object::Tuple(left), Object::Tuple(right)) => left == right,
+                _ => false,
+            },
+            (Value::Dict(a), Value::Dict(b)) => match (&*a.kind(), &*b.kind()) {
+                (Object::Dict(left), Object::Dict(right)) => left == right,
+                _ => false,
+            },
+            (Value::Module(a), Value::Module(b))
+            | (Value::Class(a), Value::Class(b))
+            | (Value::Instance(a), Value::Instance(b))
+            | (Value::Function(a), Value::Function(b))
+            | (Value::BoundMethod(a), Value::BoundMethod(b)) => a.id() == b.id(),
             (Value::Exception(a), Value::Exception(b)) => a == b,
             (Value::ExceptionType(a), Value::ExceptionType(b)) => a == b,
             (
@@ -152,7 +497,6 @@ impl PartialEq for Value {
                 },
             ) => a_lower == b_lower && a_upper == b_upper && a_step == b_step,
             (Value::Code(a), Value::Code(b)) => Rc::ptr_eq(a, b),
-            (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
             _ => false,
         }
@@ -161,7 +505,7 @@ impl PartialEq for Value {
 
 impl Eq for Value {}
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinFunction {
     Print,
     Len,
@@ -182,10 +526,11 @@ pub enum BuiltinFunction {
     DivMod,
     Sorted,
     Enumerate,
+    Id,
 }
 
 impl BuiltinFunction {
-    pub fn call(self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    pub fn call(self, heap: &Heap, args: Vec<Value>) -> Result<Value, RuntimeError> {
         match self {
             BuiltinFunction::Print => {
                 let mut parts = Vec::new();
@@ -201,9 +546,18 @@ impl BuiltinFunction {
                 }
                 match &args[0] {
                     Value::Str(value) => Ok(Value::Int(value.chars().count() as i64)),
-                    Value::List(values) => Ok(Value::Int(values.len() as i64)),
-                    Value::Tuple(values) => Ok(Value::Int(values.len() as i64)),
-                    Value::Dict(values) => Ok(Value::Int(values.len() as i64)),
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::Dict(obj) => match &*obj.kind() {
+                        Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
                     _ => Err(RuntimeError::new("len() unsupported type")),
                 }
             }
@@ -245,7 +599,7 @@ impl BuiltinFunction {
                     }
                 }
 
-                Ok(Value::List(values))
+                Ok(heap.alloc_list(values))
             }
             BuiltinFunction::Slice => {
                 if args.is_empty() || args.len() > 3 {
@@ -318,11 +672,22 @@ impl BuiltinFunction {
                 };
 
                 match &args[0] {
-                    Value::List(values) | Value::Tuple(values) => {
-                        for value in values {
-                            total += value_to_int(value.clone())?;
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => {
+                            for value in values {
+                                total += value_to_int(value.clone())?;
+                            }
                         }
-                    }
+                        _ => return Err(RuntimeError::new("sum() expects list or tuple")),
+                    },
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => {
+                            for value in values {
+                                total += value_to_int(value.clone())?;
+                            }
+                        }
+                        _ => return Err(RuntimeError::new("sum() expects list or tuple")),
+                    },
                     _ => return Err(RuntimeError::new("sum() expects list or tuple")),
                 }
 
@@ -356,12 +721,18 @@ impl BuiltinFunction {
                     return Err(RuntimeError::new("list() expects at most one argument"));
                 }
                 if args.is_empty() {
-                    return Ok(Value::List(Vec::new()));
+                    return Ok(heap.alloc_list(Vec::new()));
                 }
                 match &args[0] {
-                    Value::List(values) => Ok(Value::List(values.clone())),
-                    Value::Tuple(values) => Ok(Value::List(values.clone())),
-                    Value::Str(value) => Ok(Value::List(
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => Ok(heap.alloc_list(values.clone())),
+                        _ => Err(RuntimeError::new("list() unsupported type")),
+                    },
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => Ok(heap.alloc_list(values.clone())),
+                        _ => Err(RuntimeError::new("list() unsupported type")),
+                    },
+                    Value::Str(value) => Ok(heap.alloc_list(
                         value
                             .chars()
                             .map(|ch| Value::Str(ch.to_string()))
@@ -375,12 +746,18 @@ impl BuiltinFunction {
                     return Err(RuntimeError::new("tuple() expects at most one argument"));
                 }
                 if args.is_empty() {
-                    return Ok(Value::Tuple(Vec::new()));
+                    return Ok(heap.alloc_tuple(Vec::new()));
                 }
                 match &args[0] {
-                    Value::Tuple(values) => Ok(Value::Tuple(values.clone())),
-                    Value::List(values) => Ok(Value::Tuple(values.clone())),
-                    Value::Str(value) => Ok(Value::Tuple(
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => Ok(heap.alloc_tuple(values.clone())),
+                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                    },
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => Ok(heap.alloc_tuple(values.clone())),
+                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                    },
+                    Value::Str(value) => Ok(heap.alloc_tuple(
                         value
                             .chars()
                             .map(|ch| Value::Str(ch.to_string()))
@@ -400,15 +777,45 @@ impl BuiltinFunction {
                 }
                 let div = left.div_euclid(right);
                 let rem = left.rem_euclid(right);
-                Ok(Value::Tuple(vec![Value::Int(div), Value::Int(rem)]))
+                Ok(heap.alloc_tuple(vec![Value::Int(div), Value::Int(rem)]))
             }
             BuiltinFunction::Sorted => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("sorted() expects one argument"));
                 }
                 match &args[0] {
-                    Value::List(values) | Value::Tuple(values) => {
-                        let mut result = values.clone();
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => {
+                            let mut result = values.clone();
+                            let all_numeric =
+                                result.iter().all(|value| numeric_value(value).is_some());
+                            let all_str =
+                                result.iter().all(|value| matches!(value, Value::Str(_)));
+
+                            if all_numeric {
+                                result.sort_by(|a, b| {
+                                    let left = numeric_value(a).unwrap();
+                                    let right = numeric_value(b).unwrap();
+                                    left.cmp(&right)
+                                });
+                            } else if all_str {
+                                result.sort_by(|a, b| match (a, b) {
+                                    (Value::Str(a), Value::Str(b)) => a.cmp(b),
+                                    _ => Ordering::Equal,
+                                });
+                            } else {
+                                return Err(RuntimeError::new(
+                                    "sorted() expects list/tuple of comparable values",
+                                ));
+                            }
+
+                            Ok(heap.alloc_list(result))
+                        }
+                        _ => Err(RuntimeError::new("sorted() expects list or tuple")),
+                    },
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => {
+                            let mut result = values.clone();
                         let all_numeric = result.iter().all(|value| numeric_value(value).is_some());
                         let all_str = result.iter().all(|value| matches!(value, Value::Str(_)));
 
@@ -429,8 +836,10 @@ impl BuiltinFunction {
                             ));
                         }
 
-                        Ok(Value::List(result))
-                    }
+                            Ok(heap.alloc_list(result))
+                        }
+                        _ => Err(RuntimeError::new("sorted() expects list or tuple")),
+                    },
                     _ => Err(RuntimeError::new("sorted() expects list or tuple")),
                 }
             }
@@ -445,16 +854,28 @@ impl BuiltinFunction {
                 };
                 let mut entries = Vec::new();
                 match &args[0] {
-                    Value::List(values) | Value::Tuple(values) => {
-                        for (idx, value) in values.iter().cloned().enumerate() {
-                            let index = start + idx as i64;
-                            entries.push(Value::Tuple(vec![Value::Int(index), value]));
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => {
+                            for (idx, value) in values.iter().cloned().enumerate() {
+                                let index = start + idx as i64;
+                                entries.push(heap.alloc_tuple(vec![Value::Int(index), value]));
+                            }
                         }
-                    }
+                        _ => return Err(RuntimeError::new("enumerate() expects iterable")),
+                    },
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => {
+                            for (idx, value) in values.iter().cloned().enumerate() {
+                                let index = start + idx as i64;
+                                entries.push(heap.alloc_tuple(vec![Value::Int(index), value]));
+                            }
+                        }
+                        _ => return Err(RuntimeError::new("enumerate() expects iterable")),
+                    },
                     Value::Str(value) => {
                         for (idx, ch) in value.chars().enumerate() {
                             let index = start + idx as i64;
-                            entries.push(Value::Tuple(vec![
+                            entries.push(heap.alloc_tuple(vec![
                                 Value::Int(index),
                                 Value::Str(ch.to_string()),
                             ]));
@@ -462,7 +883,14 @@ impl BuiltinFunction {
                     }
                     _ => return Err(RuntimeError::new("enumerate() expects iterable")),
                 }
-                Ok(Value::List(entries))
+                Ok(heap.alloc_list(entries))
+            }
+            BuiltinFunction::Id => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("id() expects one argument"));
+                }
+                let id = heap.id_of(&args[0]);
+                Ok(Value::Int(id as i64))
             }
         }
     }
@@ -473,22 +901,44 @@ fn builtin_all_any(args: Vec<Value>, expect_all: bool) -> Result<Value, RuntimeE
         return Err(RuntimeError::new("all/any expects one argument"));
     }
     match &args[0] {
-        Value::List(values) | Value::Tuple(values) => {
-            let mut result = expect_all;
-            for value in values {
-                let truthy = is_truthy_value(value);
-                if expect_all {
-                    if !truthy {
-                        result = false;
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => {
+                let mut result = expect_all;
+                for value in values {
+                    let truthy = is_truthy_value(value);
+                    if expect_all {
+                        if !truthy {
+                            result = false;
+                            break;
+                        }
+                    } else if truthy {
+                        result = true;
                         break;
                     }
-                } else if truthy {
-                    result = true;
-                    break;
                 }
+                Ok(Value::Bool(result))
             }
-            Ok(Value::Bool(result))
-        }
+            _ => Err(RuntimeError::new("all/any expects list or tuple")),
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => {
+                let mut result = expect_all;
+                for value in values {
+                    let truthy = is_truthy_value(value);
+                    if expect_all {
+                        if !truthy {
+                            result = false;
+                            break;
+                        }
+                    } else if truthy {
+                        result = true;
+                        break;
+                    }
+                }
+                Ok(Value::Bool(result))
+            }
+            _ => Err(RuntimeError::new("all/any expects list or tuple")),
+        },
         _ => Err(RuntimeError::new("all/any expects list or tuple")),
     }
 }
@@ -500,7 +950,14 @@ fn builtin_min_max(args: Vec<Value>, preferred: Ordering) -> Result<Value, Runti
 
     let mut values: Vec<Value> = if args.len() == 1 {
         match &args[0] {
-            Value::List(values) | Value::Tuple(values) => values.clone(),
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("min/max expects list or tuple")),
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("min/max expects list or tuple")),
+            },
             _ => return Err(RuntimeError::new("min/max expects list or tuple")),
         }
     } else {
@@ -560,35 +1017,62 @@ pub fn format_value(value: &Value) -> String {
         }
         Value::Int(value) => value.to_string(),
         Value::Str(value) => value.clone(),
-        Value::List(values) => {
-            let mut parts = Vec::new();
-            for value in values {
-                parts.push(format_value(value));
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => {
+                let mut parts = Vec::new();
+                for value in values {
+                    parts.push(format_value(value));
+                }
+                format!("[{}]", parts.join(", "))
             }
-            format!("[{}]", parts.join(", "))
-        }
-        Value::Tuple(values) => {
-            let mut parts = Vec::new();
-            for value in values {
-                parts.push(format_value(value));
+            _ => "<list>".to_string(),
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => {
+                let mut parts = Vec::new();
+                for value in values {
+                    parts.push(format_value(value));
+                }
+                if parts.len() == 1 {
+                    format!("({},)", parts[0])
+                } else {
+                    format!("({})", parts.join(", "))
+                }
             }
-            if parts.len() == 1 {
-                format!("({},)", parts[0])
-            } else {
-                format!("({})", parts.join(", "))
+            _ => "<tuple>".to_string(),
+        },
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(values) => {
+                let mut parts = Vec::new();
+                for (key, value) in values {
+                    parts.push(format!("{}: {}", format_value(key), format_value(value)));
+                }
+                format!("{{{}}}", parts.join(", "))
             }
-        }
-        Value::Dict(values) => {
-            let mut parts = Vec::new();
-            for (key, value) in values {
-                parts.push(format!("{}: {}", format_value(key), format_value(value)));
-            }
-            format!("{{{}}}", parts.join(", "))
-        }
-        Value::Module(module) => format!("<module {}>", module.name),
-        Value::Class(class) => format!("<class {}>", class.name),
-        Value::Instance(instance) => format!("<{} instance>", instance.class.name),
-        Value::BoundMethod(method) => format!("<bound method {}>", method.function.code.name),
+            _ => "<dict>".to_string(),
+        },
+        Value::Module(obj) => match &*obj.kind() {
+            Object::Module(module) => format!("<module {}>", module.name),
+            _ => "<module ?>".to_string(),
+        },
+        Value::Class(obj) => match &*obj.kind() {
+            Object::Class(class) => format!("<class {}>", class.name),
+            _ => "<class ?>".to_string(),
+        },
+        Value::Instance(obj) => match &*obj.kind() {
+            Object::Instance(instance) => match &*instance.class.kind() {
+                Object::Class(class) => format!("<{} instance>", class.name),
+                _ => "<instance ?>".to_string(),
+            },
+            _ => "<instance ?>".to_string(),
+        },
+        Value::BoundMethod(obj) => match &*obj.kind() {
+            Object::BoundMethod(method) => match &*method.function.kind() {
+                Object::Function(func) => format!("<bound method {}>", func.code.name),
+                _ => "<bound method ?>".to_string(),
+            },
+            _ => "<bound method ?>".to_string(),
+        },
         Value::Exception(exception) => match &exception.message {
             Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
             _ => exception.name.clone(),
@@ -612,9 +1096,18 @@ fn is_truthy_value(value: &Value) -> bool {
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
         Value::Str(value) => !value.is_empty(),
-        Value::List(values) => !values.is_empty(),
-        Value::Tuple(values) => !values.is_empty(),
-        Value::Dict(values) => !values.is_empty(),
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(values) => !values.is_empty(),
+            _ => true,
+        },
         Value::Slice { .. } => true,
         Value::Module(_)
         | Value::Class(_)
