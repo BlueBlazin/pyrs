@@ -7,7 +7,7 @@ This document tracks progress toward source and bytecode compatibility with CPyt
 - [x] Indentation + basic tokenization (names, ints, strings, operators, keywords for implemented subset)
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
 - [x] Statements subset: pass, expr, assign/augassign, if/elif/else, while/for/else, break/continue, def/return, import/from, global, raise, assert, try/except/else, class (bases supported, no keywords)
-- [x] Expressions subset: arithmetic, comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda
+- [x] Expressions subset: arithmetic (incl `**`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda
 - [ ] Comprehensions, generators, pattern matching, async/await, with, etc.
 
 ## Bytecode
