@@ -11,10 +11,10 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - Language & Grammar -> Milestone 7
 - Semantic Analysis & Compilation -> Milestones 5 and 7
 - Bytecode & VM Execution -> Milestones 4 and 5
-- Runtime Object Model & Data Model -> Milestones 8 and 9
+- Runtime Object Model & Data Model -> Milestones 8, 9, and 11
 - Builtins -> Milestone 9
 - Import System -> Milestone 6
-- Standard Library Coverage -> Milestones 9 and 10
+- Standard Library Coverage -> Milestones 9, 10, and 11
 - Tooling & UX -> Milestones 12 and 13
 - Testing & QA -> Milestone 11
 - Performance & Profiling -> Milestone 12
@@ -85,6 +85,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 **Standard Library Coverage**
 - [~] P0: Minimal builtins subset.
 - [~] P0: `random` module foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`).
+- [~] P0: `codecs` foundations (`encode`/`decode` for `utf-8`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`).
 - [~] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
 - [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core).
 - [~] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator`.

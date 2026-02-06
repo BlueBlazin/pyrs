@@ -107,7 +107,8 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Exception chaining (`__cause__`, `__context__`, suppression metadata) for explicit/implicit raises.
 - [~] Descriptor protocol + attribute lookup parity (descriptor hooks plus `__getattr__`/`__setattr__`/`__delattr__` implemented; full `__getattribute__`/metaclass parity pending).
 - [~] Core stdlib: `sys`, `types`, `inspect`, `io`.
-- [~] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
+- [~] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`, `codecs`.
+- [~] Utility stdlib foundations: `random`.
 - [ ] HPy extension loading/execution path.
 - [ ] Cross-platform release qualification matrix (Linux/macOS/Windows) with parity gates.
 
@@ -192,14 +193,14 @@ DoD:
 - Exception chaining/context semantics are implemented for `raise ... from ...` and implicit chaining (`__cause__`, `__context__`, `__suppress_context__`).
 Status: complete
 Notes:
-- Full metaclass precedence/selection semantics and custom metaclass class-object call edge cases are tracked in Milestone 10+.
+- Full metaclass precedence/selection semantics and custom metaclass class-object call edge cases are tracked in Milestone 11 parity closure.
 - Core builtin type parity (`bytes`/`set`/`float`/unicode codecs foundations) is delivered in Milestone 9.
 
 ### Milestone 9 — Builtins + Stdlib Bootstrap (P0/P1)
 DoD:
 - Core runtime builtin type parity required by stdlib foundations (`set`, `frozenset`, `bytes`, `bytearray`, `memoryview`, `float`, `complex`, unicode/codecs behavior), plus remaining data-model gaps (`metaclass` path and `__slots__` core behavior).
 - Builtins required by stdlib and common apps are present with correct semantics.
-- Foundational stdlib modules are usable: `sys`, `types`, `inspect`, `io`, `os`, `pathlib`, `time`, `datetime`, `collections`, `math`, `re`, `json`, `functools`, `itertools`, `operator`.
+- Foundational stdlib modules are usable: `sys`, `types`, `inspect`, `io`, `os`, `pathlib`, `time`, `datetime`, `collections`, `math`, `re`, `json`, `codecs`, `functools`, `itertools`, `operator`, `random`.
 - Pure-Python package installation/execution works for representative no-C-extension packages.
 Status: complete
 Progress:
@@ -222,6 +223,7 @@ DoD:
 - Broad `Lib/test` coverage passes with documented allowlist only for explicit non-goals.
 - Differential tests versus CPython and parser/VM fuzzing run continuously.
 - Real-world pure-Python applications pass curated smoke/regression suites.
+- Residual Milestone 8/9 semantic gaps (`__getattribute__` edge parity, metaclass precedence/selection, `__slots__` layout edge cases, full codecs behavior) are either closed or explicitly scoped with failing tests and ownership.
 
 ### Milestone 12 — Performance and Observability Baseline (P2)
 DoD:
@@ -258,6 +260,7 @@ DoD:
 ## Immediate next steps
 - Start Milestone 10 work: full coroutine runtime semantics (`async`/`await`, async iterators/generators, cancellation/finalization behavior) and event-loop integration foundations.
 - Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 10-11.
+- Run Milestone 11 parity closure for remaining Milestone 8/9 semantic deltas while CPython harness coverage expands.
 - Continue broad CPython parity tests while landing language/runtime milestones.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 

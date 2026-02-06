@@ -89,7 +89,8 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Exception chaining (`__cause__`, `__context__`, suppression metadata).
 - [~] Descriptor protocol + attribute lookup parity (descriptor hooks + `__getattr__`/`__setattr__`/`__delattr__` implemented; class-header `metaclass=` path and `__slots__` restrictions implemented; full `__getattribute__` and metaclass-precedence edge parity pending).
 - [~] Core stdlib: `sys`, `types`, `inspect`, `io`.
-- [~] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
+- [~] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`, `codecs`.
+- [~] Utility stdlib foundations: `random`.
 - [ ] HPy extension loading/execution path.
 - [ ] Cross-platform release qualification matrix (Linux/macOS/Windows).
 
