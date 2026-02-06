@@ -59,12 +59,24 @@ We are building a production-grade Python interpreter in Rust with full source a
 - Integrate CPython test suite incrementally with a compatibility tracker.
 - Real-world app smoke tests.
 
-## Milestones
-1. Milestone 0: Parser + AST + minimal evaluator.
-2. Milestone 1: Core language features and module system.
-3. Milestone 2: Bytecode VM with CPython-compatible opcodes.
-4. Milestone 3: Stdlib expansion + CPython test suite integration.
-5. Milestone 4: Performance profiling + tooling and hardening.
+## Milestones (Revised for 100% CPython 3.14)
+Acceptance rule for all remaining milestones: no milestone is complete at "basic compat"; completion requires behavior-level parity for in-scope features plus targeted CPython tests.
+
+1. Milestone 0: Parser + AST + minimal evaluator. (complete)
+2. Milestone 1: Runtime core + identity + GC foundations. (complete)
+3. Milestone 2: CPython bytecode intake foundations (`opcode_table.csv`, marshal reader, `.pyc` load + execution subset). (complete)
+4. Milestone 3: Closures + frame metadata + traceback foundations. (complete)
+5. Milestone 4: Generator and iteration parity (re-opened, P0).
+6. Milestone 5: Full 3.14 opcode execution + `.pyc` read/write parity (P0).
+7. Milestone 6: Import system parity (`importlib`/`ModuleSpec`/hooks/packages, P0).
+8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0).
+9. Milestone 8: Runtime data model parity (descriptor protocol, attribute model, metaclasses/MRO, core types, P0).
+10. Milestone 9: Builtins + stdlib bootstrap required for real apps (P0/P1).
+11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1).
+12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1).
+13. Milestone 12: Performance and observability baseline (P2).
+14. Milestone 13: Packaging/distribution and ecosystem usability (P1/P2).
+15. Milestone 14: Future hooks and extension path documentation (P3).
 
 ## Production Readiness Checklist (Living)
 Canonical checklist lives in `docs/PRODUCTION_READINESS.md`. The list below is a snapshot of P0-P3 items we are actively tracking in the roadmap.
@@ -77,7 +89,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython opcode encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [x] Closures + `nonlocal` (cell/free vars).
-- [x] Generators (`yield`, `yield from`) + protocol (basic support; eager materialization).
+- [ ] Generators (`yield`, `yield from`) + protocol (full lazy CPython semantics pending; current impl is eager materialization).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [ ] Import system parity (`importlib`, specs, hooks).
 
@@ -130,59 +142,84 @@ DoD:
 - `locals()`/`globals()` reflect correct scopes.
 Status: complete
 
-### Milestone 4 — Generators & Iteration (P0)
+### Milestone 4 — Generators & Iteration Parity (P0, re-opened)
 DoD:
-- `yield` and `yield from` match CPython for basic cases.
-- Generator `send`/`throw`/`close` behave correctly.
-- `for` loops iterate over generators and built-in iterator objects.
-Status: complete (basic)
+- Generators store suspended execution state (frame, instruction pointer, value stack, blocks), not precomputed output vectors.
+- `send`, `throw`, and `close` semantics match CPython, including `GeneratorExit` and `finally` handling.
+- `yield from` delegation semantics match CPython, including propagation of `StopIteration.value`.
+- Reentrancy and terminal-state errors match CPython (`generator already executing`, post-close behavior, etc.).
+- Targeted CPython generator tests pass (or are explicitly documented as blocked by out-of-scope work).
+Status: in progress (basic compatibility landed; full lazy semantics pending).
 
-### Milestone 5 — Import System Parity (P0)
+### Milestone 5 — Full CPython 3.14 Opcode & `.pyc` Parity (P0)
 DoD:
-- `importlib` can import pure-Python stdlib modules.
-- `sys.path`, `sys.meta_path`, `sys.path_hooks` are functional.
-- Packages with `__init__.py` and submodules load correctly.
-- `__spec__`, `__package__`, `__loader__` populated.
+- All required CPython 3.14 opcodes execute with correct semantics; no fallback `Nop` for supported code paths.
+- Stack-effect and jump validation checks are implemented for decode/translation.
+- `.pyc` writer implemented with CPython-compatible headers and marshal output for supported code objects.
+- CPython-compiled pure-Python modules execute end-to-end through the `.pyc` path.
 
-### Milestone 6 — P1 Language Features
+### Milestone 6 — Import System Parity (P0)
 DoD:
-- Comprehensions (list/dict/set/gen) with correct scoping.
-- Pattern matching parses and executes core patterns.
-- Exception chaining semantics match CPython.
+- `importlib` machinery is functional for pure-Python modules/packages.
+- `sys.path`, `sys.meta_path`, `sys.path_hooks`, and loader/finder contracts work.
+- `ModuleSpec` fields and module metadata (`__spec__`, `__package__`, `__loader__`, `__path__`) are populated correctly.
+- Relative imports and namespace package behavior match CPython for supported scenarios.
 
-### Milestone 7 — Async & Concurrency (P1)
+### Milestone 7 — Language Surface Parity (P0)
 DoD:
-- `async def`, `await`, `async for`, `async with` work with a minimal loop.
-- Async generators conform to protocol.
-- Basic `asyncio` tasks can run simple coroutines.
+- Tokenizer reaches CPython-level behavior for strings/bytes/f-strings/numeric literals/comments/indentation edge cases.
+- Remaining grammar and compiler features implemented: decorators, assignment expressions, comprehensions (with correct scope isolation), pattern matching, async syntax, exception groups (`except*`), and type-parameter syntax.
+- f-string behavior aligns with PEP 701 semantics for supported expressions.
+- `__future__` flags and feature gating behaviors are implemented.
 
-### Milestone 8 — Stdlib Core (P1)
+### Milestone 8 — Runtime Data Model Parity (P0)
 DoD:
-- `sys`, `types`, `inspect`, `io` minimally functional.
-- `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math` run basics.
-- Pure-Python package installs can execute (no C-extensions).
+- Descriptor protocol and full attribute access semantics (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) match CPython.
+- MRO/metaclass/`super()`/`__slots__` behavior is CPython-compatible for core use cases.
+- Core builtin types reach parity needed by stdlib foundations (`set`, `frozenset`, `bytes`, `bytearray`, `memoryview`, `float`, `complex`, unicode/codecs behavior).
+- Exception chaining/context behavior (`__cause__`, `__context__`, suppression) is correct.
 
-### Milestone 9 — Performance Baseline (P2)
+### Milestone 9 — Builtins + Stdlib Bootstrap (P0/P1)
 DoD:
-- Peephole optimization pass implemented.
-- Attribute lookup cache measurable in microbench.
-- Baseline benchmark suite established.
+- Builtins required by stdlib and common apps are present with correct semantics.
+- Foundational stdlib modules are usable: `sys`, `types`, `inspect`, `io`, `os`, `pathlib`, `time`, `datetime`, `collections`, `math`, `re`, `json`, `functools`, `itertools`, `operator`.
+- Pure-Python package installation/execution works for representative no-C-extension packages.
 
-### Milestone 10 — Testing & Hardening (P2)
+### Milestone 10 — Async and Concurrency Semantics (P1)
 DoD:
-- CPython `Lib/test` subset runner.
-- ≥ 500 tests passing in CI or local harness.
-- Crash-free on curated real-world scripts.
+- `async def`/`await`/`async for`/`async with` semantics are implemented.
+- Async generators and coroutine protocol behavior match CPython.
+- Core runtime support for `asyncio` basic task scheduling exists; threading + signals semantics are implemented to required compatibility level.
 
-### Milestone 11 — Ecosystem Reach (P3)
+### Milestone 11 — Testing and Parity Gate (P0/P1)
 DoD:
-- ABI-stable extension plan documented.
-- JIT hooks documented in IR + VM pipeline.
+- CPython `Lib/test` harness is first-class (not ignored by default in CI/profile used for parity).
+- Broad `Lib/test` coverage passes with documented allowlist only for explicit non-goals.
+- Differential tests versus CPython and parser/VM fuzzing run continuously.
+- Real-world pure-Python applications pass curated smoke/regression suites.
+
+### Milestone 12 — Performance and Observability Baseline (P2)
+DoD:
+- Baseline benchmark suite (including pyperformance subset) is automated.
+- At least one production-relevant optimization tier lands (peephole/inlining/caches) without semantic regressions.
+- Profiling and debug observability hooks (`sys.settrace`, `sys.setprofile`, runtime metrics) are operational.
+
+### Milestone 13 — Packaging, Distribution, and Developer UX (P1/P2)
+DoD:
+- Distribution artifacts and reproducible builds are documented and automated.
+- `site` startup behavior, venv/pip pure-Python workflows, and REPL quality are production-usable.
+- Documentation and compatibility reporting are publishable for external contributors/users.
+
+### Milestone 14 — Future Hooks (P3)
+DoD:
+- JIT hook points in IR/VM are explicitly documented and tested for non-regression.
+- Extension strategy (HPy / limited C-API path) is documented with architectural constraints.
+- Embedding API direction for Rust/C hosts is documented.
 
 ## Immediate next steps
-- Create crate layout for parser, AST, compiler, VM, runtime, stdlib, CLI.
-- Add a vendor area for CPython 3.14 grammar and opcode metadata.
-- Set up a minimal test harness for parser and bytecode tests.
+- Complete Milestone 4 with true lazy generator suspension/resume semantics.
+- Expand CPython parity tests around generators, exceptions, and frame unwinding.
+- Start Milestone 5 opcode closure by replacing remaining `Nop` fallbacks with real implementations.
 
 ## Testing Focus Note
 After Milestone 2 (CPython bytecode compatibility), prioritize a testing push:

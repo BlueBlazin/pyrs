@@ -5,6 +5,23 @@ This is the living, exhaustive checklist of what must exist for a fully capable,
 Status flags: `[ ]` not started, `[~]` in progress, `[x]` complete.
 Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (future‑proofing).
 
+## Milestone Coverage Map
+Every category below is mapped to the revised roadmap milestones in `docs/ROADMAP.md`, so the remaining plan has no known gaps.
+
+- Language & Grammar -> Milestone 7
+- Semantic Analysis & Compilation -> Milestones 5 and 7
+- Bytecode & VM Execution -> Milestones 4 and 5
+- Runtime Object Model & Data Model -> Milestone 8
+- Builtins -> Milestone 9
+- Import System -> Milestone 6
+- Standard Library Coverage -> Milestones 9 and 10
+- Tooling & UX -> Milestones 12 and 13
+- Testing & QA -> Milestone 11
+- Performance & Profiling -> Milestone 12
+- Concurrency & Platform -> Milestone 10
+- Interop & Extensibility -> Milestone 14
+- Packaging & Distribution -> Milestone 13
+
 **Language & Grammar**
 - [~] P0: Full 3.14 tokenizer parity (strings, bytes, numeric literals, f‑strings, comments, indents).
 - [~] P0: Full 3.14 grammar coverage (all statements/expressions).
@@ -25,7 +42,7 @@ Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (futu
 - [ ] P0: Correct comprehension scope isolation.
 - [ ] P0: `exec`/`eval` semantics and dynamic scope effects.
 - [ ] P0: `__future__` flags and compiler feature gating.
-- [ ] P1: Annotation capture into `__annotations__` (module/class/function).
+- [x] P1: Annotation capture into `__annotations__` (module/class/function, eager evaluation path currently implemented).
 - [ ] P1: Constant folding and peephole optimizations (no semantic changes).
 - [ ] P2: Bytecode verification pass (stack effects, jump targets, invalid op sequences).
 
