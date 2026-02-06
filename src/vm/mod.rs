@@ -41,6 +41,69 @@ const DEFAULT_PATH_HOOK: &str = "pyrs.FileFinder";
 const SOURCE_FILE_LOADER: &str = "pyrs.SourceFileLoader";
 const NAMESPACE_LOADER: &str = "pyrs.NamespaceLoader";
 const BUILTIN_MODULE_LOADER: &str = "pyrs.BuiltinLoader";
+const MT_N: usize = 624;
+const MT_M: usize = 397;
+const MT_MATRIX_A: u32 = 0x9908_b0df;
+const MT_UPPER_MASK: u32 = 0x8000_0000;
+const MT_LOWER_MASK: u32 = 0x7fff_ffff;
+
+#[derive(Clone)]
+struct Mt19937 {
+    mt: [u32; MT_N],
+    index: usize,
+}
+
+impl Mt19937 {
+    fn new(seed: u64) -> Self {
+        let mut rng = Self {
+            mt: [0; MT_N],
+            index: MT_N,
+        };
+        rng.seed(seed);
+        rng
+    }
+
+    fn seed(&mut self, seed: u64) {
+        self.mt[0] = seed as u32;
+        for idx in 1..MT_N {
+            self.mt[idx] = 1812433253u32
+                .wrapping_mul(self.mt[idx - 1] ^ (self.mt[idx - 1] >> 30))
+                .wrapping_add(idx as u32);
+        }
+        self.index = MT_N;
+    }
+
+    fn next_u32(&mut self) -> u32 {
+        if self.index >= MT_N {
+            self.twist();
+        }
+        let mut value = self.mt[self.index];
+        self.index += 1;
+        value ^= value >> 11;
+        value ^= (value << 7) & 0x9d2c_5680;
+        value ^= (value << 15) & 0xefc6_0000;
+        value ^= value >> 18;
+        value
+    }
+
+    fn random_f64(&mut self) -> f64 {
+        let top = (self.next_u32() >> 5) as u64;
+        let bottom = (self.next_u32() >> 6) as u64;
+        ((top << 26) | bottom) as f64 / 9007199254740992.0
+    }
+
+    fn twist(&mut self) {
+        for idx in 0..MT_N {
+            let x = (self.mt[idx] & MT_UPPER_MASK) | (self.mt[(idx + 1) % MT_N] & MT_LOWER_MASK);
+            let mut x_a = x >> 1;
+            if x & 1 != 0 {
+                x_a ^= MT_MATRIX_A;
+            }
+            self.mt[idx] = self.mt[(idx + MT_M) % MT_N] ^ x_a;
+        }
+        self.index = 0;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GeneratorResumeKind {
@@ -146,6 +209,7 @@ pub struct Vm {
     main_module: ObjRef,
     module_paths: Vec<PathBuf>,
     heap: Heap,
+    random: Mt19937,
     generator_states: HashMap<u64, Frame>,
     generator_returns: HashMap<u64, Value>,
     pending_generator_exception: Option<Value>,
@@ -175,6 +239,7 @@ impl Vm {
             main_module,
             module_paths,
             heap,
+            random: Mt19937::new(5489),
             generator_states: HashMap::new(),
             generator_returns: HashMap::new(),
             pending_generator_exception: None,
@@ -187,6 +252,7 @@ impl Vm {
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
         vm.install_sys_module();
         vm.install_importlib_modules();
+        vm.install_random_module();
         vm.install_builtins();
         vm
     }
@@ -420,6 +486,53 @@ impl Vm {
         }
         self.register_module("importlib.util", util.clone());
         self.link_module_chain("importlib.util", util);
+    }
+
+    fn install_random_module(&mut self) {
+        let random_module = match self.heap.alloc_module(ModuleObject::new("random")) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.set_module_metadata(
+            &random_module,
+            "random",
+            None,
+            Some(BUILTIN_MODULE_LOADER),
+            false,
+            Vec::new(),
+            false,
+        );
+        if let Object::Module(module_data) = &mut *random_module.kind_mut() {
+            module_data.globals.insert(
+                "seed".to_string(),
+                Value::Builtin(BuiltinFunction::RandomSeed),
+            );
+            module_data.globals.insert(
+                "random".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandom),
+            );
+            module_data.globals.insert(
+                "randrange".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandRange),
+            );
+            module_data.globals.insert(
+                "randint".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandInt),
+            );
+            module_data.globals.insert(
+                "getrandbits".to_string(),
+                Value::Builtin(BuiltinFunction::RandomGetRandBits),
+            );
+            module_data.globals.insert(
+                "choice".to_string(),
+                Value::Builtin(BuiltinFunction::RandomChoice),
+            );
+            module_data.globals.insert(
+                "shuffle".to_string(),
+                Value::Builtin(BuiltinFunction::RandomShuffle),
+            );
+        }
+        self.register_module("random", random_module);
     }
 
     fn sync_sys_path_from_module_paths(&mut self) {
@@ -1488,9 +1601,10 @@ impl Vm {
                             })?;
                             frame.stack.push(Value::None);
                         }
-                        let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
-                            RuntimeError::new("attribute caller frame missing")
-                        })?;
+                        let frame = self
+                            .frames
+                            .get_mut(caller_idx)
+                            .ok_or_else(|| RuntimeError::new("attribute caller frame missing"))?;
                         frame.stack.push(attr);
                     }
                     Opcode::StoreName => {
@@ -1749,39 +1863,34 @@ impl Vm {
                         self.push_value(add_values(left, right, &self.heap)?);
                     }
                     Opcode::BinarySub => {
-                        let (left, right) = self.pop_int_pair()?;
-                        self.push_value(Value::Int(left - right));
+                        let right = self.pop_value()?;
+                        let left = self.pop_value()?;
+                        self.push_value(sub_values(left, right)?);
                     }
                     Opcode::BinaryMul => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
                         self.push_value(mul_values(left, right, &self.heap)?);
                     }
+                    Opcode::BinaryDiv => {
+                        let right = self.pop_value()?;
+                        let left = self.pop_value()?;
+                        self.push_value(div_values(left, right)?);
+                    }
                     Opcode::BinaryPow => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        let (left, right) = (value_to_int(left)?, value_to_int(right)?);
-                        if right < 0 {
-                            return Err(RuntimeError::new("negative exponent not supported"));
-                        }
-                        let value = left
-                            .checked_pow(right as u32)
-                            .ok_or_else(|| RuntimeError::new("integer overflow"))?;
-                        self.push_value(Value::Int(value));
+                        self.push_value(pow_values(left, right)?);
                     }
                     Opcode::BinaryFloorDiv => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        let (left, right) = (value_to_int(left)?, value_to_int(right)?);
-                        let value = python_floor_div(left, right)?;
-                        self.push_value(Value::Int(value));
+                        self.push_value(floor_div_values(left, right)?);
                     }
                     Opcode::BinaryMod => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        let (left, right) = (value_to_int(left)?, value_to_int(right)?);
-                        let value = python_mod(left, right)?;
-                        self.push_value(Value::Int(value));
+                        self.push_value(mod_values(left, right)?);
                     }
                     Opcode::CompareEq => {
                         let right = self.pop_value()?;
@@ -1837,8 +1946,7 @@ impl Vm {
                     }
                     Opcode::UnaryNeg => {
                         let value = self.pop_value()?;
-                        let value = value_to_int(value)?;
-                        self.push_value(Value::Int(-value));
+                        self.push_value(neg_value(value)?);
                     }
                     Opcode::UnaryNot => {
                         let value = self.pop_value()?;
@@ -1846,13 +1954,7 @@ impl Vm {
                     }
                     Opcode::UnaryPos => {
                         let value = self.pop_value()?;
-                        match value {
-                            Value::Int(value) => self.push_value(Value::Int(value)),
-                            Value::Bool(value) => {
-                                self.push_value(Value::Int(if value { 1 } else { 0 }))
-                            }
-                            _ => return Err(RuntimeError::new("unsupported operand type for +")),
-                        }
+                        self.push_value(pos_value(value)?);
                     }
                     Opcode::ToBool => {
                         let value = self.pop_value()?;
@@ -2622,7 +2724,9 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
+                                self.push_value(Value::Exception(ExceptionObject::new(
+                                    name, message,
+                                )));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -2833,7 +2937,9 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
+                                self.push_value(Value::Exception(ExceptionObject::new(
+                                    name, message,
+                                )));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -3015,7 +3121,9 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
+                                self.push_value(Value::Exception(ExceptionObject::new(
+                                    name, message,
+                                )));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -3168,7 +3276,9 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
+                                self.push_value(Value::Exception(ExceptionObject::new(
+                                    name, message,
+                                )));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -3335,7 +3445,9 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
+                                self.push_value(Value::Exception(ExceptionObject::new(
+                                    name, message,
+                                )));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -4038,10 +4150,9 @@ impl Vm {
         if let Value::Class(class_ref) = &class_value {
             if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                 class_data.attrs.extend(attrs);
-                class_data.attrs.insert(
-                    "__name__".to_string(),
-                    Value::Str(class_data.name.clone()),
-                );
+                class_data
+                    .attrs
+                    .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
                 class_data.attrs.insert(
                     "__bases__".to_string(),
                     self.heap.alloc_tuple(
@@ -4075,7 +4186,11 @@ impl Vm {
         }
     }
 
-    fn build_class_mro(&self, class: &ObjRef, bases: &[ObjRef]) -> Result<Vec<ObjRef>, RuntimeError> {
+    fn build_class_mro(
+        &self,
+        class: &ObjRef,
+        bases: &[ObjRef],
+    ) -> Result<Vec<ObjRef>, RuntimeError> {
         if bases.is_empty() {
             return Ok(vec![class.clone()]);
         }
@@ -4177,12 +4292,6 @@ impl Vm {
             }
             _ => Err(RuntimeError::new("invalid cell object")),
         }
-    }
-
-    fn pop_int_pair(&mut self) -> Result<(i64, i64), RuntimeError> {
-        let right = self.pop_value()?;
-        let left = self.pop_value()?;
-        Ok((value_to_int(left)?, value_to_int(right)?))
     }
 
     fn lookup_name(&self, name: &str) -> Result<Value, RuntimeError> {
@@ -4434,7 +4543,11 @@ impl Vm {
         Ok(InternalCallOutcome::Value(value))
     }
 
-    fn load_attr_class(&mut self, class: &ObjRef, attr_name: &str) -> Result<AttrAccessOutcome, RuntimeError> {
+    fn load_attr_class(
+        &mut self,
+        class: &ObjRef,
+        attr_name: &str,
+    ) -> Result<AttrAccessOutcome, RuntimeError> {
         let class_name = match &*class.kind() {
             Object::Class(class_data) => class_data.name.clone(),
             _ => "<class>".to_string(),
@@ -4448,14 +4561,18 @@ impl Vm {
 
         let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
         if let Some(getter) = getter {
-            return Ok(match self.call_internal(
-                getter,
-                vec![Value::None, Value::Class(class.clone())],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
-                InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
-            });
+            return Ok(
+                match self.call_internal(
+                    getter,
+                    vec![Value::None, Value::Class(class.clone())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        AttrAccessOutcome::ExceptionHandled
+                    }
+                },
+            );
         }
 
         Ok(AttrAccessOutcome::Value(attr))
@@ -4476,16 +4593,21 @@ impl Vm {
             let (getter, setter, deleter) = self.descriptor_hooks(&attr)?;
             if setter.is_some() || deleter.is_some() {
                 if let Some(getter) = getter {
-                    return Ok(match self.call_internal(
-                        getter,
-                        vec![Value::Instance(instance.clone()), Value::Class(class_ref.clone())],
-                        HashMap::new(),
-                    )? {
-                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
-                        InternalCallOutcome::CallerExceptionHandled => {
-                            AttrAccessOutcome::ExceptionHandled
-                        }
-                    });
+                    return Ok(
+                        match self.call_internal(
+                            getter,
+                            vec![
+                                Value::Instance(instance.clone()),
+                                Value::Class(class_ref.clone()),
+                            ],
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                AttrAccessOutcome::ExceptionHandled
+                            }
+                        },
+                    );
                 }
                 return Ok(AttrAccessOutcome::Value(attr));
             }
@@ -4500,18 +4622,27 @@ impl Vm {
         if let Some(attr) = class_attr {
             if let Value::Function(func) = attr.clone() {
                 let bound = BoundMethod::new(func, instance.clone());
-                return Ok(AttrAccessOutcome::Value(self.heap.alloc_bound_method(bound)));
+                return Ok(AttrAccessOutcome::Value(
+                    self.heap.alloc_bound_method(bound),
+                ));
             }
             let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
             if let Some(getter) = getter {
-                return Ok(match self.call_internal(
-                    getter,
-                    vec![Value::Instance(instance.clone()), Value::Class(class_ref.clone())],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
-                    InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
-                });
+                return Ok(
+                    match self.call_internal(
+                        getter,
+                        vec![
+                            Value::Instance(instance.clone()),
+                            Value::Class(class_ref.clone()),
+                        ],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            AttrAccessOutcome::ExceptionHandled
+                        }
+                    },
+                );
             }
             return Ok(AttrAccessOutcome::Value(attr));
         }
@@ -4519,14 +4650,18 @@ impl Vm {
         if let Some(getattr_method) =
             self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__getattr__")?
         {
-            return Ok(match self.call_internal(
-                getattr_method,
-                vec![Value::Str(attr_name.to_string())],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
-                InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
-            });
+            return Ok(
+                match self.call_internal(
+                    getattr_method,
+                    vec![Value::Str(attr_name.to_string())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        AttrAccessOutcome::ExceptionHandled
+                    }
+                },
+            );
         }
 
         let class_name = match &*class_ref.kind() {
@@ -4539,7 +4674,11 @@ impl Vm {
         )))
     }
 
-    fn load_attr_super(&mut self, super_ref: &ObjRef, attr_name: &str) -> Result<AttrAccessOutcome, RuntimeError> {
+    fn load_attr_super(
+        &mut self,
+        super_ref: &ObjRef,
+        attr_name: &str,
+    ) -> Result<AttrAccessOutcome, RuntimeError> {
         let (start_class, receiver, object_type) = match &*super_ref.kind() {
             Object::Super(data) => (
                 data.start_class.clone(),
@@ -4562,18 +4701,24 @@ impl Vm {
             if let Some(attr) = class_attr_lookup(&class, attr_name) {
                 if let Value::Function(func) = attr.clone() {
                     let bound = BoundMethod::new(func, receiver.clone());
-                    return Ok(AttrAccessOutcome::Value(self.heap.alloc_bound_method(bound)));
+                    return Ok(AttrAccessOutcome::Value(
+                        self.heap.alloc_bound_method(bound),
+                    ));
                 }
                 let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
                 if let Some(getter) = getter {
-                    return Ok(match self.call_internal(
-                        getter,
-                        vec![receiver_value.clone(), owner_value.clone()],
-                        HashMap::new(),
-                    )? {
-                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
-                        InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
-                    });
+                    return Ok(
+                        match self.call_internal(
+                            getter,
+                            vec![receiver_value.clone(), owner_value.clone()],
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                AttrAccessOutcome::ExceptionHandled
+                            }
+                        },
+                    );
                 }
                 return Ok(AttrAccessOutcome::Value(attr));
             }
@@ -4585,7 +4730,11 @@ impl Vm {
         )))
     }
 
-    fn load_attr_module(&mut self, module: &ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
+    fn load_attr_module(
+        &mut self,
+        module: &ObjRef,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
         let (module_name, attr) = match &*module.kind() {
             Object::Module(module_data) => {
                 let attr = module_data.globals.get(attr_name).cloned();
@@ -4626,14 +4775,18 @@ impl Vm {
         if let Some(setattr_method) =
             self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__setattr__")?
         {
-            return Ok(match self.call_internal(
-                setattr_method,
-                vec![Value::Str(attr_name.to_string()), value],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
-                InternalCallOutcome::CallerExceptionHandled => AttrMutationOutcome::ExceptionHandled,
-            });
+            return Ok(
+                match self.call_internal(
+                    setattr_method,
+                    vec![Value::Str(attr_name.to_string()), value],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        AttrMutationOutcome::ExceptionHandled
+                    }
+                },
+            );
         }
 
         let class_ref = match &*instance.kind() {
@@ -4644,14 +4797,18 @@ impl Vm {
         if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
             let (_getter, setter, _deleter) = self.descriptor_hooks(&descriptor)?;
             if let Some(setter) = setter {
-                return Ok(match self.call_internal(
-                    setter,
-                    vec![Value::Instance(instance.clone()), value],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
-                    InternalCallOutcome::CallerExceptionHandled => AttrMutationOutcome::ExceptionHandled,
-                });
+                return Ok(
+                    match self.call_internal(
+                        setter,
+                        vec![Value::Instance(instance.clone()), value],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            AttrMutationOutcome::ExceptionHandled
+                        }
+                    },
+                );
             }
         }
 
@@ -4669,14 +4826,18 @@ impl Vm {
         if let Some(delattr_method) =
             self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__delattr__")?
         {
-            return Ok(match self.call_internal(
-                delattr_method,
-                vec![Value::Str(attr_name.to_string())],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
-                InternalCallOutcome::CallerExceptionHandled => AttrMutationOutcome::ExceptionHandled,
-            });
+            return Ok(
+                match self.call_internal(
+                    delattr_method,
+                    vec![Value::Str(attr_name.to_string())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        AttrMutationOutcome::ExceptionHandled
+                    }
+                },
+            );
         }
 
         let class_ref = match &*instance.kind() {
@@ -4687,14 +4848,18 @@ impl Vm {
         if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
             let (_getter, _setter, deleter) = self.descriptor_hooks(&descriptor)?;
             if let Some(deleter) = deleter {
-                return Ok(match self.call_internal(
-                    deleter,
-                    vec![Value::Instance(instance.clone())],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
-                    InternalCallOutcome::CallerExceptionHandled => AttrMutationOutcome::ExceptionHandled,
-                });
+                return Ok(
+                    match self.call_internal(
+                        deleter,
+                        vec![Value::Instance(instance.clone())],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            AttrMutationOutcome::ExceptionHandled
+                        }
+                    },
+                );
             }
         }
 
@@ -5188,6 +5353,13 @@ impl Vm {
             BuiltinFunction::Import => self.builtin_import(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
+            BuiltinFunction::RandomSeed => self.builtin_random_seed(args, kwargs),
+            BuiltinFunction::RandomRandom => self.builtin_random_random(args, kwargs),
+            BuiltinFunction::RandomRandRange => self.builtin_random_randrange(args, kwargs),
+            BuiltinFunction::RandomRandInt => self.builtin_random_randint(args, kwargs),
+            BuiltinFunction::RandomGetRandBits => self.builtin_random_getrandbits(args, kwargs),
+            BuiltinFunction::RandomChoice => self.builtin_random_choice(args, kwargs),
+            BuiltinFunction::RandomShuffle => self.builtin_random_shuffle(args, kwargs),
             _ => {
                 if kwargs.is_empty() {
                     builtin.call(&self.heap, args)
@@ -5327,7 +5499,9 @@ impl Vm {
                                     obj
                                 }
                             }
-                            _ => return Err(RuntimeError::new("attribute access unsupported type")),
+                            _ => {
+                                return Err(RuntimeError::new("attribute access unsupported type"));
+                            }
                         }
                     };
                     Ok(Value::Dict(annotations))
@@ -5802,6 +5976,308 @@ impl Vm {
         ))
     }
 
+    fn builtin_random_seed(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("seed() takes at most 1 argument"));
+        }
+        let kw_value = kwargs.remove("a");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "seed() got an unexpected keyword argument",
+            ));
+        }
+        if kw_value.is_some() && !args.is_empty() {
+            return Err(RuntimeError::new(
+                "seed() got multiple values for argument 'a'",
+            ));
+        }
+        let value = kw_value.or_else(|| args.pop()).unwrap_or(Value::None);
+        let seed = seed_from_value(&value)?;
+        self.random.seed(seed);
+        Ok(Value::None)
+    }
+
+    fn builtin_random_random(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(RuntimeError::new("random() takes no arguments"));
+        }
+        Ok(Value::Float(self.random.random_f64()))
+    }
+
+    fn builtin_random_randrange(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 3 {
+            return Err(RuntimeError::new(
+                "randrange() expected at most 3 arguments",
+            ));
+        }
+        let mut start_kw = kwargs.remove("start");
+        let mut stop_kw = kwargs.remove("stop");
+        let mut step_kw = kwargs.remove("step");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "randrange() got an unexpected keyword argument",
+            ));
+        }
+
+        match args.len() {
+            0 => {}
+            1 => {
+                if stop_kw.is_some() {
+                    return Err(RuntimeError::new("randrange() got multiple values"));
+                }
+                stop_kw = Some(args.remove(0));
+            }
+            2 => {
+                if start_kw.is_some() || stop_kw.is_some() {
+                    return Err(RuntimeError::new("randrange() got multiple values"));
+                }
+                start_kw = Some(args.remove(0));
+                stop_kw = Some(args.remove(0));
+            }
+            3 => {
+                if start_kw.is_some() || stop_kw.is_some() || step_kw.is_some() {
+                    return Err(RuntimeError::new("randrange() got multiple values"));
+                }
+                start_kw = Some(args.remove(0));
+                stop_kw = Some(args.remove(0));
+                step_kw = Some(args.remove(0));
+            }
+            _ => unreachable!(),
+        }
+
+        let stop = stop_kw.ok_or_else(|| RuntimeError::new("randrange() missing stop"))?;
+        let start = start_kw.unwrap_or(Value::Int(0));
+        let step = step_kw.unwrap_or(Value::Int(1));
+
+        let start = value_to_int(start)?;
+        let stop = value_to_int(stop)?;
+        let step = value_to_int(step)?;
+        if step == 0 {
+            return Err(RuntimeError::new(
+                "randrange() step argument must not be zero",
+            ));
+        }
+
+        let count = random_range_count(start, stop, step)?;
+        let offset = self.random_randbelow(count)?;
+        let result = (start as i128)
+            .checked_add((step as i128) * (offset as i128))
+            .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+        let result = i64::try_from(result).map_err(|_| RuntimeError::new("integer overflow"))?;
+        Ok(Value::Int(result))
+    }
+
+    fn builtin_random_randint(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::new("randint() expected 2 arguments"));
+        }
+        let a_kw = kwargs.remove("a");
+        let b_kw = kwargs.remove("b");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "randint() got an unexpected keyword argument",
+            ));
+        }
+
+        let a_value = if let Some(value) = a_kw {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "randint() got multiple values for argument 'a'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new("randint() missing argument 'a'"));
+        };
+        let b_value = if let Some(value) = b_kw {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "randint() got multiple values for argument 'b'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new("randint() missing argument 'b'"));
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new("randint() expected 2 arguments"));
+        }
+
+        let a = value_to_int(a_value)?;
+        let b = value_to_int(b_value)?;
+        let upper = b
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::new("empty range for randint()"))?;
+        let count = random_range_count(a, upper, 1)?;
+        let offset = self.random_randbelow(count)?;
+        let result = a
+            .checked_add(offset)
+            .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+        Ok(Value::Int(result))
+    }
+
+    fn builtin_random_getrandbits(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new(
+                "getrandbits() takes exactly one argument",
+            ));
+        }
+        let kw_k = kwargs.remove("k");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "getrandbits() got an unexpected keyword argument",
+            ));
+        }
+        let k_value = if let Some(value) = kw_k {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "getrandbits() got multiple values for 'k'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new("getrandbits() missing argument 'k'"));
+        };
+
+        let bits = value_to_int(k_value)?;
+        if bits < 0 {
+            return Err(RuntimeError::new("number of bits must be non-negative"));
+        }
+        if bits == 0 {
+            return Ok(Value::Int(0));
+        }
+        if bits > 63 {
+            return Err(RuntimeError::new(
+                "getrandbits() supports up to 63 bits in this runtime",
+            ));
+        }
+
+        let mut produced = 0u64;
+        let mut consumed = 0i64;
+        while consumed < bits {
+            let chunk = self.random.next_u32() as u64;
+            let take = std::cmp::min(32, (bits - consumed) as usize);
+            let mask = if take == 32 {
+                u64::MAX
+            } else {
+                (1u64 << take) - 1
+            };
+            produced |= (chunk & mask) << consumed;
+            consumed += take as i64;
+        }
+        Ok(Value::Int(produced as i64))
+    }
+
+    fn builtin_random_choice(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("choice() expects one argument"));
+        }
+        match &args[0] {
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => {
+                    if values.is_empty() {
+                        return Err(RuntimeError::new("Cannot choose from an empty sequence"));
+                    }
+                    let idx = self.random_randbelow(values.len() as i64)? as usize;
+                    Ok(values[idx].clone())
+                }
+                _ => Err(RuntimeError::new("choice() expects a sequence")),
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => {
+                    if values.is_empty() {
+                        return Err(RuntimeError::new("Cannot choose from an empty sequence"));
+                    }
+                    let idx = self.random_randbelow(values.len() as i64)? as usize;
+                    Ok(values[idx].clone())
+                }
+                _ => Err(RuntimeError::new("choice() expects a sequence")),
+            },
+            Value::Str(value) => {
+                let chars: Vec<char> = value.chars().collect();
+                if chars.is_empty() {
+                    return Err(RuntimeError::new("Cannot choose from an empty sequence"));
+                }
+                let idx = self.random_randbelow(chars.len() as i64)? as usize;
+                Ok(Value::Str(chars[idx].to_string()))
+            }
+            _ => Err(RuntimeError::new("choice() expects a sequence")),
+        }
+    }
+
+    fn builtin_random_shuffle(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("shuffle() expects one argument"));
+        }
+        match &args[0] {
+            Value::List(obj) => {
+                let len = match &*obj.kind() {
+                    Object::List(values) => values.len(),
+                    _ => return Err(RuntimeError::new("shuffle() expects list")),
+                };
+                if len <= 1 {
+                    return Ok(Value::None);
+                }
+                for idx in (1..len).rev() {
+                    let swap = self.random_randbelow((idx + 1) as i64)? as usize;
+                    if let Object::List(values) = &mut *obj.kind_mut() {
+                        values.swap(idx, swap);
+                    }
+                }
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::new("shuffle() expects list")),
+        }
+    }
+
+    fn random_randbelow(&mut self, upper: i64) -> Result<i64, RuntimeError> {
+        if upper <= 0 {
+            return Err(RuntimeError::new("empty range for randrange()"));
+        }
+        let upper = upper as u64;
+        let zone = u64::MAX - (u64::MAX % upper);
+        loop {
+            let value = ((self.random.next_u32() as u64) << 32) | self.random.next_u32() as u64;
+            if value < zone {
+                return Ok((value % upper) as i64);
+            }
+        }
+    }
+
     fn install_builtins(&mut self) {
         self.builtins
             .insert("print".to_string(), Value::Builtin(BuiltinFunction::Print));
@@ -5815,6 +6291,8 @@ impl Vm {
             .insert("bool".to_string(), Value::Builtin(BuiltinFunction::Bool));
         self.builtins
             .insert("int".to_string(), Value::Builtin(BuiltinFunction::Int));
+        self.builtins
+            .insert("float".to_string(), Value::Builtin(BuiltinFunction::Float));
         self.builtins
             .insert("str".to_string(), Value::Builtin(BuiltinFunction::Str));
         self.builtins
@@ -5873,10 +6351,8 @@ impl Vm {
             "hasattr".to_string(),
             Value::Builtin(BuiltinFunction::HasAttr),
         );
-        self.builtins.insert(
-            "super".to_string(),
-            Value::Builtin(BuiltinFunction::Super),
-        );
+        self.builtins
+            .insert("super".to_string(), Value::Builtin(BuiltinFunction::Super));
         self.builtins.insert(
             "__import__".to_string(),
             Value::Builtin(BuiltinFunction::Import),
@@ -5999,6 +6475,49 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
     }
 }
 
+fn seed_from_value(value: &Value) -> Result<u64, RuntimeError> {
+    match value {
+        Value::None => {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            Ok(nanos as u64)
+        }
+        Value::Int(value) => Ok(*value as u64),
+        Value::Bool(value) => Ok(if *value { 1 } else { 0 }),
+        Value::Float(value) => Ok(value.to_bits()),
+        Value::Str(value) => {
+            let mut hash: u64 = 1469598103934665603;
+            for byte in value.as_bytes() {
+                hash ^= *byte as u64;
+                hash = hash.wrapping_mul(1099511628211);
+            }
+            Ok(hash)
+        }
+        _ => Err(RuntimeError::new("seed() unsupported type")),
+    }
+}
+
+fn random_range_count(start: i64, stop: i64, step: i64) -> Result<i64, RuntimeError> {
+    if step == 0 {
+        return Err(RuntimeError::new("empty range for randrange()"));
+    }
+    if step > 0 {
+        if start >= stop {
+            return Err(RuntimeError::new("empty range for randrange()"));
+        }
+        let count = ((stop as i128 - start as i128 - 1) / step as i128) + 1;
+        return i64::try_from(count).map_err(|_| RuntimeError::new("integer overflow"));
+    }
+    if start <= stop {
+        return Err(RuntimeError::new("empty range for randrange()"));
+    }
+    let step_mag = -(step as i128);
+    let count = ((start as i128 - stop as i128 - 1) / step_mag) + 1;
+    i64::try_from(count).map_err(|_| RuntimeError::new("integer overflow"))
+}
+
 fn deref_name(code: &CodeObject, idx: usize) -> Option<&str> {
     if idx < code.cellvars.len() {
         return code.cellvars.get(idx).map(|name| name.as_str());
@@ -6045,32 +6564,58 @@ fn python_mod(left: i64, right: i64) -> Result<i64, RuntimeError> {
     Ok(value as i64)
 }
 
-fn numeric_pair(left: &Value, right: &Value) -> Option<(i64, i64)> {
+#[derive(Clone, Copy)]
+enum NumericValue {
+    Int(i64),
+    Float(f64),
+}
+
+fn numeric_pair(left: &Value, right: &Value) -> Option<(NumericValue, NumericValue)> {
     let left = match left {
-        Value::Int(value) => *value,
+        Value::Int(value) => NumericValue::Int(*value),
         Value::Bool(value) => {
             if *value {
-                1
+                NumericValue::Int(1)
             } else {
-                0
+                NumericValue::Int(0)
             }
         }
+        Value::Float(value) => NumericValue::Float(*value),
         _ => return None,
     };
 
     let right = match right {
-        Value::Int(value) => *value,
+        Value::Int(value) => NumericValue::Int(*value),
         Value::Bool(value) => {
             if *value {
-                1
+                NumericValue::Int(1)
             } else {
-                0
+                NumericValue::Int(0)
             }
         }
+        Value::Float(value) => NumericValue::Float(*value),
         _ => return None,
     };
 
     Some((left, right))
+}
+
+fn numeric_as_f64(value: NumericValue) -> f64 {
+    match value {
+        NumericValue::Int(value) => value as f64,
+        NumericValue::Float(value) => value,
+    }
+}
+
+fn mod_float(left: f64, right: f64) -> Result<f64, RuntimeError> {
+    if right == 0.0 {
+        return Err(RuntimeError::new("float modulo by zero"));
+    }
+    let mut value = left - right * (left / right).floor();
+    if value == 0.0 {
+        value = 0.0f64.copysign(right);
+    }
+    Ok(value)
 }
 
 fn is_truthy(value: &Value) -> bool {
@@ -6078,6 +6623,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::None => false,
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
+        Value::Float(value) => *value != 0.0,
         Value::Str(value) => !value.is_empty(),
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => !values.is_empty(),
@@ -6631,7 +7177,15 @@ fn classify_runtime_error(message: &str) -> &'static str {
 
 fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let Some((left, right)) = numeric_pair(&left, &right) {
-        return Ok(Value::Int(left + right));
+        return match (left, right) {
+            (NumericValue::Int(left), NumericValue::Int(right)) => {
+                let value = left
+                    .checked_add(right)
+                    .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+                Ok(Value::Int(value))
+            }
+            (left, right) => Ok(Value::Float(numeric_as_f64(left) + numeric_as_f64(right))),
+        };
     }
 
     match (left, right) {
@@ -6656,9 +7210,110 @@ fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeEr
     }
 }
 
+fn sub_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    match numeric_pair(&left, &right) {
+        Some((NumericValue::Int(left), NumericValue::Int(right))) => {
+            let value = left
+                .checked_sub(right)
+                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+            Ok(Value::Int(value))
+        }
+        Some((left, right)) => Ok(Value::Float(numeric_as_f64(left) - numeric_as_f64(right))),
+        None => Err(RuntimeError::new("unsupported operand type for -")),
+    }
+}
+
+fn div_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    let (left, right) = numeric_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for /"))?;
+    let right_value = numeric_as_f64(right);
+    if right_value == 0.0 {
+        return Err(RuntimeError::new("division by zero"));
+    }
+    Ok(Value::Float(numeric_as_f64(left) / right_value))
+}
+
+fn floor_div_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    let (left, right) = numeric_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for //"))?;
+    match (left, right) {
+        (NumericValue::Int(left), NumericValue::Int(right)) => {
+            Ok(Value::Int(python_floor_div(left, right)?))
+        }
+        (left, right) => {
+            let right_value = numeric_as_f64(right);
+            if right_value == 0.0 {
+                return Err(RuntimeError::new("division by zero"));
+            }
+            Ok(Value::Float((numeric_as_f64(left) / right_value).floor()))
+        }
+    }
+}
+
+fn mod_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    let (left, right) = numeric_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for %"))?;
+    match (left, right) {
+        (NumericValue::Int(left), NumericValue::Int(right)) => {
+            Ok(Value::Int(python_mod(left, right)?))
+        }
+        (left, right) => Ok(Value::Float(mod_float(
+            numeric_as_f64(left),
+            numeric_as_f64(right),
+        )?)),
+    }
+}
+
+fn pow_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    let (left, right) = numeric_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for **"))?;
+    match (left, right) {
+        (NumericValue::Int(left), NumericValue::Int(right)) if right >= 0 => {
+            let value = left
+                .checked_pow(right as u32)
+                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+            Ok(Value::Int(value))
+        }
+        (left, right) => {
+            let left = numeric_as_f64(left);
+            let right = numeric_as_f64(right);
+            if left == 0.0 && right < 0.0 {
+                return Err(RuntimeError::new("division by zero"));
+            }
+            Ok(Value::Float(left.powf(right)))
+        }
+    }
+}
+
+fn neg_value(value: Value) -> Result<Value, RuntimeError> {
+    match value {
+        Value::Int(value) => {
+            let value = value
+                .checked_neg()
+                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+            Ok(Value::Int(value))
+        }
+        Value::Bool(value) => Ok(Value::Int(if value { -1 } else { 0 })),
+        Value::Float(value) => Ok(Value::Float(-value)),
+        _ => Err(RuntimeError::new("unsupported operand type for -")),
+    }
+}
+
+fn pos_value(value: Value) -> Result<Value, RuntimeError> {
+    match value {
+        Value::Int(value) => Ok(Value::Int(value)),
+        Value::Bool(value) => Ok(Value::Int(if value { 1 } else { 0 })),
+        Value::Float(value) => Ok(Value::Float(value)),
+        _ => Err(RuntimeError::new("unsupported operand type for +")),
+    }
+}
+
 fn compare_order(left: Value, right: Value) -> Result<Ordering, RuntimeError> {
     if let Some((left, right)) = numeric_pair(&left, &right) {
-        return Ok(left.cmp(&right));
+        return Ok(match (left, right) {
+            (NumericValue::Int(left), NumericValue::Int(right)) => left.cmp(&right),
+            (left, right) => numeric_as_f64(left).total_cmp(&numeric_as_f64(right)),
+        });
     }
 
     match (left, right) {
@@ -6711,7 +7366,15 @@ fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeError> {
 
 fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let Some((left, right)) = numeric_pair(&left, &right) {
-        return Ok(Value::Int(left * right));
+        return match (left, right) {
+            (NumericValue::Int(left), NumericValue::Int(right)) => {
+                let value = left
+                    .checked_mul(right)
+                    .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+                Ok(Value::Int(value))
+            }
+            (left, right) => Ok(Value::Float(numeric_as_f64(left) * numeric_as_f64(right))),
+        };
     }
 
     match (left, right) {

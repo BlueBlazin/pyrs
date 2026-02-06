@@ -125,8 +125,13 @@ impl<'a> Lexer<'a> {
                     tokens.push(Token::new(TokenKind::RBrace, "}", offset, line, column));
                 }
                 '.' => {
-                    self.advance();
-                    tokens.push(Token::new(TokenKind::Dot, ".", offset, line, column));
+                    if matches!(self.peek_char_at(1), Some(ch) if ch.is_ascii_digit()) {
+                        let lexeme = self.consume_number_from_dot();
+                        tokens.push(Token::new(TokenKind::Number, lexeme, offset, line, column));
+                    } else {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::Dot, ".", offset, line, column));
+                    }
                 }
                 ':' => {
                     self.advance();
@@ -278,6 +283,15 @@ impl<'a> Lexer<'a> {
                                 column,
                             ));
                         }
+                    } else if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(
+                            TokenKind::SlashEqual,
+                            "/=",
+                            offset,
+                            line,
+                            column,
+                        ));
                     } else {
                         tokens.push(Token::new(TokenKind::Slash, "/", offset, line, column));
                     }
@@ -396,6 +410,10 @@ impl<'a> Lexer<'a> {
         self.source[self.offset..].chars().next()
     }
 
+    fn peek_char_at(&self, idx: usize) -> Option<char> {
+        self.source[self.offset..].chars().nth(idx)
+    }
+
     fn advance(&mut self) -> Option<char> {
         let ch = self.peek_char()?;
         self.offset += ch.len_utf8();
@@ -445,11 +463,64 @@ impl<'a> Lexer<'a> {
                 return self.source[start..self.offset].to_string();
             }
         }
+
         while let Some(ch) = self.peek_char() {
             if ch.is_ascii_digit() || ch == '_' {
                 self.advance();
             } else {
                 break;
+            }
+        }
+
+        if self.peek_char() == Some('.') && self.peek_char_at(1) != Some('.') {
+            self.advance();
+            while let Some(ch) = self.peek_char() {
+                if ch.is_ascii_digit() || ch == '_' {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if matches!(self.peek_char(), Some('e' | 'E')) {
+            self.advance();
+            if matches!(self.peek_char(), Some('+' | '-')) {
+                self.advance();
+            }
+            while let Some(ch) = self.peek_char() {
+                if ch.is_ascii_digit() || ch == '_' {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        self.source[start..self.offset].to_string()
+    }
+
+    fn consume_number_from_dot(&mut self) -> String {
+        let start = self.offset;
+        self.advance();
+        while let Some(ch) = self.peek_char() {
+            if ch.is_ascii_digit() || ch == '_' {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if matches!(self.peek_char(), Some('e' | 'E')) {
+            self.advance();
+            if matches!(self.peek_char(), Some('+' | '-')) {
+                self.advance();
+            }
+            while let Some(ch) = self.peek_char() {
+                if ch.is_ascii_digit() || ch == '_' {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
         }
         self.source[start..self.offset].to_string()

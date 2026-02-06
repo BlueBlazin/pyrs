@@ -30,6 +30,7 @@ pub enum Opcode {
     BinaryAdd,
     BinarySub,
     BinaryMul,
+    BinaryDiv,
     BinaryPow,
     BinaryFloorDiv,
     BinaryMod,

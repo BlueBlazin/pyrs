@@ -45,6 +45,7 @@ pub enum PyObject {
     None,
     Bool(bool),
     Int(i64),
+    Float(f64),
     Str(String),
     Bytes(Vec<u8>),
     Tuple(Vec<PyObject>),
@@ -466,6 +467,9 @@ impl<'a> Translator<'a> {
                 name if name.starts_with("BINARY_OP_MULTIPLY") => {
                     Instruction::new(Opcode::BinaryMul, None)
                 }
+                name if name.starts_with("BINARY_OP_TRUE_DIVIDE") => {
+                    Instruction::new(Opcode::BinaryDiv, None)
+                }
                 name if name.starts_with("BINARY_OP_SUBSCR") => {
                     Instruction::new(Opcode::Subscript, None)
                 }
@@ -540,6 +544,7 @@ impl<'a> Translator<'a> {
             PyObject::None => Ok(Value::None),
             PyObject::Bool(value) => Ok(Value::Bool(*value)),
             PyObject::Int(value) => Ok(Value::Int(*value)),
+            PyObject::Float(value) => Ok(Value::Float(*value)),
             PyObject::Str(value) => Ok(Value::Str(value.clone())),
             PyObject::Tuple(items) => {
                 let mut values = Vec::with_capacity(items.len());
@@ -653,6 +658,8 @@ impl<'a> Translator<'a> {
             Instruction::new(Opcode::BinarySub, None)
         } else if name.contains("MULTIPLY") {
             Instruction::new(Opcode::BinaryMul, None)
+        } else if name.contains("TRUE_DIVIDE") {
+            Instruction::new(Opcode::BinaryDiv, None)
         } else if name.contains("FLOOR_DIVIDE") {
             Instruction::new(Opcode::BinaryFloorDiv, None)
         } else if name.contains("REMAINDER") {
@@ -676,12 +683,14 @@ impl<'a> Translator<'a> {
             6 => Ok(Instruction::new(Opcode::BinaryMod, None)),
             8 => Ok(Instruction::new(Opcode::BinaryPow, None)),
             10 => Ok(Instruction::new(Opcode::BinarySub, None)),
+            11 => Ok(Instruction::new(Opcode::BinaryDiv, None)),
             13 => Ok(Instruction::new(Opcode::BinaryAdd, None)),
             15 => Ok(Instruction::new(Opcode::BinaryFloorDiv, None)),
             18 => Ok(Instruction::new(Opcode::BinaryMul, None)),
             19 => Ok(Instruction::new(Opcode::BinaryMod, None)),
             21 => Ok(Instruction::new(Opcode::BinaryPow, None)),
             23 => Ok(Instruction::new(Opcode::BinarySub, None)),
+            24 => Ok(Instruction::new(Opcode::BinaryDiv, None)),
             26 => Ok(Instruction::new(Opcode::Subscript, None)),
             _ => Err(CpythonError::new(format!(
                 "unsupported BINARY_OP arg {} at instruction {}",
@@ -896,6 +905,7 @@ fn translated_successors(
         Opcode::BinaryAdd
         | Opcode::BinarySub
         | Opcode::BinaryMul
+        | Opcode::BinaryDiv
         | Opcode::BinaryPow
         | Opcode::BinaryFloorDiv
         | Opcode::BinaryMod
@@ -1093,6 +1103,10 @@ impl MarshalWriter {
                     self.write_long(*value)?;
                 }
             }
+            PyObject::Float(value) => {
+                self.write_u8(b'g');
+                self.data.extend_from_slice(&value.to_le_bytes());
+            }
             PyObject::Str(value) => {
                 self.write_u8(b'u');
                 self.write_bytes_long(value.as_bytes())?;
@@ -1225,6 +1239,17 @@ impl<'a> MarshalReader<'a> {
             'T' => PyObject::Bool(true),
             'i' => PyObject::Int(self.read_i32()? as i64),
             'l' => PyObject::Int(self.read_long()?),
+            'g' => PyObject::Float(f64::from_le_bytes(self.read_exact(8)?.try_into().unwrap())),
+            'f' => {
+                let len = self.read_u8()? as usize;
+                let bytes = self.read_exact(len)?;
+                let text = std::str::from_utf8(bytes)
+                    .map_err(|_| CpythonError::new("invalid marshal float string"))?;
+                let value = text
+                    .parse::<f64>()
+                    .map_err(|_| CpythonError::new("invalid marshal float literal"))?;
+                PyObject::Float(value)
+            }
             's' => PyObject::Bytes(self.read_bytes_long()?),
             'a' | 'A' => PyObject::Str(self.read_string_long()?),
             'z' | 'Z' => PyObject::Str(self.read_string_short()?),

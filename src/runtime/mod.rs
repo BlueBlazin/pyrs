@@ -241,6 +241,7 @@ enum ImmediateKey {
     None,
     Bool(bool),
     Int(i64),
+    Float(u64),
     Str(String),
     Code(u64),
     Exception(String, Option<String>),
@@ -335,6 +336,7 @@ impl Heap {
             Value::None => self.id_for_immediate(ImmediateKey::None),
             Value::Bool(value) => self.id_for_immediate(ImmediateKey::Bool(*value)),
             Value::Int(value) => self.id_for_immediate(ImmediateKey::Int(*value)),
+            Value::Float(value) => self.id_for_immediate(ImmediateKey::Float(value.to_bits())),
             Value::Str(value) => self.id_for_immediate(ImmediateKey::Str(value.clone())),
             Value::List(obj)
             | Value::Tuple(obj)
@@ -570,6 +572,7 @@ pub enum Value {
     None,
     Bool(bool),
     Int(i64),
+    Float(f64),
     Str(String),
     List(ObjRef),
     Tuple(ObjRef),
@@ -653,8 +656,13 @@ impl PartialEq for Value {
             (Value::None, Value::None) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Bool(a), Value::Int(b)) => (*a as i64) == *b,
+            (Value::Bool(a), Value::Float(b)) => (*a as i64 as f64) == *b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Int(a), Value::Bool(b)) => *a == (*b as i64),
+            (Value::Int(a), Value::Float(b)) => (*a as f64) == *b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Float(a), Value::Int(b)) => *a == (*b as f64),
+            (Value::Float(a), Value::Bool(b)) => *a == (*b as i64 as f64),
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::List(a), Value::List(b)) => match (&*a.kind(), &*b.kind()) {
                 (Object::List(left), Object::List(right)) => left == right,
@@ -708,6 +716,7 @@ pub enum BuiltinFunction {
     Slice,
     Bool,
     Int,
+    Float,
     Str,
     Abs,
     Sum,
@@ -733,6 +742,13 @@ pub enum BuiltinFunction {
     Import,
     ImportModule,
     FindSpec,
+    RandomSeed,
+    RandomRandom,
+    RandomRandRange,
+    RandomRandInt,
+    RandomGetRandBits,
+    RandomChoice,
+    RandomShuffle,
 }
 
 impl BuiltinFunction {
@@ -841,6 +857,7 @@ impl BuiltinFunction {
                 match &args[0] {
                     Value::Int(value) => Ok(Value::Int(*value)),
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
+                    Value::Float(value) => Ok(Value::Int(*value as i64)),
                     Value::Str(value) => {
                         let trimmed = value.trim();
                         let parsed = trimmed
@@ -849,6 +866,24 @@ impl BuiltinFunction {
                         Ok(Value::Int(parsed))
                     }
                     _ => Err(RuntimeError::new("int() unsupported type")),
+                }
+            }
+            BuiltinFunction::Float => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("float() expects one argument"));
+                }
+                match &args[0] {
+                    Value::Float(value) => Ok(Value::Float(*value)),
+                    Value::Int(value) => Ok(Value::Float(*value as f64)),
+                    Value::Bool(value) => Ok(Value::Float(if *value { 1.0 } else { 0.0 })),
+                    Value::Str(value) => {
+                        let trimmed = value.trim();
+                        let parsed = trimmed
+                            .parse::<f64>()
+                            .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                        Ok(Value::Float(parsed))
+                    }
+                    _ => Err(RuntimeError::new("float() unsupported type")),
                 }
             }
             BuiltinFunction::Str => {
@@ -864,6 +899,7 @@ impl BuiltinFunction {
                 match &args[0] {
                     Value::Int(value) => Ok(Value::Int(value.abs())),
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
+                    Value::Float(value) => Ok(Value::Float(value.abs())),
                     _ => Err(RuntimeError::new("abs() unsupported type")),
                 }
             }
@@ -872,16 +908,16 @@ impl BuiltinFunction {
                     return Err(RuntimeError::new("sum() expects 1-2 arguments"));
                 }
                 let mut total = if args.len() == 2 {
-                    value_to_int(args[1].clone())?
+                    args[1].clone()
                 } else {
-                    0
+                    Value::Int(0)
                 };
 
                 match &args[0] {
                     Value::List(obj) => match &*obj.kind() {
                         Object::List(values) => {
                             for value in values {
-                                total += value_to_int(value.clone())?;
+                                total = add_numeric_values(total, value.clone())?;
                             }
                         }
                         _ => return Err(RuntimeError::new("sum() expects list or tuple")),
@@ -889,7 +925,7 @@ impl BuiltinFunction {
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => {
                             for value in values {
-                                total += value_to_int(value.clone())?;
+                                total = add_numeric_values(total, value.clone())?;
                             }
                         }
                         _ => return Err(RuntimeError::new("sum() expects list or tuple")),
@@ -897,7 +933,7 @@ impl BuiltinFunction {
                     _ => return Err(RuntimeError::new("sum() expects list or tuple")),
                 }
 
-                Ok(Value::Int(total))
+                Ok(total)
             }
             BuiltinFunction::Min => builtin_min_max(args, Ordering::Less),
             BuiltinFunction::Max => builtin_min_max(args, Ordering::Greater),
@@ -907,20 +943,16 @@ impl BuiltinFunction {
                 if args.len() < 2 || args.len() > 3 {
                     return Err(RuntimeError::new("pow() expects 2-3 arguments"));
                 }
-                let base = value_to_int(args[0].clone())?;
-                let exp = value_to_int(args[1].clone())?;
-                if exp < 0 {
-                    return Err(RuntimeError::new("pow() negative exponent unsupported"));
-                }
-                let mut value = base.pow(exp as u32);
+                let mut value = pow_numeric_values(args[0].clone(), args[1].clone())?;
                 if args.len() == 3 {
                     let modu = value_to_int(args[2].clone())?;
                     if modu == 0 {
                         return Err(RuntimeError::new("pow() modulo by zero"));
                     }
-                    value = value.rem_euclid(modu);
+                    let as_int = value_to_int(value)?;
+                    value = Value::Int(as_int.rem_euclid(modu));
                 }
-                Ok(Value::Int(value))
+                Ok(value)
             }
             BuiltinFunction::List => {
                 if args.len() > 1 {
@@ -968,14 +1000,8 @@ impl BuiltinFunction {
                 if args.len() != 2 {
                     return Err(RuntimeError::new("divmod() expects two arguments"));
                 }
-                let left = value_to_int(args[0].clone())?;
-                let right = value_to_int(args[1].clone())?;
-                if right == 0 {
-                    return Err(RuntimeError::new("divmod() division by zero"));
-                }
-                let div = left.div_euclid(right);
-                let rem = left.rem_euclid(right);
-                Ok(heap.alloc_tuple(vec![Value::Int(div), Value::Int(rem)]))
+                let (div, rem) = divmod_values(args[0].clone(), args[1].clone())?;
+                Ok(heap.alloc_tuple(vec![div, rem]))
             }
             BuiltinFunction::Sorted => {
                 if args.len() != 1 {
@@ -991,9 +1017,7 @@ impl BuiltinFunction {
 
                             if all_numeric {
                                 result.sort_by(|a, b| {
-                                    let left = numeric_value(a).unwrap();
-                                    let right = numeric_value(b).unwrap();
-                                    left.cmp(&right)
+                                    numeric_compare(a, b).unwrap_or(Ordering::Equal)
                                 });
                             } else if all_str {
                                 result.sort_by(|a, b| match (a, b) {
@@ -1019,9 +1043,7 @@ impl BuiltinFunction {
 
                             if all_numeric {
                                 result.sort_by(|a, b| {
-                                    let left = numeric_value(a).unwrap();
-                                    let right = numeric_value(b).unwrap();
-                                    left.cmp(&right)
+                                    numeric_compare(a, b).unwrap_or(Ordering::Equal)
                                 });
                             } else if all_str {
                                 result.sort_by(|a, b| match (a, b) {
@@ -1091,7 +1113,14 @@ impl BuiltinFunction {
             | BuiltinFunction::HasAttr
             | BuiltinFunction::Super
             | BuiltinFunction::Locals
-            | BuiltinFunction::Globals => {
+            | BuiltinFunction::Globals
+            | BuiltinFunction::RandomSeed
+            | BuiltinFunction::RandomRandom
+            | BuiltinFunction::RandomRandRange
+            | BuiltinFunction::RandomRandInt
+            | BuiltinFunction::RandomGetRandBits
+            | BuiltinFunction::RandomChoice
+            | BuiltinFunction::RandomShuffle => {
                 Err(RuntimeError::new("builtin requires VM context"))
             }
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
@@ -1207,23 +1236,146 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
     }
 }
 
-fn numeric_value(value: &Value) -> Option<i64> {
+#[derive(Clone, Copy)]
+enum NumericValue {
+    Int(i64),
+    Float(f64),
+}
+
+fn numeric_value(value: &Value) -> Option<NumericValue> {
     match value {
-        Value::Int(value) => Some(*value),
-        Value::Bool(value) => Some(if *value { 1 } else { 0 }),
+        Value::Int(value) => Some(NumericValue::Int(*value)),
+        Value::Bool(value) => Some(NumericValue::Int(if *value { 1 } else { 0 })),
+        Value::Float(value) => Some(NumericValue::Float(*value)),
         _ => None,
     }
 }
 
+fn numeric_compare(left: &Value, right: &Value) -> Option<Ordering> {
+    match (numeric_value(left)?, numeric_value(right)?) {
+        (NumericValue::Int(left), NumericValue::Int(right)) => Some(left.cmp(&right)),
+        (left, right) => {
+            let left = match left {
+                NumericValue::Int(value) => value as f64,
+                NumericValue::Float(value) => value,
+            };
+            let right = match right {
+                NumericValue::Int(value) => value as f64,
+                NumericValue::Float(value) => value,
+            };
+            Some(left.total_cmp(&right))
+        }
+    }
+}
+
+fn add_numeric_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    match (numeric_value(&left), numeric_value(&right)) {
+        (Some(NumericValue::Int(left)), Some(NumericValue::Int(right))) => {
+            let value = left
+                .checked_add(right)
+                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+            Ok(Value::Int(value))
+        }
+        (Some(left), Some(right)) => {
+            let left = match left {
+                NumericValue::Int(value) => value as f64,
+                NumericValue::Float(value) => value,
+            };
+            let right = match right {
+                NumericValue::Int(value) => value as f64,
+                NumericValue::Float(value) => value,
+            };
+            Ok(Value::Float(left + right))
+        }
+        _ => Err(RuntimeError::new("unsupported operand type")),
+    }
+}
+
+fn pow_numeric_values(base: Value, exponent: Value) -> Result<Value, RuntimeError> {
+    match (numeric_value(&base), numeric_value(&exponent)) {
+        (Some(NumericValue::Int(base)), Some(NumericValue::Int(exp))) if exp >= 0 => {
+            let value = base
+                .checked_pow(exp as u32)
+                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+            Ok(Value::Int(value))
+        }
+        (Some(base), Some(exponent)) => {
+            let base = match base {
+                NumericValue::Int(value) => value as f64,
+                NumericValue::Float(value) => value,
+            };
+            let exponent = match exponent {
+                NumericValue::Int(value) => value as f64,
+                NumericValue::Float(value) => value,
+            };
+            if base == 0.0 && exponent < 0.0 {
+                return Err(RuntimeError::new("division by zero"));
+            }
+            Ok(Value::Float(base.powf(exponent)))
+        }
+        _ => Err(RuntimeError::new("unsupported operand type")),
+    }
+}
+
+fn divmod_values(left: Value, right: Value) -> Result<(Value, Value), RuntimeError> {
+    match (numeric_value(&left), numeric_value(&right)) {
+        (Some(NumericValue::Int(left)), Some(NumericValue::Int(right))) => {
+            if right == 0 {
+                return Err(RuntimeError::new("divmod() division by zero"));
+            }
+            let div = left.div_euclid(right);
+            let rem = left.rem_euclid(right);
+            Ok((Value::Int(div), Value::Int(rem)))
+        }
+        (Some(left), Some(right)) => {
+            let left = match left {
+                NumericValue::Int(value) => value as f64,
+                NumericValue::Float(value) => value,
+            };
+            let right = match right {
+                NumericValue::Int(value) => value as f64,
+                NumericValue::Float(value) => value,
+            };
+            if right == 0.0 {
+                return Err(RuntimeError::new("divmod() division by zero"));
+            }
+            let div = (left / right).floor();
+            let mut rem = left - div * right;
+            if rem == 0.0 {
+                rem = 0.0f64.copysign(right);
+            }
+            Ok((Value::Float(div), Value::Float(rem)))
+        }
+        _ => Err(RuntimeError::new("unsupported operand type")),
+    }
+}
+
 fn compare_values(left: &Value, right: &Value) -> Result<Ordering, RuntimeError> {
-    if let (Some(left), Some(right)) = (numeric_value(left), numeric_value(right)) {
-        return Ok(left.cmp(&right));
+    if let Some(ordering) = numeric_compare(left, right) {
+        return Ok(ordering);
     }
 
     match (left, right) {
         (Value::Str(a), Value::Str(b)) => Ok(a.cmp(b)),
         _ => Err(RuntimeError::new("min/max unsupported type")),
     }
+}
+
+fn format_float(value: f64) -> String {
+    if value.is_nan() {
+        return "nan".to_string();
+    }
+    if value.is_infinite() {
+        if value.is_sign_negative() {
+            return "-inf".to_string();
+        }
+        return "inf".to_string();
+    }
+    let mut text = value.to_string();
+    if !text.contains('.') && !text.contains('e') && !text.contains('E') {
+        text.push_str(".0");
+    }
+    text
 }
 
 pub fn format_value(value: &Value) -> String {
@@ -1237,6 +1389,7 @@ pub fn format_value(value: &Value) -> String {
             }
         }
         Value::Int(value) => value.to_string(),
+        Value::Float(value) => format_float(*value),
         Value::Str(value) => value.clone(),
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => {
@@ -1327,6 +1480,7 @@ fn is_truthy_value(value: &Value) -> bool {
         Value::None => false,
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
+        Value::Float(value) => *value != 0.0,
         Value::Str(value) => !value.is_empty(),
         Value::Cell(_) => true,
         Value::List(obj) => match &*obj.kind() {

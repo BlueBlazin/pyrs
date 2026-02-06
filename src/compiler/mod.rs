@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ast::{
-    AssignTarget, CallArg, ComprehensionClause, Constant, ExceptHandler, Expr, ExprKind,
-    MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
+    AssignTarget, CallArg, ComprehensionClause, Constant, ExceptHandler, Expr, ExprKind, MatchCase,
+    Module, Parameter, Pattern, Span, Stmt, StmtKind,
 };
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
@@ -1075,7 +1075,11 @@ impl Compiler {
         let mut seen_non_future = false;
         for stmt in body.iter().skip(idx) {
             match &stmt.node {
-                StmtKind::ImportFrom { module, names, level } if *level == 0 => {
+                StmtKind::ImportFrom {
+                    module,
+                    names,
+                    level,
+                } if *level == 0 => {
                     if module.as_deref() == Some("__future__") {
                         if seen_non_future {
                             return Err(CompileError::new(
@@ -1297,6 +1301,7 @@ impl Compiler {
                     crate::ast::BinaryOp::Add => Opcode::BinaryAdd,
                     crate::ast::BinaryOp::Sub => Opcode::BinarySub,
                     crate::ast::BinaryOp::Mul => Opcode::BinaryMul,
+                    crate::ast::BinaryOp::Div => Opcode::BinaryDiv,
                     crate::ast::BinaryOp::Pow => Opcode::BinaryPow,
                     crate::ast::BinaryOp::FloorDiv => Opcode::BinaryFloorDiv,
                     crate::ast::BinaryOp::Mod => Opcode::BinaryMod,
@@ -2236,6 +2241,7 @@ impl Compiler {
                     crate::ast::AugOp::Add => Opcode::BinaryAdd,
                     crate::ast::AugOp::Sub => Opcode::BinarySub,
                     crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                    crate::ast::AugOp::Div => Opcode::BinaryDiv,
                     crate::ast::AugOp::Mod => Opcode::BinaryMod,
                     crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
                     crate::ast::AugOp::Pow => Opcode::BinaryPow,
@@ -2258,6 +2264,7 @@ impl Compiler {
                         crate::ast::AugOp::Add => Opcode::BinaryAdd,
                         crate::ast::AugOp::Sub => Opcode::BinarySub,
                         crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                        crate::ast::AugOp::Div => Opcode::BinaryDiv,
                         crate::ast::AugOp::Mod => Opcode::BinaryMod,
                         crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
                         crate::ast::AugOp::Pow => Opcode::BinaryPow,
@@ -2290,6 +2297,7 @@ impl Compiler {
                     crate::ast::AugOp::Add => Opcode::BinaryAdd,
                     crate::ast::AugOp::Sub => Opcode::BinarySub,
                     crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                    crate::ast::AugOp::Div => Opcode::BinaryDiv,
                     crate::ast::AugOp::Mod => Opcode::BinaryMod,
                     crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
                     crate::ast::AugOp::Pow => Opcode::BinaryPow,
@@ -2704,6 +2712,7 @@ fn constant_to_value(constant: &Constant) -> Value {
         Constant::None => Value::None,
         Constant::Bool(value) => Value::Bool(*value),
         Constant::Int(value) => Value::Int(*value),
+        Constant::Float(value) => Value::Float(value.value()),
         Constant::Str(value) => Value::Str(value.clone()),
     }
 }

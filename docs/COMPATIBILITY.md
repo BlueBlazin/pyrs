@@ -5,10 +5,10 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 
 ## Parser & Grammar
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
-- [x] Indentation + baseline tokenization (names, ints with underscores/base prefixes, strings with prefixes, operators, keywords for implemented subset)
+- [x] Indentation + baseline tokenization (names, ints/floats with underscores/base prefixes/exponents, strings with prefixes, operators, keywords for implemented subset)
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
 - [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with, class (bases supported), decorators, `match`/`case` (core subset), `except*` parsing, and async statement syntax (`async def`/`async for`/`async with` with lowering semantics)
-- [x] Expressions subset: arithmetic (incl `**`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await syntax lowering, list/dict comprehensions, generator expressions, and f-string lowering
+- [x] Expressions subset: arithmetic (incl `**`, `/`, `//`, `%`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await syntax lowering, list/dict comprehensions, generator expressions, and f-string lowering
 - [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
 - [x] Type parameter syntax on `def`/`class` headers (`def f[T](...)`, `class C[T]: ...`)
 - [x] `__future__` import placement + unknown-feature compile-time validation
@@ -20,13 +20,13 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Internal bytecode IR + compiler for subset (non-CPython)
 - [x] `.pyc` header parsing
 - [x] CPython bytecode decoder + translator for supported opcode subset (explicit unsupported-opcode errors; no silent fallback behavior)
-- [x] `.pyc` loader + executor for supported opcode subset
+- [x] `.pyc` loader + executor for supported opcode subset (including marshal float constants)
 - [x] CPython `.pyc` writer for supported code-object subset (header + marshal)
 - [ ] CPython bytecode encoder for full 3.14 opcode families
 - [ ] Opcode execution parity (full 3.14 coverage)
 
 ## Runtime & Object Model
-- [x] Core types subset (None, bool, int, str, tuple, list, dict)
+- [x] Core types subset (None, bool, int, float, str, tuple, list, dict)
 - [ ] bytes, set, frozenset, memoryview, complex, etc.
 - [x] Function + frame model (positional-only params, positional params, defaults, keyword args, keyword-only params, *args/**kwargs; closures + `nonlocal`)
 - [x] Generators (lazy suspended-frame protocol: `__next__`, `send`, `throw`, `close`)
@@ -40,12 +40,13 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
 
 ## Stdlib Coverage
-- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted, locals, globals, `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, basic `__import__` name/fromlist/level semantics)
+- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/float/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted, locals, globals, `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, basic `__import__` name/fromlist/level semantics)
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
 - [x] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`)
 - [ ] `types`, `inspect`
 - [ ] `os`, `pathlib`, `io`
-- [ ] `math`, `random`, `itertools`
+- [~] `random` foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`)
+- [ ] `math`, `itertools`
 - [ ] `json`, `re`, `datetime`
 
 ## CPython Tests

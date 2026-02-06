@@ -1,6 +1,6 @@
 use pyrs::ast::{
-    AssignTarget, ComprehensionClause, Constant, Expr, ExprKind, MatchCase, Module, Parameter,
-    Pattern, Span, Stmt, StmtKind,
+    AssignTarget, ComprehensionClause, Constant, Expr, ExprKind, FloatLiteral, MatchCase, Module,
+    Parameter, Pattern, Span, Stmt, StmtKind,
 };
 use pyrs::parser;
 
@@ -422,8 +422,9 @@ fn parses_augmented_assignment() {
 
 #[test]
 fn parses_augmented_assignment_variants() {
-    let module = parser::parse_module("x %= 2\nx //= 3\nx **= 2\n").expect("parse should succeed");
-    assert_eq!(strip_module(&module).len(), 3);
+    let module =
+        parser::parse_module("x /= 2\nx %= 2\nx //= 3\nx **= 2\n").expect("parse should succeed");
+    assert_eq!(strip_module(&module).len(), 4);
     for stmt in &strip_module(&module) {
         match &stmt.node {
             StmtKind::AugAssign { .. } => {}
@@ -484,6 +485,20 @@ fn parses_floor_div_expression() {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Binary { op, .. } => {
                 assert_eq!(*op, pyrs::ast::BinaryOp::FloorDiv);
+            }
+            other => panic!("unexpected expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_true_div_expression() {
+    let module = parser::parse_module("5 / 2").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Expr(expr) => match &expr.node {
+            ExprKind::Binary { op, .. } => {
+                assert_eq!(*op, pyrs::ast::BinaryOp::Div);
             }
             other => panic!("unexpected expr: {other:?}"),
         },
@@ -1660,6 +1675,28 @@ fn parses_integer_literal() {
 }
 
 #[test]
+fn parses_float_literal() {
+    let module = parser::parse_module("3.5").expect("parse should succeed");
+    assert_eq!(
+        strip_module(&module),
+        vec![spanned_stmt(StmtKind::Expr(spanned_expr(
+            ExprKind::Constant(Constant::Float(FloatLiteral(3.5)))
+        )))]
+    );
+}
+
+#[test]
+fn parses_leading_dot_float_literal() {
+    let module = parser::parse_module(".5").expect("parse should succeed");
+    assert_eq!(
+        strip_module(&module),
+        vec![spanned_stmt(StmtKind::Expr(spanned_expr(
+            ExprKind::Constant(Constant::Float(FloatLiteral(0.5)))
+        )))]
+    );
+}
+
+#[test]
 fn parses_string_literal() {
     let module = parser::parse_module("'hi'").expect("parse should succeed");
     assert_eq!(
@@ -1792,7 +1829,10 @@ fn parses_match_case_statement() {
         StmtKind::Match { subject, cases } => {
             assert_eq!(subject.node, ExprKind::Name("value".to_string()));
             assert_eq!(cases.len(), 2);
-            assert!(matches!(cases[0].pattern, Pattern::Constant(Constant::Int(1))));
+            assert!(matches!(
+                cases[0].pattern,
+                Pattern::Constant(Constant::Int(1))
+            ));
             assert!(matches!(cases[1].pattern, Pattern::Capture(_)));
             assert!(cases[1].guard.is_some());
         }
@@ -1806,9 +1846,7 @@ fn parses_async_statements_and_await() {
     let module = parser::parse_module(source).expect("parse should succeed");
     let stripped = strip_module(&module);
     match &stripped[0].node {
-        StmtKind::FunctionDef {
-            is_async, body, ..
-        } => {
+        StmtKind::FunctionDef { is_async, body, .. } => {
             assert!(*is_async);
             match &body[0].node {
                 StmtKind::Return { value } => {
@@ -1820,7 +1858,10 @@ fn parses_async_statements_and_await() {
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
-    assert!(matches!(stripped[1].node, StmtKind::For { is_async: true, .. }));
+    assert!(matches!(
+        stripped[1].node,
+        StmtKind::For { is_async: true, .. }
+    ));
     assert!(matches!(
         stripped[2].node,
         StmtKind::With { is_async: true, .. }

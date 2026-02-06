@@ -292,6 +292,7 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mul,
+    Div,
     Pow,
     FloorDiv,
     Mod,
@@ -325,15 +326,34 @@ pub enum AugOp {
     Add,
     Sub,
     Mul,
+    Div,
     Mod,
     FloorDiv,
     Pow,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct FloatLiteral(pub f64);
+
+impl FloatLiteral {
+    pub fn value(self) -> f64 {
+        self.0
+    }
+}
+
+impl PartialEq for FloatLiteral {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for FloatLiteral {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Constant {
     None,
     Bool(bool),
     Int(i64),
+    Float(FloatLiteral),
     Str(String),
 }

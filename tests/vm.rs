@@ -17,6 +17,18 @@ fn dict_entries(value: Option<Value>) -> Option<Vec<(Value, Value)>> {
     value.and_then(|val| val.as_dict())
 }
 
+fn assert_float_global(vm: &Vm, name: &str, expected: f64) {
+    match vm.get_global(name) {
+        Some(Value::Float(actual)) => {
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "expected {name}={expected}, got {actual}"
+            );
+        }
+        other => panic!("expected float global {name}, got {other:?}"),
+    }
+}
+
 #[test]
 fn executes_constant_expression() {
     let module = parser::parse_module("42").expect("parse should succeed");
@@ -117,6 +129,34 @@ fn executes_bool_int_numeric_ops() {
     assert_eq!(vm.get_global("c"), Some(Value::Int(3)));
     assert_eq!(vm.get_global("d"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("e"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_float_numeric_ops() {
+    let source = "\
+a = 1 / 2\n\
+b = 5.0 / 2\n\
+c = 5 // 2.0\n\
+d = 5.0 % 2\n\
+e = 2 ** -1\n\
+f = +3.5\n\
+g = -3.5\n\
+h = 1.0 == 1\n\
+i = 1.0 < 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_float_global(&vm, "a", 0.5);
+    assert_float_global(&vm, "b", 2.5);
+    assert_float_global(&vm, "c", 2.0);
+    assert_float_global(&vm, "d", 1.0);
+    assert_float_global(&vm, "e", 0.5);
+    assert_float_global(&vm, "f", 3.5);
+    assert_float_global(&vm, "g", -3.5);
+    assert_eq!(vm.get_global("h"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("i"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -700,7 +740,10 @@ fn executes_bool_int_str_builtins() {
 b = bool(1)\n\
 c = int(True)\n\
 d = int('5')\n\
-e = str(3)\n";
+e = str(3)\n\
+f = float(3)\n\
+g = float('2.5')\n\
+h = int(3.9)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -711,12 +754,16 @@ e = str(3)\n";
     assert_eq!(vm.get_global("c"), Some(Value::Int(1)));
     assert_eq!(vm.get_global("d"), Some(Value::Int(5)));
     assert_eq!(vm.get_global("e"), Some(Value::Str("3".to_string())));
+    assert_float_global(&vm, "f", 3.0);
+    assert_float_global(&vm, "g", 2.5);
+    assert_eq!(vm.get_global("h"), Some(Value::Int(3)));
 }
 
 #[test]
 fn executes_abs_builtin() {
     let source = "a = abs(-3)\n\
-b = abs(True)\n";
+b = abs(True)\n\
+c = abs(-3.5)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -724,12 +771,14 @@ b = abs(True)\n";
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("a"), Some(Value::Int(3)));
     assert_eq!(vm.get_global("b"), Some(Value::Int(1)));
+    assert_float_global(&vm, "c", 3.5);
 }
 
 #[test]
 fn executes_sum_builtin() {
     let source = "a = sum([1, 2, 3])\n\
-b = sum((1, 2), 5)\n";
+b = sum((1, 2), 5)\n\
+c = sum([1.5, 2.5], 1.0)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -737,6 +786,7 @@ b = sum((1, 2), 5)\n";
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("a"), Some(Value::Int(6)));
     assert_eq!(vm.get_global("b"), Some(Value::Int(8)));
+    assert_float_global(&vm, "c", 5.0);
 }
 
 #[test]
@@ -783,7 +833,8 @@ c = all((1, 2, 3))\n";
 #[test]
 fn executes_pow_builtin() {
     let source = "a = pow(2, 3)\n\
-b = pow(2, 3, 5)\n";
+b = pow(2, 3, 5)\n\
+c = pow(2, -1)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -791,6 +842,7 @@ b = pow(2, 3, 5)\n";
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("a"), Some(Value::Int(8)));
     assert_eq!(vm.get_global("b"), Some(Value::Int(3)));
+    assert_float_global(&vm, "c", 0.5);
 }
 
 #[test]
@@ -825,7 +877,8 @@ d = list('ab')\n";
 #[test]
 fn executes_divmod_builtin() {
     let source = "a = divmod(7, 3)\n\
-b = divmod(-7, 3)\n";
+b = divmod(-7, 3)\n\
+c = divmod(7.0, 3)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -839,6 +892,19 @@ b = divmod(-7, 3)\n";
         tuple_values(vm.get_global("b")),
         Some(vec![Value::Int(-3), Value::Int(2)])
     );
+    match tuple_values(vm.get_global("c")) {
+        Some(values) => {
+            assert_eq!(values.len(), 2);
+            match (&values[0], &values[1]) {
+                (Value::Float(div), Value::Float(rem)) => {
+                    assert!((*div - 2.0).abs() < 1e-12);
+                    assert!((*rem - 1.0).abs() < 1e-12);
+                }
+                other => panic!("unexpected divmod floats: {other:?}"),
+            }
+        }
+        other => panic!("expected tuple for c, got {other:?}"),
+    }
 }
 
 #[test]
@@ -1559,6 +1625,35 @@ path_len = len(sys.path)\n";
         Some(Value::Str("sys".to_string()))
     );
     assert_eq!(vm.get_global("path_len"), Some(Value::Int(1)));
+}
+
+#[test]
+fn imports_random_module_and_is_seed_deterministic() {
+    let source = "\
+import random\n\
+random.seed(123)\n\
+a1 = random.random()\n\
+b1 = random.randrange(100)\n\
+c1 = random.randint(3, 7)\n\
+d1 = random.getrandbits(12)\n\
+x = [1, 2, 3, 4]\n\
+random.shuffle(x)\n\
+e1 = random.choice(x)\n\
+random.seed(123)\n\
+a2 = random.random()\n\
+b2 = random.randrange(100)\n\
+c2 = random.randint(3, 7)\n\
+d2 = random.getrandbits(12)\n\
+y = [1, 2, 3, 4]\n\
+random.shuffle(y)\n\
+e2 = random.choice(y)\n\
+same = (a1 == a2) and (b1 == b2) and (c1 == c2) and (d1 == d2) and (x == y) and (e1 == e2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("same"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -2552,7 +2647,8 @@ fn executes_async_syntax_lowering() {
 
 #[test]
 fn executes_except_star_as_except() {
-    let source = "caught = False\ntry:\n    raise ValueError\nexcept* ValueError:\n    caught = True\n";
+    let source =
+        "caught = False\ntry:\n    raise ValueError\nexcept* ValueError:\n    caught = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -2579,7 +2675,8 @@ fn rejects_misplaced_future_import() {
     let module = parser::parse_module(source).expect("parse should succeed");
     let err = compiler::compile_module(&module).expect_err("compile should fail");
     assert!(
-        err.message.contains("from __future__ imports must occur at the beginning"),
+        err.message
+            .contains("from __future__ imports must occur at the beginning"),
         "unexpected message: {}",
         err.message
     );

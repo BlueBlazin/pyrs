@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::ast::{
     AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, ExceptHandler, Expr,
-    ExprKind, ImportAlias, MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind, UnaryOp,
+    ExprKind, FloatLiteral, ImportAlias, MatchCase, Module, Parameter, Pattern, Span, Stmt,
+    StmtKind, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -189,6 +190,7 @@ impl Parser {
                 TokenKind::PlusEqual => Some(crate::ast::AugOp::Add),
                 TokenKind::MinusEqual => Some(crate::ast::AugOp::Sub),
                 TokenKind::StarEqual => Some(crate::ast::AugOp::Mul),
+                TokenKind::SlashEqual => Some(crate::ast::AugOp::Div),
                 TokenKind::PercentEqual => Some(crate::ast::AugOp::Mod),
                 TokenKind::DoubleSlashEqual => Some(crate::ast::AugOp::FloorDiv),
                 TokenKind::DoubleStarEqual => Some(crate::ast::AugOp::Pow),
@@ -217,6 +219,7 @@ impl Parser {
                     | TokenKind::PlusEqual
                     | TokenKind::MinusEqual
                     | TokenKind::StarEqual
+                    | TokenKind::SlashEqual
                     | TokenKind::DoubleStarEqual
                     | TokenKind::DoubleSlashEqual
                     | TokenKind::PercentEqual
@@ -339,7 +342,10 @@ impl Parser {
             pos = self.consume_separators(pos);
         }
         pos = self.expect_kind(pos, TokenKind::Dedent)?;
-        Ok((self.make_stmt(start, StmtKind::Match { subject, cases }), pos))
+        Ok((
+            self.make_stmt(start, StmtKind::Match { subject, cases }),
+            pos,
+        ))
     }
 
     fn parse_match_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
@@ -353,8 +359,8 @@ impl Parser {
                 }
             }
             TokenKind::Number => {
-                let value = self.parse_int_literal(&token.lexeme, pos)?;
-                Ok((Pattern::Constant(Constant::Int(value)), pos + 1))
+                let value = self.parse_number_literal(&token.lexeme, pos)?;
+                Ok((Pattern::Constant(value), pos + 1))
             }
             TokenKind::String => Ok((
                 Pattern::Constant(Constant::Str(token.lexeme.clone())),
@@ -374,8 +380,13 @@ impl Parser {
                 if next.kind != TokenKind::Number {
                     return Err(self.error_at(pos, "expected numeric pattern"));
                 }
-                let value = self.parse_int_literal(&next.lexeme, pos + 1)?;
-                Ok((Pattern::Constant(Constant::Int(-value)), pos + 2))
+                let value = self.parse_number_literal(&next.lexeme, pos + 1)?;
+                let negated = match value {
+                    Constant::Int(value) => Constant::Int(-value),
+                    Constant::Float(value) => Constant::Float(FloatLiteral(-value.value())),
+                    _ => return Err(self.error_at(pos, "expected numeric pattern")),
+                };
+                Ok((Pattern::Constant(negated), pos + 2))
             }
             _ => Err(self.error_at(pos, "unsupported pattern")),
         }
@@ -656,6 +667,7 @@ impl Parser {
         loop {
             let op = match self.token_at(pos).kind {
                 TokenKind::Star => BinaryOp::Mul,
+                TokenKind::Slash => BinaryOp::Div,
                 TokenKind::DoubleSlash => BinaryOp::FloorDiv,
                 TokenKind::Percent => BinaryOp::Mod,
                 _ => break,
@@ -751,11 +763,8 @@ impl Parser {
                 pos + 1,
             ),
             TokenKind::Number => {
-                let value = self.parse_int_literal(&token.lexeme, pos)?;
-                (
-                    self.make_expr(pos, ExprKind::Constant(Constant::Int(value))),
-                    pos + 1,
-                )
+                let value = self.parse_number_literal(&token.lexeme, pos)?;
+                (self.make_expr(pos, ExprKind::Constant(value)), pos + 1)
             }
             TokenKind::String => (
                 self.make_expr(pos, ExprKind::Constant(Constant::Str(token.lexeme.clone()))),
@@ -1651,6 +1660,25 @@ impl Parser {
             .map_err(|_| self.error_at(pos, "invalid integer literal"))
     }
 
+    fn parse_number_literal(&self, lexeme: &str, pos: usize) -> Result<Constant, ParseError> {
+        let normalized = lexeme.replace('_', "");
+        let is_prefixed_int = normalized.starts_with("0x")
+            || normalized.starts_with("0X")
+            || normalized.starts_with("0o")
+            || normalized.starts_with("0O")
+            || normalized.starts_with("0b")
+            || normalized.starts_with("0B");
+        if !is_prefixed_int
+            && (normalized.contains('.') || normalized.contains('e') || normalized.contains('E'))
+        {
+            let value = normalized
+                .parse::<f64>()
+                .map_err(|_| self.error_at(pos, "invalid float literal"))?;
+            return Ok(Constant::Float(FloatLiteral(value)));
+        }
+        self.parse_int_literal(lexeme, pos).map(Constant::Int)
+    }
+
     fn parse_fstring_literal(&mut self, pos: usize, content: &str) -> Result<Expr, ParseError> {
         let span = self.span_at(pos);
         let mut pieces: Vec<Expr> = Vec::new();
@@ -1692,10 +1720,7 @@ impl Parser {
                     return Err(self.error_at(pos, "empty f-string expression"));
                 }
                 let embedded = self.parse_embedded_expr(expr_text).map_err(|err| {
-                    self.error_at(
-                        pos,
-                        format!("invalid f-string expression: {}", err.message),
-                    )
+                    self.error_at(pos, format!("invalid f-string expression: {}", err.message))
                 })?;
                 let str_name = Expr {
                     node: ExprKind::Name("str".to_string()),
@@ -1763,7 +1788,8 @@ impl Parser {
 
     fn is_comprehension_start(&self, pos: usize) -> bool {
         self.match_keyword(pos, Keyword::For)
-            || (self.match_keyword(pos, Keyword::Async) && self.match_keyword(pos + 1, Keyword::For))
+            || (self.match_keyword(pos, Keyword::Async)
+                && self.match_keyword(pos + 1, Keyword::For))
     }
 
     fn parse_comp_clauses(
@@ -1927,10 +1953,7 @@ impl Parser {
     fn parse_paren_expr(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
         let start = pos.saturating_sub(1);
         if matches!(self.token_at(pos).kind, TokenKind::RParen) {
-            return Ok((
-                self.make_expr(start, ExprKind::Tuple(Vec::new())),
-                pos + 1,
-            ));
+            return Ok((self.make_expr(start, ExprKind::Tuple(Vec::new())), pos + 1));
         }
 
         let (first, mut pos) = self.parse_expr_at(pos)?;

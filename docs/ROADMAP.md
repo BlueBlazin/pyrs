@@ -201,6 +201,11 @@ DoD:
 - Builtins required by stdlib and common apps are present with correct semantics.
 - Foundational stdlib modules are usable: `sys`, `types`, `inspect`, `io`, `os`, `pathlib`, `time`, `datetime`, `collections`, `math`, `re`, `json`, `functools`, `itertools`, `operator`.
 - Pure-Python package installation/execution works for representative no-C-extension packages.
+Status: in progress
+Progress:
+- Float foundations landed end-to-end: parser/AST/compiler/VM/runtime support float literals, `/`, `//`, `%`, `**`, unary `+/-`, mixed int-bool-float comparisons, and `float()` builtin conversion paths.
+- CPython marshal/translation now supports float constants (`g` binary float marshal tag) for `.pyc` decode/execute flows.
+- Builtin `random` module foundations landed (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`) with deterministic seed behavior and regression tests.
 
 ### Milestone 10 — Async and Concurrency Semantics (P1)
 DoD:
@@ -248,7 +253,7 @@ DoD:
 - Production playbook exists for incident triage, rollback strategy, and reproducible artifact verification.
 
 ## Immediate next steps
-- Start Milestone 9 work: core runtime type coverage (`set`/`frozenset`, `bytes`/`bytearray`/`memoryview`, `float`/`complex`, unicode/codecs) and remaining data-model gaps (`metaclass`, `__slots__`).
+- Continue Milestone 9 work: remaining core runtime type coverage (`set`/`frozenset`, `bytes`/`bytearray`/`memoryview`, `complex`, unicode/codecs) and remaining data-model gaps (`metaclass`, `__slots__`).
 - Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 9-10.
 - Continue broad CPython parity tests while landing language/runtime milestones.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.

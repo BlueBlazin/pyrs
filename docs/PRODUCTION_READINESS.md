@@ -58,8 +58,8 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [ ] P2: Inline cache / adaptive opcode support.
 
 **Runtime Object Model & Data Model**
-- [~] P0: Core objects (int/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC.
-- [ ] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules.
+- [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC.
+- [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (float + mixed int/bool coercion implemented; big-int and complex pending).
 - [ ] P0: bytes/bytearray/memoryview and buffer protocol.
 - [ ] P0: set/frozenset.
 - [ ] P0: Unicode/codec behavior parity (including error handlers).
@@ -71,7 +71,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [ ] P1: Frame objects + `inspect` compatibility (locals/globals/stack).
 
 **Builtins**
-- [~] P0: Core builtin set (print, len, range, etc.).
+- [~] P0: Core builtin set (print, len, range, float/int coercions, numeric ops, and random module foundations).
 - [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, dir, help, input, etc.; `getattr`/`setattr`/`delattr`/`hasattr` and explicit-args `super` implemented).
 - [x] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to loader path).
 
@@ -84,6 +84,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 
 **Standard Library Coverage**
 - [~] P0: Minimal builtins subset.
+- [~] P0: `random` module foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`).
 - [ ] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
 - [ ] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core).
 - [ ] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator`.
