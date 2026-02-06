@@ -1,6 +1,4 @@
-use pyrs::ast::{
-    AssignTarget, Constant, Expr, ExprKind, Module, Parameter, Span, Stmt, StmtKind,
-};
+use pyrs::ast::{AssignTarget, Constant, Expr, ExprKind, Module, Parameter, Span, Stmt, StmtKind};
 use pyrs::parser;
 
 fn spanned_expr(node: ExprKind) -> Expr {
@@ -100,7 +98,9 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             body: body.iter().map(strip_stmt).collect(),
             orelse: orelse.iter().map(strip_stmt).collect(),
         },
-        StmtKind::Import { names } => StmtKind::Import { names: names.clone() },
+        StmtKind::Import { names } => StmtKind::Import {
+            names: names.clone(),
+        },
         StmtKind::ImportFrom {
             module,
             names,
@@ -110,8 +110,12 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             names: names.clone(),
             level: *level,
         },
-        StmtKind::Global { names } => StmtKind::Global { names: names.clone() },
-        StmtKind::Nonlocal { names } => StmtKind::Nonlocal { names: names.clone() },
+        StmtKind::Global { names } => StmtKind::Global {
+            names: names.clone(),
+        },
+        StmtKind::Nonlocal { names } => StmtKind::Nonlocal {
+            names: names.clone(),
+        },
         StmtKind::AnnAssign {
             target,
             annotation,
@@ -157,27 +161,19 @@ fn strip_expr(expr: &Expr) -> Expr {
                     pyrs::ast::CallArg::Positional(expr) => {
                         pyrs::ast::CallArg::Positional(strip_expr(expr))
                     }
-                    pyrs::ast::CallArg::Keyword { name, value } => {
-                        pyrs::ast::CallArg::Keyword {
-                            name: name.clone(),
-                            value: strip_expr(value),
-                        }
-                    }
-                    pyrs::ast::CallArg::Star(expr) => {
-                        pyrs::ast::CallArg::Star(strip_expr(expr))
-                    }
+                    pyrs::ast::CallArg::Keyword { name, value } => pyrs::ast::CallArg::Keyword {
+                        name: name.clone(),
+                        value: strip_expr(value),
+                    },
+                    pyrs::ast::CallArg::Star(expr) => pyrs::ast::CallArg::Star(strip_expr(expr)),
                     pyrs::ast::CallArg::DoubleStar(expr) => {
                         pyrs::ast::CallArg::DoubleStar(strip_expr(expr))
                     }
                 })
                 .collect(),
         },
-        ExprKind::List(values) => {
-            ExprKind::List(values.iter().map(strip_expr).collect())
-        }
-        ExprKind::Tuple(values) => {
-            ExprKind::Tuple(values.iter().map(strip_expr).collect())
-        }
+        ExprKind::List(values) => ExprKind::List(values.iter().map(strip_expr).collect()),
+        ExprKind::Tuple(values) => ExprKind::Tuple(values.iter().map(strip_expr).collect()),
         ExprKind::Dict(entries) => ExprKind::Dict(
             entries
                 .iter()
@@ -281,7 +277,9 @@ fn parses_name_expression_statement() {
     let module = parser::parse_module("spam").expect("parse should succeed");
     assert_eq!(
         strip_module(&module),
-        vec![spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Name("spam".to_string()))))]
+        vec![spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Name(
+            "spam".to_string()
+        ))))]
     );
 }
 
@@ -348,8 +346,7 @@ fn parses_augmented_assignment() {
 
 #[test]
 fn parses_augmented_assignment_variants() {
-    let module =
-        parser::parse_module("x %= 2\nx //= 3\nx **= 2\n").expect("parse should succeed");
+    let module = parser::parse_module("x %= 2\nx //= 3\nx **= 2\n").expect("parse should succeed");
     assert_eq!(strip_module(&module).len(), 3);
     for stmt in &strip_module(&module) {
         match &stmt.node {
@@ -364,7 +361,9 @@ fn parses_with_statement() {
     let source = "with mgr as value:\n    pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::With { context, target, .. } => {
+        StmtKind::With {
+            context, target, ..
+        } => {
             assert_eq!(&context.node, &ExprKind::Name("mgr".to_string()));
             let target = target.as_ref().expect("with target");
             assert_eq!(*target, AssignTarget::Name("value".to_string()));
@@ -474,8 +473,7 @@ fn parses_not_equal_expression() {
 
 #[test]
 fn parses_relational_expressions() {
-    let module =
-        parser::parse_module("1 <= 2\n3 > 2\n4 >= 4").expect("parse should succeed");
+    let module = parser::parse_module("1 <= 2\n3 > 2\n4 >= 4").expect("parse should succeed");
     match &strip_module(&module)[0].node {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Binary { op, .. } => {
@@ -587,18 +585,18 @@ fn parses_lambda_expression() {
                 kwonly_params,
                 body,
             } => {
-            assert!(posonly_params.is_empty());
-            assert_eq!(params.len(), 1);
-            assert_eq!(params[0].name, "x");
-            assert!(params[0].default.is_none());
-            assert!(vararg.is_none());
-            assert!(kwarg.is_none());
-            assert!(kwonly_params.is_empty());
-            match &body.node {
-                ExprKind::Binary { .. } => {}
-                other => panic!("unexpected body: {other:?}"),
+                assert!(posonly_params.is_empty());
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].name, "x");
+                assert!(params[0].default.is_none());
+                assert!(vararg.is_none());
+                assert!(kwarg.is_none());
+                assert!(kwonly_params.is_empty());
+                match &body.node {
+                    ExprKind::Binary { .. } => {}
+                    other => panic!("unexpected body: {other:?}"),
+                }
             }
-        }
             other => panic!("unexpected expr: {other:?}"),
         },
         other => panic!("unexpected stmt: {other:?}"),
@@ -740,9 +738,15 @@ fn parses_boolean_and_none_literals() {
     assert_eq!(
         strip_module(&module),
         vec![
-            spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Constant(Constant::Bool(true))))),
-            spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Constant(Constant::Bool(false))))),
-            spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Constant(Constant::None)))),
+            spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Constant(
+                Constant::Bool(true)
+            )))),
+            spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Constant(
+                Constant::Bool(false)
+            )))),
+            spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Constant(
+                Constant::None
+            )))),
         ]
     );
 }
@@ -840,7 +844,10 @@ fn parses_function_definition_with_varargs() {
             assert!(posonly_params.is_empty());
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "a");
-            assert_eq!(vararg.as_ref().map(|param| param.name.as_str()), Some("rest"));
+            assert_eq!(
+                vararg.as_ref().map(|param| param.name.as_str()),
+                Some("rest")
+            );
             assert_eq!(kwarg.as_ref().map(|param| param.name.as_str()), Some("kw"));
             assert!(kwonly_params.is_empty());
         }
@@ -863,7 +870,10 @@ fn parses_lambda_with_varargs() {
             } => {
                 assert!(posonly_params.is_empty());
                 assert!(params.is_empty());
-                assert_eq!(vararg.as_ref().map(|param| param.name.as_str()), Some("args"));
+                assert_eq!(
+                    vararg.as_ref().map(|param| param.name.as_str()),
+                    Some("args")
+                );
                 assert_eq!(kwarg.as_ref().map(|param| param.name.as_str()), Some("kw"));
                 assert!(kwonly_params.is_empty());
             }
@@ -917,8 +927,8 @@ fn parses_keyword_only_parameters() {
 
 #[test]
 fn parses_positional_only_parameters() {
-    let module =
-        parser::parse_module("def f(a, b=1, /, c=2):\n    return a\n").expect("parse should succeed");
+    let module = parser::parse_module("def f(a, b=1, /, c=2):\n    return a\n")
+        .expect("parse should succeed");
     match &strip_module(&module)[0].node {
         StmtKind::FunctionDef {
             posonly_params,
@@ -991,15 +1001,19 @@ fn parses_call_expression() {
     match &strip_module(&module)[0].node {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Call { func, args } => {
-            assert_eq!(&func.node, &ExprKind::Name("add".to_string()));
-            assert_eq!(
-                args,
-                &vec![
-                    pyrs::ast::CallArg::Positional(spanned_expr(ExprKind::Constant(Constant::Int(1)))),
-                    pyrs::ast::CallArg::Positional(spanned_expr(ExprKind::Constant(Constant::Int(2)))),
-                ]
-            );
-        }
+                assert_eq!(&func.node, &ExprKind::Name("add".to_string()));
+                assert_eq!(
+                    args,
+                    &vec![
+                        pyrs::ast::CallArg::Positional(spanned_expr(ExprKind::Constant(
+                            Constant::Int(1)
+                        ))),
+                        pyrs::ast::CallArg::Positional(spanned_expr(ExprKind::Constant(
+                            Constant::Int(2)
+                        ))),
+                    ]
+                );
+            }
             other => panic!("unexpected expr: {other:?}"),
         },
         other => panic!("unexpected stmt: {other:?}"),
@@ -1012,20 +1026,20 @@ fn parses_call_with_keywords() {
     match &strip_module(&module)[0].node {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Call { args, .. } => {
-            assert_eq!(
-                args,
-                &vec![
-                    pyrs::ast::CallArg::Keyword {
-                        name: "a".to_string(),
-                        value: spanned_expr(ExprKind::Constant(Constant::Int(1))),
-                    },
-                    pyrs::ast::CallArg::Keyword {
-                        name: "b".to_string(),
-                        value: spanned_expr(ExprKind::Constant(Constant::Int(2))),
-                    },
-                ]
-            );
-        }
+                assert_eq!(
+                    args,
+                    &vec![
+                        pyrs::ast::CallArg::Keyword {
+                            name: "a".to_string(),
+                            value: spanned_expr(ExprKind::Constant(Constant::Int(1))),
+                        },
+                        pyrs::ast::CallArg::Keyword {
+                            name: "b".to_string(),
+                            value: spanned_expr(ExprKind::Constant(Constant::Int(2))),
+                        },
+                    ]
+                );
+            }
             other => panic!("unexpected expr: {other:?}"),
         },
         other => panic!("unexpected stmt: {other:?}"),
@@ -1038,14 +1052,16 @@ fn parses_call_with_star_args() {
     match &strip_module(&module)[0].node {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Call { args, .. } => {
-            assert_eq!(
-                args,
-                &vec![
-                    pyrs::ast::CallArg::Star(spanned_expr(ExprKind::Name("args".to_string()))),
-                    pyrs::ast::CallArg::DoubleStar(spanned_expr(ExprKind::Name("kwargs".to_string()))),
-                ]
-            );
-        }
+                assert_eq!(
+                    args,
+                    &vec![
+                        pyrs::ast::CallArg::Star(spanned_expr(ExprKind::Name("args".to_string()))),
+                        pyrs::ast::CallArg::DoubleStar(spanned_expr(ExprKind::Name(
+                            "kwargs".to_string()
+                        ))),
+                    ]
+                );
+            }
             other => panic!("unexpected expr: {other:?}"),
         },
         other => panic!("unexpected stmt: {other:?}"),
@@ -1058,15 +1074,15 @@ fn parses_list_literal_and_subscript() {
     match &strip_module(&module)[0].node {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Subscript { value, index } => {
-            assert_eq!(
-                &value.node,
-                &ExprKind::List(vec![
-                    spanned_expr(ExprKind::Constant(Constant::Int(1))),
-                    spanned_expr(ExprKind::Constant(Constant::Int(2)))
-                ])
-            );
-            assert_eq!(&index.node, &ExprKind::Constant(Constant::Int(0)));
-        }
+                assert_eq!(
+                    &value.node,
+                    &ExprKind::List(vec![
+                        spanned_expr(ExprKind::Constant(Constant::Int(1))),
+                        spanned_expr(ExprKind::Constant(Constant::Int(2)))
+                    ])
+                );
+                assert_eq!(&index.node, &ExprKind::Constant(Constant::Int(0)));
+            }
             other => panic!("unexpected expr: {other:?}"),
         },
         other => panic!("unexpected stmt: {other:?}"),
@@ -1079,9 +1095,9 @@ fn parses_attribute_expression() {
     match &strip_module(&module)[0].node {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Attribute { value, name } => {
-            assert_eq!(&value.node, &ExprKind::Name("mod".to_string()));
-            assert_eq!(name, "value");
-        }
+                assert_eq!(&value.node, &ExprKind::Name("mod".to_string()));
+                assert_eq!(name, "value");
+            }
             other => panic!("unexpected expr: {other:?}"),
         },
         other => panic!("unexpected stmt: {other:?}"),
@@ -1167,7 +1183,9 @@ fn parses_function_annotations() {
     let source = "def f(x: int) -> str:\n    return 'ok'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::FunctionDef { params, returns, .. } => {
+        StmtKind::FunctionDef {
+            params, returns, ..
+        } => {
             assert_eq!(params.len(), 1);
             assert!(params[0].annotation.is_some());
             match returns {
@@ -1282,8 +1300,7 @@ fn parses_import_alias() {
 
 #[test]
 fn parses_from_import_alias() {
-    let module = parser::parse_module("from mod import value as v")
-        .expect("parse should succeed");
+    let module = parser::parse_module("from mod import value as v").expect("parse should succeed");
     match &strip_module(&module)[0].node {
         StmtKind::ImportFrom { names, .. } => {
             assert_eq!(
@@ -1458,7 +1475,10 @@ fn parses_break_and_continue() {
         StmtKind::While { body, orelse, .. } => {
             assert_eq!(
                 body,
-                &vec![spanned_stmt(StmtKind::Break), spanned_stmt(StmtKind::Continue)]
+                &vec![
+                    spanned_stmt(StmtKind::Break),
+                    spanned_stmt(StmtKind::Continue)
+                ]
             );
             assert!(orelse.is_empty());
         }
@@ -1528,9 +1548,9 @@ fn parses_integer_literal() {
     let module = parser::parse_module("42").expect("parse should succeed");
     assert_eq!(
         strip_module(&module),
-        vec![spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Constant(Constant::Int(
-            42
-        )))))]
+        vec![spanned_stmt(StmtKind::Expr(spanned_expr(
+            ExprKind::Constant(Constant::Int(42))
+        )))]
     );
 }
 
@@ -1539,9 +1559,9 @@ fn parses_string_literal() {
     let module = parser::parse_module("'hi'").expect("parse should succeed");
     assert_eq!(
         strip_module(&module),
-        vec![spanned_stmt(StmtKind::Expr(spanned_expr(ExprKind::Constant(
-            Constant::Str("hi".to_string())
-        ))))]
+        vec![spanned_stmt(StmtKind::Expr(spanned_expr(
+            ExprKind::Constant(Constant::Str("hi".to_string()))
+        )))]
     );
 }
 

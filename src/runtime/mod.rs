@@ -323,12 +323,10 @@ impl Heap {
             | Value::Function(obj)
             | Value::BoundMethod(obj)
             | Value::Cell(obj) => obj.id(),
-            Value::Exception(exception) => {
-                self.id_for_immediate(ImmediateKey::Exception(
-                    exception.name.clone(),
-                    exception.message.clone(),
-                ))
-            }
+            Value::Exception(exception) => self.id_for_immediate(ImmediateKey::Exception(
+                exception.name.clone(),
+                exception.message.clone(),
+            )),
             Value::ExceptionType(name) => {
                 self.id_for_immediate(ImmediateKey::ExceptionType(name.clone()))
             }
@@ -428,9 +426,7 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             }
         }
         Object::Iterator(iterator) => match &iterator.kind {
-            IteratorKind::List(list)
-            | IteratorKind::Tuple(list)
-            | IteratorKind::Dict(list) => {
+            IteratorKind::List(list) | IteratorKind::Tuple(list) | IteratorKind::Dict(list) => {
                 stack.push(list.clone());
             }
             IteratorKind::Str(_) => {}
@@ -495,9 +491,7 @@ fn clear_object_refs(obj: &ObjRef) {
             entries.clear();
         }
         Object::Iterator(iterator) => match &mut iterator.kind {
-            IteratorKind::List(_)
-            | IteratorKind::Tuple(_)
-            | IteratorKind::Dict(_) => {
+            IteratorKind::List(_) | IteratorKind::Tuple(_) | IteratorKind::Dict(_) => {
                 iterator.kind = IteratorKind::Str(String::new());
                 iterator.index = 0;
             }
@@ -679,6 +673,8 @@ pub enum BuiltinFunction {
     Locals,
     Globals,
     Import,
+    ImportModule,
+    FindSpec,
 }
 
 impl BuiltinFunction {
@@ -789,9 +785,9 @@ impl BuiltinFunction {
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
                     Value::Str(value) => {
                         let trimmed = value.trim();
-                        let parsed = trimmed.parse::<i64>().map_err(|_| {
-                            RuntimeError::new("int() invalid literal")
-                        })?;
+                        let parsed = trimmed
+                            .parse::<i64>()
+                            .map_err(|_| RuntimeError::new("int() invalid literal"))?;
                         Ok(Value::Int(parsed))
                     }
                     _ => Err(RuntimeError::new("int() unsupported type")),
@@ -884,12 +880,8 @@ impl BuiltinFunction {
                         Object::Tuple(values) => Ok(heap.alloc_list(values.clone())),
                         _ => Err(RuntimeError::new("list() unsupported type")),
                     },
-                    Value::Str(value) => Ok(heap.alloc_list(
-                        value
-                            .chars()
-                            .map(|ch| Value::Str(ch.to_string()))
-                            .collect(),
-                    )),
+                    Value::Str(value) => Ok(heap
+                        .alloc_list(value.chars().map(|ch| Value::Str(ch.to_string())).collect())),
                     _ => Err(RuntimeError::new("list() unsupported type")),
                 }
             }
@@ -909,12 +901,8 @@ impl BuiltinFunction {
                         Object::List(values) => Ok(heap.alloc_tuple(values.clone())),
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
                     },
-                    Value::Str(value) => Ok(heap.alloc_tuple(
-                        value
-                            .chars()
-                            .map(|ch| Value::Str(ch.to_string()))
-                            .collect(),
-                    )),
+                    Value::Str(value) => Ok(heap
+                        .alloc_tuple(value.chars().map(|ch| Value::Str(ch.to_string())).collect())),
                     _ => Err(RuntimeError::new("tuple() unsupported type")),
                 }
             }
@@ -941,8 +929,7 @@ impl BuiltinFunction {
                             let mut result = values.clone();
                             let all_numeric =
                                 result.iter().all(|value| numeric_value(value).is_some());
-                            let all_str =
-                                result.iter().all(|value| matches!(value, Value::Str(_)));
+                            let all_str = result.iter().all(|value| matches!(value, Value::Str(_)));
 
                             if all_numeric {
                                 result.sort_by(|a, b| {
@@ -968,25 +955,26 @@ impl BuiltinFunction {
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => {
                             let mut result = values.clone();
-                        let all_numeric = result.iter().all(|value| numeric_value(value).is_some());
-                        let all_str = result.iter().all(|value| matches!(value, Value::Str(_)));
+                            let all_numeric =
+                                result.iter().all(|value| numeric_value(value).is_some());
+                            let all_str = result.iter().all(|value| matches!(value, Value::Str(_)));
 
-                        if all_numeric {
-                            result.sort_by(|a, b| {
-                                let left = numeric_value(a).unwrap();
-                                let right = numeric_value(b).unwrap();
-                                left.cmp(&right)
-                            });
-                        } else if all_str {
-                            result.sort_by(|a, b| match (a, b) {
-                                (Value::Str(a), Value::Str(b)) => a.cmp(b),
-                                _ => Ordering::Equal,
-                            });
-                        } else {
-                            return Err(RuntimeError::new(
-                                "sorted() expects list/tuple of comparable values",
-                            ));
-                        }
+                            if all_numeric {
+                                result.sort_by(|a, b| {
+                                    let left = numeric_value(a).unwrap();
+                                    let right = numeric_value(b).unwrap();
+                                    left.cmp(&right)
+                                });
+                            } else if all_str {
+                                result.sort_by(|a, b| match (a, b) {
+                                    (Value::Str(a), Value::Str(b)) => a.cmp(b),
+                                    _ => Ordering::Equal,
+                                });
+                            } else {
+                                return Err(RuntimeError::new(
+                                    "sorted() expects list/tuple of comparable values",
+                                ));
+                            }
 
                             Ok(heap.alloc_list(result))
                         }
@@ -1027,24 +1015,32 @@ impl BuiltinFunction {
                     Value::Str(value) => {
                         for (idx, ch) in value.chars().enumerate() {
                             let index = start + idx as i64;
-                            entries.push(heap.alloc_tuple(vec![
-                                Value::Int(index),
-                                Value::Str(ch.to_string()),
-                            ]));
+                            entries.push(
+                                heap.alloc_tuple(vec![
+                                    Value::Int(index),
+                                    Value::Str(ch.to_string()),
+                                ]),
+                            );
                         }
                     }
                     _ => return Err(RuntimeError::new("enumerate() expects iterable")),
                 }
                 Ok(heap.alloc_list(entries))
             }
-            BuiltinFunction::Locals | BuiltinFunction::Globals => Err(RuntimeError::new(
-                "locals()/globals() require VM context",
-            )),
+            BuiltinFunction::Locals | BuiltinFunction::Globals => {
+                Err(RuntimeError::new("locals()/globals() require VM context"))
+            }
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
                 "__build_class__ is only available in the VM",
             )),
-            BuiltinFunction::Import => Err(RuntimeError::new(
-                "__import__ is only available in the VM",
+            BuiltinFunction::Import => {
+                Err(RuntimeError::new("__import__ is only available in the VM"))
+            }
+            BuiltinFunction::ImportModule => Err(RuntimeError::new(
+                "importlib.import_module() is only available in the VM",
+            )),
+            BuiltinFunction::FindSpec => Err(RuntimeError::new(
+                "importlib.find_spec() is only available in the VM",
             )),
             BuiltinFunction::Id => {
                 if args.len() != 1 {

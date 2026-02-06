@@ -29,7 +29,9 @@ impl MetadataError {
 
 impl OpcodeMetadata {
     pub fn empty() -> Self {
-        Self { opcodes: Vec::new() }
+        Self {
+            opcodes: Vec::new(),
+        }
     }
 
     pub fn load_default() -> Result<Self, MetadataError> {

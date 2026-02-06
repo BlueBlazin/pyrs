@@ -82,7 +82,12 @@ fn expr_to_source(expr: &Expr) -> String {
                 Op::Mod => "%",
                 Op::Pow => "**",
             };
-            format!("({} {} {})", expr_to_source(left), op_str, expr_to_source(right))
+            format!(
+                "({} {} {})",
+                expr_to_source(left),
+                op_str,
+                expr_to_source(right)
+            )
         }
     }
 }

@@ -32,14 +32,16 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Tracebacks with filename/line/col + frame names
 - [ ] Exception chaining
 - [x] `__annotations__` storage for modules/classes/functions
-- [x] Module/import system baseline (file-based imports, dotted modules, lazy submodule loading on attribute access, relative `from .` imports, `sys.path`-driven source lookup, `sys.modules` exposure, filesystem namespace-package loading, submodule lookup via package `__path__`, and baseline `sys.meta_path` control via default path-finder entry)
-- [~] Module metadata parity foundation (`__package__`, `__spec__`, `__loader__`, `__path__` set for loaded modules/packages; full importlib `ModuleSpec` behavior pending)
+- [x] Module/import system parity for supported pure-Python scenarios (file-based imports, dotted modules, lazy submodule loading on attribute access, relative `from .` imports, `sys.path`-driven source lookup, `sys.modules` exposure, filesystem namespace-package loading, submodule lookup via package `__path__`, `sys.meta_path` default path-finder control, `sys.path_hooks` + `sys.path_importer_cache` contracts)
+- [x] Module metadata/spec fields for supported loaders (`__package__`, `__spec__`, `__loader__`, `__path__`, `has_location`, `cached`)
 - [x] Classes subset (single inheritance, instance attrs + bound methods)
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
 
 ## Stdlib Coverage
 - [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted, locals, globals, basic `__import__` name/fromlist/level semantics)
-- [~] `sys` foundation (`path`, `meta_path`, `path_hooks`, `modules`); `types`, `inspect` pending
+- [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
+- [x] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`)
+- [ ] `types`, `inspect`
 - [ ] `os`, `pathlib`, `io`
 - [ ] `math`, `random`, `itertools`
 - [ ] `json`, `re`, `datetime`
@@ -67,7 +69,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Closures + `nonlocal` (cell/free vars).
 - [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
-- [ ] Import system parity (`importlib`, specs, hooks).
+- [x] Import system parity for supported pure-Python import scenarios (`importlib`, specs, hooks).
 
 ### P1 (Major Ecosystem Enablers)
 - [ ] Async/await + async generators.

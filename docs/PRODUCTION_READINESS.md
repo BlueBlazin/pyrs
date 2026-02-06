@@ -72,12 +72,12 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 **Builtins**
 - [~] P0: Core builtin set (print, len, range, etc.).
 - [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, getattr/setattr/delattr, dir, help, input, etc.).
-- [~] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to current loader; full importlib semantics pending).
+- [x] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to loader path).
 
 **Import System**
-- [~] P0: File‑based imports + module cache + basic packages (including relative `from .` resolution, `sys.path` lookup, `sys.modules` exposure, package `__path__` lookup for submodules, baseline `sys.meta_path` path-finder control, and baseline module metadata fields).
-- [ ] P0: Full importlib machinery (`ModuleSpec`, `__loader__`, `__package__`, `__path__`).
-- [~] P0: Namespace packages (filesystem directory namespace package loading with aggregated `__path__`; full importlib namespace semantics pending).
+- [x] P0: File‑based imports + module cache + basic packages (including relative `from .` resolution, `sys.path` lookup, `sys.modules` exposure, package `__path__` lookup for submodules, `sys.meta_path`/`sys.path_hooks`/`sys.path_importer_cache` contracts, and module metadata/spec population).
+- [~] P0: Full importlib machinery (`ModuleSpec`, `__loader__`, `__package__`, `__path__`) for supported pure-Python loaders (`pyrs.SourceFileLoader`, `pyrs.NamespaceLoader`) and `importlib` helper APIs (`import_module`, `find_spec`, `importlib.util.find_spec`).
+- [x] P0: Namespace packages (filesystem directory namespace package loading with aggregated `__path__`).
 - [ ] P0: Zip/bytecode imports.
 - [ ] P1: `importlib.resources`, `pkgutil`, entry points.
 
@@ -99,6 +99,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 
 **Testing & QA**
 - [~] P0: CPython `Lib/test` subset harness.
+- [~] P0: Import-focused CPython subset harness (`tests/cpython_subset_imports.txt`) scaffolded.
 - [ ] P0: Large `Lib/test` subset + CI gating.
 - [ ] P1: Differential tests vs CPython on real‑world scripts.
 - [ ] P1: Fuzzing for parser + VM (syntax + runtime).

@@ -37,6 +37,10 @@ struct ModuleSourceInfo {
 }
 
 const DEFAULT_META_PATH_FINDER: &str = "pyrs.PathFinder";
+const DEFAULT_PATH_HOOK: &str = "pyrs.FileFinder";
+const SOURCE_FILE_LOADER: &str = "pyrs.SourceFileLoader";
+const NAMESPACE_LOADER: &str = "pyrs.NamespaceLoader";
+const BUILTIN_MODULE_LOADER: &str = "pyrs.BuiltinLoader";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GeneratorResumeKind {
@@ -163,8 +167,9 @@ impl Vm {
             generator_resume_outcome: None,
         };
         let main = vm.main_module.clone();
-        vm.set_module_metadata(&main, "__main__", None, false, Vec::new(), false);
+        vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
         vm.install_sys_module();
+        vm.install_importlib_modules();
         vm.install_builtins();
         vm
     }
@@ -322,17 +327,21 @@ impl Vm {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
-        self.set_module_metadata(&sys_module, "sys", None, false, Vec::new(), false);
+        self.set_module_metadata(&sys_module, "sys", None, None, false, Vec::new(), false);
         if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
             module_data
                 .globals
                 .insert("path".to_string(), self.heap.alloc_list(Vec::new()));
-            module_data
-                .globals
-                .insert("meta_path".to_string(), self.heap.alloc_list(vec![Value::Str(DEFAULT_META_PATH_FINDER.to_string())]));
-            module_data
-                .globals
-                .insert("path_hooks".to_string(), self.heap.alloc_list(Vec::new()));
+            module_data.globals.insert(
+                "meta_path".to_string(),
+                self.heap
+                    .alloc_list(vec![Value::Str(DEFAULT_META_PATH_FINDER.to_string())]),
+            );
+            module_data.globals.insert(
+                "path_hooks".to_string(),
+                self.heap
+                    .alloc_list(vec![Value::Str(DEFAULT_PATH_HOOK.to_string())]),
+            );
             module_data.globals.insert(
                 "path_importer_cache".to_string(),
                 self.heap.alloc_dict(Vec::new()),
@@ -344,6 +353,55 @@ impl Vm {
         self.register_module("sys", sys_module);
         self.sync_sys_path_from_module_paths();
         self.refresh_sys_modules_dict();
+    }
+
+    fn install_importlib_modules(&mut self) {
+        let importlib = match self.heap.alloc_module(ModuleObject::new("importlib")) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.set_module_metadata(
+            &importlib,
+            "importlib",
+            None,
+            Some(BUILTIN_MODULE_LOADER),
+            true,
+            Vec::new(),
+            false,
+        );
+        if let Object::Module(module_data) = &mut *importlib.kind_mut() {
+            module_data.globals.insert(
+                "import_module".to_string(),
+                Value::Builtin(BuiltinFunction::ImportModule),
+            );
+            module_data.globals.insert(
+                "find_spec".to_string(),
+                Value::Builtin(BuiltinFunction::FindSpec),
+            );
+        }
+        self.register_module("importlib", importlib.clone());
+
+        let util = match self.heap.alloc_module(ModuleObject::new("importlib.util")) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.set_module_metadata(
+            &util,
+            "importlib.util",
+            None,
+            Some(BUILTIN_MODULE_LOADER),
+            false,
+            Vec::new(),
+            false,
+        );
+        if let Object::Module(module_data) = &mut *util.kind_mut() {
+            module_data.globals.insert(
+                "find_spec".to_string(),
+                Value::Builtin(BuiltinFunction::FindSpec),
+            );
+        }
+        self.register_module("importlib.util", util.clone());
+        self.link_module_chain("importlib.util", util);
     }
 
     fn sync_sys_path_from_module_paths(&mut self) {
@@ -427,11 +485,13 @@ impl Vm {
         let source_info = self
             .find_module_source(name)
             .ok_or_else(|| RuntimeError::new(format!("module '{name}' not found")))?;
-
-        let module = match self.heap.alloc_module(ModuleObject::new(name)) {
-            Value::Module(obj) => obj,
-            _ => unreachable!(),
+        let loader_name = if source_info.is_namespace {
+            NAMESPACE_LOADER
+        } else {
+            SOURCE_FILE_LOADER
         };
+
+        let module = self.create_module_for_loader(name, loader_name)?;
         let origin = if source_info.is_namespace {
             None
         } else {
@@ -441,6 +501,7 @@ impl Vm {
             &module,
             name,
             origin,
+            Some(loader_name),
             source_info.is_package,
             source_info.package_dirs.clone(),
             source_info.is_namespace,
@@ -448,38 +509,91 @@ impl Vm {
 
         self.register_module(name, module.clone());
         self.link_module_chain(name, module.clone());
+        self.exec_module_for_loader(&module, name, loader_name, &source_info)?;
+        Ok(module)
+    }
 
-        if source_info.is_namespace {
-            return Ok(module);
+    fn create_module_for_loader(
+        &mut self,
+        name: &str,
+        loader_name: &str,
+    ) -> Result<ObjRef, RuntimeError> {
+        match loader_name {
+            SOURCE_FILE_LOADER | NAMESPACE_LOADER => {
+                match self.heap.alloc_module(ModuleObject::new(name)) {
+                    Value::Module(obj) => Ok(obj),
+                    _ => unreachable!(),
+                }
+            }
+            _ => Err(RuntimeError::new(format!(
+                "unsupported loader for module creation: {loader_name}"
+            ))),
         }
+    }
 
-        let source = std::fs::read_to_string(&source_info.path)
-            .map_err(|err| RuntimeError::new(format!("failed to read module '{name}': {err}")))?;
+    fn exec_module_for_loader(
+        &mut self,
+        module: &ObjRef,
+        name: &str,
+        loader_name: &str,
+        source_info: &ModuleSourceInfo,
+    ) -> Result<(), RuntimeError> {
+        match loader_name {
+            NAMESPACE_LOADER => Ok(()),
+            SOURCE_FILE_LOADER => {
+                let source = std::fs::read_to_string(&source_info.path).map_err(|err| {
+                    RuntimeError::new(format!("failed to read module '{name}': {err}"))
+                })?;
 
-        let module_ast = parser::parse_module(&source).map_err(|err| {
-            RuntimeError::new(format!(
-                "parse error in module '{name}' at {}: {}",
-                err.offset, err.message
-            ))
-        })?;
-        let code =
-            compiler::compile_module_with_filename(&module_ast, &source_info.path.to_string_lossy())
+                let module_ast = parser::parse_module(&source).map_err(|err| {
+                    RuntimeError::new(format!(
+                        "parse error in module '{name}' at {}: {}",
+                        err.offset, err.message
+                    ))
+                })?;
+                let code = compiler::compile_module_with_filename(
+                    &module_ast,
+                    &source_info.path.to_string_lossy(),
+                )
                 .map_err(|err| {
                     RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
                 })?;
-        let code = Rc::new(code);
-        let cells = self.build_cells(&code, Vec::new());
-        let mut frame = Frame::new(code, module.clone(), true, false, cells);
-        frame.discard_result = true;
-        self.frames.push(frame);
-        Ok(module)
+                let code = Rc::new(code);
+                let cells = self.build_cells(&code, Vec::new());
+                let mut frame = Frame::new(code, module.clone(), true, false, cells);
+                frame.discard_result = true;
+                self.frames.push(frame);
+                Ok(())
+            }
+            _ => Err(RuntimeError::new(format!(
+                "unsupported loader for module execution: {loader_name}"
+            ))),
+        }
     }
 
     fn find_module_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
         self.sync_module_paths_from_sys();
-        if !self.default_pathfinder_enabled() {
-            return None;
+        let meta_path = self.sys_list_values("meta_path").unwrap_or_default();
+        for finder in &meta_path {
+            if let Some(source) = self.find_module_source_with_meta_finder(name, finder) {
+                return Some(source);
+            }
         }
+        None
+    }
+
+    fn find_module_source_with_meta_finder(
+        &mut self,
+        name: &str,
+        finder: &Value,
+    ) -> Option<ModuleSourceInfo> {
+        if matches_finder_kind(finder, DEFAULT_META_PATH_FINDER) {
+            return self.path_finder_find_spec(name);
+        }
+        None
+    }
+
+    fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
         if let Some((parent_name, child_name)) = name.rsplit_once('.') {
             if let Some(parent_paths) = self.package_search_paths(parent_name) {
                 if let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths) {
@@ -487,69 +601,8 @@ impl Vm {
                 }
             }
         }
-        let rel_name = name.replace('.', "/");
-        let filename = format!("{rel_name}.py");
-        let mut namespace_dirs = Vec::new();
-        for base in &self.module_paths {
-            let candidate = base.join(&filename);
-            if candidate.exists() {
-                return Some(ModuleSourceInfo {
-                    path: candidate,
-                    is_package: false,
-                    package_dirs: Vec::new(),
-                    is_namespace: false,
-                });
-            }
-            let package_dir = base.join(&rel_name);
-            let package_init = package_dir.join("__init__.py");
-            if package_init.exists() {
-                return Some(ModuleSourceInfo {
-                    path: package_init,
-                    is_package: true,
-                    package_dirs: vec![package_dir],
-                    is_namespace: false,
-                });
-            }
-            if package_dir.is_dir() {
-                namespace_dirs.push(package_dir);
-            }
-        }
-        if !namespace_dirs.is_empty() {
-            return Some(ModuleSourceInfo {
-                path: namespace_dirs[0].clone(),
-                is_package: true,
-                package_dirs: namespace_dirs,
-                is_namespace: true,
-            });
-        }
-        None
-    }
-
-    fn default_pathfinder_enabled(&self) -> bool {
-        let sys_module = match self.modules.get("sys") {
-            Some(module) => module.clone(),
-            None => return true,
-        };
-        let module_kind = sys_module.kind();
-        let module_data = match &*module_kind {
-            Object::Module(module_data) => module_data,
-            _ => return true,
-        };
-        let meta_path = match module_data.globals.get("meta_path") {
-            Some(value) => value,
-            None => return true,
-        };
-        let meta_path_list = match meta_path {
-            Value::List(list) => list.clone(),
-            _ => return false,
-        };
-        let list_kind = meta_path_list.kind();
-        match &*list_kind {
-            Object::List(values) => values
-                .iter()
-                .any(|value| matches!(value, Value::Str(name) if name == DEFAULT_META_PATH_FINDER)),
-            _ => false,
-        }
+        let roots = self.module_paths.clone();
+        self.find_module_source_in_roots(name, &roots)
     }
 
     fn package_search_paths(&self, package_name: &str) -> Option<Vec<PathBuf>> {
@@ -575,52 +628,172 @@ impl Vm {
                 roots.push(PathBuf::from(path));
             }
         }
-        if roots.is_empty() {
-            None
-        } else {
-            Some(roots)
-        }
+        if roots.is_empty() { None } else { Some(roots) }
     }
 
     fn find_module_source_in_roots(
-        &self,
+        &mut self,
         module_name: &str,
         roots: &[PathBuf],
     ) -> Option<ModuleSourceInfo> {
         let mut namespace_dirs = Vec::new();
         for root in roots {
-            let candidate = root.join(format!("{module_name}.py"));
-            if candidate.exists() {
-                return Some(ModuleSourceInfo {
-                    path: candidate,
-                    is_package: false,
-                    package_dirs: Vec::new(),
-                    is_namespace: false,
-                });
-            }
-            let package_dir = root.join(module_name);
-            let package_init = package_dir.join("__init__.py");
-            if package_init.exists() {
-                return Some(ModuleSourceInfo {
-                    path: package_init,
-                    is_package: true,
-                    package_dirs: vec![package_dir],
-                    is_namespace: false,
-                });
-            }
-            if package_dir.is_dir() {
-                namespace_dirs.push(package_dir);
+            let importer = match self.path_importer_for_root(root) {
+                Some(importer) => importer,
+                None => continue,
+            };
+            if let Some(spec) = self.find_module_source_with_importer(&importer, module_name) {
+                if spec.is_namespace {
+                    namespace_dirs.extend(spec.package_dirs);
+                    continue;
+                }
+                return Some(spec);
             }
         }
         if !namespace_dirs.is_empty() {
-            Some(ModuleSourceInfo {
+            return Some(ModuleSourceInfo {
                 path: namespace_dirs[0].clone(),
                 is_package: true,
                 package_dirs: namespace_dirs,
                 is_namespace: true,
-            })
-        } else {
+            });
+        }
+        None
+    }
+
+    fn path_importer_for_root(&mut self, root: &PathBuf) -> Option<Value> {
+        let key = Value::Str(root.to_string_lossy().to_string());
+        if let Some(cache_dict) = self.sys_dict_obj("path_importer_cache") {
+            if let Some(cached) = dict_get_value(&cache_dict, &key) {
+                return if matches!(cached, Value::None) {
+                    None
+                } else {
+                    Some(cached)
+                };
+            }
+
+            let importer = self.run_path_hooks_for_root(root);
+            let cached_value = importer.clone().unwrap_or(Value::None);
+            dict_set_value(&cache_dict, key, cached_value.clone());
+            return if matches!(cached_value, Value::None) {
+                None
+            } else {
+                Some(cached_value)
+            };
+        }
+        self.run_path_hooks_for_root(root)
+    }
+
+    fn run_path_hooks_for_root(&mut self, root: &PathBuf) -> Option<Value> {
+        let hooks = self.sys_list_values("path_hooks").unwrap_or_default();
+        for hook in hooks {
+            if matches_finder_kind(&hook, DEFAULT_PATH_HOOK) {
+                return Some(self.make_file_finder_importer(root));
+            }
+        }
+        None
+    }
+
+    fn make_file_finder_importer(&self, root: &PathBuf) -> Value {
+        self.heap.alloc_dict(vec![
+            (
+                Value::Str("kind".to_string()),
+                Value::Str(DEFAULT_PATH_HOOK.to_string()),
+            ),
+            (
+                Value::Str("path".to_string()),
+                Value::Str(root.to_string_lossy().to_string()),
+            ),
+        ])
+    }
+
+    fn find_module_source_with_importer(
+        &self,
+        importer: &Value,
+        module_name: &str,
+    ) -> Option<ModuleSourceInfo> {
+        let importer_dict = match importer {
+            Value::Dict(dict) => dict.clone(),
+            _ => return None,
+        };
+        let kind = match dict_get_value(&importer_dict, &Value::Str("kind".to_string())) {
+            Some(Value::Str(kind)) => kind,
+            _ => return None,
+        };
+        if kind != DEFAULT_PATH_HOOK {
             None
+        } else {
+            let root = match dict_get_value(&importer_dict, &Value::Str("path".to_string())) {
+                Some(Value::Str(path)) => PathBuf::from(path),
+                _ => return None,
+            };
+            self.find_module_source_in_single_root(module_name, &root)
+        }
+    }
+
+    fn find_module_source_in_single_root(
+        &self,
+        module_name: &str,
+        root: &PathBuf,
+    ) -> Option<ModuleSourceInfo> {
+        let rel_name = module_name.replace('.', "/");
+        let candidate = root.join(format!("{rel_name}.py"));
+        if candidate.exists() {
+            return Some(ModuleSourceInfo {
+                path: candidate,
+                is_package: false,
+                package_dirs: Vec::new(),
+                is_namespace: false,
+            });
+        }
+        let package_dir = root.join(&rel_name);
+        let package_init = package_dir.join("__init__.py");
+        if package_init.exists() {
+            return Some(ModuleSourceInfo {
+                path: package_init,
+                is_package: true,
+                package_dirs: vec![package_dir],
+                is_namespace: false,
+            });
+        }
+        if package_dir.is_dir() {
+            return Some(ModuleSourceInfo {
+                path: package_dir.clone(),
+                is_package: true,
+                package_dirs: vec![package_dir],
+                is_namespace: true,
+            });
+        }
+        None
+    }
+
+    fn sys_list_values(&self, name: &str) -> Option<Vec<Value>> {
+        let sys_module = self.modules.get("sys")?.clone();
+        let module_kind = sys_module.kind();
+        let module_data = match &*module_kind {
+            Object::Module(module_data) => module_data,
+            _ => return None,
+        };
+        let list_obj = match module_data.globals.get(name) {
+            Some(Value::List(list)) => list.clone(),
+            _ => return None,
+        };
+        match &*list_obj.kind() {
+            Object::List(values) => Some(values.clone()),
+            _ => None,
+        }
+    }
+
+    fn sys_dict_obj(&self, name: &str) -> Option<ObjRef> {
+        let sys_module = self.modules.get("sys")?.clone();
+        let module_kind = sys_module.kind();
+        let module_data = match &*module_kind {
+            Object::Module(module_data) => module_data,
+            _ => return None,
+        };
+        match module_data.globals.get(name) {
+            Some(Value::Dict(dict)) => Some(dict.clone()),
+            _ => None,
         }
     }
 
@@ -658,7 +831,7 @@ impl Vm {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
-        self.set_module_metadata(&module, name, None, false, Vec::new(), false);
+        self.set_module_metadata(&module, name, None, None, false, Vec::new(), false);
         self.register_module(name, module.clone());
         module
     }
@@ -668,6 +841,7 @@ impl Vm {
         module: &ObjRef,
         name: &str,
         origin: Option<&PathBuf>,
+        loader_name: Option<&str>,
         is_package: bool,
         package_dirs: Vec<PathBuf>,
         is_namespace: bool,
@@ -679,17 +853,9 @@ impl Vm {
                 .map(|(parent, _)| parent.to_string())
                 .unwrap_or_default()
         };
-        let parent = name
-            .rsplit_once('.')
-            .map(|(parent, _)| parent.to_string())
-            .unwrap_or_default();
-        let loader_value = if is_namespace {
-            Value::None
-        } else if origin.is_some() {
-            Value::Str("pyrs.SourceFileLoader".to_string())
-        } else {
-            Value::None
-        };
+        let loader_value = loader_name
+            .map(|loader| Value::Str(loader.to_string()))
+            .unwrap_or(Value::None);
         let origin_value = origin
             .map(|path| Value::Str(path.to_string_lossy().to_string()))
             .unwrap_or(Value::None);
@@ -702,24 +868,14 @@ impl Vm {
         } else {
             Value::None
         };
-        let spec_value = self.heap.alloc_dict(vec![
-            (Value::Str("name".to_string()), Value::Str(name.to_string())),
-            (Value::Str("origin".to_string()), origin_value.clone()),
-            (Value::Str("loader".to_string()), loader_value.clone()),
-            (Value::Str("parent".to_string()), Value::Str(parent)),
-            (
-                Value::Str("submodule_search_locations".to_string()),
-                submodule_locations.clone(),
-            ),
-            (
-                Value::Str("is_package".to_string()),
-                Value::Bool(is_package),
-            ),
-            (
-                Value::Str("is_namespace".to_string()),
-                Value::Bool(is_namespace),
-            ),
-        ]);
+        let spec_value = self.build_module_spec_value(
+            name,
+            origin,
+            loader_name,
+            is_package,
+            package_dirs.as_slice(),
+            is_namespace,
+        );
 
         if let Object::Module(module_data) = &mut *module.kind_mut() {
             module_data
@@ -735,7 +891,9 @@ impl Vm {
                 .globals
                 .insert("__spec__".to_string(), spec_value);
             if origin.is_some() {
-                module_data.globals.insert("__file__".to_string(), origin_value);
+                module_data
+                    .globals
+                    .insert("__file__".to_string(), origin_value);
             }
             if is_package {
                 module_data
@@ -743,6 +901,60 @@ impl Vm {
                     .insert("__path__".to_string(), submodule_locations);
             }
         }
+    }
+
+    fn build_module_spec_value(
+        &mut self,
+        name: &str,
+        origin: Option<&PathBuf>,
+        loader_name: Option<&str>,
+        is_package: bool,
+        package_dirs: &[PathBuf],
+        is_namespace: bool,
+    ) -> Value {
+        let parent = name
+            .rsplit_once('.')
+            .map(|(parent, _)| parent.to_string())
+            .unwrap_or_default();
+        let loader_value = loader_name
+            .map(|loader| Value::Str(loader.to_string()))
+            .unwrap_or(Value::None);
+        let origin_value = origin
+            .map(|path| Value::Str(path.to_string_lossy().to_string()))
+            .unwrap_or(Value::None);
+        let submodule_locations = if is_package {
+            let mut entries = Vec::new();
+            for dir in package_dirs {
+                entries.push(Value::Str(dir.to_string_lossy().to_string()));
+            }
+            self.heap.alloc_list(entries)
+        } else {
+            Value::None
+        };
+
+        self.heap.alloc_dict(vec![
+            (Value::Str("name".to_string()), Value::Str(name.to_string())),
+            (Value::Str("origin".to_string()), origin_value),
+            (Value::Str("loader".to_string()), loader_value),
+            (Value::Str("parent".to_string()), Value::Str(parent)),
+            (
+                Value::Str("submodule_search_locations".to_string()),
+                submodule_locations,
+            ),
+            (
+                Value::Str("is_package".to_string()),
+                Value::Bool(is_package),
+            ),
+            (
+                Value::Str("is_namespace".to_string()),
+                Value::Bool(is_namespace),
+            ),
+            (
+                Value::Str("has_location".to_string()),
+                Value::Bool(origin.is_some()),
+            ),
+            (Value::Str("cached".to_string()), Value::None),
+        ])
     }
 
     fn link_module_chain(&mut self, name: &str, module: ObjRef) {
@@ -837,6 +1049,19 @@ impl Vm {
             return Err(RuntimeError::new(
                 "attempted relative import with no known parent package",
             ));
+        }
+
+        self.resolve_import_name_from_package(&package, requested, level)
+    }
+
+    fn resolve_import_name_from_package(
+        &self,
+        package: &str,
+        requested: &str,
+        level: usize,
+    ) -> Result<String, RuntimeError> {
+        if level == 0 {
+            return Ok(requested.to_string());
         }
 
         let mut parts: Vec<&str> = package.split('.').collect();
@@ -1169,14 +1394,13 @@ impl Vm {
                                 })
                                 .ok_or_else(|| {
                                     RuntimeError::new(format!(
-                                    "module '{}' has no attribute '{}'",
-                                    module_name, attr_name
-                                ))
+                                        "module '{}' has no attribute '{}'",
+                                        module_name, attr_name
+                                    ))
                                 })?;
-                                let frame = self
-                                    .frames
-                                    .get_mut(caller_idx)
-                                    .ok_or_else(|| RuntimeError::new("attribute caller frame missing"))?;
+                                let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                    RuntimeError::new("attribute caller frame missing")
+                                })?;
                                 if push_null {
                                     frame.stack.push(Value::None);
                                 }
@@ -1863,7 +2087,9 @@ impl Vm {
                                         self.push_value(self.heap.alloc_list(result));
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
                                     }
                                 },
                                 Value::Tuple(obj) => match &*obj.kind() {
@@ -1877,7 +2103,9 @@ impl Vm {
                                         self.push_value(self.heap.alloc_tuple(result));
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
                                     }
                                 },
                                 Value::Str(value) => {
@@ -1909,7 +2137,9 @@ impl Vm {
                                         self.push_value(values[index_int as usize].clone());
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
                                     }
                                 },
                                 Value::Tuple(obj) => match &*obj.kind() {
@@ -1926,7 +2156,9 @@ impl Vm {
                                         self.push_value(values[index_int as usize].clone());
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
                                     }
                                 },
                                 Value::Str(value) => {
@@ -1958,7 +2190,9 @@ impl Vm {
                                         }
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
                                     }
                                 },
                                 _ => return Err(RuntimeError::new("subscript unsupported type")),
@@ -2208,7 +2442,9 @@ impl Vm {
                                     Value::Tuple(obj) => match &*obj.kind() {
                                         Object::Tuple(values) => values.clone(),
                                         _ => {
-                                            return Err(RuntimeError::new("defaults must be tuple"));
+                                            return Err(RuntimeError::new(
+                                                "defaults must be tuple",
+                                            ));
                                         }
                                     },
                                     _ => return Err(RuntimeError::new("defaults must be tuple")),
@@ -2407,10 +2643,9 @@ impl Vm {
                             Value::Builtin(builtin) => {
                                 let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, HashMap::new())?;
-                                let frame = self
-                                    .frames
-                                    .get_mut(caller_idx)
-                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                    RuntimeError::new("builtin caller frame missing")
+                                })?;
                                 frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
@@ -2622,10 +2857,9 @@ impl Vm {
                             Value::Builtin(builtin) => {
                                 let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, kwargs)?;
-                                let frame = self
-                                    .frames
-                                    .get_mut(caller_idx)
-                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                    RuntimeError::new("builtin caller frame missing")
+                                })?;
                                 frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
@@ -2808,10 +3042,9 @@ impl Vm {
                             Value::Builtin(builtin) => {
                                 let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, kwargs)?;
-                                let frame = self
-                                    .frames
-                                    .get_mut(caller_idx)
-                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                    RuntimeError::new("builtin caller frame missing")
+                                })?;
                                 frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
@@ -2960,10 +3193,9 @@ impl Vm {
                             Value::Builtin(builtin) => {
                                 let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, kwargs)?;
-                                let frame = self
-                                    .frames
-                                    .get_mut(caller_idx)
-                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                    RuntimeError::new("builtin caller frame missing")
+                                })?;
                                 frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
@@ -3131,10 +3363,9 @@ impl Vm {
                             Value::Builtin(builtin) => {
                                 let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, kwargs)?;
-                                let frame = self
-                                    .frames
-                                    .get_mut(caller_idx)
-                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                    RuntimeError::new("builtin caller frame missing")
+                                })?;
                                 frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
@@ -3259,10 +3490,9 @@ impl Vm {
                                         attr_name, module_name
                                     )));
                                 };
-                                let frame =
-                                    self.frames.get_mut(caller_idx).ok_or_else(|| {
-                                        RuntimeError::new("import caller frame missing")
-                                    })?;
+                                let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                    RuntimeError::new("import caller frame missing")
+                                })?;
                                 frame.stack.push(attr);
                             }
                             _ => {
@@ -3649,24 +3879,24 @@ impl Vm {
                             self.finish_generator_resume(owner, value);
                             return Ok(None);
                         }
-                    let value = if frame.return_class {
-                        self.class_value_from_module(&frame.module, frame.class_bases)
-                    } else if let Some(instance) = frame.return_instance {
-                        Value::Instance(instance)
-                    } else if frame.return_module {
-                        Value::Module(frame.module.clone())
-                    } else {
-                        value
-                    };
-                    if let Some(caller) = self.frames.last_mut() {
-                        if !frame.discard_result {
-                            caller.stack.push(value);
+                        let value = if frame.return_class {
+                            self.class_value_from_module(&frame.module, frame.class_bases)
+                        } else if let Some(instance) = frame.return_instance {
+                            Value::Instance(instance)
+                        } else if frame.return_module {
+                            Value::Module(frame.module.clone())
+                        } else {
+                            value
+                        };
+                        if let Some(caller) = self.frames.last_mut() {
+                            if !frame.discard_result {
+                                caller.stack.push(value);
+                            }
+                            return Ok(None);
                         }
-                        return Ok(None);
+                        return Ok(Some(value));
                     }
-                    return Ok(Some(value));
-                }
-                Opcode::ReturnValue => {
+                    Opcode::ReturnValue => {
                         let value = self.pop_value().unwrap_or(Value::None);
                         let frame = self.frames.pop().expect("frame exists");
                         if frame.expect_none_return && value != Value::None {
@@ -3676,23 +3906,23 @@ impl Vm {
                             self.finish_generator_resume(owner, value);
                             return Ok(None);
                         }
-                    let value = if frame.return_class {
-                        self.class_value_from_module(&frame.module, frame.class_bases)
-                    } else if let Some(instance) = frame.return_instance {
-                        Value::Instance(instance)
-                    } else if frame.return_module {
-                        Value::Module(frame.module.clone())
-                    } else {
-                        value
-                    };
-                    if let Some(caller) = self.frames.last_mut() {
-                        if !frame.discard_result {
-                            caller.stack.push(value);
+                        let value = if frame.return_class {
+                            self.class_value_from_module(&frame.module, frame.class_bases)
+                        } else if let Some(instance) = frame.return_instance {
+                            Value::Instance(instance)
+                        } else if frame.return_module {
+                            Value::Module(frame.module.clone())
+                        } else {
+                            value
+                        };
+                        if let Some(caller) = self.frames.last_mut() {
+                            if !frame.discard_result {
+                                caller.stack.push(value);
+                            }
+                            return Ok(None);
                         }
-                        return Ok(None);
+                        return Ok(Some(value));
                     }
-                    return Ok(Some(value));
-                }
                 }
                 Ok(None)
             })();
@@ -4405,6 +4635,8 @@ impl Vm {
             BuiltinFunction::Locals => self.builtin_locals(args, kwargs),
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
             BuiltinFunction::Import => self.builtin_import(args, kwargs),
+            BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
+            BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
             _ => {
                 if kwargs.is_empty() {
                     builtin.call(&self.heap, args)
@@ -4516,7 +4748,9 @@ impl Vm {
         } else if !args.is_empty() {
             args.remove(0)
         } else {
-            return Err(RuntimeError::new("__import__() missing required argument 'name'"));
+            return Err(RuntimeError::new(
+                "__import__() missing required argument 'name'",
+            ));
         };
         let name = match name_value {
             Value::Str(name) => name,
@@ -4569,6 +4803,176 @@ impl Vm {
             self.module_for_plain_import(&resolved_name, module)
         };
         Ok(Value::Module(result))
+    }
+
+    fn builtin_import_module(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::new(
+                "import_module() takes at most 2 arguments",
+            ));
+        }
+        let kw_name = kwargs.remove("name");
+        let kw_package = kwargs.remove("package");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "import_module() got an unexpected keyword argument",
+            ));
+        }
+
+        let name_value = if let Some(value) = kw_name {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "import_module() got multiple values for argument 'name'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new(
+                "import_module() missing required argument 'name'",
+            ));
+        };
+        let name = match name_value {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("import_module() name must be string")),
+        };
+
+        let package_value = if let Some(value) = kw_package {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "import_module() got multiple values for argument 'package'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            Value::None
+        };
+        let package = match package_value {
+            Value::None => None,
+            Value::Str(package) => Some(package),
+            _ => {
+                return Err(RuntimeError::new(
+                    "import_module() package must be string or None",
+                ));
+            }
+        };
+
+        let (level, requested) = split_relative_import_name(&name);
+        let resolved_name = if level == 0 {
+            name
+        } else {
+            let package = package.ok_or_else(|| {
+                RuntimeError::new("import_module() relative import requires package argument")
+            })?;
+            self.resolve_import_name_from_package(&package, &requested, level)?
+        };
+        let module = self.import_module_object(&resolved_name)?;
+        Ok(Value::Module(module))
+    }
+
+    fn builtin_find_spec(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::new("find_spec() takes at most 2 arguments"));
+        }
+        let kw_name = kwargs.remove("name");
+        let kw_package = kwargs.remove("package");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "find_spec() got an unexpected keyword argument",
+            ));
+        }
+
+        let name_value = if let Some(value) = kw_name {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "find_spec() got multiple values for argument 'name'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new(
+                "find_spec() missing required argument 'name'",
+            ));
+        };
+        let name = match name_value {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("find_spec() name must be string")),
+        };
+
+        let package_value = if let Some(value) = kw_package {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "find_spec() got multiple values for argument 'package'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            Value::None
+        };
+        let package = match package_value {
+            Value::None => None,
+            Value::Str(package) => Some(package),
+            _ => {
+                return Err(RuntimeError::new(
+                    "find_spec() package must be string or None",
+                ));
+            }
+        };
+
+        let (level, requested) = split_relative_import_name(&name);
+        let resolved_name = if level == 0 {
+            name
+        } else {
+            let package = package.ok_or_else(|| {
+                RuntimeError::new("find_spec() relative import requires package argument")
+            })?;
+            self.resolve_import_name_from_package(&package, &requested, level)?
+        };
+
+        if let Some(existing) = self.modules.get(&resolved_name).cloned() {
+            if let Object::Module(module_data) = &*existing.kind() {
+                if let Some(spec) = module_data.globals.get("__spec__").cloned() {
+                    return Ok(spec);
+                }
+            }
+        }
+
+        let Some(source_info) = self.find_module_source(&resolved_name) else {
+            return Ok(Value::None);
+        };
+        let loader_name = if source_info.is_namespace {
+            NAMESPACE_LOADER
+        } else {
+            SOURCE_FILE_LOADER
+        };
+        let origin = if source_info.is_namespace {
+            None
+        } else {
+            Some(&source_info.path)
+        };
+        Ok(self.build_module_spec_value(
+            &resolved_name,
+            origin,
+            Some(loader_name),
+            source_info.is_package,
+            source_info.package_dirs.as_slice(),
+            source_info.is_namespace,
+        ))
     }
 
     fn install_builtins(&mut self) {
@@ -5272,6 +5676,54 @@ fn decode_call_counts(arg: u32) -> (usize, usize) {
     let pos = (arg & 0xFFFF) as usize;
     let kw = (arg >> 16) as usize;
     (pos, kw)
+}
+
+fn matches_finder_kind(value: &Value, expected: &str) -> bool {
+    match value {
+        Value::Str(name) => name == expected,
+        Value::Dict(dict) => matches!(
+            dict_get_value(dict, &Value::Str("kind".to_string())),
+            Some(Value::Str(name)) if name == expected
+        ),
+        _ => false,
+    }
+}
+
+fn split_relative_import_name(name: &str) -> (usize, String) {
+    let mut level = 0usize;
+    for ch in name.chars() {
+        if ch == '.' {
+            level += 1;
+        } else {
+            break;
+        }
+    }
+    (level, name.chars().skip(level).collect())
+}
+
+fn dict_get_value(dict: &ObjRef, key: &Value) -> Option<Value> {
+    let dict_kind = dict.kind();
+    let entries = match &*dict_kind {
+        Object::Dict(entries) => entries,
+        _ => return None,
+    };
+    entries
+        .iter()
+        .find(|(entry_key, _)| entry_key == key)
+        .map(|(_, value)| value.clone())
+}
+
+fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
+    let mut dict_kind = dict.kind_mut();
+    let entries = match &mut *dict_kind {
+        Object::Dict(entries) => entries,
+        _ => return,
+    };
+    if let Some((_, entry_value)) = entries.iter_mut().find(|(entry_key, _)| *entry_key == key) {
+        *entry_value = value;
+        return;
+    }
+    entries.push((key, value));
 }
 
 fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {

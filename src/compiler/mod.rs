@@ -153,7 +153,14 @@ fn analyze_scope(
     let mut globals = HashSet::new();
     let mut nonlocals = HashSet::new();
 
-    collect_param_locals(posonly_params, params, kwonly_params, vararg, kwarg, &mut locals);
+    collect_param_locals(
+        posonly_params,
+        params,
+        kwonly_params,
+        vararg,
+        kwarg,
+        &mut locals,
+    );
 
     for stmt in body {
         collect_locals_stmt(stmt, &mut locals, &mut globals, &mut nonlocals);
@@ -188,10 +195,8 @@ fn analyze_scope(
         collect_uses_stmt(stmt, &mut uses, &mut child_free, &available_nonlocal)?;
     }
 
-    let mut direct_free: HashSet<String> = uses
-        .intersection(&available_nonlocal)
-        .cloned()
-        .collect();
+    let mut direct_free: HashSet<String> =
+        uses.intersection(&available_nonlocal).cloned().collect();
     for name in &nonlocals {
         direct_free.insert(name.clone());
     }
@@ -312,10 +317,14 @@ fn collect_locals_stmt(
         }
         StmtKind::Import { names } => {
             for alias in names {
-                let binding = alias
-                    .asname
-                    .clone()
-                    .unwrap_or_else(|| alias.name.split('.').next().unwrap_or(&alias.name).to_string());
+                let binding = alias.asname.clone().unwrap_or_else(|| {
+                    alias
+                        .name
+                        .split('.')
+                        .next()
+                        .unwrap_or(&alias.name)
+                        .to_string()
+                });
                 locals.insert(binding);
             }
         }
@@ -405,7 +414,12 @@ fn collect_uses_stmt(
                 collect_uses_stmt(stmt, uses, child_free, enclosing)?;
             }
         }
-        StmtKind::For { target, iter, body, orelse } => {
+        StmtKind::For {
+            target,
+            iter,
+            body,
+            orelse,
+        } => {
             collect_target_uses(target, uses, child_free, enclosing)?;
             collect_uses_expr(iter, uses, child_free, enclosing)?;
             for stmt in body {
@@ -415,7 +429,11 @@ fn collect_uses_stmt(
                 collect_uses_stmt(stmt, uses, child_free, enclosing)?;
             }
         }
-        StmtKind::With { context, target, body } => {
+        StmtKind::With {
+            context,
+            target,
+            body,
+        } => {
             collect_uses_expr(context, uses, child_free, enclosing)?;
             if let Some(target) = target {
                 collect_target_uses(target, uses, child_free, enclosing)?;
@@ -424,7 +442,12 @@ fn collect_uses_stmt(
                 collect_uses_stmt(stmt, uses, child_free, enclosing)?;
             }
         }
-        StmtKind::Try { body, handlers, orelse, finalbody } => {
+        StmtKind::Try {
+            body,
+            handlers,
+            orelse,
+            finalbody,
+        } => {
             for stmt in body {
                 collect_uses_stmt(stmt, uses, child_free, enclosing)?;
             }
@@ -469,7 +492,11 @@ fn collect_uses_stmt(
             body,
             ..
         } => {
-            for param in posonly_params.iter().chain(params.iter()).chain(kwonly_params.iter()) {
+            for param in posonly_params
+                .iter()
+                .chain(params.iter())
+                .chain(kwonly_params.iter())
+            {
                 if let Some(default) = &param.default {
                     collect_uses_expr(default, uses, child_free, enclosing)?;
                 }
@@ -501,16 +528,8 @@ fn collect_uses_stmt(
             for base in bases {
                 collect_uses_expr(base, uses, child_free, enclosing)?;
             }
-            let scope = analyze_scope(
-                ScopeType::Class,
-                &[],
-                &[],
-                &[],
-                None,
-                None,
-                body,
-                enclosing,
-            )?;
+            let scope =
+                analyze_scope(ScopeType::Class, &[], &[], &[], None, None, body, enclosing)?;
             child_free.extend(scope.freevars.into_iter());
         }
         StmtKind::Import { .. }
@@ -570,9 +589,7 @@ fn collect_uses_expr(
             collect_uses_expr(func, uses, child_free, enclosing)?;
             for arg in args {
                 match arg {
-                    CallArg::Positional(expr)
-                    | CallArg::Star(expr)
-                    | CallArg::DoubleStar(expr) => {
+                    CallArg::Positional(expr) | CallArg::Star(expr) | CallArg::DoubleStar(expr) => {
                         collect_uses_expr(expr, uses, child_free, enclosing)?;
                     }
                     CallArg::Keyword { value, .. } => {
@@ -723,15 +740,9 @@ fn body_has_yield(body: &[Stmt]) -> bool {
                 }
             }
             StmtKind::AnnAssign {
-                annotation,
-                value,
-                ..
+                annotation, value, ..
             } => {
-                if expr_has_yield(annotation)
-                    || value
-                        .as_ref()
-                        .map(expr_has_yield)
-                        .unwrap_or(false)
+                if expr_has_yield(annotation) || value.as_ref().map(expr_has_yield).unwrap_or(false)
                 {
                     return true;
                 }
@@ -752,10 +763,7 @@ fn body_has_yield(body: &[Stmt]) -> bool {
                 }
             }
             StmtKind::For {
-                iter,
-                body,
-                orelse,
-                ..
+                iter, body, orelse, ..
             } => {
                 if expr_has_yield(iter) || body_has_yield(body) || body_has_yield(orelse) {
                     return true;
@@ -772,10 +780,7 @@ fn body_has_yield(body: &[Stmt]) -> bool {
                 orelse,
                 finalbody,
             } => {
-                if body_has_yield(body)
-                    || body_has_yield(orelse)
-                    || body_has_yield(finalbody)
-                {
+                if body_has_yield(body) || body_has_yield(orelse) || body_has_yield(finalbody) {
                     return true;
                 }
                 for handler in handlers {
@@ -796,12 +801,7 @@ fn body_has_yield(body: &[Stmt]) -> bool {
                 }
             }
             StmtKind::Assert { test, message } => {
-                if expr_has_yield(test)
-                    || message
-                        .as_ref()
-                        .map(expr_has_yield)
-                        .unwrap_or(false)
-                {
+                if expr_has_yield(test) || message.as_ref().map(expr_has_yield).unwrap_or(false) {
                     return true;
                 }
             }
@@ -854,7 +854,10 @@ fn expr_has_yield(expr: &Expr) -> bool {
         }
         ExprKind::Lambda { .. } | ExprKind::Name(_) | ExprKind::Constant(_) => false,
         ExprKind::Slice { lower, upper, step } => {
-            lower.as_ref().map(|expr| expr_has_yield(expr)).unwrap_or(false)
+            lower
+                .as_ref()
+                .map(|expr| expr_has_yield(expr))
+                .unwrap_or(false)
                 || upper
                     .as_ref()
                     .map(|expr| expr_has_yield(expr))
@@ -903,12 +906,7 @@ impl Compiler {
         code.cellvars = scope.cellvars.clone();
         code.freevars = scope.freevars.clone();
         let mut cell_index = HashMap::new();
-        for (idx, name) in code
-            .cellvars
-            .iter()
-            .chain(code.freevars.iter())
-            .enumerate()
-        {
+        for (idx, name) in code.cellvars.iter().chain(code.freevars.iter()).enumerate() {
             cell_index.insert(name.clone(), idx as u32);
         }
         Self {
@@ -1019,9 +1017,7 @@ impl Compiler {
             } => compiler.compile_for(target, iter, body, orelse),
             StmtKind::Import { names } => {
                 for alias in names {
-                    let const_idx = compiler
-                        .code
-                        .add_const(Value::Str(alias.name.clone()));
+                    let const_idx = compiler.code.add_const(Value::Str(alias.name.clone()));
                     compiler.emit(Opcode::ImportName, Some(const_idx));
                     let parts: Vec<&str> = alias.name.split('.').collect();
                     let has_dots = parts.len() > 1;
@@ -1125,9 +1121,7 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::BoolOp { op, left, right } => compiler.compile_bool_op(op, left, right),
-            ExprKind::IfExpr { test, body, orelse } => {
-                compiler.compile_if_expr(test, body, orelse)
-            }
+            ExprKind::IfExpr { test, body, orelse } => compiler.compile_if_expr(test, body, orelse),
             ExprKind::Lambda {
                 posonly_params,
                 params,
@@ -1178,9 +1172,9 @@ impl Compiler {
             }
             ExprKind::Call { func, args } => {
                 compiler.compile_expr(func)?;
-                let has_star = args.iter().any(|arg| {
-                    matches!(arg, CallArg::Star(_) | CallArg::DoubleStar(_))
-                });
+                let has_star = args
+                    .iter()
+                    .any(|arg| matches!(arg, CallArg::Star(_) | CallArg::DoubleStar(_)));
 
                 if has_star {
                     enum TempArg {
@@ -1239,8 +1233,7 @@ impl Compiler {
                     for temp in &temps {
                         match temp {
                             TempArg::Keyword(name, value) => {
-                                let name_idx =
-                                    compiler.code.add_const(Value::Str(name.clone()));
+                                let name_idx = compiler.code.add_const(Value::Str(name.clone()));
                                 compiler.emit(Opcode::LoadConst, Some(name_idx));
                                 compiler.emit_load_name(value)?;
                                 compiler.emit(Opcode::DictSet, None);
@@ -1339,7 +1332,10 @@ impl Compiler {
     }
 
     fn ensure_local_name(&mut self, name: &str) {
-        if matches!(self.scope.scope_type, ScopeType::Function | ScopeType::Lambda) {
+        if matches!(
+            self.scope.scope_type,
+            ScopeType::Function | ScopeType::Lambda
+        ) {
             self.scope.locals.insert(name.to_string());
         }
     }
@@ -1353,12 +1349,10 @@ impl Compiler {
 
     fn emit(&mut self, opcode: Opcode, arg: Option<u32>) {
         self.code.instructions.push(Instruction::new(opcode, arg));
-        self.code
-            .locations
-            .push(crate::bytecode::Location::new(
-                self.current_span.line,
-                self.current_span.column,
-            ));
+        self.code.locations.push(crate::bytecode::Location::new(
+            self.current_span.line,
+            self.current_span.column,
+        ));
     }
 
     fn emit_const(&mut self, value: Value) {
@@ -1430,7 +1424,11 @@ impl Compiler {
         returns: Option<&Expr>,
     ) -> Result<bool, CompileError> {
         let mut items: Vec<(String, &Expr)> = Vec::new();
-        for param in posonly_params.iter().chain(params.iter()).chain(kwonly_params.iter()) {
+        for param in posonly_params
+            .iter()
+            .chain(params.iter())
+            .chain(kwonly_params.iter())
+        {
             if let Some(annotation) = &param.annotation {
                 items.push((param.name.clone(), annotation.as_ref()));
             }
@@ -1475,9 +1473,10 @@ impl Compiler {
     }
 
     fn deref_index(&self, name: &str) -> Result<u32, CompileError> {
-        self.cell_index.get(name).copied().ok_or_else(|| {
-            CompileError::new(format!("unknown closure variable '{name}'"))
-        })
+        self.cell_index
+            .get(name)
+            .copied()
+            .ok_or_else(|| CompileError::new(format!("unknown closure variable '{name}'")))
     }
 
     fn emit_jump(&mut self, opcode: Opcode) -> usize {
@@ -1682,11 +1681,7 @@ impl Compiler {
 
     fn compile_class(&mut self, name: &str, body: &[Stmt]) -> Result<CodeObject, CompileError> {
         let scope = ScopeInfo::for_class(body, &self.scope)?;
-        let mut compiler = Compiler::new(
-            &format!("<class {name}>"),
-            &self.code.filename,
-            scope,
-        );
+        let mut compiler = Compiler::new(&format!("<class {name}>"), &self.code.filename, scope);
         if body_has_ann_assign(body) {
             compiler.init_annotations()?;
         }
@@ -1734,7 +1729,10 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_store_target_from_stack(&mut self, target: &AssignTarget) -> Result<(), CompileError> {
+    fn compile_store_target_from_stack(
+        &mut self,
+        target: &AssignTarget,
+    ) -> Result<(), CompileError> {
         match target {
             AssignTarget::Name(name) => {
                 self.emit_store_name_scoped(name)?;
@@ -1797,7 +1795,10 @@ impl Compiler {
                 self.emit_store_name_scoped(name)?;
                 Ok(())
             }
-            AssignTarget::Subscript { value: container, index } => {
+            AssignTarget::Subscript {
+                value: container,
+                index,
+            } => {
                 if let ExprKind::Name(name) = &container.node {
                     let name = name.clone();
                     self.emit_load_name(&name)?;
@@ -1824,7 +1825,10 @@ impl Compiler {
                     ))
                 }
             }
-            AssignTarget::Attribute { value: object, name } => {
+            AssignTarget::Attribute {
+                value: object,
+                name,
+            } => {
                 let temp = self.fresh_temp("assign_obj");
                 let value_temp = self.fresh_temp("assign_val");
                 self.compile_expr(object)?;
@@ -1849,9 +1853,7 @@ impl Compiler {
                 self.emit(Opcode::StoreAttr, Some(idx));
                 Ok(())
             }
-            _ => Err(CompileError::new(
-                "invalid augmented assignment target",
-            )),
+            _ => Err(CompileError::new("invalid augmented assignment target")),
         }
     }
 
@@ -1955,11 +1957,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_assert(
-        &mut self,
-        test: &Expr,
-        message: Option<&Expr>,
-    ) -> Result<(), CompileError> {
+    fn compile_assert(&mut self, test: &Expr, message: Option<&Expr>) -> Result<(), CompileError> {
         self.compile_expr(test)?;
         let jump_if_true = self.emit_jump(Opcode::JumpIfTrue);
 

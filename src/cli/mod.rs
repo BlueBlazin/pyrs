@@ -2,11 +2,11 @@
 
 use std::env;
 
+use crate::VERSION;
 use crate::compiler;
 use crate::parser;
 use crate::stdlib;
 use crate::vm::Vm;
-use crate::VERSION;
 
 const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
 
@@ -92,8 +92,8 @@ fn run_file(path: &str) -> Result<(), String> {
 }
 
 fn run_ast(path: &str) -> Result<(), String> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {path}: {err}"))?;
+    let source =
+        std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
     let module = parser::parse_module(&source)
         .map_err(|err| format!("parse error at {}: {}", err.offset, err.message))?;
     println!("{module:#?}");
@@ -101,8 +101,8 @@ fn run_ast(path: &str) -> Result<(), String> {
 }
 
 fn run_bytecode(path: &str) -> Result<(), String> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {path}: {err}"))?;
+    let source =
+        std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
     let module = parser::parse_module(&source)
         .map_err(|err| format!("parse error at {}: {}", err.offset, err.message))?;
     let code = compiler::compile_module_with_filename(&module, path)

@@ -90,8 +90,12 @@ impl Parser {
         }
 
         let result = self.parse_module_uncached(pos);
-        self.module_memo
-            .insert(pos, Memo { result: result.clone() });
+        self.module_memo.insert(
+            pos,
+            Memo {
+                result: result.clone(),
+            },
+        );
         result
     }
 
@@ -105,8 +109,10 @@ impl Parser {
             body.push(stmt);
 
             let next_kind = &self.token_at(next).kind;
-            if matches!(next_kind, TokenKind::Newline | TokenKind::Semicolon | TokenKind::EndMarker)
-            {
+            if matches!(
+                next_kind,
+                TokenKind::Newline | TokenKind::Semicolon | TokenKind::EndMarker
+            ) {
                 pos = self.consume_terminators(next)?;
             } else if allows_missing {
                 pos = next;
@@ -126,8 +132,12 @@ impl Parser {
         }
 
         let result = self.parse_stmt_uncached(pos);
-        self.stmt_memo
-            .insert(pos, Memo { result: result.clone() });
+        self.stmt_memo.insert(
+            pos,
+            Memo {
+                result: result.clone(),
+            },
+        );
         result
     }
 
@@ -147,43 +157,52 @@ impl Parser {
                     next = after;
                 }
                 return Ok((
-                    self.make_stmt(start, StmtKind::AnnAssign {
-                        target: target_expr,
-                        annotation,
-                        value,
-                    }),
+                    self.make_stmt(
+                        start,
+                        StmtKind::AnnAssign {
+                            target: target_expr,
+                            annotation,
+                            value,
+                        },
+                    ),
                     next,
                 ));
             }
             if kind == TokenKind::Equal {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;
                 return Ok((
-                    self.make_stmt(start, StmtKind::Assign {
-                        target: target_expr,
-                        value,
-                    }),
+                    self.make_stmt(
+                        start,
+                        StmtKind::Assign {
+                            target: target_expr,
+                            value,
+                        },
+                    ),
                     next,
                 ));
             }
 
             let aug_op = match kind {
-            TokenKind::PlusEqual => Some(crate::ast::AugOp::Add),
-            TokenKind::MinusEqual => Some(crate::ast::AugOp::Sub),
-            TokenKind::StarEqual => Some(crate::ast::AugOp::Mul),
-            TokenKind::PercentEqual => Some(crate::ast::AugOp::Mod),
-            TokenKind::DoubleSlashEqual => Some(crate::ast::AugOp::FloorDiv),
-            TokenKind::DoubleStarEqual => Some(crate::ast::AugOp::Pow),
-            _ => None,
-        };
+                TokenKind::PlusEqual => Some(crate::ast::AugOp::Add),
+                TokenKind::MinusEqual => Some(crate::ast::AugOp::Sub),
+                TokenKind::StarEqual => Some(crate::ast::AugOp::Mul),
+                TokenKind::PercentEqual => Some(crate::ast::AugOp::Mod),
+                TokenKind::DoubleSlashEqual => Some(crate::ast::AugOp::FloorDiv),
+                TokenKind::DoubleStarEqual => Some(crate::ast::AugOp::Pow),
+                _ => None,
+            };
 
             if let Some(op) = aug_op {
                 let (value, next) = self.parse_expr_at(next_pos + 1)?;
                 return Ok((
-                    self.make_stmt(start, StmtKind::AugAssign {
-                        target: target_expr,
-                        op,
-                        value,
-                    }),
+                    self.make_stmt(
+                        start,
+                        StmtKind::AugAssign {
+                            target: target_expr,
+                            op,
+                            value,
+                        },
+                    ),
                     next,
                 ));
             }
@@ -197,8 +216,12 @@ impl Parser {
             TokenKind::Keyword(Keyword::Try) => self.parse_try_stmt(pos),
             TokenKind::Keyword(Keyword::For) => self.parse_for_stmt(pos),
             TokenKind::Keyword(Keyword::Class) => self.parse_class_def(pos),
-            TokenKind::Keyword(Keyword::Break) => Ok((self.make_stmt(start, StmtKind::Break), pos + 1)),
-            TokenKind::Keyword(Keyword::Continue) => Ok((self.make_stmt(start, StmtKind::Continue), pos + 1)),
+            TokenKind::Keyword(Keyword::Break) => {
+                Ok((self.make_stmt(start, StmtKind::Break), pos + 1))
+            }
+            TokenKind::Keyword(Keyword::Continue) => {
+                Ok((self.make_stmt(start, StmtKind::Continue), pos + 1))
+            }
             TokenKind::Keyword(Keyword::Import) => self.parse_import_stmt(pos),
             TokenKind::Keyword(Keyword::From) => self.parse_from_import_stmt(pos),
             TokenKind::Keyword(Keyword::Global) => self.parse_global_stmt(pos),
@@ -206,7 +229,9 @@ impl Parser {
             TokenKind::Keyword(Keyword::With) => self.parse_with_stmt(pos),
             TokenKind::Keyword(Keyword::Raise) => self.parse_raise_stmt(pos),
             TokenKind::Keyword(Keyword::Assert) => self.parse_assert_stmt(pos),
-            TokenKind::Keyword(Keyword::Pass) => Ok((self.make_stmt(start, StmtKind::Pass), pos + 1)),
+            TokenKind::Keyword(Keyword::Pass) => {
+                Ok((self.make_stmt(start, StmtKind::Pass), pos + 1))
+            }
             _ => {
                 let (expr, next) = self.parse_expr_at(pos)?;
                 Ok((self.make_stmt(start, StmtKind::Expr(expr)), next))
@@ -220,8 +245,12 @@ impl Parser {
         }
 
         let result = self.parse_expr_uncached(pos);
-        self.expr_memo
-            .insert(pos, Memo { result: result.clone() });
+        self.expr_memo.insert(
+            pos,
+            Memo {
+                result: result.clone(),
+            },
+        );
         result
     }
 
@@ -262,10 +291,7 @@ impl Parser {
                 | TokenKind::Comma
                 | TokenKind::Colon
         ) {
-            return Ok((
-                self.make_expr(start, ExprKind::Yield { value: None }),
-                pos,
-            ));
+            return Ok((self.make_expr(start, ExprKind::Yield { value: None }), pos));
         }
 
         let (value, next) = self.parse_if_expr(pos)?;
@@ -283,28 +309,28 @@ impl Parser {
     fn parse_lambda(&mut self, pos: usize) -> ParseResult<Expr> {
         let start = pos;
         let mut pos = pos + 1;
-        let (posonly_params, params, kwonly_params, vararg, kwarg, next) = if matches!(
-            self.token_at(pos).kind,
-            TokenKind::Colon
-        )
-        {
-            (Vec::new(), Vec::new(), Vec::new(), None, None, pos)
-        } else {
-            self.parse_lambda_params(pos)?
-        };
+        let (posonly_params, params, kwonly_params, vararg, kwarg, next) =
+            if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+                (Vec::new(), Vec::new(), Vec::new(), None, None, pos)
+            } else {
+                self.parse_lambda_params(pos)?
+            };
         pos = next;
 
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_expr_at(pos)?;
         Ok((
-            self.make_expr(start, ExprKind::Lambda {
-                posonly_params,
-                params,
-                vararg,
-                kwarg,
-                kwonly_params,
-                body: Box::new(body),
-            }),
+            self.make_expr(
+                start,
+                ExprKind::Lambda {
+                    posonly_params,
+                    params,
+                    vararg,
+                    kwarg,
+                    kwonly_params,
+                    body: Box::new(body),
+                },
+            ),
             next,
         ))
     }
@@ -377,10 +403,13 @@ impl Parser {
             let start = pos;
             let (expr, next) = self.parse_not(pos + 1)?;
             return Ok((
-                self.make_expr(start, ExprKind::Unary {
-                    op: UnaryOp::Not,
-                    operand: Box::new(expr),
-                }),
+                self.make_expr(
+                    start,
+                    ExprKind::Unary {
+                        op: UnaryOp::Not,
+                        operand: Box::new(expr),
+                    },
+                ),
                 next,
             ));
         }
@@ -510,10 +539,13 @@ impl Parser {
             let start = pos;
             let (expr, next) = self.parse_unary(pos + 1)?;
             return Ok((
-                self.make_expr(start, ExprKind::Unary {
-                    op: UnaryOp::Neg,
-                    operand: Box::new(expr),
-                }),
+                self.make_expr(
+                    start,
+                    ExprKind::Unary {
+                        op: UnaryOp::Neg,
+                        operand: Box::new(expr),
+                    },
+                ),
                 next,
             ));
         }
@@ -521,10 +553,13 @@ impl Parser {
             let start = pos;
             let (expr, next) = self.parse_unary(pos + 1)?;
             return Ok((
-                self.make_expr(start, ExprKind::Unary {
-                    op: UnaryOp::Pos,
-                    operand: Box::new(expr),
-                }),
+                self.make_expr(
+                    start,
+                    ExprKind::Unary {
+                        op: UnaryOp::Pos,
+                        operand: Box::new(expr),
+                    },
+                ),
                 next,
             ));
         }
@@ -534,30 +569,36 @@ impl Parser {
     fn parse_atom(&mut self, pos: usize) -> ParseResult<Expr> {
         let token = self.token_at(pos);
         let (mut expr, mut pos) = match &token.kind {
-            TokenKind::Name => (self.make_expr(pos, ExprKind::Name(token.lexeme.clone())), pos + 1),
+            TokenKind::Name => (
+                self.make_expr(pos, ExprKind::Name(token.lexeme.clone())),
+                pos + 1,
+            ),
             TokenKind::Number => {
                 let value = token
                     .lexeme
                     .parse::<i64>()
                     .map_err(|_| self.error_at(pos, "invalid integer literal"))?;
-                (self.make_expr(pos, ExprKind::Constant(Constant::Int(value))), pos + 1)
+                (
+                    self.make_expr(pos, ExprKind::Constant(Constant::Int(value))),
+                    pos + 1,
+                )
             }
             TokenKind::String => (
-                self.make_expr(
-                    pos,
-                    ExprKind::Constant(Constant::Str(token.lexeme.clone())),
-                ),
+                self.make_expr(pos, ExprKind::Constant(Constant::Str(token.lexeme.clone()))),
                 pos + 1,
             ),
-            TokenKind::Keyword(Keyword::TrueLiteral) => {
-                (self.make_expr(pos, ExprKind::Constant(Constant::Bool(true))), pos + 1)
-            }
-            TokenKind::Keyword(Keyword::FalseLiteral) => {
-                (self.make_expr(pos, ExprKind::Constant(Constant::Bool(false))), pos + 1)
-            }
-            TokenKind::Keyword(Keyword::NoneLiteral) => {
-                (self.make_expr(pos, ExprKind::Constant(Constant::None)), pos + 1)
-            }
+            TokenKind::Keyword(Keyword::TrueLiteral) => (
+                self.make_expr(pos, ExprKind::Constant(Constant::Bool(true))),
+                pos + 1,
+            ),
+            TokenKind::Keyword(Keyword::FalseLiteral) => (
+                self.make_expr(pos, ExprKind::Constant(Constant::Bool(false))),
+                pos + 1,
+            ),
+            TokenKind::Keyword(Keyword::NoneLiteral) => (
+                self.make_expr(pos, ExprKind::Constant(Constant::None)),
+                pos + 1,
+            ),
             TokenKind::LParen => {
                 let (expr, next) = self.parse_paren_expr(pos + 1)?;
                 (expr, next)
@@ -673,7 +714,10 @@ impl Parser {
             pos = next;
         }
 
-        Ok((self.make_stmt(start, StmtKind::While { test, body, orelse }), pos))
+        Ok((
+            self.make_stmt(start, StmtKind::While { test, body, orelse }),
+            pos,
+        ))
     }
 
     fn parse_for_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -703,7 +747,18 @@ impl Parser {
             pos = next;
         }
 
-        Ok((self.make_stmt(start, StmtKind::For { target, iter, body, orelse }), pos))
+        Ok((
+            self.make_stmt(
+                start,
+                StmtKind::For {
+                    target,
+                    iter,
+                    body,
+                    orelse,
+                },
+            ),
+            pos,
+        ))
     }
 
     fn parse_with_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -725,7 +780,17 @@ impl Parser {
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-        Ok((self.make_stmt(start, StmtKind::With { context, target, body }), pos))
+        Ok((
+            self.make_stmt(
+                start,
+                StmtKind::With {
+                    context,
+                    target,
+                    body,
+                },
+            ),
+            pos,
+        ))
     }
 
     fn parse_try_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -799,12 +864,15 @@ impl Parser {
         }
 
         Ok((
-            self.make_stmt(start, StmtKind::Try {
-                body,
-                handlers,
-                orelse,
-                finalbody,
-            }),
+            self.make_stmt(
+                start,
+                StmtKind::Try {
+                    body,
+                    handlers,
+                    orelse,
+                    finalbody,
+                },
+            ),
             pos,
         ))
     }
@@ -937,7 +1005,10 @@ impl Parser {
         }
         let (expr, next) = self.parse_expr_at(pos)?;
         pos = next;
-        Ok((self.make_stmt(start, StmtKind::Raise { value: Some(expr) }), pos))
+        Ok((
+            self.make_stmt(start, StmtKind::Raise { value: Some(expr) }),
+            pos,
+        ))
     }
 
     fn parse_assert_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -954,7 +1025,10 @@ impl Parser {
             pos = next;
         }
 
-        Ok((self.make_stmt(start, StmtKind::Assert { test, message }), pos))
+        Ok((
+            self.make_stmt(start, StmtKind::Assert { test, message }),
+            pos,
+        ))
     }
 
     fn parse_import_alias(&mut self, pos: usize) -> Result<(ImportAlias, usize), ParseError> {
@@ -1158,16 +1232,19 @@ impl Parser {
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
         Ok((
-            self.make_stmt(start, StmtKind::FunctionDef {
-                name,
-                posonly_params,
-                params,
-                vararg,
-                kwarg,
-                kwonly_params,
-                returns,
-                body,
-            }),
+            self.make_stmt(
+                start,
+                StmtKind::FunctionDef {
+                    name,
+                    posonly_params,
+                    params,
+                    vararg,
+                    kwarg,
+                    kwonly_params,
+                    returns,
+                    body,
+                },
+            ),
             pos,
         ))
     }
@@ -1189,7 +1266,7 @@ impl Parser {
                 match arg {
                     CallArg::Positional(expr) => bases.push(expr),
                     CallArg::Keyword { .. } | CallArg::Star(_) | CallArg::DoubleStar(_) => {
-                        return Err(self.error_at(pos, "class bases cannot be keyword arguments"))
+                        return Err(self.error_at(pos, "class bases cannot be keyword arguments"));
                     }
                 }
             }
@@ -1199,7 +1276,10 @@ impl Parser {
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-        Ok((self.make_stmt(start, StmtKind::ClassDef { name, bases, body }), pos))
+        Ok((
+            self.make_stmt(start, StmtKind::ClassDef { name, bases, body }),
+            pos,
+        ))
     }
 
     fn parse_return_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -1213,7 +1293,10 @@ impl Parser {
         }
         let (expr, next) = self.parse_expr_at(pos)?;
         pos = next;
-        Ok((self.make_stmt(start, StmtKind::Return { value: Some(expr) }), pos))
+        Ok((
+            self.make_stmt(start, StmtKind::Return { value: Some(expr) }),
+            pos,
+        ))
     }
 
     fn parse_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
@@ -1300,7 +1383,10 @@ impl Parser {
 
     fn parse_paren_expr(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
         if matches!(self.token_at(pos).kind, TokenKind::RParen) {
-            return Ok((self.make_expr(pos.saturating_sub(1), ExprKind::Tuple(Vec::new())), pos + 1));
+            return Ok((
+                self.make_expr(pos.saturating_sub(1), ExprKind::Tuple(Vec::new())),
+                pos + 1,
+            ));
         }
 
         let (first, mut pos) = self.parse_expr_at(pos)?;
@@ -1321,8 +1407,17 @@ impl Parser {
         }
 
         pos = self.expect_kind(pos, TokenKind::RParen)?;
-        let span = elements.first().map(|expr| expr.span).unwrap_or_else(Span::unknown);
-        Ok((Expr { node: ExprKind::Tuple(elements), span }, pos))
+        let span = elements
+            .first()
+            .map(|expr| expr.span)
+            .unwrap_or_else(Span::unknown);
+        Ok((
+            Expr {
+                node: ExprKind::Tuple(elements),
+                span,
+            },
+            pos,
+        ))
     }
 
     fn parse_dict_entries(&mut self, pos: usize) -> Result<(Vec<(Expr, Expr)>, usize), ParseError> {
@@ -1371,12 +1466,19 @@ impl Parser {
         Ok((expr, pos))
     }
 
-    fn parse_slice(&mut self, lower: Option<Expr>, pos: usize) -> Result<(Expr, usize), ParseError> {
+    fn parse_slice(
+        &mut self,
+        lower: Option<Expr>,
+        pos: usize,
+    ) -> Result<(Expr, usize), ParseError> {
         let mut pos = pos;
         pos = self.expect_kind(pos, TokenKind::Colon)?;
 
         let mut upper = None;
-        if !matches!(self.token_at(pos).kind, TokenKind::Colon | TokenKind::RBracket) {
+        if !matches!(
+            self.token_at(pos).kind,
+            TokenKind::Colon | TokenKind::RBracket
+        ) {
             let (expr, next) = self.parse_expr_at(pos)?;
             upper = Some(expr);
             pos = next;
@@ -1460,9 +1562,7 @@ impl Parser {
                     }
                     pos += 1;
                     let name_token = self.token_at(pos);
-                    if name_token.kind == TokenKind::Comma
-                        || name_token.kind == TokenKind::RParen
-                    {
+                    if name_token.kind == TokenKind::Comma || name_token.kind == TokenKind::RParen {
                         keyword_only = true;
                         if name_token.kind == TokenKind::Comma {
                             pos += 1;
@@ -1616,9 +1716,7 @@ impl Parser {
                     }
                     pos += 1;
                     let name_token = self.token_at(pos);
-                    if name_token.kind == TokenKind::Comma
-                        || name_token.kind == TokenKind::Colon
-                    {
+                    if name_token.kind == TokenKind::Comma || name_token.kind == TokenKind::Colon {
                         keyword_only = true;
                         if name_token.kind == TokenKind::Comma {
                             pos += 1;
@@ -1744,7 +1842,10 @@ impl Parser {
         let mut body = Vec::new();
         pos = self.consume_separators(pos);
 
-        while !matches!(self.token_at(pos).kind, TokenKind::Dedent | TokenKind::EndMarker) {
+        while !matches!(
+            self.token_at(pos).kind,
+            TokenKind::Dedent | TokenKind::EndMarker
+        ) {
             let (stmt, next) = self.parse_stmt_at(pos)?;
             let allows_missing = stmt_allows_missing_terminator(&stmt);
             body.push(stmt);

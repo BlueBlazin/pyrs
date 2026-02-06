@@ -1,6 +1,5 @@
 use pyrs::{
-    compiler,
-    parser,
+    compiler, parser,
     runtime::{BuiltinFunction, ExceptionObject, Object, Value},
     vm::Vm,
 };
@@ -267,7 +266,8 @@ fn executes_function_annotations() {
 
 #[test]
 fn executes_generator_for_loop() {
-    let source = "def gen():\n    yield 1\n    yield 2\nvals = []\nfor x in gen():\n    vals += [x]\n";
+    let source =
+        "def gen():\n    yield 1\n    yield 2\nvals = []\nfor x in gen():\n    vals += [x]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -307,7 +307,8 @@ fn executes_generator_lazily_on_iteration() {
 
 #[test]
 fn executes_generator_send_value_into_yield_expression() {
-    let source = "def gen():\n    x = yield 1\n    yield x\ng = gen()\na = g.send(None)\nb = g.send(5)\n";
+    let source =
+        "def gen():\n    x = yield 1\n    yield x\ng = gen()\na = g.send(None)\nb = g.send(5)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -356,7 +357,8 @@ fn executes_generator_close_runs_finally() {
 
 #[test]
 fn executes_generator_yield_from() {
-    let source = "def gen():\n    yield from [1, 2, 3]\nvals = []\nfor x in gen():\n    vals += [x]\n";
+    let source =
+        "def gen():\n    yield from [1, 2, 3]\nvals = []\nfor x in gen():\n    vals += [x]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -664,10 +666,7 @@ v = s[1:3]\n";
         tuple_values(vm.get_global("u")),
         Some(vec![Value::Int(2), Value::Int(3), Value::Int(4)])
     );
-    assert_eq!(
-        vm.get_global("v"),
-        Some(Value::Str("bc".to_string()))
-    );
+    assert_eq!(vm.get_global("v"), Some(Value::Str("bc".to_string())));
 }
 
 #[test]
@@ -905,8 +904,7 @@ b = enumerate('ab', start=1)\n";
 
 #[test]
 fn executes_try_except_statement() {
-    let source =
-        "try:\n    raise ValueError('bad')\nexcept ValueError as err:\n    x = 1\n";
+    let source = "try:\n    raise ValueError('bad')\nexcept ValueError as err:\n    x = 1\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -968,7 +966,8 @@ fn executes_try_finally_on_exception() {
 
 #[test]
 fn executes_try_except_finally_statement() {
-    let source = "try:\n    raise ValueError('bad')\nexcept ValueError:\n    x = 1\nfinally:\n    x = 2\n";
+    let source =
+        "try:\n    raise ValueError('bad')\nexcept ValueError:\n    x = 1\nfinally:\n    x = 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1120,9 +1119,7 @@ fn executes_module_attribute_access() {
     let module_value = vm.alloc_module("mod");
     if let Value::Module(obj) = &module_value {
         if let pyrs::runtime::Object::Module(module_data) = &mut *obj.kind_mut() {
-            module_data
-                .globals
-                .insert("x".to_string(), Value::Int(42));
+            module_data.globals.insert("x".to_string(), Value::Int(42));
         }
     }
     vm.set_global("mod", module_value);
@@ -1426,14 +1423,23 @@ sub_spec_parent = pkg.sub.__spec__['parent']\n";
     vm.add_module_path(&temp_dir);
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("pkg_name"), Some(Value::Str("pkg".to_string())));
-    assert_eq!(vm.get_global("pkg_package"), Some(Value::Str("pkg".to_string())));
+    assert_eq!(
+        vm.get_global("pkg_name"),
+        Some(Value::Str("pkg".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("pkg_package"),
+        Some(Value::Str("pkg".to_string()))
+    );
     assert_eq!(
         vm.get_global("pkg_spec_name"),
         Some(Value::Str("pkg".to_string()))
     );
     assert_eq!(vm.get_global("pkg_path_len"), Some(Value::Int(1)));
-    assert_eq!(vm.get_global("sub_package"), Some(Value::Str("pkg".to_string())));
+    assert_eq!(
+        vm.get_global("sub_package"),
+        Some(Value::Str("pkg".to_string()))
+    );
     assert_eq!(
         vm.get_global("sub_spec_parent"),
         Some(Value::Str("pkg".to_string()))
@@ -1461,8 +1467,59 @@ path_len = len(sys.path)\n";
         vm.get_global("main_name"),
         Some(Value::Str("__main__".to_string()))
     );
-    assert_eq!(vm.get_global("sys_name"), Some(Value::Str("sys".to_string())));
+    assert_eq!(
+        vm.get_global("sys_name"),
+        Some(Value::Str("sys".to_string()))
+    );
     assert_eq!(vm.get_global("path_len"), Some(Value::Int(1)));
+}
+
+#[test]
+fn imports_with_meta_path_finder_object_entry() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_meta_obj_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 97\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nsys.meta_path = [{{'kind': 'pyrs.PathFinder'}}]\nimport mod\nx = mod.value\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(97)));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn imports_with_path_hook_object_entry() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_path_hook_obj_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 101\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nsys.path_hooks = [{{'kind': 'pyrs.FileFinder'}}]\nimport mod\nx = mod.value\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(101)));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
 }
 
 #[test]
@@ -1475,9 +1532,8 @@ fn disables_path_imports_when_meta_path_excludes_default_finder() {
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
     std::fs::write(temp_dir.join("mod.py"), "value = 71\n").expect("write module");
     let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
-    let source = format!(
-        "import sys\nsys.path = ['{path_literal}']\nsys.meta_path = []\nimport mod\n"
-    );
+    let source =
+        format!("import sys\nsys.path = ['{path_literal}']\nsys.meta_path = []\nimport mod\n");
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1509,6 +1565,142 @@ fn re_enables_path_imports_with_default_meta_path_finder() {
     assert_eq!(vm.get_global("x"), Some(Value::Int(73)));
 
     let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn disables_path_imports_when_path_hooks_are_empty() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_path_hooks_empty_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 79\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source =
+        format!("import sys\nsys.path = ['{path_literal}']\nsys.path_hooks = []\nimport mod\n");
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("module 'mod' not found"));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn populates_path_importer_cache_for_loaded_path_entry() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_path_cache_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 83\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nimport mod\ncached = '{path_literal}' in sys.path_importer_cache\nkind = sys.path_importer_cache['{path_literal}']['kind']\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("cached"), Some(Value::Bool(true)));
+    assert_eq!(
+        vm.get_global("kind"),
+        Some(Value::Str("pyrs.FileFinder".to_string()))
+    );
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn reuses_cached_importer_when_path_hooks_are_cleared() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_path_cache_reuse_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod_a.py"), "value = 2\n").expect("write module a");
+    std::fs::write(temp_dir.join("mod_b.py"), "value = 9\n").expect("write module b");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nimport mod_a\nsys.path_hooks = []\nimport mod_b\ntotal = mod_a.value + mod_b.value\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("total"), Some(Value::Int(11)));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod_a.py"));
+    let _ = std::fs::remove_file(temp_dir.join("mod_b.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn imports_using_importlib_module_helpers() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_importlib_helpers_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 107\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nimport importlib\nimport importlib.util\nsys.path = ['{path_literal}']\nspec = importlib.find_spec('mod')\nname = spec['name']\nloader = spec['loader']\nm = importlib.import_module('mod')\nu_spec = importlib.util.find_spec('mod')\nu_name = u_spec['name']\nx = m.value\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("name"), Some(Value::Str("mod".to_string())));
+    assert_eq!(
+        vm.get_global("loader"),
+        Some(Value::Str("pyrs.SourceFileLoader".to_string()))
+    );
+    assert_eq!(vm.get_global("u_name"), Some(Value::Str("mod".to_string())));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(107)));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn imports_using_importlib_relative_package_resolution() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_importlib_relative_{unique}"));
+    let pkg_dir = temp_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp dir");
+    std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
+    std::fs::write(pkg_dir.join("sub.py"), "value = 109\n").expect("write sub module");
+
+    let source = "\
+import importlib\n\
+m = importlib.import_module('.sub', package='pkg')\n\
+x = m.value\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(109)));
+
+    let _ = std::fs::remove_file(pkg_dir.join("sub.py"));
+    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
+    let _ = std::fs::remove_dir(&pkg_dir);
     let _ = std::fs::remove_dir(&temp_dir);
 }
 
@@ -1558,7 +1750,10 @@ x = leaf.value\n";
     vm.add_module_path(&temp_dir);
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("top_name"), Some(Value::Str("pkg".to_string())));
+    assert_eq!(
+        vm.get_global("top_name"),
+        Some(Value::Str("pkg".to_string()))
+    );
     assert_eq!(
         vm.get_global("leaf_name"),
         Some(Value::Str("pkg.sub".to_string()))
@@ -1690,8 +1885,9 @@ fn resolves_submodule_using_package_dunder_path() {
     std::fs::write(external_dir.join("sub.py"), "value = 59\n").expect("write external submodule");
 
     let path_literal = external_dir.to_string_lossy().replace('\\', "\\\\");
-    let source =
-        format!("import pkg\npkg.__path__ = ['{path_literal}']\nimport pkg.sub\nx = pkg.sub.value\n");
+    let source = format!(
+        "import pkg\npkg.__path__ = ['{path_literal}']\nimport pkg.sub\nx = pkg.sub.value\n"
+    );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

@@ -155,13 +155,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     if self.peek_char() == Some('=') {
                         self.advance();
-                        tokens.push(Token::new(
-                            TokenKind::LessEqual,
-                            "<=",
-                            offset,
-                            line,
-                            column,
-                        ));
+                        tokens.push(Token::new(TokenKind::LessEqual, "<=", offset, line, column));
                     } else {
                         tokens.push(Token::new(TokenKind::Less, "<", offset, line, column));
                     }
@@ -185,13 +179,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     if self.peek_char() == Some('=') {
                         self.advance();
-                        tokens.push(Token::new(
-                            TokenKind::NotEqual,
-                            "!=",
-                            offset,
-                            line,
-                            column,
-                        ));
+                        tokens.push(Token::new(TokenKind::NotEqual, "!=", offset, line, column));
                     } else {
                         return Err(LexError::new(
                             "unexpected character: !",
@@ -217,7 +205,13 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token::new(TokenKind::Arrow, "->", offset, line, column));
                     } else if self.peek_char() == Some('=') {
                         self.advance();
-                        tokens.push(Token::new(TokenKind::MinusEqual, "-=", offset, line, column));
+                        tokens.push(Token::new(
+                            TokenKind::MinusEqual,
+                            "-=",
+                            offset,
+                            line,
+                            column,
+                        ));
                     } else {
                         tokens.push(Token::new(TokenKind::Minus, "-", offset, line, column));
                     }
@@ -527,13 +521,7 @@ impl<'a> Lexer<'a> {
 
         if level > current {
             self.indent_stack.push(level);
-            tokens.push(Token::new(
-                TokenKind::Indent,
-                "",
-                offset,
-                line,
-                column,
-            ));
+            tokens.push(Token::new(TokenKind::Indent, "", offset, line, column));
             return Ok(());
         }
 
@@ -542,13 +530,7 @@ impl<'a> Lexer<'a> {
                 return Ok(());
             }
             self.indent_stack.pop();
-            tokens.push(Token::new(
-                TokenKind::Dedent,
-                "",
-                offset,
-                line,
-                column,
-            ));
+            tokens.push(Token::new(TokenKind::Dedent, "", offset, line, column));
         }
 
         Err(LexError::new(

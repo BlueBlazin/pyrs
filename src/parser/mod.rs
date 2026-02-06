@@ -5,4 +5,4 @@ pub mod token;
 
 mod parser;
 
-pub use parser::{parse_module, ParseError};
+pub use parser::{ParseError, parse_module};

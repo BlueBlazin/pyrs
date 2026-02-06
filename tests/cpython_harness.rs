@@ -3,9 +3,8 @@ use std::path::{Path, PathBuf};
 
 use pyrs::{compiler, parser, vm::Vm};
 
-fn read_subset() -> Vec<String> {
-    let data = fs::read_to_string("tests/cpython_subset.txt")
-        .unwrap_or_else(|_| String::new());
+fn read_subset(path: &str) -> Vec<String> {
+    let data = fs::read_to_string(path).unwrap_or_else(|_| String::new());
     data.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -25,9 +24,7 @@ fn module_path(lib: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-#[test]
-#[ignore = "Requires PYRS_CPYTHON_LIB pointing to CPython Lib/ and broader stdlib support"]
-fn runs_cpython_lib_subset() {
+fn run_subset_file(subset_file: &str) {
     let lib = match std::env::var("PYRS_CPYTHON_LIB") {
         Ok(path) => PathBuf::from(path),
         Err(_) => {
@@ -40,7 +37,7 @@ fn runs_cpython_lib_subset() {
         return;
     }
 
-    let tests = read_subset();
+    let tests = read_subset(subset_file);
     if tests.is_empty() {
         return;
     }
@@ -85,4 +82,16 @@ fn runs_cpython_lib_subset() {
     if !failures.is_empty() {
         panic!("CPython harness failures:\n{}", failures.join("\n"));
     }
+}
+
+#[test]
+#[ignore = "Requires PYRS_CPYTHON_LIB pointing to CPython Lib/ and broader stdlib support"]
+fn runs_cpython_lib_subset() {
+    run_subset_file("tests/cpython_subset.txt");
+}
+
+#[test]
+#[ignore = "Requires PYRS_CPYTHON_LIB pointing to CPython Lib/ and broader stdlib support"]
+fn runs_cpython_import_subset() {
+    run_subset_file("tests/cpython_subset_imports.txt");
 }
