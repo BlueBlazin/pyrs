@@ -55,7 +55,7 @@ Current milestone state summary:
 7. Milestone 9 complete (P0/P1): core runtime types (`set`/`frozenset`, `bytes`/`bytearray`/`memoryview`, `complex`), class metaclass keyword path + `__slots__` core behavior, and stdlib bootstrap foundations (including `codecs` and previously landed `random`) are implemented.
 8. Milestone 10 complete (P1): core async/concurrency semantics are implemented for milestone scope (`async`/`await`, async generators, `aiter`/`anext`, foundational `asyncio`/`threading`/`signal` support).
 9. Milestone 11 complete (P0/P1): parity/test gate foundations are active (CPython harness suites + owned allowlist, differential CPython checks, parser/VM fuzzing, curated real-world smoke suite, and parity profile script).
-10. Remaining milestones 12-16 cover: performance/observability, packaging/distribution, future JIT/extension hooks, native-extension ecosystem compatibility, and release hardening.
+10. Remaining milestones 12-16 cover: core CPython parity closure, stdlib/packaging usability closure, performance/observability/runtime hooks, native-extension ecosystem compatibility, and release hardening/certification.
 
 ## Engineering Principles
 - Maintain correctness first, then performance.

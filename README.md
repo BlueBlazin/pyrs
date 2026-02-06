@@ -7,7 +7,7 @@
 `pyrs` is in active alpha development.
 
 - Milestones 0-11 are complete (language/runtime foundations, import system, async foundations, and parity/test gate foundations).
-- Milestones 12-16 remain (performance/observability, packaging/distribution, extension ecosystem compatibility, and production release hardening).
+- Milestones 12-16 remain (core CPython parity closure, stdlib/packaging usability closure, performance/observability/runtime hooks, extension ecosystem compatibility, and production release hardening).
 
 ## What Users Can Expect Today
 
@@ -81,4 +81,3 @@ The curated smoke/parity tests run subprocesses in a constrained mode (`env_clea
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - Production readiness accounting: `docs/PRODUCTION_READINESS.md`
 - Project context for agent workflows: `AGENTS.md`
-

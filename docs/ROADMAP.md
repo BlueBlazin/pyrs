@@ -70,16 +70,16 @@ Release-complete target: Milestone 16; ecosystem-complete target (including nati
 5. Milestone 4: Generator and iteration parity (complete, P0).
 6. Milestone 5: Opcode execution hardening + `.pyc` read/write parity for supported bytecode paths (complete, P0).
 7. Milestone 6: Import system parity (`importlib`/`ModuleSpec`/hooks/packages, P0). (complete)
-8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0). (complete)
+8. Milestone 7: Language surface foundations (major syntax/compiler support for modern Python constructs, P0). (complete)
 9. Milestone 8: Runtime data model semantics (descriptor protocol, attribute model hooks, MRO/super, exception chaining, P0). (complete)
 10. Milestone 9: Core runtime types + builtins + stdlib bootstrap required for real apps (P0/P1). (complete)
 11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1). (complete)
 12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1). (complete)
-13. Milestone 12: Performance and observability baseline (P2).
-14. Milestone 13: Packaging/distribution and ecosystem usability (P1/P2).
-15. Milestone 14: Future hooks and extension-path architecture documentation (P3).
-16. Milestone 15: Native extension ecosystem compatibility (limited C-API/abi3 + HPy path, P1 with P0 ecosystem parity gate).
-17. Milestone 16: Release hardening and production certification (security/reliability/CI gates, P0/P1).
+13. Milestone 12: Core CPython parity closure (tokenizer/grammar/bytecode/runtime remaining P0 gaps, P0).
+14. Milestone 13: Stdlib and packaging usability closure for pure-Python ecosystem workloads (P0/P1).
+15. Milestone 14: Performance, observability, and runtime hooks (P1/P2/P3).
+16. Milestone 15: Native extension ecosystem compatibility (limited C-API/abi3 + HPy path, P0/P1).
+17. Milestone 16: Release hardening and production certification (security/reliability/CI/distribution gates, P0/P1).
 
 ## Production Readiness Checklist (Living)
 Canonical checklist lives in `docs/PRODUCTION_READINESS.md`. The list below is a snapshot of P0-P3 items we are actively tracking in the roadmap.
@@ -88,6 +88,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 ### P0 (Production Blocking)
 - [x] Object identity + stable headers (`id`, `is` semantics).
 - [x] Reference counting + cycle GC.
+- [ ] Full tokenizer/grammar parity for CPython 3.14 language surface.
 - [x] CPython opcode table decoder (3.14).
 - [x] CPython opcode translation hardening for supported paths (fail-fast unsupported opcodes, no silent fallback behavior).
 - [x] `.pyc` load/serialize parity for supported code-object subset (header + marshal reader/writer).
@@ -96,6 +97,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [x] Import system parity for supported pure-Python scenarios (`importlib`, specs, hooks).
+- [ ] Runtime semantic closure for remaining data-model gaps (`__getattribute__`, metaclass precedence, `__slots__` layout edges, full codecs behavior).
 - [ ] Native extension loading parity for limited C-API/abi3 modules.
 - [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, and parity-regression blocking CI.
 
@@ -175,7 +177,7 @@ DoD:
 - Relative imports and namespace package behavior match CPython for supported scenarios.
 Status: complete
 
-### Milestone 7 — Language Surface Parity (P0)
+### Milestone 7 — Language Surface Foundations (P0)
 DoD:
 - Tokenizer/grammar/compiler surface expanded for milestone targets: decorators, assignment expressions (`:=`), list/dict comprehensions and generator expressions (with scope isolation), `match`/`case` (core literal/capture/guard subset), async syntax (`async def`/`await`/`async for`/`async with`), `except*` parsing, type parameters on functions/classes, and f-string lowering.
 - `__future__` import placement/unknown-feature gating checks are enforced at compile time.
@@ -183,7 +185,7 @@ DoD:
 Status: complete
 Notes:
 - Core coroutine/event-loop semantics are implemented in Milestone 10.
-- Full `ExceptionGroup` splitting semantics and full PEP 701 formatting edge cases remain tracked under Milestones 8-10 and production-readiness checklist items.
+- Full tokenizer/grammar parity, full `ExceptionGroup` splitting semantics, and full PEP 701 formatting edge cases are tracked under Milestone 12 and production-readiness checklist items.
 
 ### Milestone 8 — Runtime Data Model Parity (P0)
 DoD:
@@ -193,7 +195,7 @@ DoD:
 - Exception chaining/context semantics are implemented for `raise ... from ...` and implicit chaining (`__cause__`, `__context__`, `__suppress_context__`).
 Status: complete
 Notes:
-- Full metaclass precedence/selection semantics and custom metaclass class-object call edge cases are tracked in Milestone 11 parity closure.
+- Full metaclass precedence/selection semantics and custom metaclass class-object call edge cases are tracked in Milestone 12 parity closure.
 - Core builtin type parity (`bytes`/`set`/`float`/unicode codecs foundations) is delivered in Milestone 9.
 
 ### Milestone 9 — Builtins + Stdlib Bootstrap (P0/P1)
@@ -237,28 +239,32 @@ Progress:
 - Curated real-world smoke coverage landed in `tests/realworld_smoke.rs` and is executed in a constrained subprocess profile (`env_clear`, isolated temp cwd/home, and timeout enforcement).
 - Milestone parity profile is codified in `scripts/run_parity_gate.sh` (`PYRS_PARITY_STRICT=1`) and currently passes.
 
-### Milestone 12 — Performance and Observability Baseline (P2)
+### Milestone 12 — Core CPython Parity Closure (P0)
 DoD:
-- Baseline benchmark suite (including pyperformance subset) is automated.
-- At least one production-relevant optimization tier lands (peephole/inlining/caches) without semantic regressions.
-- Profiling and debug observability hooks (`sys.settrace`, `sys.setprofile`, runtime metrics) are operational.
+- Tokenizer and grammar parity closure for remaining CPython 3.14 language families (string/bytes lexing edge cases, indentation/comment parity, full pattern families, `type` statement coverage, and f-string PEP 701 edge behavior).
+- Bytecode/VM parity closure for remaining required CPython 3.14 opcode families and exception-unwind semantics needed by harness and real-world suites.
+- Runtime data-model closure for outstanding parity gaps (`__getattribute__`, metaclass precedence/selection, `__slots__` layout edges, and full codecs behavior).
+- CPython harness allowlist is reduced to explicit non-goals only, with owner and rationale for each retained entry.
+- Parity gate suites are integrated as merge-blocking CI checks for the default development profile.
 
-### Milestone 13 — Packaging, Distribution, and Developer UX (P1/P2)
+### Milestone 13 — Stdlib and Packaging Usability Closure (P0/P1)
 DoD:
-- Distribution artifacts and reproducible builds are documented and automated.
-- `site` startup behavior, venv/pip pure-Python workflows, and REPL quality are production-usable.
-- Documentation and compatibility reporting are publishable for external contributors/users.
+- Stdlib coverage expands to unblock mainstream pure-Python ecosystems (`subprocess`, `socket`, `ssl`, `http`, `urllib`, `typing`, `dataclasses`, `enum`, `contextvars`, and importlib resource/package helpers).
+- Import and packaging paths close remaining usability gaps (zip/bytecode imports, `importlib.resources`, `pkgutil`, and `site` startup behavior).
+- venv + pip pure-Python package workflows are production-usable and covered by regression tests.
+- Real-world smoke/regression matrix includes CLI/web/data pure-Python app classes running under constrained sandbox profile.
 
-### Milestone 14 — Future Hooks (P3)
+### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:
-- JIT hook points in IR/VM are explicitly documented and tested for non-regression.
-- Extension strategy (HPy / limited C-API path) is documented with architectural constraints.
-- Embedding API direction for Rust/C hosts is documented.
+- Baseline benchmark suite (including pyperformance subset plus project workloads) is automated and tracked for regressions.
+- At least one production-relevant optimization tier lands (peephole/constant-folding/caches) with parity tests proving no semantic regressions.
+- Debug and profiling hooks (`sys.settrace`, `sys.setprofile`, runtime metrics, profiling workflow) are operational.
+- JIT/embedding hook points in IR/VM boundaries are explicitly documented and covered by non-regression tests.
 
-### Milestone 15 — Native Extension Ecosystem Compatibility (P1 with P0 gate)
+### Milestone 15 — Native Extension Ecosystem Compatibility (P0/P1)
 DoD:
 - Limited C-API/abi3 extension loading works for representative extension modules (import, type/object creation, method dispatch, error propagation).
-- HPy execution path is available (even if partial) with explicit compatibility matrix and tests.
+- HPy execution path is available with explicit compatibility matrix and tests.
 - Ecosystem smoke tests include at least one extension-backed package class (numeric/crypto/parsing families) with documented pass/fail matrix.
 - Any unsupported extension surfaces fail with explicit diagnostics, not silent misbehavior.
 
@@ -266,14 +272,14 @@ DoD:
 DoD:
 - Security/reliability CI gates are mandatory for release branches (ASan/UBSan, differential CPython runs, crash reproducer retention).
 - Cross-platform qualification gates pass on Linux, macOS, and Windows for defined compatibility suite.
-- Release policy defines semantic versioning, compatibility guarantees, and regression-response SLA.
-- Production playbook exists for incident triage, rollback strategy, and reproducible artifact verification.
+- Release pipeline produces reproducible and signed artifacts with SBOM generation and semantic-versioning policy.
+- Production playbook exists for incident triage, rollback strategy, reproducible artifact verification, and regression-response SLA.
 
 ## Immediate next steps
-- Start Milestone 12 performance and observability work: baseline benchmark harness and first optimization tier with regression protections.
-- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 12-13.
-- Continue shrinking CPython harness allowlist by converting parser/runtime gaps into owned fixes.
-- Wire parity/profile gates into CI so regressions block merges by default.
+- Start Milestone 12 parity closure: tokenizer/grammar completion, remaining opcode-family execution parity, and data-model edge semantics closure.
+- Convert CPython harness allowlist entries into owned closure batches (parser, VM/opcode, runtime, stdlib) with weekly burn-down targets.
+- Wire parity/profile gates into CI as merge-blocking checks before beginning optimization work.
+- Begin Milestone 13 planning in parallel for stdlib/import packaging gaps needed by real pure-Python workloads.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 
 ## Testing Focus Note

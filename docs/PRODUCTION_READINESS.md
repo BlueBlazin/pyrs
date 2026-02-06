@@ -8,17 +8,17 @@ Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (futu
 ## Milestone Coverage Map
 Every category below is mapped to the revised roadmap milestones in `docs/ROADMAP.md`, so the remaining plan has no known gaps.
 
-- Language & Grammar -> Milestone 7
-- Semantic Analysis & Compilation -> Milestones 5 and 7
-- Bytecode & VM Execution -> Milestones 4 and 5
-- Runtime Object Model & Data Model -> Milestones 8, 9, and 11
-- Builtins -> Milestone 9
-- Import System -> Milestone 6
-- Standard Library Coverage -> Milestones 9, 10, and 11
-- Tooling & UX -> Milestones 12 and 13
-- Testing & QA -> Milestone 11
-- Performance & Profiling -> Milestone 12
-- Concurrency & Platform -> Milestone 10
+- Language & Grammar -> Milestones 7 and 12
+- Semantic Analysis & Compilation -> Milestones 7 and 12
+- Bytecode & VM Execution -> Milestones 5 and 12
+- Runtime Object Model & Data Model -> Milestones 8, 9, and 12
+- Builtins -> Milestones 9 and 13
+- Import System -> Milestones 6 and 13
+- Standard Library Coverage -> Milestones 9, 10, and 13
+- Tooling & UX -> Milestones 13 and 14
+- Testing & QA -> Milestones 11 and 16
+- Performance & Profiling -> Milestone 14
+- Concurrency & Platform -> Milestones 10 and 16
 - Interop & Extensibility -> Milestones 14 and 15
 - Packaging & Distribution -> Milestones 13 and 16
 - Security, Reliability, and Release Engineering -> Milestone 16
