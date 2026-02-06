@@ -65,7 +65,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [x] P0: set/frozenset.
 - [~] P0: Unicode/codec behavior parity (including error handlers) (`codecs.encode`/`decode` foundations for `utf-8`/`ascii`/`latin-1` with `strict`/`ignore`/`replace` implemented; full parity pending).
 - [~] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`) (core VM descriptor hooks implemented; metaclass/slot edge parity pending).
-- [~] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) (`__getattr__`/`__setattr__`/`__delattr__` paths implemented for instances; full `__getattribute__` parity pending).
+- [~] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) (instance hooks plus custom `__getattribute__` override and `object.__getattribute__` baseline are implemented; full fallback/error-edge parity pending).
 - [~] P0: MRO + metaclasses + `super()` semantics (C3 MRO + explicit `super(type, obj)` implemented; class-header `metaclass=` and `__build_class__` metaclass kwargs supported; full metaclass precedence semantics pending).
 - [~] P0: `__slots__` and instance layout rules (core restrictions implemented; full layout parity pending).
 - [ ] P1: Weakrefs, `gc` module hooks, finalizers.

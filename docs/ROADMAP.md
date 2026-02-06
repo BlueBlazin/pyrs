@@ -108,7 +108,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [~] Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full families pending.
 - [x] Type annotations (parse + `__annotations__` on modules/classes/functions; eager evaluation only).
 - [x] Exception chaining (`__cause__`, `__context__`, suppression metadata) for explicit/implicit raises.
-- [~] Descriptor protocol + attribute lookup parity (descriptor hooks plus `__getattr__`/`__setattr__`/`__delattr__` implemented; full `__getattribute__`/metaclass parity pending).
+- [~] Descriptor protocol + attribute lookup parity (descriptor hooks plus `__getattribute__` override baseline and `__getattr__`/`__setattr__`/`__delattr__` implemented; full `__getattribute__` fallback-edge and metaclass parity pending).
 - [~] Core stdlib: `sys`, `types`, `inspect`, `io`.
 - [~] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`, `codecs`.
 - [~] Utility stdlib foundations: `random`.

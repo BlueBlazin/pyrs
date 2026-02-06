@@ -925,6 +925,7 @@ pub enum BuiltinFunction {
     Property,
     ObjectNew,
     ObjectInit,
+    ObjectGetAttribute,
     ObjectGetState,
     ObjectSetAttr,
     ObjectDelAttr,
@@ -2638,6 +2639,7 @@ impl BuiltinFunction {
             | BuiltinFunction::WarningsFiltersMutated
             | BuiltinFunction::ObjectNew
             | BuiltinFunction::ObjectInit
+            | BuiltinFunction::ObjectGetAttribute
             | BuiltinFunction::ObjectSetAttr
             | BuiltinFunction::ObjectDelAttr
             | BuiltinFunction::Dir

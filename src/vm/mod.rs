@@ -8796,6 +8796,63 @@ impl Vm {
         instance: &ObjRef,
         attr_name: &str,
     ) -> Result<AttrAccessOutcome, RuntimeError> {
+        let receiver = Value::Instance(instance.clone());
+        if let Some(getattribute_method) =
+            self.lookup_bound_special_method(&receiver, "__getattribute__")?
+        {
+            let getattribute_outcome = self.call_internal(
+                getattribute_method,
+                vec![Value::Str(attr_name.to_string())],
+                HashMap::new(),
+            );
+            match getattribute_outcome {
+                Ok(InternalCallOutcome::Value(value)) => {
+                    return Ok(AttrAccessOutcome::Value(value));
+                }
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    if !self.active_exception_is("AttributeError") {
+                        return Ok(AttrAccessOutcome::ExceptionHandled);
+                    }
+                    self.clear_active_exception();
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            }
+
+            if let Some(getattr_method) = self.lookup_bound_special_method(&receiver, "__getattr__")? {
+                return Ok(match self.call_internal(
+                    getattr_method,
+                    vec![Value::Str(attr_name.to_string())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                    InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
+                });
+            }
+
+            let class_name = match &*instance.kind() {
+                Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "<class>".to_string(),
+                },
+                _ => "<class>".to_string(),
+            };
+            return Err(RuntimeError::new(format!(
+                "'{}' object has no attribute '{}'",
+                class_name, attr_name
+            )));
+        }
+
+        self.load_attr_instance_default(instance, attr_name, true)
+    }
+
+    fn load_attr_instance_default(
+        &mut self,
+        instance: &ObjRef,
+        attr_name: &str,
+        allow_getattr_fallback: bool,
+    ) -> Result<AttrAccessOutcome, RuntimeError> {
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return Err(RuntimeError::new("attribute access unsupported type")),
@@ -8864,21 +8921,23 @@ impl Vm {
             return Ok(AttrAccessOutcome::Value(attr));
         }
 
-        if let Some(getattr_method) =
-            self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__getattr__")?
-        {
-            return Ok(
-                match self.call_internal(
-                    getattr_method,
-                    vec![Value::Str(attr_name.to_string())],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        AttrAccessOutcome::ExceptionHandled
-                    }
-                },
-            );
+        if allow_getattr_fallback {
+            if let Some(getattr_method) =
+                self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__getattr__")?
+            {
+                return Ok(
+                    match self.call_internal(
+                        getattr_method,
+                        vec![Value::Str(attr_name.to_string())],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            AttrAccessOutcome::ExceptionHandled
+                        }
+                    },
+                );
+            }
         }
 
         let class_name = match &*class_ref.kind() {
@@ -11004,6 +11063,7 @@ impl Vm {
             BuiltinFunction::Property => self.builtin_property(args, kwargs),
             BuiltinFunction::ObjectNew => self.builtin_object_new(args, kwargs),
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
+            BuiltinFunction::ObjectGetAttribute => self.builtin_object_getattribute(args, kwargs),
             BuiltinFunction::ObjectGetState => self.builtin_object_getstate(args, kwargs),
             BuiltinFunction::ObjectSetAttr => self.builtin_object_setattr(args, kwargs),
             BuiltinFunction::ObjectDelAttr => self.builtin_object_delattr(args, kwargs),
@@ -11660,6 +11720,33 @@ impl Vm {
                 _ => Ok(Value::None),
             },
             _ => Ok(Value::None),
+        }
+    }
+
+    fn builtin_object_getattribute(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "object.__getattribute__() expects two arguments",
+            ));
+        }
+        let target = args.remove(0);
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("attribute name must be string")),
+        };
+
+        match target {
+            Value::Instance(instance) => match self
+                .load_attr_instance_default(&instance, &name, false)?
+            {
+                AttrAccessOutcome::Value(value) => Ok(value),
+                AttrAccessOutcome::ExceptionHandled => Ok(Value::None),
+            },
+            other => self.builtin_getattr(vec![other, Value::Str(name)], HashMap::new()),
         }
     }
 
@@ -16285,6 +16372,10 @@ impl Vm {
             class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::ObjectInit),
+            );
+            class_data.attrs.insert(
+                "__getattribute__".to_string(),
+                Value::Builtin(BuiltinFunction::ObjectGetAttribute),
             );
             class_data.attrs.insert(
                 "__setattr__".to_string(),

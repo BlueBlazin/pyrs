@@ -1794,6 +1794,28 @@ fn executes_attribute_builtins() {
 }
 
 #[test]
+fn executes_custom_getattribute_with_object_fallback() {
+    let source = "class A:\n    def __init__(self):\n        self.y = 5\n    def __getattribute__(self, name):\n        if name == 'x':\n            return 42\n        return object.__getattribute__(self, name)\n\na = A()\nx = a.x\ny = a.y\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("x"), Some(Value::Int(42)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(5)));
+}
+
+#[test]
+fn object_getattribute_bypasses_getattr_fallback() {
+    let source = "class A:\n    def __getattr__(self, name):\n        return 99\n\na = A()\nvia_getattr = a.missing\ncaught = False\ntry:\n    object.__getattribute__(a, 'missing')\nexcept AttributeError:\n    caught = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("via_getattr"), Some(Value::Int(99)));
+    assert_eq!(vm.get_global("caught"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn init_returning_value_raises() {
     let source = "class Bad:\n    def __init__(self):\n        return 1\nBad()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
