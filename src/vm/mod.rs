@@ -43,7 +43,7 @@ enum NativeCallResult {
 
 enum GeneratorResumeOutcome {
     Yield(Value),
-    Complete,
+    Complete(Value),
     PropagatedException,
 }
 
@@ -118,6 +118,7 @@ pub struct Vm {
     heap: Heap,
     generator_states: HashMap<u64, Frame>,
     generator_returns: HashMap<u64, Value>,
+    pending_generator_exception: Option<Value>,
     active_generator_resume: Option<u64>,
     active_generator_resume_boundary: Option<usize>,
     generator_resume_outcome: Option<GeneratorResumeOutcome>,
@@ -151,6 +152,7 @@ impl Vm {
             heap,
             generator_states: HashMap::new(),
             generator_returns: HashMap::new(),
+            pending_generator_exception: None,
             active_generator_resume: None,
             active_generator_resume_boundary: None,
             generator_resume_outcome: None,
@@ -277,6 +279,7 @@ impl Vm {
         self.frames.clear();
         self.generator_states.clear();
         self.generator_returns.clear();
+        self.pending_generator_exception = None;
         self.active_generator_resume = None;
         self.active_generator_resume_boundary = None;
         self.generator_resume_outcome = None;
@@ -1928,7 +1931,9 @@ impl Vm {
                                         HashMap::new(),
                                     )? {
                                         NativeCallResult::Value(result) => self.push_value(result),
-                                        NativeCallResult::PropagatedException => {}
+                                        NativeCallResult::PropagatedException => {
+                                            self.propagate_pending_generator_exception()?;
+                                        }
                                     }
                                 }
                                 _ => {
@@ -2123,7 +2128,9 @@ impl Vm {
                                         kwargs,
                                     )? {
                                         NativeCallResult::Value(result) => self.push_value(result),
-                                        NativeCallResult::PropagatedException => {}
+                                        NativeCallResult::PropagatedException => {
+                                            self.propagate_pending_generator_exception()?;
+                                        }
                                     }
                                 }
                                 _ => {
@@ -2296,7 +2303,9 @@ impl Vm {
                                         kwargs,
                                     )? {
                                         NativeCallResult::Value(result) => self.push_value(result),
-                                        NativeCallResult::PropagatedException => {}
+                                        NativeCallResult::PropagatedException => {
+                                            self.propagate_pending_generator_exception()?;
+                                        }
                                     }
                                 }
                                 _ => {
@@ -2435,7 +2444,9 @@ impl Vm {
                                         kwargs,
                                     )? {
                                         NativeCallResult::Value(result) => self.push_value(result),
-                                        NativeCallResult::PropagatedException => {}
+                                        NativeCallResult::PropagatedException => {
+                                            self.propagate_pending_generator_exception()?;
+                                        }
                                     }
                                 }
                                 _ => {
@@ -2588,7 +2599,9 @@ impl Vm {
                                         kwargs,
                                     )? {
                                         NativeCallResult::Value(result) => self.push_value(result),
-                                        NativeCallResult::PropagatedException => {}
+                                        NativeCallResult::PropagatedException => {
+                                            self.propagate_pending_generator_exception()?;
+                                        }
                                     }
                                 }
                                 _ => {
@@ -2792,12 +2805,18 @@ impl Vm {
                     let iterator_value = self.pop_value()?;
                     match iterator_value {
                         Value::Generator(obj) => {
-                            if let Some(value) = self.generator_for_iter_next(&obj)? {
-                                self.push_value(Value::Generator(obj));
-                                self.push_value(value);
-                            } else {
-                                let frame = self.frames.last_mut().expect("frame exists");
-                                frame.ip = target;
+                            match self.generator_for_iter_next(&obj)? {
+                                GeneratorResumeOutcome::Yield(value) => {
+                                    self.push_value(Value::Generator(obj));
+                                    self.push_value(value);
+                                }
+                                GeneratorResumeOutcome::Complete(_) => {
+                                    let frame = self.frames.last_mut().expect("frame exists");
+                                    frame.ip = target;
+                                }
+                                GeneratorResumeOutcome::PropagatedException => {
+                                    self.propagate_pending_generator_exception()?;
+                                }
                             }
                         }
                         Value::Iterator(iterator_ref) => {
@@ -2930,45 +2949,41 @@ impl Vm {
                     } else {
                         self.to_iterator_value(source_opt.expect("source present"))?
                     };
-
-                    if let Some(exc) = thrown {
-                        self.raise_exception(exc)?;
-                        return Ok(None);
-                    }
-                    if sent != Value::None {
-                        return Err(RuntimeError::new(
-                            "can't send non-None value to a just-started generator",
-                        ));
-                    }
-
-                    if let Some(value) = self.next_from_iterator_value(&iter)? {
-                        let mut frame = self.frames.pop().expect("frame exists");
-                        frame.ip = frame.ip.saturating_sub(1);
-                        frame.yield_from_iter = Some(iter);
-                        frame.generator_awaiting_resume_value = false;
-                        frame.generator_resume_value = None;
-                        frame.generator_pending_throw = None;
-                        self.set_generator_running(&owner, false)?;
-                        self.set_generator_started(&owner, true)?;
-                        self.generator_states.insert(owner_id, frame);
-                        if resume_kind == GeneratorResumeKind::Close {
-                            return Err(RuntimeError::new("generator ignored GeneratorExit"));
+                    match self.delegate_yield_from(&iter, sent, thrown, resume_kind)? {
+                        GeneratorResumeOutcome::Yield(value) => {
+                            let mut frame = self.frames.pop().expect("frame exists");
+                            frame.ip = frame.ip.saturating_sub(1);
+                            frame.yield_from_iter = Some(iter);
+                            frame.generator_awaiting_resume_value = false;
+                            frame.generator_resume_value = None;
+                            frame.generator_pending_throw = None;
+                            self.set_generator_running(&owner, false)?;
+                            self.set_generator_started(&owner, true)?;
+                            self.generator_states.insert(owner_id, frame);
+                            if resume_kind == GeneratorResumeKind::Close {
+                                return Err(RuntimeError::new("generator ignored GeneratorExit"));
+                            }
+                            if self.active_generator_resume == Some(owner_id) {
+                                self.generator_resume_outcome =
+                                    Some(GeneratorResumeOutcome::Yield(value));
+                            } else if let Some(caller) = self.frames.last_mut() {
+                                caller.stack.push(value);
+                            } else {
+                                return Ok(Some(Value::None));
+                            }
                         }
-                        if self.active_generator_resume == Some(owner_id) {
-                            self.generator_resume_outcome =
-                                Some(GeneratorResumeOutcome::Yield(value));
-                        } else if let Some(caller) = self.frames.last_mut() {
-                            caller.stack.push(value);
-                        } else {
-                            return Ok(Some(Value::None));
+                        GeneratorResumeOutcome::Complete(value) => {
+                            let frame = self.frames.last_mut().expect("frame exists");
+                            frame.yield_from_iter = None;
+                            frame.generator_resume_value = None;
+                            frame.generator_pending_throw = None;
+                            frame.generator_awaiting_resume_value = false;
+                            frame.stack.push(value);
                         }
-                    } else {
-                        let frame = self.frames.last_mut().expect("frame exists");
-                        frame.yield_from_iter = None;
-                        frame.generator_resume_value = None;
-                        frame.generator_pending_throw = None;
-                        frame.generator_awaiting_resume_value = false;
-                        frame.stack.push(Value::None);
+                        GeneratorResumeOutcome::PropagatedException => {
+                            self.propagate_pending_generator_exception()?;
+                            return Ok(None);
+                        }
                     }
                 }
                 Opcode::SetupExcept => {
@@ -3086,9 +3101,6 @@ impl Vm {
                 Ok(Some(value)) => return Ok(value),
                 Ok(None) => {}
                 Err(err) => {
-                    if err.message == "__generator_propagated_exception__" {
-                        continue;
-                    }
                     match self.handle_runtime_error(err) {
                         Ok(()) => {}
                         Err(err) => return Err(err),
@@ -3119,8 +3131,9 @@ impl Vm {
 
             if let Some(boundary) = self.active_generator_resume_boundary {
                 if self.frames.len() <= boundary {
-                    let message = self.format_traceback(&traceback, &exc);
-                    return Err(RuntimeError::new(message));
+                    self.pending_generator_exception = Some(exc);
+                    self.generator_resume_outcome = Some(GeneratorResumeOutcome::PropagatedException);
+                    return Ok(());
                 }
             }
 
@@ -3348,7 +3361,7 @@ impl Vm {
                 }
                 match self.resume_generator(&receiver, None, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete => {
+                    GeneratorResumeOutcome::Complete(_) => {
                         Err(RuntimeError::new("StopIteration"))
                     }
                     GeneratorResumeOutcome::PropagatedException => {
@@ -3363,7 +3376,7 @@ impl Vm {
                 let sent = args.into_iter().next();
                 match self.resume_generator(&receiver, sent, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete => {
+                    GeneratorResumeOutcome::Complete(_) => {
                         Err(RuntimeError::new("StopIteration"))
                     }
                     GeneratorResumeOutcome::PropagatedException => {
@@ -3387,7 +3400,7 @@ impl Vm {
                     GeneratorResumeKind::Throw,
                 )? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete => {
+                    GeneratorResumeOutcome::Complete(_) => {
                         Err(RuntimeError::new("StopIteration"))
                     }
                     GeneratorResumeOutcome::PropagatedException => {
@@ -3416,12 +3429,21 @@ impl Vm {
                     Ok(GeneratorResumeOutcome::Yield(_)) => {
                         Err(RuntimeError::new("generator ignored GeneratorExit"))
                     }
-                    Ok(GeneratorResumeOutcome::Complete) => {
+                    Ok(GeneratorResumeOutcome::Complete(_)) => {
                         self.set_generator_closed(&receiver, true)?;
                         Ok(NativeCallResult::Value(Value::None))
                     }
                     Ok(GeneratorResumeOutcome::PropagatedException) => {
-                        if self.active_exception_is("GeneratorExit") {
+                        if self
+                            .pending_generator_exception
+                            .as_ref()
+                            .map(|exc| exception_is_named(exc, "GeneratorExit"))
+                            .unwrap_or(false)
+                        {
+                            self.pending_generator_exception = None;
+                            self.set_generator_closed(&receiver, true)?;
+                            Ok(NativeCallResult::Value(Value::None))
+                        } else if self.active_exception_is("GeneratorExit") {
                             self.clear_active_exception();
                             self.set_generator_closed(&receiver, true)?;
                             Ok(NativeCallResult::Value(Value::None))
@@ -3445,14 +3467,8 @@ impl Vm {
     fn generator_for_iter_next(
         &mut self,
         generator: &ObjRef,
-    ) -> Result<Option<Value>, RuntimeError> {
-        match self.resume_generator(generator, None, None, GeneratorResumeKind::Next)? {
-            GeneratorResumeOutcome::Yield(value) => Ok(Some(value)),
-            GeneratorResumeOutcome::Complete => Ok(None),
-            GeneratorResumeOutcome::PropagatedException => {
-                Err(RuntimeError::new("__generator_propagated_exception__"))
-            }
-        }
+    ) -> Result<GeneratorResumeOutcome, RuntimeError> {
+        self.resume_generator(generator, None, None, GeneratorResumeKind::Next)
     }
 
     fn to_iterator_value(&mut self, source: Value) -> Result<Value, RuntimeError> {
@@ -3490,7 +3506,7 @@ impl Vm {
     fn next_from_iterator_value(
         &mut self,
         iterator: &Value,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<GeneratorResumeOutcome, RuntimeError> {
         match iterator {
             Value::Generator(obj) => self.generator_for_iter_next(obj),
             Value::Iterator(iterator_ref) => {
@@ -3548,9 +3564,95 @@ impl Vm {
                         _ => None,
                     }
                 };
-                Ok(next_value)
+                if let Some(value) = next_value {
+                    Ok(GeneratorResumeOutcome::Yield(value))
+                } else {
+                    Ok(GeneratorResumeOutcome::Complete(Value::None))
+                }
             }
             _ => Err(RuntimeError::new("yield from expects iterable")),
+        }
+    }
+
+    fn delegate_yield_from(
+        &mut self,
+        iterator: &Value,
+        sent: Value,
+        thrown: Option<Value>,
+        resume_kind: GeneratorResumeKind,
+    ) -> Result<GeneratorResumeOutcome, RuntimeError> {
+        if let Some(exc) = thrown {
+            return match iterator {
+                Value::Generator(obj) => {
+                    let delegated_kind = if resume_kind == GeneratorResumeKind::Close
+                        && exception_is_named(&exc, "GeneratorExit")
+                    {
+                        GeneratorResumeKind::Close
+                    } else {
+                        GeneratorResumeKind::Throw
+                    };
+                    let outcome =
+                        self.resume_generator(obj, None, Some(exc.clone()), delegated_kind)?;
+                    if resume_kind == GeneratorResumeKind::Close
+                        && exception_is_named(&exc, "GeneratorExit")
+                    {
+                        match outcome {
+                            GeneratorResumeOutcome::Yield(_) => {
+                                Err(RuntimeError::new("generator ignored GeneratorExit"))
+                            }
+                            GeneratorResumeOutcome::Complete(_) => {
+                                self.raise_exception(exc)?;
+                                Ok(GeneratorResumeOutcome::PropagatedException)
+                            }
+                            GeneratorResumeOutcome::PropagatedException => {
+                                if self.active_exception_is("GeneratorExit") {
+                                    self.clear_active_exception();
+                                    self.raise_exception(exc)?;
+                                }
+                                Ok(GeneratorResumeOutcome::PropagatedException)
+                            }
+                        }
+                    } else {
+                        Ok(outcome)
+                    }
+                }
+                Value::Iterator(_) => {
+                    self.raise_exception(exc)?;
+                    Ok(GeneratorResumeOutcome::PropagatedException)
+                }
+                _ => Err(RuntimeError::new("yield from expects iterable")),
+            };
+        }
+
+        if sent != Value::None {
+            return match iterator {
+                Value::Generator(obj) => {
+                    self.resume_generator(obj, Some(sent), None, GeneratorResumeKind::Next)
+                }
+                Value::Iterator(_) => Err(RuntimeError::new(format!(
+                    "'{}' object has no attribute 'send'",
+                    self.iterator_type_name(iterator)
+                ))),
+                _ => Err(RuntimeError::new("yield from expects iterable")),
+            };
+        }
+
+        self.next_from_iterator_value(iterator)
+    }
+
+    fn iterator_type_name(&self, iterator: &Value) -> &'static str {
+        match iterator {
+            Value::Iterator(obj) => match &*obj.kind() {
+                Object::Iterator(state) => match state.kind {
+                    IteratorKind::List(_) => "list_iterator",
+                    IteratorKind::Tuple(_) => "tuple_iterator",
+                    IteratorKind::Str(_) => "str_iterator",
+                    IteratorKind::Dict(_) => "dict_keyiterator",
+                },
+                _ => "iterator",
+            },
+            Value::Generator(_) => "generator",
+            _ => "object",
         }
     }
 
@@ -3569,7 +3671,12 @@ impl Vm {
             return Err(RuntimeError::new("generator already executing"));
         }
         if closed {
-            return Ok(GeneratorResumeOutcome::Complete);
+            let value = self
+                .generator_returns
+                .get(&generator.id())
+                .cloned()
+                .unwrap_or(Value::None);
+            return Ok(GeneratorResumeOutcome::Complete(value));
         }
         if thrown.is_none() && !started {
             if let Some(value) = &sent {
@@ -3594,23 +3701,32 @@ impl Vm {
         let previous_active = self.active_generator_resume;
         let previous_boundary = self.active_generator_resume_boundary;
         let previous_outcome = self.generator_resume_outcome.take();
+        let previous_pending = self.pending_generator_exception.take();
 
         self.active_generator_resume = Some(generator.id());
         self.active_generator_resume_boundary = Some(self.frames.len());
         self.generator_resume_outcome = None;
+        self.pending_generator_exception = None;
         self.frames.push(frame);
         let run_result = self.run();
         let outcome = self.generator_resume_outcome.take();
+        let pending = self.pending_generator_exception.take();
         self.active_generator_resume = previous_active;
         self.active_generator_resume_boundary = previous_boundary;
         self.generator_resume_outcome = previous_outcome;
+        self.pending_generator_exception = pending.or(previous_pending);
 
         match run_result {
             Ok(_) => {
                 if let Some(outcome) = outcome {
                     Ok(outcome)
                 } else {
-                    Ok(GeneratorResumeOutcome::Complete)
+                    let value = self
+                        .generator_returns
+                        .get(&generator.id())
+                        .cloned()
+                        .unwrap_or(Value::None);
+                    Ok(GeneratorResumeOutcome::Complete(value))
                 }
             }
             Err(err) => {
@@ -3627,7 +3743,7 @@ impl Vm {
         let _ = self.set_generator_started(&owner, true);
         let _ = self.set_generator_closed(&owner, true);
         if self.active_generator_resume == Some(owner.id()) {
-            self.generator_resume_outcome = Some(GeneratorResumeOutcome::Complete);
+            self.generator_resume_outcome = Some(GeneratorResumeOutcome::Complete(value));
         }
     }
 
@@ -3692,6 +3808,13 @@ impl Vm {
         if let Some(frame) = self.frames.last_mut() {
             frame.active_exception = None;
         }
+    }
+
+    fn propagate_pending_generator_exception(&mut self) -> Result<(), RuntimeError> {
+        if let Some(exc) = self.pending_generator_exception.take() {
+            self.raise_exception(exc)?;
+        }
+        Ok(())
     }
 
     fn call_builtin(
@@ -3825,6 +3948,8 @@ impl Vm {
             .insert("locals".to_string(), Value::Builtin(BuiltinFunction::Locals));
         self.builtins
             .insert("globals".to_string(), Value::Builtin(BuiltinFunction::Globals));
+        self.builtins
+            .insert("BaseException".to_string(), Value::ExceptionType("BaseException".to_string()));
         self.builtins
             .insert("Exception".to_string(), Value::ExceptionType("Exception".to_string()));
         self.builtins
@@ -4063,11 +4188,50 @@ fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, Ru
         _ => return Err(RuntimeError::new("except expects exception type")),
     };
 
-    if handler_name == "Exception" {
-        return Ok(true);
-    }
+    Ok(exception_inherits(exception_name, handler_name))
+}
 
-    Ok(exception_name == handler_name)
+fn exception_is_named(exception: &Value, name: &str) -> bool {
+    match exception {
+        Value::Exception(exc) => exc.name == name,
+        Value::ExceptionType(exc_name) => exc_name == name,
+        _ => false,
+    }
+}
+
+fn exception_inherits(exception_name: &str, handler_name: &str) -> bool {
+    if exception_name == handler_name {
+        return true;
+    }
+    let mut current = exception_parent(exception_name);
+    while let Some(name) = current {
+        if name == handler_name {
+            return true;
+        }
+        current = exception_parent(name);
+    }
+    false
+}
+
+fn exception_parent(name: &str) -> Option<&'static str> {
+    match name {
+        "BaseException" => None,
+        "Exception" => Some("BaseException"),
+        "GeneratorExit" => Some("BaseException"),
+        "SystemExit" => Some("BaseException"),
+        "KeyboardInterrupt" => Some("BaseException"),
+        "StopIteration" => Some("Exception"),
+        "AssertionError" => Some("Exception"),
+        "AttributeError" => Some("Exception"),
+        "IndexError" => Some("Exception"),
+        "KeyError" => Some("Exception"),
+        "NameError" => Some("Exception"),
+        "RuntimeError" => Some("Exception"),
+        "TypeError" => Some("Exception"),
+        "ValueError" => Some("Exception"),
+        "ZeroDivisionError" => Some("Exception"),
+        _ => Some("Exception"),
+    }
 }
 
 struct BoundArguments {

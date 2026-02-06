@@ -27,7 +27,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [~] P0: Full 3.14 grammar coverage (all statements/expressions).
 - [ ] P0: Decorators on functions/classes.
 - [ ] P0: Assignment expressions (`:=`).
-- [~] P0: `yield`, `yield from`.
+- [x] P0: `yield`, `yield from` (lazy suspension/resume with delegation semantics).
 - [ ] P0: `async`/`await`, async comprehensions, async generators.
 - [ ] P0: `try/except*` (exception groups) and `ExceptionGroup` semantics.
 - [ ] P0: Pattern matching (`match`/`case`).

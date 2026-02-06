@@ -62,7 +62,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython opcode encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [x] Closures + `nonlocal` (cell/free vars).
-- [ ] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume landed; remaining edge parity on `yield from` delegation and exact `GeneratorExit` behavior).
+- [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [ ] Import system parity (`importlib`, specs, hooks).
 

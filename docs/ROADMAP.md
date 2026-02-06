@@ -66,7 +66,7 @@ Acceptance rule for all remaining milestones: no milestone is complete at "basic
 2. Milestone 1: Runtime core + identity + GC foundations. (complete)
 3. Milestone 2: CPython bytecode intake foundations (`opcode_table.csv`, marshal reader, `.pyc` load + execution subset). (complete)
 4. Milestone 3: Closures + frame metadata + traceback foundations. (complete)
-5. Milestone 4: Generator and iteration parity (re-opened, P0).
+5. Milestone 4: Generator and iteration parity (complete, P0).
 6. Milestone 5: Full 3.14 opcode execution + `.pyc` read/write parity (P0).
 7. Milestone 6: Import system parity (`importlib`/`ModuleSpec`/hooks/packages, P0).
 8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0).
@@ -89,7 +89,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython opcode encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [x] Closures + `nonlocal` (cell/free vars).
-- [ ] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume implemented; remaining CPython edge semantics pending).
+- [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [ ] Import system parity (`importlib`, specs, hooks).
 
@@ -142,14 +142,14 @@ DoD:
 - `locals()`/`globals()` reflect correct scopes.
 Status: complete
 
-### Milestone 4 — Generators & Iteration Parity (P0, re-opened)
+### Milestone 4 — Generators & Iteration Parity (P0)
 DoD:
 - Generators store suspended execution state (frame, instruction pointer, value stack, blocks), not precomputed output vectors.
 - `send`, `throw`, and `close` semantics match CPython, including `GeneratorExit` and `finally` handling.
 - `yield from` delegation semantics match CPython, including propagation of `StopIteration.value`.
 - Reentrancy and terminal-state errors match CPython (`generator already executing`, post-close behavior, etc.).
 - Targeted CPython generator tests pass (or are explicitly documented as blocked by out-of-scope work).
-Status: in progress (lazy frame suspension/resume and core protocol behavior landed; `yield from` send/throw delegation and exact `GeneratorExit` hierarchy semantics still open).
+Status: complete
 
 ### Milestone 5 — Full CPython 3.14 Opcode & `.pyc` Parity (P0)
 DoD:
@@ -217,9 +217,9 @@ DoD:
 - Embedding API direction for Rust/C hosts is documented.
 
 ## Immediate next steps
-- Complete remaining Milestone 4 edge semantics (`yield from` delegation for `send`/`throw`, `StopIteration.value`, exact `GeneratorExit` behavior).
-- Expand CPython parity tests around generator edge cases and delegated exception flow.
 - Start Milestone 5 opcode closure by replacing remaining `Nop` fallbacks with real implementations.
+- Extend `.pyc` parity coverage and begin opcode stack-effect validation.
+- Continue broad CPython parity tests while landing opcode semantics.
 
 ## Testing Focus Note
 After Milestone 2 (CPython bytecode compatibility), prioritize a testing push:

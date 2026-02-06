@@ -47,7 +47,7 @@ Roadmap milestones are now maintained in `docs/ROADMAP.md` and are structured to
 
 Current milestone state summary:
 1. Milestones 0-3 complete (foundations: parser/AST, runtime identity+GC, bytecode intake, closures+frames).
-2. Milestone 4 in progress (P0): lazy generator suspension/resume is implemented; remaining parity work is edge semantics (`yield from` send/throw delegation and exact `GeneratorExit`/exception-hierarchy behavior).
+2. Milestone 4 complete (P0): lazy generator suspension/resume + `yield from` send/throw delegation + `StopIteration` return-value propagation + close/`GeneratorExit` handling + reentrancy guard coverage.
 3. Remaining milestones 5-14 cover: full opcode+`.pyc` parity, importlib parity, full language/tokenizer/compiler parity, runtime data model parity, builtins+stdlib bootstrap, async/concurrency semantics, CPython parity test gates, performance/observability, packaging/distribution, and future JIT/extension hooks.
 
 ## Engineering Principles

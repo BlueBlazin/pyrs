@@ -330,6 +330,18 @@ fn executes_generator_throw_into_suspended_frame() {
 }
 
 #[test]
+fn executes_generator_reentrancy_error() {
+    let source = "caught = False\ndef gen():\n    global caught\n    try:\n        g.__next__()\n    except RuntimeError:\n        caught = True\n    yield 1\ng = gen()\na = g.__next__()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("caught"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_generator_close_runs_finally() {
     let source = "closed = False\ndef gen():\n    global closed\n    try:\n        yield 1\n    finally:\n        closed = True\ng = gen()\na = g.__next__()\nb = g.close()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -354,6 +366,91 @@ fn executes_generator_yield_from() {
         list_values(vm.get_global("vals")),
         Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
+}
+
+#[test]
+fn executes_generator_yield_from_send_delegation() {
+    let source = "def sub():\n    x = yield 1\n    yield x\n\ndef outer():\n    yield from sub()\n\ng = outer()\na = g.send(None)\nb = g.send(9)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(9)));
+}
+
+#[test]
+fn executes_generator_yield_from_send_non_none_to_plain_iterator() {
+    let source = "def gen():\n    yield from [1, 2]\n\ng = gen()\na = g.__next__()\ncaught = False\ntry:\n    g.send(7)\nexcept AttributeError:\n    caught = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("caught"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_generator_yield_from_throw_delegation() {
+    let source = "def sub():\n    try:\n        yield 1\n    except ValueError:\n        yield 2\n\ndef outer():\n    yield from sub()\n\ng = outer()\na = g.__next__()\nb = g.throw(ValueError)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(2)));
+}
+
+#[test]
+fn executes_generator_yield_from_throw_to_plain_iterator() {
+    let source = "def outer():\n    yield from [1, 2]\n\ng = outer()\na = g.__next__()\ncaught = False\ntry:\n    g.throw(ValueError)\nexcept ValueError:\n    caught = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("caught"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_generator_yield_from_return_value_propagation() {
+    let source = "def inner():\n    return 42\n    yield 0\n\ndef outer():\n    x = yield from inner()\n    yield x\n\ng = outer()\nv = g.__next__()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("v"), Some(Value::Int(42)));
+}
+
+#[test]
+fn executes_generator_yield_from_close_delegation() {
+    let source = "closed = False\ndef sub():\n    global closed\n    try:\n        yield 1\n    finally:\n        closed = True\n\ndef outer():\n    yield from sub()\n\ng = outer()\na = g.__next__()\nb = g.close()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::None));
+    assert_eq!(vm.get_global("closed"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_generator_exit_not_caught_by_exception_handler() {
+    let source = "flag = 0\ndef gen():\n    global flag\n    try:\n        yield 1\n    except Exception:\n        flag = flag + 1\n    finally:\n        flag = flag + 2\n\ng = gen()\na = g.__next__()\nb = g.close()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::None));
+    assert_eq!(vm.get_global("flag"), Some(Value::Int(2)));
 }
 
 #[test]
