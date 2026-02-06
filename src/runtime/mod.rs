@@ -678,6 +678,7 @@ pub enum BuiltinFunction {
     Id,
     Locals,
     Globals,
+    Import,
 }
 
 impl BuiltinFunction {
@@ -1041,6 +1042,9 @@ impl BuiltinFunction {
             )),
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
                 "__build_class__ is only available in the VM",
+            )),
+            BuiltinFunction::Import => Err(RuntimeError::new(
+                "__import__ is only available in the VM",
             )),
             BuiltinFunction::Id => {
                 if args.len() != 1 {

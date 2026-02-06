@@ -161,6 +161,7 @@ impl Vm {
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, false, None);
+        vm.install_sys_module();
         vm.install_builtins();
         vm
     }
@@ -180,6 +181,7 @@ impl Vm {
 
     pub fn add_module_path(&mut self, path: impl Into<PathBuf>) {
         self.module_paths.push(path.into());
+        self.sync_sys_path_from_module_paths();
     }
 
     pub fn id_of(&self, value: &Value) -> u64 {
@@ -312,6 +314,98 @@ impl Vm {
         self.execute_pyc_bytes(&bytes)
     }
 
+    fn install_sys_module(&mut self) {
+        let sys_module = match self.heap.alloc_module(ModuleObject::new("sys")) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.set_module_metadata(&sys_module, "sys", None, false, None);
+        if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
+            module_data
+                .globals
+                .insert("path".to_string(), self.heap.alloc_list(Vec::new()));
+            module_data
+                .globals
+                .insert("meta_path".to_string(), self.heap.alloc_list(Vec::new()));
+            module_data
+                .globals
+                .insert("path_hooks".to_string(), self.heap.alloc_list(Vec::new()));
+            module_data.globals.insert(
+                "path_importer_cache".to_string(),
+                self.heap.alloc_dict(Vec::new()),
+            );
+            module_data
+                .globals
+                .insert("modules".to_string(), self.heap.alloc_dict(Vec::new()));
+        }
+        self.register_module("sys", sys_module);
+        self.sync_sys_path_from_module_paths();
+        self.refresh_sys_modules_dict();
+    }
+
+    fn sync_sys_path_from_module_paths(&mut self) {
+        let sys_module = match self.modules.get("sys").cloned() {
+            Some(module) => module,
+            None => return,
+        };
+        let values = self
+            .module_paths
+            .iter()
+            .map(|path| Value::Str(path.to_string_lossy().to_string()))
+            .collect::<Vec<_>>();
+        if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
+            module_data
+                .globals
+                .insert("path".to_string(), self.heap.alloc_list(values));
+        }
+    }
+
+    fn sync_module_paths_from_sys(&mut self) {
+        let sys_module = match self.modules.get("sys").cloned() {
+            Some(module) => module,
+            None => return,
+        };
+        let path_value = match &*sys_module.kind() {
+            Object::Module(module_data) => module_data.globals.get("path").cloned(),
+            _ => None,
+        };
+        let Some(Value::List(path_list)) = path_value else {
+            return;
+        };
+
+        let mut new_paths = Vec::new();
+        if let Object::List(values) = &*path_list.kind() {
+            for value in values {
+                if let Value::Str(path) = value {
+                    new_paths.push(PathBuf::from(path));
+                }
+            }
+        }
+        self.module_paths = new_paths;
+    }
+
+    fn refresh_sys_modules_dict(&mut self) {
+        let sys_module = match self.modules.get("sys").cloned() {
+            Some(module) => module,
+            None => return,
+        };
+        let mut entries = Vec::with_capacity(self.modules.len());
+        for (name, module) in self.modules.iter() {
+            entries.push((Value::Str(name.clone()), Value::Module(module.clone())));
+        }
+        let modules_dict = self.heap.alloc_dict(entries);
+        if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
+            module_data
+                .globals
+                .insert("modules".to_string(), modules_dict);
+        }
+    }
+
+    fn register_module(&mut self, name: &str, module: ObjRef) {
+        self.modules.insert(name.to_string(), module);
+        self.refresh_sys_modules_dict();
+    }
+
     fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
         if let Some(module) = self.modules.get(name).cloned() {
             return Ok(module);
@@ -346,7 +440,7 @@ impl Vm {
             source_info.package_dir.as_ref(),
         );
 
-        self.modules.insert(name.to_string(), module.clone());
+        self.register_module(name, module.clone());
         self.link_module_chain(name, module.clone());
 
         let module_ast = parser::parse_module(&source).map_err(|err| {
@@ -368,7 +462,8 @@ impl Vm {
         Ok(module)
     }
 
-    fn find_module_source(&self, name: &str) -> Option<ModuleSourceInfo> {
+    fn find_module_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
+        self.sync_module_paths_from_sys();
         let rel_name = name.replace('.', "/");
         let filename = format!("{rel_name}.py");
         for base in &self.module_paths {
@@ -393,7 +488,7 @@ impl Vm {
         None
     }
 
-    fn find_module_file(&self, name: &str) -> Option<PathBuf> {
+    fn find_module_file(&mut self, name: &str) -> Option<PathBuf> {
         self.find_module_source(name).map(|info| info.path)
     }
 
@@ -428,7 +523,7 @@ impl Vm {
             _ => unreachable!(),
         };
         self.set_module_metadata(&module, name, None, false, None);
-        self.modules.insert(name.to_string(), module.clone());
+        self.register_module(name, module.clone());
         module
     }
 
@@ -2167,8 +2262,13 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
+                                let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, HashMap::new())?;
-                                self.push_value(result);
+                                let frame = self
+                                    .frames
+                                    .get_mut(caller_idx)
+                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
                                 let message = match args.as_slice() {
@@ -2377,8 +2477,13 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
+                                let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, kwargs)?;
-                                self.push_value(result);
+                                let frame = self
+                                    .frames
+                                    .get_mut(caller_idx)
+                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
                                 let message = match args.as_slice() {
@@ -2558,8 +2663,13 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
+                                let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, kwargs)?;
-                                self.push_value(result);
+                                let frame = self
+                                    .frames
+                                    .get_mut(caller_idx)
+                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
                                 let message = match args.as_slice() {
@@ -2705,8 +2815,13 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
+                                let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, kwargs)?;
-                                self.push_value(result);
+                                let frame = self
+                                    .frames
+                                    .get_mut(caller_idx)
+                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
                                 if !kwargs.is_empty() {
@@ -2871,8 +2986,13 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
+                                let caller_idx = self.frames.len().saturating_sub(1);
                                 let result = self.call_builtin(builtin, args, kwargs)?;
-                                self.push_value(result);
+                                let frame = self
+                                    .frames
+                                    .get_mut(caller_idx)
+                                    .ok_or_else(|| RuntimeError::new("builtin caller frame missing"))?;
+                                frame.stack.push(result);
                             }
                             Value::ExceptionType(name) => {
                                 if !kwargs.is_empty() {
@@ -4133,7 +4253,7 @@ impl Vm {
     }
 
     fn call_builtin(
-        &self,
+        &mut self,
         builtin: BuiltinFunction,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4141,6 +4261,7 @@ impl Vm {
         match builtin {
             BuiltinFunction::Locals => self.builtin_locals(args, kwargs),
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
+            BuiltinFunction::Import => self.builtin_import(args, kwargs),
             _ => {
                 if kwargs.is_empty() {
                     builtin.call(&self.heap, args)
@@ -4222,6 +4343,91 @@ impl Vm {
         }
     }
 
+    fn builtin_import(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 5 {
+            return Err(RuntimeError::new("__import__() takes at most 5 arguments"));
+        }
+
+        let kw_name = kwargs.remove("name");
+        let kw_globals = kwargs.remove("globals");
+        let kw_locals = kwargs.remove("locals");
+        let kw_fromlist = kwargs.remove("fromlist");
+        let kw_level = kwargs.remove("level");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "__import__() got an unexpected keyword argument",
+            ));
+        }
+
+        let name_value = if let Some(value) = kw_name {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "__import__() got multiple values for argument 'name'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new("__import__() missing required argument 'name'"));
+        };
+        let name = match name_value {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("__import__() name must be string")),
+        };
+
+        if kw_globals.is_some() && !args.is_empty() {
+            return Err(RuntimeError::new(
+                "__import__() got multiple values for argument 'globals'",
+            ));
+        }
+        if kw_locals.is_some() && args.len() > 1 {
+            return Err(RuntimeError::new(
+                "__import__() got multiple values for argument 'locals'",
+            ));
+        }
+        let fromlist = if let Some(value) = kw_fromlist {
+            if args.len() > 2 {
+                return Err(RuntimeError::new(
+                    "__import__() got multiple values for argument 'fromlist'",
+                ));
+            }
+            value
+        } else if args.len() > 2 {
+            args[2].clone()
+        } else {
+            Value::None
+        };
+        let level = if let Some(value) = kw_level {
+            if args.len() > 3 {
+                return Err(RuntimeError::new(
+                    "__import__() got multiple values for argument 'level'",
+                ));
+            }
+            value_to_int(value)?
+        } else if args.len() > 3 {
+            value_to_int(args[3].clone())?
+        } else {
+            0
+        };
+        if level < 0 {
+            return Err(RuntimeError::new("level must be >= 0"));
+        }
+
+        let resolved_name = self.resolve_import_name(&name, level as usize)?;
+        let module = self.import_module_object(&resolved_name)?;
+        let result = if self.fromlist_requested(&fromlist) {
+            module
+        } else {
+            self.module_for_plain_import(&resolved_name, module)
+        };
+        Ok(Value::Module(result))
+    }
+
     fn install_builtins(&mut self) {
         self.builtins
             .insert("print".to_string(), Value::Builtin(BuiltinFunction::Print));
@@ -4276,6 +4482,10 @@ impl Vm {
         self.builtins.insert(
             "globals".to_string(),
             Value::Builtin(BuiltinFunction::Globals),
+        );
+        self.builtins.insert(
+            "__import__".to_string(),
+            Value::Builtin(BuiltinFunction::Import),
         );
         self.builtins.insert(
             "BaseException".to_string(),

@@ -1446,6 +1446,118 @@ sub_spec_parent = pkg.sub.__spec__['parent']\n";
 }
 
 #[test]
+fn imports_sys_module_and_exposes_modules_dict() {
+    let source = "\
+import sys\n\
+main_name = sys.modules['__main__'].__name__\n\
+sys_name = sys.modules['sys'].__name__\n\
+path_len = len(sys.path)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("main_name"),
+        Some(Value::Str("__main__".to_string()))
+    );
+    assert_eq!(vm.get_global("sys_name"), Some(Value::Str("sys".to_string())));
+    assert_eq!(vm.get_global("path_len"), Some(Value::Int(1)));
+}
+
+#[test]
+fn uses_sys_path_mutation_for_module_lookup() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_sys_path_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 37\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!("import sys\nsys.path = ['{path_literal}']\nimport mod\nx = mod.value\n");
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(37)));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn executes_dunder_import_top_level_and_fromlist() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_dunder_import_{unique}"));
+    let pkg_dir = temp_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp dir");
+    std::fs::write(pkg_dir.join("__init__.py"), "flag = 1\n").expect("write package init");
+    std::fs::write(pkg_dir.join("sub.py"), "value = 41\n").expect("write sub module");
+
+    let source = "\
+root = __import__('pkg.sub')\n\
+top_name = root.__name__\n\
+leaf = __import__('pkg.sub', fromlist=['sub'])\n\
+leaf_name = leaf.__name__\n\
+x = leaf.value\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("top_name"), Some(Value::Str("pkg".to_string())));
+    assert_eq!(
+        vm.get_global("leaf_name"),
+        Some(Value::Str("pkg.sub".to_string()))
+    );
+    assert_eq!(vm.get_global("x"), Some(Value::Int(41)));
+
+    let _ = std::fs::remove_file(pkg_dir.join("sub.py"));
+    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
+    let _ = std::fs::remove_dir(&pkg_dir);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn executes_dunder_import_relative_level_inside_package() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_dunder_relative_{unique}"));
+    let pkg_dir = temp_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp dir");
+    std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
+    std::fs::write(pkg_dir.join("sub.py"), "value = 43\n").expect("write sub module");
+    std::fs::write(
+        pkg_dir.join("mod.py"),
+        "m = __import__('sub', globals(), locals(), ['value'], 1)\nresult = m.value\n",
+    )
+    .expect("write package module");
+
+    let source = "import pkg.mod\nx = pkg.mod.result\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(43)));
+
+    let _ = std::fs::remove_file(pkg_dir.join("mod.py"));
+    let _ = std::fs::remove_file(pkg_dir.join("sub.py"));
+    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
+    let _ = std::fs::remove_dir(&pkg_dir);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn executes_len_on_list() {
     let source = "x = len([1, 2, 3])";
     let module = parser::parse_module(source).expect("parse should succeed");

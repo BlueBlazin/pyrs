@@ -72,10 +72,10 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 **Builtins**
 - [~] P0: Core builtin set (print, len, range, etc.).
 - [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, getattr/setattr/delattr, dir, help, input, etc.).
-- [ ] P1: `__import__` with importlib semantics.
+- [~] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to current loader; full importlib semantics pending).
 
 **Import System**
-- [~] P0: File‑based imports + module cache + basic packages (including relative `from .` resolution and baseline module metadata fields).
+- [~] P0: File‑based imports + module cache + basic packages (including relative `from .` resolution, `sys.path` lookup, `sys.modules` exposure, and baseline module metadata fields).
 - [ ] P0: Full importlib machinery (`ModuleSpec`, `__loader__`, `__package__`, `__path__`).
 - [ ] P0: Namespace packages.
 - [ ] P0: Zip/bytecode imports.
