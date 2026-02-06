@@ -19,8 +19,9 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - Testing & QA -> Milestone 11
 - Performance & Profiling -> Milestone 12
 - Concurrency & Platform -> Milestone 10
-- Interop & Extensibility -> Milestone 14
-- Packaging & Distribution -> Milestone 13
+- Interop & Extensibility -> Milestones 14 and 15
+- Packaging & Distribution -> Milestones 13 and 16
+- Security, Reliability, and Release Engineering -> Milestone 16
 
 **Language & Grammar**
 - [~] P0: Full 3.14 tokenizer parity (strings, bytes, numeric literals, f‑strings, comments, indents).
@@ -117,6 +118,8 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [ ] P1: Cross‑platform parity (Linux/macOS/Windows).
 
 **Interop & Extensibility**
+- [ ] P0: Limited C-API/abi3 extension loading and execution parity for supported API surface.
+- [ ] P1: HPy loading/execution path with explicit compatibility matrix.
 - [ ] P1: Stable ABI/FFI plan (HPy or limited C‑API) documented.
 - [ ] P2: Embedding API for Rust and C/C++ hosts.
 - [ ] P3: JIT hooks at IR/VM boundaries (no implementation yet).
@@ -124,3 +127,10 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 **Packaging & Distribution**
 - [ ] P1: `pip` compatibility (pure‑Python wheels).
 - [ ] P2: Binary distribution artifacts and reproducible builds.
+
+**Security, Reliability, and Release Engineering**
+- [ ] P0: Sanitizer-gated CI on release profiles (ASan/UBSan and platform-appropriate thread/memory checks).
+- [ ] P0: Parity-regression blocker policy in CI (critical CPython suite failures block release).
+- [ ] P1: Incident triage runbook + crash reproducer retention for release lines.
+- [ ] P1: Cross-platform release qualification matrix (Linux/macOS/Windows).
+- [ ] P2: Signed artifacts + SBOM generation for release bundles.

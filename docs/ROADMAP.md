@@ -11,7 +11,7 @@ We are building a production-grade Python interpreter in Rust with full source a
 
 ## Non-goals (now)
 - JIT compilation.
-- Full CPython C-API compatibility and C-extensions.
+- Full CPython C-API compatibility and C-extensions (deferred until Milestone 15).
 - GIL-free runtime.
 
 ## Future-friendly constraints
@@ -61,6 +61,7 @@ We are building a production-grade Python interpreter in Rust with full source a
 
 ## Milestones (Revised for 100% CPython 3.14)
 Acceptance rule for all remaining milestones: no milestone is complete at "basic compat"; completion requires behavior-level parity for in-scope features plus targeted CPython tests.
+Release-complete target: Milestone 16; ecosystem-complete target (including native-extension packages): Milestone 15 + Milestone 16.
 
 1. Milestone 0: Parser + AST + minimal evaluator. (complete)
 2. Milestone 1: Runtime core + identity + GC foundations. (complete)
@@ -76,7 +77,9 @@ Acceptance rule for all remaining milestones: no milestone is complete at "basic
 12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1).
 13. Milestone 12: Performance and observability baseline (P2).
 14. Milestone 13: Packaging/distribution and ecosystem usability (P1/P2).
-15. Milestone 14: Future hooks and extension path documentation (P3).
+15. Milestone 14: Future hooks and extension-path architecture documentation (P3).
+16. Milestone 15: Native extension ecosystem compatibility (limited C-API/abi3 + HPy path, P1 with P0 ecosystem parity gate).
+17. Milestone 16: Release hardening and production certification (security/reliability/CI gates, P0/P1).
 
 ## Production Readiness Checklist (Living)
 Canonical checklist lives in `docs/PRODUCTION_READINESS.md`. The list below is a snapshot of P0-P3 items we are actively tracking in the roadmap.
@@ -93,6 +96,8 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [x] Import system parity for supported pure-Python scenarios (`importlib`, specs, hooks).
+- [ ] Native extension loading parity for limited C-API/abi3 modules.
+- [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, and parity-regression blocking CI.
 
 ### P1 (Major Ecosystem Enablers)
 - [ ] Async/await + async generators.
@@ -103,6 +108,8 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] Descriptor protocol + attribute lookup parity.
 - [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.
 - [ ] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
+- [ ] HPy extension loading/execution path.
+- [ ] Cross-platform release qualification matrix (Linux/macOS/Windows) with parity gates.
 
 ### P2 (Performance & QoL)
 - [ ] Peephole / constant-folding bytecode optimizations.
@@ -112,7 +119,6 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython `Lib/test` subset runner.
 
 ### P3 (Future-Proofing)
-- [ ] ABI-stable extension story (HPy or limited C-API).
 - [ ] JIT hooks in IR/VM boundaries (no implementation).
 - [ ] Debug hooks (`sys.settrace`, `sys.setprofile`).
 - [ ] Profiling/benchmark harness.
@@ -219,10 +225,25 @@ DoD:
 - Extension strategy (HPy / limited C-API path) is documented with architectural constraints.
 - Embedding API direction for Rust/C hosts is documented.
 
+### Milestone 15 — Native Extension Ecosystem Compatibility (P1 with P0 gate)
+DoD:
+- Limited C-API/abi3 extension loading works for representative extension modules (import, type/object creation, method dispatch, error propagation).
+- HPy execution path is available (even if partial) with explicit compatibility matrix and tests.
+- Ecosystem smoke tests include at least one extension-backed package class (numeric/crypto/parsing families) with documented pass/fail matrix.
+- Any unsupported extension surfaces fail with explicit diagnostics, not silent misbehavior.
+
+### Milestone 16 — Release Hardening and Production Certification (P0/P1)
+DoD:
+- Security/reliability CI gates are mandatory for release branches (ASan/UBSan, differential CPython runs, crash reproducer retention).
+- Cross-platform qualification gates pass on Linux, macOS, and Windows for defined compatibility suite.
+- Release policy defines semantic versioning, compatibility guarantees, and regression-response SLA.
+- Production playbook exists for incident triage, rollback strategy, and reproducible artifact verification.
+
 ## Immediate next steps
 - Start Milestone 7 language-surface parity work (tokenizer coverage, comprehensions, decorators, assignment expressions, pattern matching, async syntax).
 - Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 7-10.
 - Continue broad CPython parity tests while landing language/runtime milestones.
+- Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 
 ## Testing Focus Note
 After Milestone 2 (CPython bytecode compatibility), prioritize a testing push:

@@ -54,7 +54,12 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 ## Real-world Apps
 - [ ] CLI tools (simple)
 - [ ] Web apps (minimal framework)
-- [ ] Data processing (pure Python)
+- [ ] Data processing (pure Python first, extension-backed packages once Milestone 15 starts)
+
+## Native Extension Ecosystem
+- [ ] Limited C-API/abi3 extension loading/execution parity for supported API surface
+- [ ] HPy execution path with explicit compatibility matrix
+- [ ] Extension-backed ecosystem smoke suite (numeric/parsing/crypto package classes)
 
 ## Production Readiness Checklist (Living)
 Status flags: `[ ]` not started, `[x]` complete.
@@ -70,6 +75,8 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [x] Import system parity for supported pure-Python import scenarios (`importlib`, specs, hooks).
+- [ ] Native extension loading parity for limited C-API/abi3 modules.
+- [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, parity-regression blocking CI.
 
 ### P1 (Major Ecosystem Enablers)
 - [ ] Async/await + async generators.
@@ -79,6 +86,8 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] Descriptor protocol + attribute lookup parity.
 - [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.
 - [ ] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
+- [ ] HPy extension loading/execution path.
+- [ ] Cross-platform release qualification matrix (Linux/macOS/Windows).
 
 ### P2 (Performance & QoL)
 - [ ] Peephole / constant-folding bytecode optimizations.
@@ -88,7 +97,6 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython `Lib/test` subset runner.
 
 ### P3 (Future-Proofing)
-- [ ] ABI-stable extension story (HPy or limited C-API).
 - [ ] JIT hooks in IR/VM boundaries (no implementation).
 - [ ] Debug hooks (`sys.settrace`, `sys.setprofile`).
 - [ ] Profiling/benchmark harness.
