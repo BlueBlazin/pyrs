@@ -1,8 +1,8 @@
 //! Bytecode representation and metadata (stubbed).
 
+pub mod cpython;
 pub mod metadata;
 pub mod pyc;
-pub mod cpython;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
@@ -46,12 +46,15 @@ pub enum Opcode {
     UnaryNeg,
     UnaryNot,
     UnaryPos,
+    ToBool,
     MakeFunction,
     BuildClass,
     CallFunction,
     CallFunctionKw,
     CallFunctionVar,
     ImportName,
+    ImportNameCpython,
+    ImportFromCpython,
     BuildList,
     BuildTuple,
     BuildDict,
@@ -66,8 +69,11 @@ pub enum Opcode {
     DupTop,
     JumpIfFalse,
     JumpIfTrue,
+    JumpIfNone,
+    JumpIfNotNone,
     Jump,
     SetupExcept,
+    SetupAnnotations,
     PopBlock,
     Raise,
     MatchException,
@@ -78,6 +84,7 @@ pub enum Opcode {
     ForIter,
     YieldValue,
     YieldFrom,
+    Send,
     CallCpython,
     CallCpythonKwStack,
     MakeFunctionStack,

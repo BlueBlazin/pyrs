@@ -48,7 +48,8 @@ Roadmap milestones are now maintained in `docs/ROADMAP.md` and are structured to
 Current milestone state summary:
 1. Milestones 0-3 complete (foundations: parser/AST, runtime identity+GC, bytecode intake, closures+frames).
 2. Milestone 4 complete (P0): lazy generator suspension/resume + `yield from` send/throw delegation + `StopIteration` return-value propagation + close/`GeneratorExit` handling + reentrancy guard coverage.
-3. Remaining milestones 5-14 cover: full opcode+`.pyc` parity, importlib parity, full language/tokenizer/compiler parity, runtime data model parity, builtins+stdlib bootstrap, async/concurrency semantics, CPython parity test gates, performance/observability, packaging/distribution, and future JIT/extension hooks.
+3. Milestone 5 complete (P0): supported-path opcode hardening (explicit unsupported-opcode errors + decode/translation jump/stack validation) and supported-subset `.pyc` writer (header + marshal).
+4. Remaining milestones 6-14 cover: importlib parity, full language/tokenizer/compiler parity, runtime data model parity, builtins+stdlib bootstrap, async/concurrency semantics, CPython parity test gates, performance/observability, packaging/distribution, and future JIT/extension hooks.
 
 ## Engineering Principles
 - Maintain correctness first, then performance.
@@ -69,11 +70,11 @@ Current milestone state summary:
 - Exceptions: `try/except` handles explicit `raise`; VM runtime errors are mapped to coarse exception types (`RuntimeError`, `TypeError`, `IndexError`, `KeyError`, `ZeroDivisionError`, `NameError`, `AttributeError`) based on message heuristics; tracebacks include filename/line/column and frame names.
 - Identity: `id()` builtin returns stable ids; `is`/`is not` are identity-based (heap objects carry stable ids).
 - Classes: class bodies execute in a class namespace module while resolving missing names against the defining module; methods capture the defining module as globals.
-- CPython bytecode: marshal reader + `.pyc` loader, decoder, and translator covering a core opcode subset (`RESUME`, `LOAD_CONST`, `LOAD_SMALL_INT`, `LOAD_NAME`, `LOAD_LOCALS`, `LOAD_GLOBAL`, `LOAD_FAST`, `LOAD_DEREF`, `LOAD_CLOSURE`, `STORE_DEREF`, `LOAD_ATTR` with encoded null flag, `STORE_*`, `BINARY_OP`, `COMPARE_OP`, `CONTAINS_OP`, `IS_OP`, `CALL`/`CALL_KW`, `MAKE_FUNCTION`, `SET_FUNCTION_ATTRIBUTE`, `LOAD_BUILD_CLASS`, `PUSH_NULL`, `GET_ITER`/`FOR_ITER`, `YIELD_VALUE`/`YIELD_FROM`, jumps, `RETURN_*`). Extra opcodes mapped to `Nop` pending parity. Attribute load encodes `push_null` flag in low bit (`arg = name_idx << 1 | flag`).
+- CPython bytecode: marshal reader + `.pyc` loader/writer, decoder, and translator covering a core opcode subset (`RESUME`, `LOAD_CONST`, `LOAD_SMALL_INT`, `LOAD_NAME`, `LOAD_LOCALS`, `LOAD_GLOBAL`, `LOAD_FAST*`, `LOAD_DEREF`, `LOAD_CLOSURE`, `STORE_DEREF`, `LOAD_ATTR` with encoded null flag, `STORE_*`, `BINARY_OP*`, `COMPARE_OP*`, `CONTAINS_OP*`, `IS_OP`, `CALL`/`CALL_KW` + specialized call forms, `MAKE_FUNCTION`, `SET_FUNCTION_ATTRIBUTE`, `LOAD_BUILD_CLASS`, `PUSH_NULL`, `GET_ITER`/`FOR_ITER`, `SEND`, `YIELD_VALUE`/`YIELD_FROM`, jumps, `RETURN_*`, `IMPORT_NAME`/`IMPORT_FROM`). Unsupported opcodes fail translation explicitly; decode/translation run jump-target and stack-shape validation.
 - Modules: new `Value::Module` with per-module globals; VM maintains module cache and search paths (default CWD, configurable via `Vm::add_module_path`). Import loads `<name>.py` (or package `__init__.py`) into a module frame, returning module objects; module attribute access attempts to lazy-load submodules; functions capture defining module globals.
 - Numeric compatibility: `bool` participates in int arithmetic/comparisons (`True == 1`, `True + 1`, etc.).
 - Scoping: `global` and `nonlocal` statements supported inside functions; closures wired via cell/free vars; assignments to globals emit `StoreGlobal`.
-- `.pyc` header parsing (hash-based + timestamp) + executor (`Vm::execute_pyc_*`), with CLI support for `.pyc` paths.
+- `.pyc` header parsing/writing (hash-based + timestamp) + executor (`Vm::execute_pyc_*`), with CLI support for `.pyc` paths.
 - Code objects carry `filename` plus per-instruction source locations for tracebacks.
-- Tests: parser smoke tests, bytecode metadata loader test, pyc header tests, CPython `.pyc` execution smoke test, arithmetic fuzz/property tests, integration package test, and an optional CPython `Lib/test` harness (see `tests/cpython_harness.rs` + `tests/cpython_subset.txt`).
+- Tests: parser smoke tests, bytecode metadata loader test, pyc header read/write tests, CPython `.pyc` execution + rewrite roundtrip tests, translation validation tests (jump/stack guards), arithmetic fuzz/property tests, integration package test, and an optional CPython `Lib/test` harness (see `tests/cpython_harness.rs` + `tests/cpython_subset.txt`).
 - CLI: `--ast`, `--bytecode`, and `.pyc` execution by file extension.

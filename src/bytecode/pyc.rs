@@ -69,6 +69,27 @@ pub fn parse_pyc_header(bytes: &[u8]) -> Result<(PycHeader, usize), PycError> {
     }
 }
 
+pub fn write_pyc_header(header: &PycHeader, out: &mut Vec<u8>) -> Result<(), PycError> {
+    out.extend_from_slice(&header.magic.to_le_bytes());
+    out.extend_from_slice(&header.bitfield.to_le_bytes());
+    if header.bitfield & 0x01 != 0 {
+        let hash = header
+            .hash
+            .ok_or_else(|| PycError::new("hash-based pyc header requires hash"))?;
+        out.extend_from_slice(&hash);
+    } else {
+        let timestamp = header
+            .timestamp
+            .ok_or_else(|| PycError::new("timestamp-based pyc header requires timestamp"))?;
+        let source_size = header
+            .source_size
+            .ok_or_else(|| PycError::new("timestamp-based pyc header requires source_size"))?;
+        out.extend_from_slice(&timestamp.to_le_bytes());
+        out.extend_from_slice(&source_size.to_le_bytes());
+    }
+    Ok(())
+}
+
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, PycError> {
     let slice = bytes
         .get(offset..offset + 4)

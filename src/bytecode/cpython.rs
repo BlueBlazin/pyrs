@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::bytecode::metadata::OpcodeMetadata;
-use crate::bytecode::pyc::parse_pyc_header;
+use crate::bytecode::pyc::{PycHeader, parse_pyc_header, write_pyc_header};
+use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::{Heap, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,14 +59,23 @@ pub enum PyObject {
 }
 
 pub fn load_pyc(bytes: &[u8]) -> Result<CpythonCode, CpythonError> {
-    let (_header, offset) = parse_pyc_header(bytes)
-        .map_err(|err| CpythonError::new(err.message))?;
+    let (_header, offset) =
+        parse_pyc_header(bytes).map_err(|err| CpythonError::new(err.message))?;
     let mut reader = MarshalReader::new(&bytes[offset..]);
     let obj = reader.read_object(true)?;
     match obj {
         PyObject::Code(code) => Ok((*code).clone()),
         _ => Err(CpythonError::new("pyc did not contain a code object")),
     }
+}
+
+pub fn dump_pyc(code: &CpythonCode, header: &PycHeader) -> Result<Vec<u8>, CpythonError> {
+    let mut bytes = Vec::new();
+    write_pyc_header(header, &mut bytes).map_err(|err| CpythonError::new(err.message))?;
+    let mut writer = MarshalWriter::new();
+    writer.write_code_object(code)?;
+    bytes.extend_from_slice(&writer.into_bytes());
+    Ok(bytes)
 }
 
 pub fn translate_code(code: &CpythonCode, heap: &mut Heap) -> Result<CodeObject, CpythonError> {
@@ -90,8 +99,8 @@ struct Translator<'a> {
 
 impl<'a> Translator<'a> {
     fn new(code: &'a CpythonCode, heap: &'a mut Heap) -> Result<Self, CpythonError> {
-        let metadata = OpcodeMetadata::load_default()
-            .map_err(|err| CpythonError::new(err.message))?;
+        let metadata =
+            OpcodeMetadata::load_default().map_err(|err| CpythonError::new(err.message))?;
         let mut opmap = HashMap::new();
         for info in metadata.opcodes {
             opmap.insert(info.code as u8, info.name);
@@ -121,6 +130,7 @@ impl<'a> Translator<'a> {
         result.names = self.names.clone();
         result.cellvars = self.cellvars.clone();
         result.freevars = self.freevars.clone();
+        result.is_generator = (self.code.flags & 0x20) != 0;
         self.populate_params(&mut result)?;
 
         let instructions = self.translate_instructions()?;
@@ -134,12 +144,7 @@ impl<'a> Translator<'a> {
         for (idx, name) in self.code.localsplusnames.iter().enumerate() {
             let mapped = self.intern_name(name);
             self.locals_map.push(mapped);
-            let kind = self
-                .code
-                .localspluskinds
-                .get(idx)
-                .copied()
-                .unwrap_or(0);
+            let kind = self.code.localspluskinds.get(idx).copied().unwrap_or(0);
             let mut deref_index = None;
             if kind & 0x40 != 0 {
                 self.cellvars.push(name.clone());
@@ -201,19 +206,47 @@ impl<'a> Translator<'a> {
 
     fn translate_instructions(&mut self) -> Result<Vec<Instruction>, CpythonError> {
         let cp_instructions = decode_instructions(&self.code.code, &self.opmap)?;
+        validate_cpython_control_flow(&cp_instructions)?;
         let mut result = Vec::with_capacity(cp_instructions.len());
         let mut pending_kw_names: Option<u16> = None;
+        let mut prev_was_return_generator = false;
 
         for (idx, instr) in cp_instructions.iter().enumerate() {
             let name = instr.name.as_str();
             let arg = instr.arg;
+            if pending_kw_names.is_some() && !kw_names_follower(name) {
+                return Err(CpythonError::new(format!(
+                    "KW_NAMES at instruction {} is not followed by CALL",
+                    idx.saturating_sub(1)
+                )));
+            }
             let instruction = match name {
-                "CACHE" | "RESUME" | "NOP" | "NOT_TAKEN" | "EXTENDED_ARG" => {
-                    Instruction::new(Opcode::Nop, None)
-                }
+                "CACHE"
+                | "RESUME"
+                | "RESUME_CHECK"
+                | "NOP"
+                | "NOT_TAKEN"
+                | "EXTENDED_ARG"
+                | "RETURN_GENERATOR"
+                | "MAKE_CELL"
+                | "COPY_FREE_VARS"
+                | "END_SEND"
+                | "CLEANUP_THROW"
+                | "SETUP_WITH"
+                | "SETUP_FINALLY"
+                | "SETUP_CLEANUP"
+                | "INSTRUMENTED_INSTRUCTION"
+                | "INSTRUMENTED_NOT_TAKEN"
+                | "INSTRUMENTED_LINE"
+                | "ANNOTATIONS_PLACEHOLDER"
+                | "INTERPRETER_EXIT"
+                | "ENTER_EXECUTOR" => Instruction::new(Opcode::Nop, None),
+                "POP_TOP" if prev_was_return_generator => Instruction::new(Opcode::Nop, None),
                 "POP_TOP" => Instruction::new(Opcode::PopTop, None),
                 "POP_ITER" => Instruction::new(Opcode::Nop, None),
+                "INSTRUMENTED_POP_ITER" => Instruction::new(Opcode::Nop, None),
                 "RETURN_VALUE" => Instruction::new(Opcode::ReturnValue, None),
+                "INSTRUMENTED_RETURN_VALUE" => Instruction::new(Opcode::ReturnValue, None),
                 "RETURN_CONST" => Instruction::new(Opcode::ReturnConst, Some(arg)),
                 "LOAD_CONST" | "LOAD_CONST_MORTAL" | "LOAD_CONST_IMMORTAL" => {
                     Instruction::new(Opcode::LoadConst, Some(arg))
@@ -234,15 +267,16 @@ impl<'a> Translator<'a> {
                     let idx = self.add_const(value);
                     Instruction::new(Opcode::LoadConst, Some(idx))
                 }
+                "SETUP_ANNOTATIONS" => Instruction::new(Opcode::SetupAnnotations, None),
                 "LOAD_NAME" => Instruction::new(Opcode::LoadName, Some(self.map_name(arg)?)),
                 "LOAD_LOCALS" => Instruction::new(Opcode::LoadLocals, None),
                 "STORE_NAME" => Instruction::new(Opcode::StoreName, Some(self.map_name(arg)?)),
                 "LOAD_DEREF" => Instruction::new(Opcode::LoadDeref, Some(self.map_deref(arg)?)),
                 "STORE_DEREF" => Instruction::new(Opcode::StoreDeref, Some(self.map_deref(arg)?)),
-                "LOAD_CLOSURE" => {
-                    Instruction::new(Opcode::LoadClosure, Some(self.map_deref(arg)?))
-                }
-                "LOAD_GLOBAL" | "LOAD_GLOBAL_ADAPTIVE" | "LOAD_GLOBAL_BUILTIN"
+                "LOAD_CLOSURE" => Instruction::new(Opcode::LoadClosure, Some(self.map_deref(arg)?)),
+                "LOAD_GLOBAL"
+                | "LOAD_GLOBAL_ADAPTIVE"
+                | "LOAD_GLOBAL_BUILTIN"
                 | "LOAD_GLOBAL_MODULE" => {
                     let name_idx = (arg >> 1) as u32;
                     let push_null = (arg & 1) as u32;
@@ -250,22 +284,20 @@ impl<'a> Translator<'a> {
                     let encoded = (mapped << 1) | push_null;
                     Instruction::new(Opcode::LoadGlobal, Some(encoded))
                 }
-                name if name.starts_with("LOAD_FAST") => {
-                    match name {
-                        "LOAD_FAST_LOAD_FAST" | "LOAD_FAST_BORROW_LOAD_FAST_BORROW" => {
-                            let first = (arg >> 4) & 0x0F;
-                            let second = arg & 0x0F;
-                            let first = self.map_local(first)?;
-                            let second = self.map_local(second)?;
-                            let encoded = (first << 16) | second;
-                            Instruction::new(Opcode::LoadFast2, Some(encoded))
-                        }
-                        "LOAD_FAST_AND_CLEAR" => {
-                            Instruction::new(Opcode::LoadFastAndClear, Some(self.map_local(arg)?))
-                        }
-                        _ => Instruction::new(Opcode::LoadFast, Some(self.map_local(arg)?)),
+                name if name.starts_with("LOAD_FAST") => match name {
+                    "LOAD_FAST_LOAD_FAST" | "LOAD_FAST_BORROW_LOAD_FAST_BORROW" => {
+                        let first = (arg >> 4) & 0x0F;
+                        let second = arg & 0x0F;
+                        let first = self.map_local(first)?;
+                        let second = self.map_local(second)?;
+                        let encoded = (first << 16) | second;
+                        Instruction::new(Opcode::LoadFast2, Some(encoded))
                     }
-                }
+                    "LOAD_FAST_AND_CLEAR" => {
+                        Instruction::new(Opcode::LoadFastAndClear, Some(self.map_local(arg)?))
+                    }
+                    _ => Instruction::new(Opcode::LoadFast, Some(self.map_local(arg)?)),
+                },
                 name if name.starts_with("STORE_FAST") => match name {
                     "STORE_FAST_LOAD_FAST" => {
                         let first = (arg >> 4) & 0x0F;
@@ -302,84 +334,128 @@ impl<'a> Translator<'a> {
                 "SET_FUNCTION_ATTRIBUTE" => {
                     Instruction::new(Opcode::SetFunctionAttribute, Some(arg))
                 }
-                "COPY_FREE_VARS" => Instruction::new(Opcode::Nop, None),
                 "KW_NAMES" => {
                     pending_kw_names = Some(arg as u16);
                     Instruction::new(Opcode::Nop, None)
                 }
-                "CALL" => {
+                "CALL"
+                | "INSTRUMENTED_CALL"
+                | "CALL_ALLOC_AND_ENTER_INIT"
+                | "CALL_BOUND_METHOD_EXACT_ARGS"
+                | "CALL_BOUND_METHOD_GENERAL"
+                | "CALL_BUILTIN_CLASS"
+                | "CALL_BUILTIN_FAST"
+                | "CALL_BUILTIN_FAST_WITH_KEYWORDS"
+                | "CALL_BUILTIN_O"
+                | "CALL_ISINSTANCE"
+                | "CALL_LEN"
+                | "CALL_LIST_APPEND"
+                | "CALL_METHOD_DESCRIPTOR_FAST"
+                | "CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS"
+                | "CALL_METHOD_DESCRIPTOR_NOARGS"
+                | "CALL_METHOD_DESCRIPTOR_O"
+                | "CALL_NON_PY_GENERAL"
+                | "CALL_PY_EXACT_ARGS"
+                | "CALL_PY_GENERAL"
+                | "CALL_STR_1"
+                | "CALL_TUPLE_1"
+                | "CALL_TYPE_1" => {
                     let kw_idx = pending_kw_names.take().unwrap_or(u16::MAX);
                     let encoded = ((kw_idx as u32) << 16) | (arg & 0xFFFF);
                     Instruction::new(Opcode::CallCpython, Some(encoded))
                 }
-                "CALL_KW" => Instruction::new(Opcode::CallCpythonKwStack, Some(arg)),
-                "POP_JUMP_IF_FALSE" => {
-                    let target = idx + 1 + arg as usize;
-                    Instruction::new(Opcode::JumpIfFalse, Some(target as u32))
-                }
+                "CALL_KW"
+                | "INSTRUMENTED_CALL_KW"
+                | "CALL_KW_BOUND_METHOD"
+                | "CALL_KW_NON_PY"
+                | "CALL_KW_PY" => Instruction::new(Opcode::CallCpythonKwStack, Some(arg)),
+                "POP_JUMP_IF_FALSE" => Instruction::new(
+                    Opcode::JumpIfFalse,
+                    Some(relative_forward_target(idx, arg)?),
+                ),
+                "INSTRUMENTED_POP_JUMP_IF_FALSE" => Instruction::new(
+                    Opcode::JumpIfFalse,
+                    Some(relative_forward_target(idx, arg)?),
+                ),
                 "POP_JUMP_IF_TRUE" => {
-                    let target = idx + 1 + arg as usize;
-                    Instruction::new(Opcode::JumpIfTrue, Some(target as u32))
+                    Instruction::new(Opcode::JumpIfTrue, Some(relative_forward_target(idx, arg)?))
                 }
-                "JUMP_FORWARD" => {
-                    let target = idx + 1 + arg as usize;
-                    Instruction::new(Opcode::Jump, Some(target as u32))
+                "INSTRUMENTED_POP_JUMP_IF_TRUE" => {
+                    Instruction::new(Opcode::JumpIfTrue, Some(relative_forward_target(idx, arg)?))
                 }
-                "JUMP_BACKWARD" | "JUMP_BACKWARD_NO_INTERRUPT" | "JUMP_BACKWARD_NO_JIT" => {
-                    let target = idx + 1 - arg as usize;
-                    Instruction::new(Opcode::Jump, Some(target as u32))
+                "POP_JUMP_IF_NONE" | "INSTRUMENTED_POP_JUMP_IF_NONE" => {
+                    Instruction::new(Opcode::JumpIfNone, Some(relative_forward_target(idx, arg)?))
+                }
+                "POP_JUMP_IF_NOT_NONE" | "INSTRUMENTED_POP_JUMP_IF_NOT_NONE" => Instruction::new(
+                    Opcode::JumpIfNotNone,
+                    Some(relative_forward_target(idx, arg)?),
+                ),
+                "JUMP_FORWARD" | "INSTRUMENTED_JUMP_FORWARD" => {
+                    Instruction::new(Opcode::Jump, Some(relative_forward_target(idx, arg)?))
+                }
+                "JUMP_BACKWARD"
+                | "JUMP_BACKWARD_NO_INTERRUPT"
+                | "JUMP_BACKWARD_NO_JIT"
+                | "JUMP_BACKWARD_JIT"
+                | "INSTRUMENTED_JUMP_BACKWARD" => {
+                    Instruction::new(Opcode::Jump, Some(relative_backward_target(idx, arg)?))
+                }
+                "JUMP" | "JUMP_NO_INTERRUPT" => {
+                    Instruction::new(Opcode::Jump, Some(relative_forward_target(idx, arg)?))
                 }
                 "GET_ITER" => Instruction::new(Opcode::GetIter, None),
-                "FOR_ITER" => {
-                    let target = idx + 2 + arg as usize;
-                    Instruction::new(Opcode::ForIter, Some(target as u32))
+                "GET_YIELD_FROM_ITER" => Instruction::new(Opcode::GetIter, None),
+                "FOR_ITER" => Instruction::new(Opcode::ForIter, Some(for_iter_target(idx, arg)?)),
+                "INSTRUMENTED_FOR_ITER"
+                | "FOR_ITER_GEN"
+                | "FOR_ITER_LIST"
+                | "FOR_ITER_RANGE"
+                | "FOR_ITER_TUPLE" => {
+                    Instruction::new(Opcode::ForIter, Some(for_iter_target(idx, arg)?))
+                }
+                "SEND" | "SEND_GEN" => {
+                    Instruction::new(Opcode::Send, Some(relative_forward_target(idx, arg)?))
                 }
                 "YIELD_VALUE" => Instruction::new(Opcode::YieldValue, None),
+                "INSTRUMENTED_YIELD_VALUE" => Instruction::new(Opcode::YieldValue, None),
                 "YIELD_FROM" => Instruction::new(Opcode::YieldFrom, None),
-                "END_FOR" => Instruction::new(Opcode::EndFor, None),
+                "END_FOR" | "INSTRUMENTED_END_FOR" => Instruction::new(Opcode::EndFor, None),
                 "BUILD_LIST" => Instruction::new(Opcode::BuildList, Some(arg)),
                 "BUILD_TUPLE" => Instruction::new(Opcode::BuildTuple, Some(arg)),
                 "BUILD_MAP" | "BUILD_DICT" => Instruction::new(Opcode::BuildDict, Some(arg)),
                 "BUILD_SLICE" => Instruction::new(Opcode::BuildSlice, Some(arg)),
+                "UNPACK_SEQUENCE"
+                | "UNPACK_SEQUENCE_LIST"
+                | "UNPACK_SEQUENCE_TUPLE"
+                | "UNPACK_SEQUENCE_TWO_TUPLE" => {
+                    Instruction::new(Opcode::UnpackSequence, Some(arg))
+                }
+                "IMPORT_NAME" => {
+                    Instruction::new(Opcode::ImportNameCpython, Some(self.map_name(arg)?))
+                }
+                "IMPORT_FROM" => {
+                    Instruction::new(Opcode::ImportFromCpython, Some(self.map_name(arg)?))
+                }
                 "UNARY_NEGATIVE" => Instruction::new(Opcode::UnaryNeg, None),
                 "UNARY_POSITIVE" => Instruction::new(Opcode::UnaryPos, None),
                 "UNARY_NOT" => Instruction::new(Opcode::UnaryNot, None),
-                "COMPARE_OP" => match arg {
-                    0 => Instruction::new(Opcode::CompareLt, None),
-                    1 => Instruction::new(Opcode::CompareLe, None),
-                    2 => Instruction::new(Opcode::CompareEq, None),
-                    3 => Instruction::new(Opcode::CompareNe, None),
-                    4 => Instruction::new(Opcode::CompareGt, None),
-                    5 => Instruction::new(Opcode::CompareGe, None),
-                    _ => Instruction::new(Opcode::Nop, None),
-                },
-                "CONTAINS_OP" => match arg {
-                    0 => Instruction::new(Opcode::CompareIn, None),
-                    1 => Instruction::new(Opcode::CompareNotIn, None),
-                    _ => Instruction::new(Opcode::Nop, None),
-                },
-                "IS_OP" => match arg {
-                    0 => Instruction::new(Opcode::CompareIs, None),
-                    1 => Instruction::new(Opcode::CompareIsNot, None),
-                    _ => Instruction::new(Opcode::Nop, None),
-                },
-                "BINARY_OP" => self.map_binary_op(arg),
+                "TO_BOOL"
+                | "TO_BOOL_ALWAYS_TRUE"
+                | "TO_BOOL_BOOL"
+                | "TO_BOOL_INT"
+                | "TO_BOOL_LIST"
+                | "TO_BOOL_NONE"
+                | "TO_BOOL_STR" => Instruction::new(Opcode::ToBool, None),
+                "COMPARE_OP" | "COMPARE_OP_FLOAT" | "COMPARE_OP_INT" | "COMPARE_OP_STR" => {
+                    self.map_compare_op(idx, arg)?
+                }
+                "CONTAINS_OP" | "CONTAINS_OP_DICT" | "CONTAINS_OP_SET" => {
+                    self.map_contains_op(idx, arg)?
+                }
+                "IS_OP" => self.map_is_op(idx, arg)?,
+                "BINARY_OP" => self.map_binary_op(idx, arg)?,
                 name if name.starts_with("BINARY_OP_INPLACE") => {
-                    if name.contains("ADD") {
-                        Instruction::new(Opcode::BinaryAdd, None)
-                    } else if name.contains("SUBTRACT") {
-                        Instruction::new(Opcode::BinarySub, None)
-                    } else if name.contains("MULTIPLY") {
-                        Instruction::new(Opcode::BinaryMul, None)
-                    } else if name.contains("FLOOR_DIVIDE") {
-                        Instruction::new(Opcode::BinaryFloorDiv, None)
-                    } else if name.contains("REMAINDER") {
-                        Instruction::new(Opcode::BinaryMod, None)
-                    } else if name.contains("POWER") {
-                        Instruction::new(Opcode::BinaryPow, None)
-                    } else {
-                        Instruction::new(Opcode::Nop, None)
-                    }
+                    self.map_inplace_binary_op(idx, name)?
                 }
                 name if name.starts_with("BINARY_OP_ADD") => {
                     Instruction::new(Opcode::BinaryAdd, None)
@@ -393,13 +469,32 @@ impl<'a> Translator<'a> {
                 name if name.starts_with("BINARY_OP_SUBSCR") => {
                     Instruction::new(Opcode::Subscript, None)
                 }
-                "STORE_SUBSCR" => Instruction::new(Opcode::StoreSubscript, None),
+                "STORE_SUBSCR" | "STORE_SUBSCR_DICT" | "STORE_SUBSCR_LIST_INT" => {
+                    Instruction::new(Opcode::StoreSubscript, None)
+                }
                 "BINARY_SLICE" => Instruction::new(Opcode::Subscript, None),
-                _ => Instruction::new(Opcode::Nop, None),
+                "PUSH_EXC_INFO" => Instruction::new(Opcode::Nop, None),
+                "POP_EXCEPT" => Instruction::new(Opcode::ClearException, None),
+                "RERAISE" => Instruction::new(Opcode::Raise, Some(0)),
+                "RAISE_VARARGS" => Instruction::new(Opcode::Raise, Some(arg)),
+                "CHECK_EXC_MATCH" => Instruction::new(Opcode::MatchException, None),
+                "POP_BLOCK" => Instruction::new(Opcode::PopBlock, None),
+                _ => {
+                    return Err(CpythonError::new(format!(
+                        "unsupported CPython opcode '{}' (arg={}) at instruction {}",
+                        name, arg, idx
+                    )));
+                }
             };
+            prev_was_return_generator = name == "RETURN_GENERATOR";
             result.push(instruction);
         }
 
+        if pending_kw_names.is_some() {
+            return Err(CpythonError::new("dangling KW_NAMES without CALL"));
+        }
+
+        validate_translated_code(&result)?;
         Ok(result)
     }
 
@@ -505,24 +600,402 @@ impl<'a> Translator<'a> {
         }
     }
 
-    fn map_binary_op(&self, oparg: u32) -> Instruction {
+    fn map_compare_op(&self, idx: usize, oparg: u32) -> Result<Instruction, CpythonError> {
+        let instr = match oparg {
+            0 => Instruction::new(Opcode::CompareLt, None),
+            1 => Instruction::new(Opcode::CompareLe, None),
+            2 => Instruction::new(Opcode::CompareEq, None),
+            3 => Instruction::new(Opcode::CompareNe, None),
+            4 => Instruction::new(Opcode::CompareGt, None),
+            5 => Instruction::new(Opcode::CompareGe, None),
+            _ => {
+                return Err(CpythonError::new(format!(
+                    "unsupported COMPARE_OP arg {} at instruction {}",
+                    oparg, idx
+                )));
+            }
+        };
+        Ok(instr)
+    }
+
+    fn map_contains_op(&self, idx: usize, oparg: u32) -> Result<Instruction, CpythonError> {
+        let instr = match oparg {
+            0 => Instruction::new(Opcode::CompareIn, None),
+            1 => Instruction::new(Opcode::CompareNotIn, None),
+            _ => {
+                return Err(CpythonError::new(format!(
+                    "unsupported CONTAINS_OP arg {} at instruction {}",
+                    oparg, idx
+                )));
+            }
+        };
+        Ok(instr)
+    }
+
+    fn map_is_op(&self, idx: usize, oparg: u32) -> Result<Instruction, CpythonError> {
+        let instr = match oparg {
+            0 => Instruction::new(Opcode::CompareIs, None),
+            1 => Instruction::new(Opcode::CompareIsNot, None),
+            _ => {
+                return Err(CpythonError::new(format!(
+                    "unsupported IS_OP arg {} at instruction {}",
+                    oparg, idx
+                )));
+            }
+        };
+        Ok(instr)
+    }
+
+    fn map_inplace_binary_op(&self, idx: usize, name: &str) -> Result<Instruction, CpythonError> {
+        let instr = if name.contains("ADD") {
+            Instruction::new(Opcode::BinaryAdd, None)
+        } else if name.contains("SUBTRACT") {
+            Instruction::new(Opcode::BinarySub, None)
+        } else if name.contains("MULTIPLY") {
+            Instruction::new(Opcode::BinaryMul, None)
+        } else if name.contains("FLOOR_DIVIDE") {
+            Instruction::new(Opcode::BinaryFloorDiv, None)
+        } else if name.contains("REMAINDER") {
+            Instruction::new(Opcode::BinaryMod, None)
+        } else if name.contains("POWER") {
+            Instruction::new(Opcode::BinaryPow, None)
+        } else {
+            return Err(CpythonError::new(format!(
+                "unsupported {} at instruction {}",
+                name, idx
+            )));
+        };
+        Ok(instr)
+    }
+
+    fn map_binary_op(&self, idx: usize, oparg: u32) -> Result<Instruction, CpythonError> {
         match oparg {
-            0 => Instruction::new(Opcode::BinaryAdd, None),
-            2 => Instruction::new(Opcode::BinaryFloorDiv, None),
-            5 => Instruction::new(Opcode::BinaryMul, None),
-            6 => Instruction::new(Opcode::BinaryMod, None),
-            8 => Instruction::new(Opcode::BinaryPow, None),
-            10 => Instruction::new(Opcode::BinarySub, None),
-            13 => Instruction::new(Opcode::BinaryAdd, None),
-            15 => Instruction::new(Opcode::BinaryFloorDiv, None),
-            18 => Instruction::new(Opcode::BinaryMul, None),
-            19 => Instruction::new(Opcode::BinaryMod, None),
-            21 => Instruction::new(Opcode::BinaryPow, None),
-            23 => Instruction::new(Opcode::BinarySub, None),
-            26 => Instruction::new(Opcode::Subscript, None),
-            _ => Instruction::new(Opcode::Nop, None),
+            0 => Ok(Instruction::new(Opcode::BinaryAdd, None)),
+            2 => Ok(Instruction::new(Opcode::BinaryFloorDiv, None)),
+            5 => Ok(Instruction::new(Opcode::BinaryMul, None)),
+            6 => Ok(Instruction::new(Opcode::BinaryMod, None)),
+            8 => Ok(Instruction::new(Opcode::BinaryPow, None)),
+            10 => Ok(Instruction::new(Opcode::BinarySub, None)),
+            13 => Ok(Instruction::new(Opcode::BinaryAdd, None)),
+            15 => Ok(Instruction::new(Opcode::BinaryFloorDiv, None)),
+            18 => Ok(Instruction::new(Opcode::BinaryMul, None)),
+            19 => Ok(Instruction::new(Opcode::BinaryMod, None)),
+            21 => Ok(Instruction::new(Opcode::BinaryPow, None)),
+            23 => Ok(Instruction::new(Opcode::BinarySub, None)),
+            26 => Ok(Instruction::new(Opcode::Subscript, None)),
+            _ => Err(CpythonError::new(format!(
+                "unsupported BINARY_OP arg {} at instruction {}",
+                oparg, idx
+            ))),
         }
     }
+}
+
+fn kw_names_follower(name: &str) -> bool {
+    matches!(
+        name,
+        "CALL"
+            | "CALL_KW"
+            | "INSTRUMENTED_CALL"
+            | "INSTRUMENTED_CALL_KW"
+            | "CALL_ALLOC_AND_ENTER_INIT"
+            | "CALL_BOUND_METHOD_EXACT_ARGS"
+            | "CALL_BOUND_METHOD_GENERAL"
+            | "CALL_BUILTIN_CLASS"
+            | "CALL_BUILTIN_FAST"
+            | "CALL_BUILTIN_FAST_WITH_KEYWORDS"
+            | "CALL_BUILTIN_O"
+            | "CALL_ISINSTANCE"
+            | "CALL_KW_BOUND_METHOD"
+            | "CALL_KW_NON_PY"
+            | "CALL_KW_PY"
+            | "CALL_LEN"
+            | "CALL_LIST_APPEND"
+            | "CALL_METHOD_DESCRIPTOR_FAST"
+            | "CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS"
+            | "CALL_METHOD_DESCRIPTOR_NOARGS"
+            | "CALL_METHOD_DESCRIPTOR_O"
+            | "CALL_NON_PY_GENERAL"
+            | "CALL_PY_EXACT_ARGS"
+            | "CALL_PY_GENERAL"
+            | "CALL_STR_1"
+            | "CALL_TUPLE_1"
+            | "CALL_TYPE_1"
+            | "CACHE"
+            | "RESUME"
+            | "RESUME_CHECK"
+            | "NOP"
+            | "NOT_TAKEN"
+            | "EXTENDED_ARG"
+    )
+}
+
+fn relative_forward_target(idx: usize, arg: u32) -> Result<u32, CpythonError> {
+    let delta = arg as usize;
+    let target = idx
+        .checked_add(1)
+        .and_then(|value| value.checked_add(delta))
+        .ok_or_else(|| CpythonError::new("jump target overflow"))?;
+    u32::try_from(target).map_err(|_| CpythonError::new("jump target overflow"))
+}
+
+fn relative_backward_target(idx: usize, arg: u32) -> Result<u32, CpythonError> {
+    let delta = arg as usize;
+    let base = idx
+        .checked_add(1)
+        .ok_or_else(|| CpythonError::new("jump target overflow"))?;
+    let target = base
+        .checked_sub(delta)
+        .ok_or_else(|| CpythonError::new("backward jump before start"))?;
+    u32::try_from(target).map_err(|_| CpythonError::new("jump target overflow"))
+}
+
+fn for_iter_target(idx: usize, arg: u32) -> Result<u32, CpythonError> {
+    let delta = arg as usize;
+    let target = idx
+        .checked_add(2)
+        .and_then(|value| value.checked_add(delta))
+        .ok_or_else(|| CpythonError::new("FOR_ITER target overflow"))?;
+    u32::try_from(target).map_err(|_| CpythonError::new("FOR_ITER target overflow"))
+}
+
+fn validate_cpython_control_flow(instructions: &[CpInstr]) -> Result<(), CpythonError> {
+    let len = instructions.len();
+    for (idx, instr) in instructions.iter().enumerate() {
+        let name = instr.name.as_str();
+        let target = match name {
+            "POP_JUMP_IF_FALSE"
+            | "POP_JUMP_IF_TRUE"
+            | "POP_JUMP_IF_NONE"
+            | "POP_JUMP_IF_NOT_NONE"
+            | "INSTRUMENTED_POP_JUMP_IF_FALSE"
+            | "INSTRUMENTED_POP_JUMP_IF_TRUE"
+            | "INSTRUMENTED_POP_JUMP_IF_NONE"
+            | "INSTRUMENTED_POP_JUMP_IF_NOT_NONE"
+            | "JUMP_FORWARD"
+            | "INSTRUMENTED_JUMP_FORWARD"
+            | "JUMP"
+            | "JUMP_NO_INTERRUPT"
+            | "SEND"
+            | "SEND_GEN" => Some(relative_forward_target(idx, instr.arg)? as usize),
+            "JUMP_BACKWARD"
+            | "JUMP_BACKWARD_NO_INTERRUPT"
+            | "JUMP_BACKWARD_NO_JIT"
+            | "JUMP_BACKWARD_JIT"
+            | "INSTRUMENTED_JUMP_BACKWARD" => {
+                Some(relative_backward_target(idx, instr.arg)? as usize)
+            }
+            "FOR_ITER"
+            | "INSTRUMENTED_FOR_ITER"
+            | "FOR_ITER_GEN"
+            | "FOR_ITER_LIST"
+            | "FOR_ITER_RANGE"
+            | "FOR_ITER_TUPLE" => Some(for_iter_target(idx, instr.arg)? as usize),
+            _ => None,
+        };
+        if let Some(target) = target {
+            if target > len {
+                return Err(CpythonError::new(format!(
+                    "jump target {} out of range at instruction {}",
+                    target, idx
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_translated_code(instructions: &[Instruction]) -> Result<(), CpythonError> {
+    let mut queue = VecDeque::new();
+    let mut seen: HashSet<(usize, i32)> = HashSet::new();
+    queue.push_back((0usize, 0i32));
+
+    while let Some((ip, stack_depth)) = queue.pop_front() {
+        if ip >= instructions.len() {
+            continue;
+        }
+        if !seen.insert((ip, stack_depth)) {
+            continue;
+        }
+        let instr = &instructions[ip];
+        let successors = translated_successors(ip, stack_depth, instr, instructions.len())?;
+        for (next_ip, next_depth) in successors {
+            if next_depth < 0 {
+                return Err(CpythonError::new(format!(
+                    "stack underflow at instruction {} ({:?})",
+                    ip, instr.opcode
+                )));
+            }
+            if next_ip > instructions.len() {
+                return Err(CpythonError::new(format!(
+                    "translated jump target {} out of range at instruction {}",
+                    next_ip, ip
+                )));
+            }
+            queue.push_back((next_ip, next_depth));
+        }
+    }
+    Ok(())
+}
+
+fn translated_successors(
+    ip: usize,
+    stack_depth: i32,
+    instr: &Instruction,
+    code_len: usize,
+) -> Result<Vec<(usize, i32)>, CpythonError> {
+    let next_ip = ip + 1;
+    let arg = instr.arg;
+    let pop = |count: i32| -> Result<i32, CpythonError> {
+        if stack_depth < count {
+            return Err(CpythonError::new(format!(
+                "stack underflow at instruction {} ({:?})",
+                ip, instr.opcode
+            )));
+        }
+        Ok(stack_depth - count)
+    };
+
+    let successors = match instr.opcode {
+        Opcode::Nop
+        | Opcode::SetupExcept
+        | Opcode::PopBlock
+        | Opcode::ClearException
+        | Opcode::EndFor
+        | Opcode::SetupAnnotations => vec![(next_ip, stack_depth)],
+        Opcode::LoadConst
+        | Opcode::LoadName
+        | Opcode::LoadLocals
+        | Opcode::LoadFast
+        | Opcode::LoadDeref
+        | Opcode::LoadClosure
+        | Opcode::LoadBuildClass
+        | Opcode::PushNull => vec![(next_ip, stack_depth + 1)],
+        Opcode::LoadFast2 => vec![(next_ip, stack_depth + 2)],
+        Opcode::LoadFastAndClear => vec![(next_ip, stack_depth + 1)],
+        Opcode::LoadGlobal => {
+            let push_null = arg.unwrap_or(0) & 1;
+            let pushes = if push_null == 1 { 2 } else { 1 };
+            vec![(next_ip, stack_depth + pushes)]
+        }
+        Opcode::StoreName
+        | Opcode::StoreFast
+        | Opcode::StoreGlobal
+        | Opcode::StoreDeref
+        | Opcode::PopTop
+        | Opcode::UnaryNeg
+        | Opcode::UnaryNot
+        | Opcode::UnaryPos
+        | Opcode::ToBool => vec![(next_ip, pop(1)?)],
+        Opcode::StoreFastLoadFast => {
+            let depth = pop(1)? + 1;
+            vec![(next_ip, depth)]
+        }
+        Opcode::StoreFastStoreFast => vec![(next_ip, pop(2)?)],
+        Opcode::StoreAttr | Opcode::StoreAttrCpython => vec![(next_ip, pop(2)?)],
+        Opcode::BinaryAdd
+        | Opcode::BinarySub
+        | Opcode::BinaryMul
+        | Opcode::BinaryPow
+        | Opcode::BinaryFloorDiv
+        | Opcode::BinaryMod
+        | Opcode::CompareEq
+        | Opcode::CompareNe
+        | Opcode::CompareLt
+        | Opcode::CompareLe
+        | Opcode::CompareGt
+        | Opcode::CompareGe
+        | Opcode::CompareIn
+        | Opcode::CompareNotIn
+        | Opcode::CompareIs
+        | Opcode::CompareIsNot
+        | Opcode::Subscript
+        | Opcode::MatchException
+        | Opcode::ListAppend
+        | Opcode::ListExtend
+        | Opcode::DictUpdate => vec![(next_ip, pop(2)? + 1)],
+        Opcode::BuildList | Opcode::BuildTuple => {
+            let count = arg.ok_or_else(|| CpythonError::new("missing build count"))? as i32;
+            vec![(next_ip, pop(count)? + 1)]
+        }
+        Opcode::BuildDict => {
+            let count = arg.ok_or_else(|| CpythonError::new("missing dict count"))? as i32;
+            vec![(next_ip, pop(count * 2)? + 1)]
+        }
+        Opcode::BuildSlice => {
+            let count = arg.unwrap_or(3) as i32;
+            if count != 2 && count != 3 {
+                return Err(CpythonError::new(format!(
+                    "invalid BUILD_SLICE arg {} at instruction {}",
+                    count, ip
+                )));
+            }
+            vec![(next_ip, pop(count)? + 1)]
+        }
+        Opcode::UnpackSequence => {
+            let count = arg.ok_or_else(|| CpythonError::new("missing unpack count"))? as i32;
+            vec![(next_ip, pop(1)? + count)]
+        }
+        Opcode::DictSet => vec![(next_ip, pop(3)? + 1)],
+        Opcode::StoreSubscript => vec![(next_ip, pop(3)? + 1)],
+        Opcode::DupTop => vec![(next_ip, pop(1)? + 2)],
+        Opcode::JumpIfFalse | Opcode::JumpIfTrue | Opcode::JumpIfNone | Opcode::JumpIfNotNone => {
+            let target = arg.ok_or_else(|| CpythonError::new("missing jump target"))? as usize;
+            let depth = pop(1)?;
+            vec![(next_ip, depth), (target, depth)]
+        }
+        Opcode::Jump => {
+            let target = arg.ok_or_else(|| CpythonError::new("missing jump target"))? as usize;
+            vec![(target, stack_depth)]
+        }
+        Opcode::GetIter => vec![(next_ip, pop(1)? + 1)],
+        Opcode::ForIter => {
+            let target = arg.ok_or_else(|| CpythonError::new("missing for-iter target"))? as usize;
+            vec![(next_ip, pop(1)? + 2), (target, pop(1)?)]
+        }
+        Opcode::YieldValue => {
+            let depth = pop(1)? + 1;
+            vec![(next_ip, depth)]
+        }
+        Opcode::YieldFrom => vec![(next_ip, stack_depth)],
+        Opcode::Send => {
+            let target = arg.ok_or_else(|| CpythonError::new("missing send target"))? as usize;
+            let depth = pop(2)?;
+            vec![(next_ip, depth + 2), (target, depth + 1)]
+        }
+        Opcode::MakeFunction => vec![(next_ip, pop(2)? + 1)],
+        Opcode::MakeFunctionStack => vec![(next_ip, pop(1)? + 1)],
+        Opcode::SetFunctionAttribute => vec![(next_ip, pop(2)? + 1)],
+        Opcode::BuildClass => vec![(next_ip, pop(2)? + 1)],
+        Opcode::CallFunction => {
+            let argc = arg.ok_or_else(|| CpythonError::new("missing call argc"))? as i32;
+            vec![(next_ip, pop(argc + 1)? + 1)]
+        }
+        Opcode::CallFunctionKw => vec![(next_ip, pop(1)? + 1)],
+        Opcode::CallFunctionVar => vec![(next_ip, pop(3)? + 1)],
+        Opcode::CallCpython => {
+            let argc = (arg.ok_or_else(|| CpythonError::new("missing call argc"))? & 0xFFFF) as i32;
+            vec![(next_ip, pop(argc + 1)? + 1)]
+        }
+        Opcode::CallCpythonKwStack => {
+            let argc = arg.ok_or_else(|| CpythonError::new("missing call argc"))? as i32;
+            vec![(next_ip, pop(argc + 2)? + 1)]
+        }
+        Opcode::ImportName => vec![(next_ip, stack_depth + 1)],
+        Opcode::ImportNameCpython => vec![(next_ip, pop(2)? + 1)],
+        Opcode::ImportFromCpython => vec![(next_ip, pop(1)? + 2)],
+        Opcode::Raise | Opcode::ReturnConst | Opcode::ReturnValue => Vec::new(),
+        _ => vec![(next_ip, stack_depth)],
+    };
+
+    if successors.iter().any(|(next, _)| *next > code_len) {
+        return Err(CpythonError::new(format!(
+            "translated jump target out of range at instruction {}",
+            ip
+        )));
+    }
+
+    Ok(successors)
 }
 
 struct CpInstr {
@@ -553,11 +1026,175 @@ fn decode_instructions(
         } else {
             let full_arg = (ext << 8) | arg;
             ext = 0;
-            instructions.push(CpInstr { name, arg: full_arg });
+            instructions.push(CpInstr {
+                name,
+                arg: full_arg,
+            });
         }
         i += 2;
     }
     Ok(instructions)
+}
+
+struct MarshalWriter {
+    data: Vec<u8>,
+}
+
+impl MarshalWriter {
+    fn new() -> Self {
+        Self { data: Vec::new() }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.data
+    }
+
+    fn write_code_object(&mut self, code: &CpythonCode) -> Result<(), CpythonError> {
+        self.write_u8(b'c');
+        self.write_i32(code.argcount);
+        self.write_i32(code.posonlyargcount);
+        self.write_i32(code.kwonlyargcount);
+        self.write_i32(code.stacksize);
+        self.write_i32(code.flags);
+        self.write_object(&PyObject::Bytes(code.code.clone()))?;
+        self.write_object(&PyObject::Tuple(code.consts.clone()))?;
+        self.write_object(&PyObject::Tuple(
+            code.names.iter().cloned().map(PyObject::Str).collect(),
+        ))?;
+        self.write_object(&PyObject::Tuple(
+            code.localsplusnames
+                .iter()
+                .cloned()
+                .map(PyObject::Str)
+                .collect(),
+        ))?;
+        self.write_object(&PyObject::Bytes(code.localspluskinds.clone()))?;
+        self.write_object(&PyObject::Str(code.filename.clone()))?;
+        self.write_object(&PyObject::Str(code.name.clone()))?;
+        self.write_object(&PyObject::Str(code.qualname.clone()))?;
+        self.write_i32(code.firstlineno);
+        self.write_object(&PyObject::Bytes(code.linetable.clone()))?;
+        self.write_object(&PyObject::Bytes(code.exceptiontable.clone()))?;
+        Ok(())
+    }
+
+    fn write_object(&mut self, obj: &PyObject) -> Result<(), CpythonError> {
+        match obj {
+            PyObject::Null => self.write_u8(b'0'),
+            PyObject::None => self.write_u8(b'N'),
+            PyObject::Bool(false) => self.write_u8(b'F'),
+            PyObject::Bool(true) => self.write_u8(b'T'),
+            PyObject::Int(value) => {
+                if *value >= i32::MIN as i64 && *value <= i32::MAX as i64 {
+                    self.write_u8(b'i');
+                    self.write_i32(*value as i32);
+                } else {
+                    self.write_u8(b'l');
+                    self.write_long(*value)?;
+                }
+            }
+            PyObject::Str(value) => {
+                self.write_u8(b'u');
+                self.write_bytes_long(value.as_bytes())?;
+            }
+            PyObject::Bytes(value) => {
+                self.write_u8(b's');
+                self.write_bytes_long(value)?;
+            }
+            PyObject::Tuple(items) => {
+                self.write_u8(b'(');
+                self.write_i32(
+                    i32::try_from(items.len())
+                        .map_err(|_| CpythonError::new("tuple constant too large"))?,
+                );
+                for item in items {
+                    self.write_object(item)?;
+                }
+            }
+            PyObject::List(items) => {
+                self.write_u8(b'[');
+                self.write_i32(
+                    i32::try_from(items.len())
+                        .map_err(|_| CpythonError::new("list constant too large"))?,
+                );
+                for item in items {
+                    self.write_object(item)?;
+                }
+            }
+            PyObject::Dict(entries) => {
+                self.write_u8(b'{');
+                for (key, value) in entries {
+                    self.write_object(key)?;
+                    self.write_object(value)?;
+                }
+                self.write_u8(b'0');
+            }
+            PyObject::Code(code) => {
+                self.write_code_object(code)?;
+            }
+            PyObject::Slice { lower, upper, step } => {
+                self.write_u8(b':');
+                if let Some(value) = lower {
+                    self.write_object(value)?;
+                } else {
+                    self.write_object(&PyObject::Null)?;
+                }
+                if let Some(value) = upper {
+                    self.write_object(value)?;
+                } else {
+                    self.write_object(&PyObject::Null)?;
+                }
+                if let Some(value) = step {
+                    self.write_object(value)?;
+                } else {
+                    self.write_object(&PyObject::Null)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.data.push(value);
+    }
+
+    fn write_i32(&mut self, value: i32) {
+        self.data.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u16(&mut self, value: u16) {
+        self.data.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_bytes_long(&mut self, bytes: &[u8]) -> Result<(), CpythonError> {
+        self.write_i32(
+            i32::try_from(bytes.len())
+                .map_err(|_| CpythonError::new("byte sequence too large for marshal"))?,
+        );
+        self.data.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn write_long(&mut self, value: i64) -> Result<(), CpythonError> {
+        if value == 0 {
+            self.write_i32(0);
+            return Ok(());
+        }
+        let sign = if value < 0 { -1 } else { 1 };
+        let mut abs = (value as i128).abs();
+        let mut digits = Vec::new();
+        while abs > 0 {
+            digits.push((abs & 0x7fff) as u16);
+            abs >>= 15;
+        }
+        let count = i32::try_from(digits.len())
+            .map_err(|_| CpythonError::new("long constant too large"))?;
+        self.write_i32(if sign < 0 { -count } else { count });
+        for digit in digits {
+            self.write_u16(digit);
+        }
+        Ok(())
+    }
 }
 
 struct MarshalReader<'a> {
@@ -579,11 +1216,7 @@ impl<'a> MarshalReader<'a> {
         let code = self.read_u8()? as u8;
         let flag = (code & 0x80) != 0;
         let obj_type = (code & 0x7f) as u8;
-        let ref_index = if flag {
-            Some(self.reserve_ref())
-        } else {
-            None
-        };
+        let ref_index = if flag { Some(self.reserve_ref()) } else { None };
 
         let value = match obj_type as char {
             '0' => PyObject::Null,
@@ -746,7 +1379,7 @@ impl<'a> MarshalReader<'a> {
             other => {
                 return Err(CpythonError::new(format!(
                     "unsupported marshal type {other:?}"
-                )))
+                )));
             }
         };
 

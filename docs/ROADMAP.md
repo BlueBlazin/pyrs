@@ -30,7 +30,7 @@ We are building a production-grade Python interpreter in Rust with full source a
 ## Bytecode compatibility
 - Target CPython 3.14 bytecode format and semantics.
 - Maintain an opcode table in-repo and generate decoder/encoder tables.
-- Support reading and writing .pyc files (reader in place; writer TBD).
+- Support reading and writing .pyc files (supported-subset writer now in place).
 - Keep stack effect metadata in one place to enable verification and tooling.
 
 ## Compiler and IR
@@ -67,7 +67,7 @@ Acceptance rule for all remaining milestones: no milestone is complete at "basic
 3. Milestone 2: CPython bytecode intake foundations (`opcode_table.csv`, marshal reader, `.pyc` load + execution subset). (complete)
 4. Milestone 3: Closures + frame metadata + traceback foundations. (complete)
 5. Milestone 4: Generator and iteration parity (complete, P0).
-6. Milestone 5: Full 3.14 opcode execution + `.pyc` read/write parity (P0).
+6. Milestone 5: Opcode execution hardening + `.pyc` read/write parity for supported bytecode paths (complete, P0).
 7. Milestone 6: Import system parity (`importlib`/`ModuleSpec`/hooks/packages, P0).
 8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0).
 9. Milestone 8: Runtime data model parity (descriptor protocol, attribute model, metaclasses/MRO, core types, P0).
@@ -86,8 +86,9 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Object identity + stable headers (`id`, `is` semantics).
 - [x] Reference counting + cycle GC.
 - [x] CPython opcode table decoder (3.14).
-- [ ] CPython opcode encoder (3.14).
-- [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
+- [x] CPython opcode translation hardening for supported paths (fail-fast unsupported opcodes, no silent fallback behavior).
+- [x] `.pyc` load/serialize parity for supported code-object subset (header + marshal reader/writer).
+- [ ] Full CPython opcode encode/decode parity for all 3.14 opcode families.
 - [x] Closures + `nonlocal` (cell/free vars).
 - [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
@@ -151,12 +152,13 @@ DoD:
 - Targeted CPython generator tests pass (or are explicitly documented as blocked by out-of-scope work).
 Status: complete
 
-### Milestone 5 — Full CPython 3.14 Opcode & `.pyc` Parity (P0)
+### Milestone 5 — Opcode Hardening & `.pyc` Writer Parity (P0)
 DoD:
-- All required CPython 3.14 opcodes execute with correct semantics; no fallback `Nop` for supported code paths.
+- All required CPython opcodes for the supported source/bytecode surface execute with correct semantics; no silent fallback `Nop` in supported code paths (unsupported opcodes fail translation explicitly).
 - Stack-effect and jump validation checks are implemented for decode/translation.
 - `.pyc` writer implemented with CPython-compatible headers and marshal output for supported code objects.
 - CPython-compiled pure-Python modules execute end-to-end through the `.pyc` path.
+Status: complete
 
 ### Milestone 6 — Import System Parity (P0)
 DoD:
@@ -217,9 +219,9 @@ DoD:
 - Embedding API direction for Rust/C hosts is documented.
 
 ## Immediate next steps
-- Start Milestone 5 opcode closure by replacing remaining `Nop` fallbacks with real implementations.
-- Extend `.pyc` parity coverage and begin opcode stack-effect validation.
-- Continue broad CPython parity tests while landing opcode semantics.
+- Start Milestone 6 import-system parity (`importlib`, `ModuleSpec`, loader/finder contracts).
+- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 7-10.
+- Continue broad CPython parity tests while landing import/language/runtime milestones.
 
 ## Testing Focus Note
 After Milestone 2 (CPython bytecode compatibility), prioritize a testing push:

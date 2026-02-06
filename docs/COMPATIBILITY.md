@@ -17,9 +17,10 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Opcode table synced from CPython 3.14 (generated `opcode_table.csv`)
 - [x] Internal bytecode IR + compiler for subset (non-CPython)
 - [x] `.pyc` header parsing
-- [x] CPython bytecode decoder + translator for supported opcode subset
+- [x] CPython bytecode decoder + translator for supported opcode subset (explicit unsupported-opcode errors; no silent fallback behavior)
 - [x] `.pyc` loader + executor for supported opcode subset
-- [ ] CPython bytecode encoder
+- [x] CPython `.pyc` writer for supported code-object subset (header + marshal)
+- [ ] CPython bytecode encoder for full 3.14 opcode families
 - [ ] Opcode execution parity (full 3.14 coverage)
 
 ## Runtime & Object Model
@@ -59,8 +60,9 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Object identity + stable headers (`id`, `is` semantics).
 - [x] Reference counting + cycle GC.
 - [x] CPython opcode table decoder (3.14).
-- [ ] CPython opcode encoder (3.14).
-- [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
+- [x] CPython opcode translation hardening for supported paths (fail-fast unsupported opcodes, jump/stack validation).
+- [x] `.pyc` load/serialize parity for supported code-object subset.
+- [ ] CPython opcode encoder (3.14 full family parity).
 - [x] Closures + `nonlocal` (cell/free vars).
 - [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).

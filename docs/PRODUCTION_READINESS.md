@@ -44,10 +44,11 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [ ] P0: `__future__` flags and compiler feature gating.
 - [x] P1: Annotation capture into `__annotations__` (module/class/function, eager evaluation path currently implemented).
 - [ ] P1: Constant folding and peephole optimizations (no semantic changes).
-- [ ] P2: Bytecode verification pass (stack effects, jump targets, invalid op sequences).
+- [~] P2: Bytecode verification pass (jump-target + stack-shape checks implemented for supported translation paths; full verifier coverage pending).
 
 **Bytecode & VM Execution**
-- [~] P0: CPython 3.14 opcode table decode.
+- [x] P0: CPython 3.14 opcode table decode.
+- [x] P0: Supported-subset `.pyc` reader/writer parity (headers + marshal code object read/write) and translation validation (jump/stack checks).
 - [ ] P0: Full opcode execution parity (all 3.14 opcodes).
 - [ ] P0: `.pyc` read/write parity with CPython 3.14 (flags, hash/timestamp, marshal).
 - [ ] P0: Precise exception propagation and frame unwinding semantics.
