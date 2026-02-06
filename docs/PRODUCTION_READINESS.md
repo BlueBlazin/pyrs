@@ -134,7 +134,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Security, Reliability, and Release Engineering**
 - [ ] P0: Sanitizer-gated CI on release profiles (ASan/UBSan and platform-appropriate thread/memory checks).
-- [ ] P0: Parity-regression blocker policy in CI (critical CPython suite failures block release).
+- [~] P0: Parity-regression blocker policy in CI (baseline workflow in `.github/workflows/parity-gate.yml`; release-branch policy hardening pending).
 - [ ] P1: Incident triage runbook + crash reproducer retention for release lines.
 - [ ] P1: Cross-platform release qualification matrix (Linux/macOS/Windows).
 - [ ] P2: Signed artifacts + SBOM generation for release bundles.

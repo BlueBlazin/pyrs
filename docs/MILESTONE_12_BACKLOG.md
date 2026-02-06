@@ -68,6 +68,7 @@ Source: `tests/cpython_allowlist.txt`
 - Result:
 - Allowlist burned down to zero.
 - `scripts/run_parity_gate.sh` is green on current suites and used as the parity profile.
+- Baseline CI parity workflow is in-repo at `.github/workflows/parity-gate.yml` (pins CPython 3.14.3 `Lib` for harness runs).
 
 ## Milestone 12 Exit Gate
 

@@ -253,6 +253,7 @@ Progress:
 - Curated CPython language/import suites pass under `tests/cpython_harness.rs`.
 - Runtime and stdlib compatibility closure landed for harness blockers (plus broad regression additions in `tests/vm.rs` and `tests/parser.rs`).
 - Parity profile script remains green.
+- Baseline CI parity workflow is present (`.github/workflows/parity-gate.yml`) and runs full tests plus parity profile against CPython 3.14.3 `Lib`.
 Execution record:
 - Milestone closure details are tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
@@ -288,7 +289,7 @@ DoD:
 ## Immediate next steps
 - Execute Milestone 13 closure batches: long-tail language/runtime parity semantics plus stdlib/import/packaging usability blockers.
 - Expand CPython harness breadth beyond current curated suites while preserving empty-allowlist policy for in-scope tests.
-- Wire parity/profile gates into CI as merge-blocking checks before beginning optimization-heavy work.
+- Harden CI parity policy beyond baseline workflow (`.github/workflows/parity-gate.yml`) for release-branch blocking and multi-platform parity lanes.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 
 ## Testing Focus Note
