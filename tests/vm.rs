@@ -913,10 +913,10 @@ fn executes_try_except_statement() {
     assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
     assert_eq!(
         vm.get_global("err"),
-        Some(Value::Exception(ExceptionObject {
-            name: "ValueError".to_string(),
-            message: Some("bad".to_string()),
-        }))
+        Some(Value::Exception(ExceptionObject::new(
+            "ValueError",
+            Some("bad".to_string()),
+        )))
     );
 }
 
@@ -988,6 +988,44 @@ fn executes_try_except_finally_unhandled_exception() {
 }
 
 #[test]
+fn executes_raise_from_and_exception_chaining_metadata() {
+    let source = "try:\n    try:\n        raise ValueError('inner')\n    except ValueError as err:\n        raise RuntimeError('outer') from err\nexcept RuntimeError as exc:\n    cause = exc.__cause__\n    context = exc.__context__\n    suppressed = exc.__suppress_context__\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        vm.get_global("cause"),
+        Some(Value::Exception(ExceptionObject::new(
+            "ValueError",
+            Some("inner".to_string()),
+        )))
+    );
+    assert_eq!(vm.get_global("context"), Some(Value::None));
+    assert_eq!(vm.get_global("suppressed"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_implicit_exception_context_metadata() {
+    let source = "try:\n    try:\n        raise ValueError('inner')\n    except ValueError:\n        raise RuntimeError('outer')\nexcept RuntimeError as exc:\n    cause = exc.__cause__\n    context = exc.__context__\n    suppressed = exc.__suppress_context__\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("cause"), Some(Value::None));
+    assert_eq!(
+        vm.get_global("context"),
+        Some(Value::Exception(ExceptionObject::new(
+            "ValueError",
+            Some("inner".to_string()),
+        )))
+    );
+    assert_eq!(vm.get_global("suppressed"), Some(Value::Bool(false)));
+}
+
+#[test]
 fn executes_class_definition_and_methods() {
     let source = "class Foo:\n    def __init__(self, x):\n        self.x = x\n    def get(self):\n        return self.x\n\nf = Foo(3)\ny = f.get()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1031,6 +1069,55 @@ fn executes_class_inheritance() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("val"), Some(Value::Int(7)));
+}
+
+#[test]
+fn executes_descriptor_get_set_protocol() {
+    let source = "class Descriptor:\n    def __get__(self, obj, owner):\n        return obj._value + 1\n    def __set__(self, obj, value):\n        obj._value = value * 2\n\nclass Box:\n    x = Descriptor()\n    def __init__(self):\n        self._value = 0\n\nb = Box()\nb.x = 3\nout = b.x\nstate = b._value\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("state"), Some(Value::Int(6)));
+    assert_eq!(vm.get_global("out"), Some(Value::Int(7)));
+}
+
+#[test]
+fn non_data_descriptor_respects_instance_attribute_precedence() {
+    let source = "class Descriptor:\n    def __get__(self, obj, owner):\n        return 99\n\nclass Box:\n    x = Descriptor()\n\nb = Box()\nb.x = 5\nout = b.x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("out"), Some(Value::Int(5)));
+}
+
+#[test]
+fn executes_super_and_mro_lookup() {
+    let source = "class A:\n    def who(self):\n        return 'A'\n\nclass B(A):\n    def who(self):\n        return 'B'\n\nclass C(A):\n    def who(self):\n        return 'C'\n\nclass D(B, C):\n    def who(self):\n        return super(D, self).who()\n\nd = D()\nout = d.who()\nm1 = D.__mro__[1].__name__\nm2 = D.__mro__[2].__name__\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("out"), Some(Value::Str("B".to_string())));
+    assert_eq!(vm.get_global("m1"), Some(Value::Str("B".to_string())));
+    assert_eq!(vm.get_global("m2"), Some(Value::Str("C".to_string())));
+}
+
+#[test]
+fn executes_attribute_builtins() {
+    let source = "class A:\n    def f(self):\n        return 10\n\nclass B(A):\n    def f(self):\n        return super(B, self).f() + 1\n\nb = B()\ng = getattr(b, 'f')\nout = g()\nsetattr(b, 'x', 7)\nhx = hasattr(b, 'x')\ndelattr(b, 'x')\nhy = hasattr(b, 'x')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("out"), Some(Value::Int(11)));
+    assert_eq!(vm.get_global("hx"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("hy"), Some(Value::Bool(false)));
 }
 
 #[test]

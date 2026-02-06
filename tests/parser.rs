@@ -81,8 +81,9 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
         StmtKind::Return { value } => StmtKind::Return {
             value: value.as_ref().map(strip_expr),
         },
-        StmtKind::Raise { value } => StmtKind::Raise {
+        StmtKind::Raise { value, cause } => StmtKind::Raise {
             value: value.as_ref().map(strip_expr),
+            cause: cause.as_ref().map(strip_expr),
         },
         StmtKind::Assert { test, message } => StmtKind::Assert {
             test: strip_expr(test),
@@ -682,12 +683,36 @@ fn parses_lambda_expression() {
 fn parses_raise_statement() {
     let module = parser::parse_module("raise ValueError").expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::Raise { value: Some(expr) } => match &expr.node {
+        StmtKind::Raise {
+            value: Some(expr),
+            cause: None,
+        } => match &expr.node {
             ExprKind::Name(name) => {
                 assert_eq!(name, "ValueError");
             }
             other => panic!("unexpected expr: {other:?}"),
         },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_raise_from_statement() {
+    let module = parser::parse_module("raise ValueError from err").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Raise {
+            value: Some(value),
+            cause: Some(cause),
+        } => {
+            match &value.node {
+                ExprKind::Name(name) => assert_eq!(name, "ValueError"),
+                other => panic!("unexpected raise value: {other:?}"),
+            }
+            match &cause.node {
+                ExprKind::Name(name) => assert_eq!(name, "err"),
+                other => panic!("unexpected raise cause: {other:?}"),
+            }
+        }
         other => panic!("unexpected stmt: {other:?}"),
     }
 }

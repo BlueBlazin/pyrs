@@ -96,6 +96,7 @@ pub enum StmtKind {
     },
     Raise {
         value: Option<Expr>,
+        cause: Option<Expr>,
     },
     Assert {
         test: Expr,

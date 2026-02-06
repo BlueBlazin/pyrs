@@ -7,7 +7,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
 - [x] Indentation + baseline tokenization (names, ints with underscores/base prefixes, strings with prefixes, operators, keywords for implemented subset)
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
-- [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise, assert, try/except/else, with, class (bases supported), decorators, `match`/`case` (core subset), `except*` parsing, and async statement syntax (`async def`/`async for`/`async with` with lowering semantics)
+- [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with, class (bases supported), decorators, `match`/`case` (core subset), `except*` parsing, and async statement syntax (`async def`/`async for`/`async with` with lowering semantics)
 - [x] Expressions subset: arithmetic (incl `**`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await syntax lowering, list/dict comprehensions, generator expressions, and f-string lowering
 - [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
 - [x] Type parameter syntax on `def`/`class` headers (`def f[T](...)`, `class C[T]: ...`)
@@ -32,15 +32,15 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Generators (lazy suspended-frame protocol: `__next__`, `send`, `throw`, `close`)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [x] Tracebacks with filename/line/col + frame names
-- [ ] Exception chaining
+- [x] Exception chaining/context metadata (`__cause__`, `__context__`, `__suppress_context__`; `raise ... from ...` and implicit chaining)
 - [x] `__annotations__` storage for modules/classes/functions
 - [x] Module/import system parity for supported pure-Python scenarios (file-based imports, dotted modules, lazy submodule loading on attribute access, relative `from .` imports, `sys.path`-driven source lookup, `sys.modules` exposure, filesystem namespace-package loading, submodule lookup via package `__path__`, `sys.meta_path` default path-finder control, `sys.path_hooks` + `sys.path_importer_cache` contracts)
 - [x] Module metadata/spec fields for supported loaders (`__package__`, `__spec__`, `__loader__`, `__path__`, `has_location`, `cached`)
-- [x] Classes subset (single inheritance, instance attrs + bound methods)
+- [x] Classes subset (multiple inheritance with C3 MRO metadata, instance attrs + bound methods, descriptor-aware attribute load/store paths, explicit `super(type, obj)` support)
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
 
 ## Stdlib Coverage
-- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted, locals, globals, basic `__import__` name/fromlist/level semantics)
+- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/str, abs/sum/min/max/all/any/pow, list/tuple, divmod, sorted, locals, globals, `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, basic `__import__` name/fromlist/level semantics)
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
 - [x] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`)
 - [ ] `types`, `inspect`
@@ -84,8 +84,8 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [~] Async/await + async generators (syntax lowering implemented; full coroutine semantics pending).
 - [x] Comprehensions with correct scoping.
 - [~] Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full pattern families pending.
-- [ ] Exception chaining (`__cause__`, `__context__`, suppression).
-- [ ] Descriptor protocol + attribute lookup parity.
+- [x] Exception chaining (`__cause__`, `__context__`, suppression metadata).
+- [~] Descriptor protocol + attribute lookup parity (descriptor hooks + `__getattr__`/`__setattr__`/`__delattr__` implemented; full `__getattribute__` and metaclass-level edge parity pending).
 - [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.
 - [ ] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
 - [ ] HPy extension loading/execution path.

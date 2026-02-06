@@ -56,6 +56,7 @@ impl FunctionObject {
 pub struct ClassObject {
     pub name: String,
     pub bases: Vec<ObjRef>,
+    pub mro: Vec<ObjRef>,
     pub attrs: HashMap<String, Value>,
 }
 
@@ -64,6 +65,7 @@ impl ClassObject {
         Self {
             name: name.into(),
             bases,
+            mro: Vec::new(),
             attrs: HashMap::new(),
         }
     }
@@ -80,6 +82,23 @@ impl InstanceObject {
         Self {
             class,
             attrs: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SuperObject {
+    pub start_class: ObjRef,
+    pub object: ObjRef,
+    pub object_type: ObjRef,
+}
+
+impl SuperObject {
+    pub fn new(start_class: ObjRef, object: ObjRef, object_type: ObjRef) -> Self {
+        Self {
+            start_class,
+            object,
+            object_type,
         }
     }
 }
@@ -178,6 +197,7 @@ pub enum Object {
     Module(ModuleObject),
     Class(ClassObject),
     Instance(InstanceObject),
+    Super(SuperObject),
     BoundMethod(BoundMethod),
     NativeMethod(NativeMethodObject),
     Function(FunctionObject),
@@ -278,6 +298,10 @@ impl Heap {
         Value::Instance(self.alloc(Object::Instance(instance)))
     }
 
+    pub fn alloc_super(&self, super_obj: SuperObject) -> Value {
+        Value::Super(self.alloc(Object::Super(super_obj)))
+    }
+
     pub fn alloc_function(&self, function: FunctionObject) -> Value {
         Value::Function(self.alloc(Object::Function(function)))
     }
@@ -320,6 +344,7 @@ impl Heap {
             | Value::Module(obj)
             | Value::Class(obj)
             | Value::Instance(obj)
+            | Value::Super(obj)
             | Value::Function(obj)
             | Value::BoundMethod(obj)
             | Value::Cell(obj) => obj.id(),
@@ -398,6 +423,7 @@ fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         | Value::Module(obj)
         | Value::Class(obj)
         | Value::Instance(obj)
+        | Value::Super(obj)
         | Value::Function(obj)
         | Value::BoundMethod(obj)
         | Value::Cell(obj) => {
@@ -441,6 +467,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             for base in &class.bases {
                 stack.push(base.clone());
             }
+            for entry in &class.mro {
+                stack.push(entry.clone());
+            }
             for value in class.attrs.values() {
                 trace_value(value, stack, marked);
             }
@@ -450,6 +479,11 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             for value in instance.attrs.values() {
                 trace_value(value, stack, marked);
             }
+        }
+        Object::Super(super_obj) => {
+            stack.push(super_obj.start_class.clone());
+            stack.push(super_obj.object.clone());
+            stack.push(super_obj.object_type.clone());
         }
         Object::Function(func) => {
             stack.push(func.module.clone());
@@ -510,11 +544,13 @@ fn clear_object_refs(obj: &ObjRef) {
         }
         Object::Class(class) => {
             class.bases.clear();
+            class.mro.clear();
             class.attrs.clear();
         }
         Object::Instance(instance) => {
             instance.attrs.clear();
         }
+        Object::Super(_) => {}
         Object::Function(func) => {
             func.defaults.clear();
             func.kwonly_defaults.clear();
@@ -543,6 +579,7 @@ pub enum Value {
     Module(ObjRef),
     Class(ObjRef),
     Instance(ObjRef),
+    Super(ObjRef),
     BoundMethod(ObjRef),
     Function(ObjRef),
     Cell(ObjRef),
@@ -593,6 +630,21 @@ impl Value {
 pub struct ExceptionObject {
     pub name: String,
     pub message: Option<String>,
+    pub cause: Option<Box<ExceptionObject>>,
+    pub context: Option<Box<ExceptionObject>>,
+    pub suppress_context: bool,
+}
+
+impl ExceptionObject {
+    pub fn new(name: impl Into<String>, message: Option<String>) -> Self {
+        Self {
+            name: name.into(),
+            message,
+            cause: None,
+            context: None,
+            suppress_context: false,
+        }
+    }
 }
 
 impl PartialEq for Value {
@@ -621,6 +673,7 @@ impl PartialEq for Value {
             (Value::Module(a), Value::Module(b))
             | (Value::Class(a), Value::Class(b))
             | (Value::Instance(a), Value::Instance(b))
+            | (Value::Super(a), Value::Super(b))
             | (Value::Function(a), Value::Function(b))
             | (Value::BoundMethod(a), Value::BoundMethod(b))
             | (Value::Cell(a), Value::Cell(b)) => a.id() == b.id(),
@@ -668,6 +721,11 @@ pub enum BuiltinFunction {
     DivMod,
     Sorted,
     Enumerate,
+    GetAttr,
+    SetAttr,
+    DelAttr,
+    HasAttr,
+    Super,
     BuildClass,
     Id,
     Locals,
@@ -1027,8 +1085,14 @@ impl BuiltinFunction {
                 }
                 Ok(heap.alloc_list(entries))
             }
-            BuiltinFunction::Locals | BuiltinFunction::Globals => {
-                Err(RuntimeError::new("locals()/globals() require VM context"))
+            BuiltinFunction::GetAttr
+            | BuiltinFunction::SetAttr
+            | BuiltinFunction::DelAttr
+            | BuiltinFunction::HasAttr
+            | BuiltinFunction::Super
+            | BuiltinFunction::Locals
+            | BuiltinFunction::Globals => {
+                Err(RuntimeError::new("builtin requires VM context"))
             }
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
                 "__build_class__ is only available in the VM",
@@ -1225,6 +1289,7 @@ pub fn format_value(value: &Value) -> String {
             },
             _ => "<instance ?>".to_string(),
         },
+        Value::Super(_) => "<super>".to_string(),
         Value::BoundMethod(obj) => match &*obj.kind() {
             Object::BoundMethod(method) => match &*method.function.kind() {
                 Object::Function(func) => format!("<bound method {}>", func.code.name),
@@ -1282,6 +1347,7 @@ fn is_truthy_value(value: &Value) -> bool {
         Value::Module(_)
         | Value::Class(_)
         | Value::Instance(_)
+        | Value::Super(_)
         | Value::BoundMethod(_)
         | Value::Exception(_)
         | Value::ExceptionType(_)

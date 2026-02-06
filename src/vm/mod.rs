@@ -12,7 +12,7 @@ use crate::parser;
 use crate::runtime::{
     BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject, GeneratorObject,
     Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject, NativeMethodKind,
-    NativeMethodObject, ObjRef, Object, RuntimeError, Value, format_value,
+    NativeMethodObject, ObjRef, Object, RuntimeError, SuperObject, Value, format_value,
 };
 
 #[derive(Debug, Clone)]
@@ -58,6 +58,21 @@ enum GeneratorResumeOutcome {
     Yield(Value),
     Complete(Value),
     PropagatedException,
+}
+
+enum InternalCallOutcome {
+    Value(Value),
+    CallerExceptionHandled,
+}
+
+enum AttrAccessOutcome {
+    Value(Value),
+    ExceptionHandled,
+}
+
+enum AttrMutationOutcome {
+    Done,
+    ExceptionHandled,
 }
 
 struct Frame {
@@ -137,6 +152,7 @@ pub struct Vm {
     active_generator_resume: Option<u64>,
     active_generator_resume_boundary: Option<usize>,
     generator_resume_outcome: Option<GeneratorResumeOutcome>,
+    run_stop_depth: Option<usize>,
 }
 
 impl Vm {
@@ -165,6 +181,7 @@ impl Vm {
             active_generator_resume: None,
             active_generator_resume_boundary: None,
             generator_resume_outcome: None,
+            run_stop_depth: None,
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -297,6 +314,7 @@ impl Vm {
         self.active_generator_resume = None;
         self.active_generator_resume_boundary = None;
         self.generator_resume_outcome = None;
+        self.run_stop_depth = None;
         let code = Rc::new(code.clone());
         let cells = self.build_cells(&code, Vec::new());
         self.frames.push(Frame::new(
@@ -1085,6 +1103,11 @@ impl Vm {
 
     fn run(&mut self) -> Result<Value, RuntimeError> {
         loop {
+            if let Some(stop_depth) = self.run_stop_depth {
+                if self.frames.len() <= stop_depth {
+                    return Ok(Value::None);
+                }
+            }
             if self.frames.is_empty() {
                 return Ok(Value::None);
             }
@@ -1362,110 +1385,27 @@ impl Vm {
                                 .ok_or_else(|| RuntimeError::new("name index out of range"))?
                                 .clone()
                         };
+                        let caller_idx = self.frames.len().saturating_sub(1);
                         let value = self.pop_value()?;
-                        match value {
-                            Value::Module(module) => {
-                                let caller_idx = self.frames.len().saturating_sub(1);
-                                let (module_name, attr) = match &*module.kind() {
-                                    Object::Module(module_data) => {
-                                        let attr = module_data.globals.get(&attr_name).cloned();
-                                        let module_name = module_data.name.clone();
-                                        (module_name, attr)
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attribute access unsupported type",
-                                        ));
-                                    }
-                                };
-                                let attr = if let Some(attr) = attr {
-                                    Some(attr)
-                                } else {
-                                    module_name.split('.').last().and_then(|suffix| {
-                                        if suffix == attr_name {
-                                            Some(Value::Module(module.clone()))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                }
-                                .or_else(|| {
-                                    self.load_submodule(&module, &attr_name).map(Value::Module)
-                                })
-                                .ok_or_else(|| {
-                                    RuntimeError::new(format!(
-                                        "module '{}' has no attribute '{}'",
-                                        module_name, attr_name
-                                    ))
-                                })?;
-                                let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
-                                    RuntimeError::new("attribute caller frame missing")
-                                })?;
-                                if push_null {
-                                    frame.stack.push(Value::None);
-                                }
-                                frame.stack.push(attr);
-                            }
+                        let attr = match value {
+                            Value::Module(module) => self.load_attr_module(&module, &attr_name)?,
                             Value::Class(class) => {
-                                let class_name = match &*class.kind() {
-                                    Object::Class(class_data) => class_data.name.clone(),
-                                    _ => "<class>".to_string(),
-                                };
-                                let attr =
-                                    class_attr_lookup(&class, &attr_name).ok_or_else(|| {
-                                        RuntimeError::new(format!(
-                                            "class '{}' has no attribute '{}'",
-                                            class_name, attr_name
-                                        ))
-                                    })?;
-                                if push_null {
-                                    self.push_value(Value::None);
+                                match self.load_attr_class(&class, &attr_name)? {
+                                    AttrAccessOutcome::Value(attr) => attr,
+                                    AttrAccessOutcome::ExceptionHandled => return Ok(None),
                                 }
-                                self.push_value(attr);
                             }
                             Value::Instance(instance) => {
-                                if let Object::Instance(instance_data) = &*instance.kind() {
-                                    if let Some(attr) = instance_data.attrs.get(&attr_name).cloned()
-                                    {
-                                        if push_null {
-                                            self.push_value(Value::None);
-                                        }
-                                        self.push_value(attr);
-                                        return Ok(None);
-                                    }
+                                match self.load_attr_instance(&instance, &attr_name)? {
+                                    AttrAccessOutcome::Value(attr) => attr,
+                                    AttrAccessOutcome::ExceptionHandled => return Ok(None),
                                 }
-                                let class_ref = match &*instance.kind() {
-                                    Object::Instance(instance_data) => instance_data.class.clone(),
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attribute access unsupported type",
-                                        ));
-                                    }
-                                };
-                                if let Some(attr) = class_attr_lookup(&class_ref, &attr_name) {
-                                    if let Value::Function(func) = attr {
-                                        let bound = BoundMethod::new(func, instance.clone());
-                                        let bound_value = self.heap.alloc_bound_method(bound);
-                                        if push_null {
-                                            self.push_value(Value::None);
-                                        }
-                                        self.push_value(bound_value);
-                                    } else {
-                                        if push_null {
-                                            self.push_value(Value::None);
-                                        }
-                                        self.push_value(attr);
-                                    }
-                                    return Ok(None);
+                            }
+                            Value::Super(super_obj) => {
+                                match self.load_attr_super(&super_obj, &attr_name)? {
+                                    AttrAccessOutcome::Value(attr) => attr,
+                                    AttrAccessOutcome::ExceptionHandled => return Ok(None),
                                 }
-                                let class_name = match &*class_ref.kind() {
-                                    Object::Class(class_data) => class_data.name.clone(),
-                                    _ => "<class>".to_string(),
-                                };
-                                return Err(RuntimeError::new(format!(
-                                    "'{}' object has no attribute '{}'",
-                                    class_name, attr_name
-                                )));
                             }
                             Value::Function(func) => {
                                 if attr_name == "__annotations__" {
@@ -1492,10 +1432,7 @@ impl Vm {
                                             }
                                         }
                                     };
-                                    if push_null {
-                                        self.push_value(Value::None);
-                                    }
-                                    self.push_value(Value::Dict(annotations));
+                                    Value::Dict(annotations)
                                 } else {
                                     return Err(RuntimeError::new(format!(
                                         "function has no attribute '{}'",
@@ -1520,16 +1457,41 @@ impl Vm {
                                 let native =
                                     self.heap.alloc_native_method(NativeMethodObject::new(kind));
                                 let bound = BoundMethod::new(native, generator);
-                                let bound_value = self.heap.alloc_bound_method(bound);
-                                if push_null {
-                                    self.push_value(Value::None);
-                                }
-                                self.push_value(bound_value);
+                                self.heap.alloc_bound_method(bound)
                             }
+                            Value::Exception(exception) => match attr_name.as_str() {
+                                "__cause__" => exception
+                                    .cause
+                                    .as_ref()
+                                    .map(|cause| Value::Exception((**cause).clone()))
+                                    .unwrap_or(Value::None),
+                                "__context__" => exception
+                                    .context
+                                    .as_ref()
+                                    .map(|context| Value::Exception((**context).clone()))
+                                    .unwrap_or(Value::None),
+                                "__suppress_context__" => Value::Bool(exception.suppress_context),
+                                _ => {
+                                    return Err(RuntimeError::new(format!(
+                                        "exception has no attribute '{}'",
+                                        attr_name
+                                    )));
+                                }
+                            },
                             _ => {
                                 return Err(RuntimeError::new("attribute access unsupported type"));
                             }
+                        };
+                        if push_null {
+                            let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                RuntimeError::new("attribute caller frame missing")
+                            })?;
+                            frame.stack.push(Value::None);
                         }
+                        let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
+                            RuntimeError::new("attribute caller frame missing")
+                        })?;
+                        frame.stack.push(attr);
                     }
                     Opcode::StoreName => {
                         let idx = instr
@@ -1665,8 +1627,9 @@ impl Vm {
                                 }
                             }
                             Value::Instance(instance) => {
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(attr_name, value);
+                                match self.store_attr_instance(&instance, &attr_name, value)? {
+                                    AttrMutationOutcome::Done => {}
+                                    AttrMutationOutcome::ExceptionHandled => return Ok(None),
                                 }
                             }
                             Value::Class(class) => {
@@ -1722,8 +1685,9 @@ impl Vm {
                                 }
                             }
                             Value::Instance(instance) => {
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(attr_name, value);
+                                match self.store_attr_instance(&instance, &attr_name, value)? {
+                                    AttrMutationOutcome::Done => {}
+                                    AttrMutationOutcome::ExceptionHandled => return Ok(None),
                                 }
                             }
                             Value::Class(class) => {
@@ -2658,10 +2622,7 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject {
-                                    name,
-                                    message,
-                                }));
+                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -2872,10 +2833,7 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject {
-                                    name,
-                                    message,
-                                }));
+                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -3057,10 +3015,7 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject {
-                                    name,
-                                    message,
-                                }));
+                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -3213,10 +3168,7 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject {
-                                    name,
-                                    message,
-                                }));
+                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -3383,10 +3335,7 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.push_value(Value::Exception(ExceptionObject {
-                                    name,
-                                    message,
-                                }));
+                                self.push_value(Value::Exception(ExceptionObject::new(name, message)));
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -3835,15 +3784,27 @@ impl Vm {
                     }
                     Opcode::Raise => {
                         let mode = instr.arg.unwrap_or(1);
-                        let value = if mode == 0 {
-                            let frame = self.frames.last().expect("frame exists");
-                            frame.active_exception.clone().ok_or_else(|| {
-                                RuntimeError::new("no active exception to reraise")
-                            })?
-                        } else {
-                            self.pop_value()?
-                        };
-                        self.raise_exception(value)?;
+                        match mode {
+                            0 => {
+                                let frame = self.frames.last().expect("frame exists");
+                                let value = frame.active_exception.clone().ok_or_else(|| {
+                                    RuntimeError::new("no active exception to reraise")
+                                })?;
+                                self.raise_exception(value)?;
+                            }
+                            1 => {
+                                let value = self.pop_value()?;
+                                self.raise_exception(value)?;
+                            }
+                            2 => {
+                                let cause = self.pop_value()?;
+                                let value = self.pop_value()?;
+                                self.raise_exception_with_cause(value, Some(cause))?;
+                            }
+                            _ => {
+                                return Err(RuntimeError::new("invalid raise mode"));
+                            }
+                        }
                     }
                     Opcode::MatchException => {
                         let handler_type = self.pop_value()?;
@@ -3939,7 +3900,39 @@ impl Vm {
     }
 
     fn raise_exception(&mut self, value: Value) -> Result<(), RuntimeError> {
-        let exc = normalize_exception(value)?;
+        self.raise_exception_with_cause(value, None)
+    }
+
+    fn raise_exception_with_cause(
+        &mut self,
+        value: Value,
+        explicit_cause: Option<Value>,
+    ) -> Result<(), RuntimeError> {
+        let mut exc = normalize_exception(value)?;
+        if let Value::Exception(exc_data) = &mut exc {
+            if let Some(cause_value) = explicit_cause {
+                if matches!(cause_value, Value::None) {
+                    exc_data.suppress_context = true;
+                    exc_data.cause = None;
+                } else {
+                    let cause = normalize_exception(cause_value)?;
+                    if let Value::Exception(cause_data) = cause {
+                        exc_data.cause = Some(Box::new(cause_data));
+                        exc_data.suppress_context = true;
+                    }
+                }
+            } else if let Some(current) = self
+                .frames
+                .last()
+                .and_then(|frame| frame.active_exception.clone())
+            {
+                let context = normalize_exception(current)?;
+                if let Value::Exception(context_data) = context {
+                    exc_data.context = Some(Box::new(context_data));
+                }
+            }
+        }
+
         let mut traceback = Vec::new();
         loop {
             let Some(frame) = self.frames.last_mut() else {
@@ -3982,10 +3975,10 @@ impl Vm {
 
     fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
         let exception_type = classify_runtime_error(&err.message);
-        let exception = Value::Exception(ExceptionObject {
-            name: exception_type.to_string(),
-            message: Some(err.message),
-        });
+        let exception = Value::Exception(ExceptionObject::new(
+            exception_type.to_string(),
+            Some(err.message),
+        ));
         self.raise_exception(exception)
     }
 
@@ -4010,22 +4003,124 @@ impl Vm {
             ));
         }
         output.push_str(&format_value(exc));
+        if let Value::Exception(exception) = exc {
+            if let Some(cause) = &exception.cause {
+                output.push_str(
+                    "\nThe above exception was the direct cause of the following exception:\n",
+                );
+                output.push_str(&self.format_exception_object(cause));
+            } else if !exception.suppress_context {
+                if let Some(context) = &exception.context {
+                    output.push_str(
+                        "\nDuring handling of the above exception, another exception occurred:\n",
+                    );
+                    output.push_str(&self.format_exception_object(context));
+                }
+            }
+        }
         output
     }
 
-    fn class_value_from_module(&self, module: &ObjRef, bases: Vec<ObjRef>) -> Value {
+    fn format_exception_object(&self, exception: &ExceptionObject) -> String {
+        match &exception.message {
+            Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
+            _ => exception.name.clone(),
+        }
+    }
+
+    fn class_value_from_module(&mut self, module: &ObjRef, bases: Vec<ObjRef>) -> Value {
         let (name, attrs) = match &*module.kind() {
             Object::Module(module_data) => (module_data.name.clone(), module_data.globals.clone()),
             _ => ("<class>".to_string(), HashMap::new()),
         };
-        let class = ClassObject::new(name, bases);
+        let class = ClassObject::new(name, bases.clone());
         let class_value = self.heap.alloc_class(class);
         if let Value::Class(class_ref) = &class_value {
             if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                 class_data.attrs.extend(attrs);
+                class_data.attrs.insert(
+                    "__name__".to_string(),
+                    Value::Str(class_data.name.clone()),
+                );
+                class_data.attrs.insert(
+                    "__bases__".to_string(),
+                    self.heap.alloc_tuple(
+                        class_data
+                            .bases
+                            .iter()
+                            .cloned()
+                            .map(Value::Class)
+                            .collect::<Vec<_>>(),
+                    ),
+                );
+            }
+            if let Ok(mro) = self.build_class_mro(class_ref, &bases) {
+                if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    class_data.mro = mro.clone();
+                    let mro_values = mro.into_iter().map(Value::Class).collect::<Vec<_>>();
+                    class_data
+                        .attrs
+                        .insert("__mro__".to_string(), self.heap.alloc_tuple(mro_values));
+                }
             }
         }
         class_value
+    }
+
+    fn class_mro_entries(&self, class: &ObjRef) -> Vec<ObjRef> {
+        match &*class.kind() {
+            Object::Class(class_data) if !class_data.mro.is_empty() => class_data.mro.clone(),
+            Object::Class(_) => vec![class.clone()],
+            _ => Vec::new(),
+        }
+    }
+
+    fn build_class_mro(&self, class: &ObjRef, bases: &[ObjRef]) -> Result<Vec<ObjRef>, RuntimeError> {
+        if bases.is_empty() {
+            return Ok(vec![class.clone()]);
+        }
+
+        let mut seqs: Vec<Vec<ObjRef>> = Vec::new();
+        for base in bases {
+            seqs.push(self.class_mro_entries(base));
+        }
+        seqs.push(bases.to_vec());
+
+        let mut merged = Vec::new();
+        loop {
+            seqs.retain(|seq| !seq.is_empty());
+            if seqs.is_empty() {
+                break;
+            }
+
+            let mut candidate = None;
+            for seq in &seqs {
+                let head = seq[0].clone();
+                let in_tail = seqs
+                    .iter()
+                    .any(|other| other.iter().skip(1).any(|entry| entry.id() == head.id()));
+                if !in_tail {
+                    candidate = Some(head);
+                    break;
+                }
+            }
+
+            let Some(head) = candidate else {
+                return Err(RuntimeError::new(
+                    "cannot create a consistent method resolution order (MRO)",
+                ));
+            };
+            merged.push(head.clone());
+            for seq in &mut seqs {
+                if !seq.is_empty() && seq[0].id() == head.id() {
+                    seq.remove(0);
+                }
+            }
+        }
+
+        let mut out = vec![class.clone()];
+        out.extend(merged);
+        Ok(out)
     }
 
     fn pop_value(&mut self) -> Result<Value, RuntimeError> {
@@ -4159,9 +4254,460 @@ impl Vm {
     fn receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
         match &*receiver.kind() {
             Object::Instance(_) => Ok(Value::Instance(receiver.clone())),
+            Object::Class(_) => Ok(Value::Class(receiver.clone())),
             Object::Generator(_) => Ok(Value::Generator(receiver.clone())),
             _ => Err(RuntimeError::new("unsupported bound method receiver")),
         }
+    }
+
+    fn receiver_from_value(&self, value: &Value) -> Result<ObjRef, RuntimeError> {
+        match value {
+            Value::Instance(obj) | Value::Class(obj) | Value::Generator(obj) => Ok(obj.clone()),
+            _ => Err(RuntimeError::new("unsupported bound-method receiver value")),
+        }
+    }
+
+    fn class_of_value(&self, value: &Value) -> Option<ObjRef> {
+        match value {
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => Some(instance_data.class.clone()),
+                _ => None,
+            },
+            Value::Class(class) => Some(class.clone()),
+            Value::Super(super_obj) => match &*super_obj.kind() {
+                Object::Super(data) => Some(data.object_type.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn bind_descriptor_method(
+        &mut self,
+        method: Value,
+        receiver: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match method {
+            Value::Function(func) => {
+                let receiver_ref = self.receiver_from_value(receiver)?;
+                Ok(Some(
+                    self.heap
+                        .alloc_bound_method(BoundMethod::new(func, receiver_ref)),
+                ))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn lookup_bound_special_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some(class_ref) = self.class_of_value(receiver) else {
+            return Ok(None);
+        };
+        let Some(method) = class_attr_lookup(&class_ref, method_name) else {
+            return Ok(None);
+        };
+        self.bind_descriptor_method(method, receiver)
+    }
+
+    fn descriptor_hooks(
+        &mut self,
+        descriptor: &Value,
+    ) -> Result<(Option<Value>, Option<Value>, Option<Value>), RuntimeError> {
+        if matches!(descriptor, Value::Function(_)) {
+            return Ok((None, None, None));
+        }
+
+        let Some(class_ref) = self.class_of_value(descriptor) else {
+            return Ok((None, None, None));
+        };
+        let get = class_attr_lookup(&class_ref, "__get__")
+            .map(|method| self.bind_descriptor_method(method, descriptor))
+            .transpose()?
+            .flatten();
+        let set = class_attr_lookup(&class_ref, "__set__")
+            .map(|method| self.bind_descriptor_method(method, descriptor))
+            .transpose()?
+            .flatten();
+        let delete = class_attr_lookup(&class_ref, "__delete__")
+            .map(|method| self.bind_descriptor_method(method, descriptor))
+            .transpose()?
+            .flatten();
+        Ok((get, set, delete))
+    }
+
+    fn call_internal(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<InternalCallOutcome, RuntimeError> {
+        let caller_depth = self.frames.len();
+        if caller_depth == 0 {
+            return Err(RuntimeError::new(
+                "internal call requires an active execution frame",
+            ));
+        }
+        let caller_ip = self.frames.last().map(|frame| frame.ip).unwrap_or(0);
+
+        let needs_run = match callable {
+            Value::Function(func) => {
+                let func_data = match &*func.kind() {
+                    Object::Function(data) => data.clone(),
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                };
+                let depth_before = self.frames.len();
+                self.push_function_call(&func_data, args, kwargs)?;
+                self.frames.len() > depth_before
+            }
+            Value::BoundMethod(method) => {
+                let method_data = match &*method.kind() {
+                    Object::BoundMethod(data) => data.clone(),
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                };
+                match &*method_data.function.kind() {
+                    Object::Function(data) => {
+                        let mut bound_args = Vec::with_capacity(args.len() + 1);
+                        bound_args.push(self.receiver_value(&method_data.receiver)?);
+                        bound_args.extend(args);
+                        let depth_before = self.frames.len();
+                        self.push_function_call(data, bound_args, kwargs)?;
+                        self.frames.len() > depth_before
+                    }
+                    Object::NativeMethod(native) => {
+                        match self.call_native_method(
+                            native.kind,
+                            method_data.receiver.clone(),
+                            args,
+                            kwargs,
+                        )? {
+                            NativeCallResult::Value(result) => {
+                                return Ok(InternalCallOutcome::Value(result));
+                            }
+                            NativeCallResult::PropagatedException => {
+                                self.propagate_pending_generator_exception()?;
+                                return Ok(InternalCallOutcome::CallerExceptionHandled);
+                            }
+                        }
+                    }
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                }
+            }
+            Value::Builtin(builtin) => {
+                let result = self.call_builtin(builtin, args, kwargs)?;
+                return Ok(InternalCallOutcome::Value(result));
+            }
+            _ => {
+                return Err(RuntimeError::new("attempted to call non-function"));
+            }
+        };
+
+        if !needs_run {
+            let value = self.pop_value()?;
+            return Ok(InternalCallOutcome::Value(value));
+        }
+
+        let previous_stop = self.run_stop_depth;
+        self.run_stop_depth = Some(caller_depth);
+        let run_result = self.run();
+        self.run_stop_depth = previous_stop;
+        run_result?;
+
+        if self.frames.len() < caller_depth {
+            return Err(RuntimeError::new(
+                "internal call unexpectedly unwound the caller frame",
+            ));
+        }
+
+        let caller = self
+            .frames
+            .get(caller_depth - 1)
+            .ok_or_else(|| RuntimeError::new("caller frame missing"))?;
+        if caller.active_exception.is_some() || caller.ip != caller_ip {
+            return Ok(InternalCallOutcome::CallerExceptionHandled);
+        }
+
+        let value = self.pop_value()?;
+        Ok(InternalCallOutcome::Value(value))
+    }
+
+    fn load_attr_class(&mut self, class: &ObjRef, attr_name: &str) -> Result<AttrAccessOutcome, RuntimeError> {
+        let class_name = match &*class.kind() {
+            Object::Class(class_data) => class_data.name.clone(),
+            _ => "<class>".to_string(),
+        };
+        let attr = class_attr_lookup(class, attr_name).ok_or_else(|| {
+            RuntimeError::new(format!(
+                "class '{}' has no attribute '{}'",
+                class_name, attr_name
+            ))
+        })?;
+
+        let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
+        if let Some(getter) = getter {
+            return Ok(match self.call_internal(
+                getter,
+                vec![Value::None, Value::Class(class.clone())],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
+            });
+        }
+
+        Ok(AttrAccessOutcome::Value(attr))
+    }
+
+    fn load_attr_instance(
+        &mut self,
+        instance: &ObjRef,
+        attr_name: &str,
+    ) -> Result<AttrAccessOutcome, RuntimeError> {
+        let class_ref = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return Err(RuntimeError::new("attribute access unsupported type")),
+        };
+
+        let class_attr = class_attr_lookup(&class_ref, attr_name);
+        if let Some(attr) = class_attr.clone() {
+            let (getter, setter, deleter) = self.descriptor_hooks(&attr)?;
+            if setter.is_some() || deleter.is_some() {
+                if let Some(getter) = getter {
+                    return Ok(match self.call_internal(
+                        getter,
+                        vec![Value::Instance(instance.clone()), Value::Class(class_ref.clone())],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            AttrAccessOutcome::ExceptionHandled
+                        }
+                    });
+                }
+                return Ok(AttrAccessOutcome::Value(attr));
+            }
+        }
+
+        if let Object::Instance(instance_data) = &*instance.kind() {
+            if let Some(attr) = instance_data.attrs.get(attr_name).cloned() {
+                return Ok(AttrAccessOutcome::Value(attr));
+            }
+        }
+
+        if let Some(attr) = class_attr {
+            if let Value::Function(func) = attr.clone() {
+                let bound = BoundMethod::new(func, instance.clone());
+                return Ok(AttrAccessOutcome::Value(self.heap.alloc_bound_method(bound)));
+            }
+            let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
+            if let Some(getter) = getter {
+                return Ok(match self.call_internal(
+                    getter,
+                    vec![Value::Instance(instance.clone()), Value::Class(class_ref.clone())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                    InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
+                });
+            }
+            return Ok(AttrAccessOutcome::Value(attr));
+        }
+
+        if let Some(getattr_method) =
+            self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__getattr__")?
+        {
+            return Ok(match self.call_internal(
+                getattr_method,
+                vec![Value::Str(attr_name.to_string())],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
+            });
+        }
+
+        let class_name = match &*class_ref.kind() {
+            Object::Class(class_data) => class_data.name.clone(),
+            _ => "<class>".to_string(),
+        };
+        Err(RuntimeError::new(format!(
+            "'{}' object has no attribute '{}'",
+            class_name, attr_name
+        )))
+    }
+
+    fn load_attr_super(&mut self, super_ref: &ObjRef, attr_name: &str) -> Result<AttrAccessOutcome, RuntimeError> {
+        let (start_class, receiver, object_type) = match &*super_ref.kind() {
+            Object::Super(data) => (
+                data.start_class.clone(),
+                data.object.clone(),
+                data.object_type.clone(),
+            ),
+            _ => return Err(RuntimeError::new("attribute access unsupported type")),
+        };
+
+        let receiver_value = self.receiver_value(&receiver)?;
+        let owner_value = Value::Class(object_type.clone());
+        let mro = self.class_mro_entries(&object_type);
+        let start_idx = mro
+            .iter()
+            .position(|entry| entry.id() == start_class.id())
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+
+        for class in mro.into_iter().skip(start_idx) {
+            if let Some(attr) = class_attr_lookup(&class, attr_name) {
+                if let Value::Function(func) = attr.clone() {
+                    let bound = BoundMethod::new(func, receiver.clone());
+                    return Ok(AttrAccessOutcome::Value(self.heap.alloc_bound_method(bound)));
+                }
+                let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
+                if let Some(getter) = getter {
+                    return Ok(match self.call_internal(
+                        getter,
+                        vec![receiver_value.clone(), owner_value.clone()],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                        InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
+                    });
+                }
+                return Ok(AttrAccessOutcome::Value(attr));
+            }
+        }
+
+        Err(RuntimeError::new(format!(
+            "super object has no attribute '{}'",
+            attr_name
+        )))
+    }
+
+    fn load_attr_module(&mut self, module: &ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
+        let (module_name, attr) = match &*module.kind() {
+            Object::Module(module_data) => {
+                let attr = module_data.globals.get(attr_name).cloned();
+                let module_name = module_data.name.clone();
+                (module_name, attr)
+            }
+            _ => {
+                return Err(RuntimeError::new("attribute access unsupported type"));
+            }
+        };
+        if let Some(attr) = attr {
+            return Ok(attr);
+        }
+        if let Some(attr) = module_name.split('.').last().and_then(|suffix| {
+            if suffix == attr_name {
+                Some(Value::Module(module.clone()))
+            } else {
+                None
+            }
+        }) {
+            return Ok(attr);
+        }
+        if let Some(submodule) = self.load_submodule(module, attr_name) {
+            return Ok(Value::Module(submodule));
+        }
+        Err(RuntimeError::new(format!(
+            "module '{}' has no attribute '{}'",
+            module_name, attr_name
+        )))
+    }
+
+    fn store_attr_instance(
+        &mut self,
+        instance: &ObjRef,
+        attr_name: &str,
+        value: Value,
+    ) -> Result<AttrMutationOutcome, RuntimeError> {
+        if let Some(setattr_method) =
+            self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__setattr__")?
+        {
+            return Ok(match self.call_internal(
+                setattr_method,
+                vec![Value::Str(attr_name.to_string()), value],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
+                InternalCallOutcome::CallerExceptionHandled => AttrMutationOutcome::ExceptionHandled,
+            });
+        }
+
+        let class_ref = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
+        };
+
+        if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
+            let (_getter, setter, _deleter) = self.descriptor_hooks(&descriptor)?;
+            if let Some(setter) = setter {
+                return Ok(match self.call_internal(
+                    setter,
+                    vec![Value::Instance(instance.clone()), value],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
+                    InternalCallOutcome::CallerExceptionHandled => AttrMutationOutcome::ExceptionHandled,
+                });
+            }
+        }
+
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data.attrs.insert(attr_name.to_string(), value);
+        }
+        Ok(AttrMutationOutcome::Done)
+    }
+
+    fn delete_attr_instance(
+        &mut self,
+        instance: &ObjRef,
+        attr_name: &str,
+    ) -> Result<AttrMutationOutcome, RuntimeError> {
+        if let Some(delattr_method) =
+            self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__delattr__")?
+        {
+            return Ok(match self.call_internal(
+                delattr_method,
+                vec![Value::Str(attr_name.to_string())],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
+                InternalCallOutcome::CallerExceptionHandled => AttrMutationOutcome::ExceptionHandled,
+            });
+        }
+
+        let class_ref = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
+        };
+
+        if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
+            let (_getter, _setter, deleter) = self.descriptor_hooks(&descriptor)?;
+            if let Some(deleter) = deleter {
+                return Ok(match self.call_internal(
+                    deleter,
+                    vec![Value::Instance(instance.clone())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(_) => AttrMutationOutcome::Done,
+                    InternalCallOutcome::CallerExceptionHandled => AttrMutationOutcome::ExceptionHandled,
+                });
+            }
+        }
+
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            if instance_data.attrs.remove(attr_name).is_some() {
+                return Ok(AttrMutationOutcome::Done);
+            }
+        }
+
+        Err(RuntimeError::new(format!(
+            "attribute '{}' does not exist",
+            attr_name
+        )))
     }
 
     fn call_native_method(
@@ -4634,6 +5180,11 @@ impl Vm {
         match builtin {
             BuiltinFunction::Locals => self.builtin_locals(args, kwargs),
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
+            BuiltinFunction::GetAttr => self.builtin_getattr(args, kwargs),
+            BuiltinFunction::SetAttr => self.builtin_setattr(args, kwargs),
+            BuiltinFunction::DelAttr => self.builtin_delattr(args, kwargs),
+            BuiltinFunction::HasAttr => self.builtin_hasattr(args, kwargs),
+            BuiltinFunction::Super => self.builtin_super(args, kwargs),
             BuiltinFunction::Import => self.builtin_import(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
@@ -4716,6 +5267,282 @@ impl Vm {
         } else {
             Ok(self.heap.alloc_dict(Vec::new()))
         }
+    }
+
+    fn builtin_getattr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "getattr() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new("getattr() expects 2-3 arguments"));
+        }
+
+        let target = args.remove(0);
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("attribute name must be string")),
+        };
+        let default = args.into_iter().next();
+
+        let looked_up = match target {
+            Value::Module(module) => self.load_attr_module(&module, &name),
+            Value::Class(class) => match self.load_attr_class(&class, &name)? {
+                AttrAccessOutcome::Value(value) => Ok(value),
+                AttrAccessOutcome::ExceptionHandled => Ok(Value::None),
+            },
+            Value::Instance(instance) => match self.load_attr_instance(&instance, &name)? {
+                AttrAccessOutcome::Value(value) => Ok(value),
+                AttrAccessOutcome::ExceptionHandled => Ok(Value::None),
+            },
+            Value::Super(super_obj) => match self.load_attr_super(&super_obj, &name)? {
+                AttrAccessOutcome::Value(value) => Ok(value),
+                AttrAccessOutcome::ExceptionHandled => Ok(Value::None),
+            },
+            Value::Function(func) => {
+                if name != "__annotations__" {
+                    Err(RuntimeError::new(format!(
+                        "function has no attribute '{}'",
+                        name
+                    )))
+                } else {
+                    let annotations = {
+                        let mut func_ref = func.kind_mut();
+                        match &mut *func_ref {
+                            Object::Function(func_data) => {
+                                if let Some(obj) = &func_data.annotations {
+                                    obj.clone()
+                                } else {
+                                    let dict = self.heap.alloc_dict(Vec::new());
+                                    let obj = match dict {
+                                        Value::Dict(obj) => obj,
+                                        _ => unreachable!(),
+                                    };
+                                    func_data.annotations = Some(obj.clone());
+                                    obj
+                                }
+                            }
+                            _ => return Err(RuntimeError::new("attribute access unsupported type")),
+                        }
+                    };
+                    Ok(Value::Dict(annotations))
+                }
+            }
+            Value::Generator(generator) => {
+                let kind = match name.as_str() {
+                    "__iter__" => NativeMethodKind::GeneratorIter,
+                    "__next__" => NativeMethodKind::GeneratorNext,
+                    "send" => NativeMethodKind::GeneratorSend,
+                    "throw" => NativeMethodKind::GeneratorThrow,
+                    "close" => NativeMethodKind::GeneratorClose,
+                    _ => {
+                        return Err(RuntimeError::new(format!(
+                            "generator has no attribute '{}'",
+                            name
+                        )));
+                    }
+                };
+                let native = self.heap.alloc_native_method(NativeMethodObject::new(kind));
+                let bound = BoundMethod::new(native, generator);
+                Ok(self.heap.alloc_bound_method(bound))
+            }
+            Value::Exception(exception) => match name.as_str() {
+                "__cause__" => Ok(exception
+                    .cause
+                    .as_ref()
+                    .map(|cause| Value::Exception((**cause).clone()))
+                    .unwrap_or(Value::None)),
+                "__context__" => Ok(exception
+                    .context
+                    .as_ref()
+                    .map(|context| Value::Exception((**context).clone()))
+                    .unwrap_or(Value::None)),
+                "__suppress_context__" => Ok(Value::Bool(exception.suppress_context)),
+                _ => Err(RuntimeError::new(format!(
+                    "exception has no attribute '{}'",
+                    name
+                ))),
+            },
+            _ => Err(RuntimeError::new("attribute access unsupported type")),
+        };
+
+        match looked_up {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                if let Some(default) = default {
+                    if err.message.contains("has no attribute") {
+                        Ok(default)
+                    } else {
+                        Err(err)
+                    }
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    fn builtin_setattr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "setattr() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 3 {
+            return Err(RuntimeError::new("setattr() expects three arguments"));
+        }
+
+        let target = args.remove(0);
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("attribute name must be string")),
+        };
+        let value = args.remove(0);
+
+        match target {
+            Value::Module(module) => {
+                if let Object::Module(module_data) = &mut *module.kind_mut() {
+                    module_data.globals.insert(name, value);
+                }
+            }
+            Value::Instance(instance) => match self.store_attr_instance(&instance, &name, value)? {
+                AttrMutationOutcome::Done => {}
+                AttrMutationOutcome::ExceptionHandled => return Ok(Value::None),
+            },
+            Value::Class(class) => {
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    class_data.attrs.insert(name, value);
+                }
+            }
+            Value::Function(func) => {
+                if name != "__annotations__" {
+                    return Err(RuntimeError::new("attribute assignment unsupported type"));
+                }
+                let annotations = match value {
+                    Value::Dict(obj) => obj,
+                    _ => return Err(RuntimeError::new("function __annotations__ must be dict")),
+                };
+                if let Object::Function(func_data) = &mut *func.kind_mut() {
+                    func_data.annotations = Some(annotations);
+                }
+            }
+            _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
+        }
+
+        Ok(Value::None)
+    }
+
+    fn builtin_delattr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "delattr() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 2 {
+            return Err(RuntimeError::new("delattr() expects two arguments"));
+        }
+
+        let target = args.remove(0);
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("attribute name must be string")),
+        };
+
+        match target {
+            Value::Module(module) => {
+                if let Object::Module(module_data) = &mut *module.kind_mut() {
+                    if module_data.globals.remove(&name).is_none() {
+                        return Err(RuntimeError::new(format!(
+                            "module attribute '{}' does not exist",
+                            name
+                        )));
+                    }
+                }
+            }
+            Value::Class(class) => {
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    if class_data.attrs.remove(&name).is_none() {
+                        return Err(RuntimeError::new(format!(
+                            "class attribute '{}' does not exist",
+                            name
+                        )));
+                    }
+                }
+            }
+            Value::Instance(instance) => match self.delete_attr_instance(&instance, &name)? {
+                AttrMutationOutcome::Done => {}
+                AttrMutationOutcome::ExceptionHandled => return Ok(Value::None),
+            },
+            _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
+        }
+
+        Ok(Value::None)
+    }
+
+    fn builtin_hasattr(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(RuntimeError::new("hasattr() expects two arguments"));
+        }
+        match self.builtin_getattr(args, kwargs) {
+            Ok(_) => Ok(Value::Bool(true)),
+            Err(err) if err.message.contains("has no attribute") => Ok(Value::Bool(false)),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn builtin_super(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "super() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 2 {
+            return Err(RuntimeError::new(
+                "super() currently requires explicit type and object arguments",
+            ));
+        }
+
+        let start_class = match args.remove(0) {
+            Value::Class(class) => class,
+            _ => return Err(RuntimeError::new("super() first argument must be a class")),
+        };
+        let object_value = args.remove(0);
+        let object_ref = self.receiver_from_value(&object_value)?;
+        let object_type = self.class_of_value(&object_value).ok_or_else(|| {
+            RuntimeError::new("super() second argument must be an instance or subclass")
+        })?;
+
+        let mro = self.class_mro_entries(&object_type);
+        if !mro.iter().any(|entry| entry.id() == start_class.id()) {
+            return Err(RuntimeError::new(
+                "super(type, obj): obj must be an instance or subtype of type",
+            ));
+        }
+
+        Ok(self
+            .heap
+            .alloc_super(SuperObject::new(start_class, object_ref, object_type)))
     }
 
     fn builtin_import(
@@ -5031,6 +5858,26 @@ impl Vm {
             Value::Builtin(BuiltinFunction::Globals),
         );
         self.builtins.insert(
+            "getattr".to_string(),
+            Value::Builtin(BuiltinFunction::GetAttr),
+        );
+        self.builtins.insert(
+            "setattr".to_string(),
+            Value::Builtin(BuiltinFunction::SetAttr),
+        );
+        self.builtins.insert(
+            "delattr".to_string(),
+            Value::Builtin(BuiltinFunction::DelAttr),
+        );
+        self.builtins.insert(
+            "hasattr".to_string(),
+            Value::Builtin(BuiltinFunction::HasAttr),
+        );
+        self.builtins.insert(
+            "super".to_string(),
+            Value::Builtin(BuiltinFunction::Super),
+        );
+        self.builtins.insert(
             "__import__".to_string(),
             Value::Builtin(BuiltinFunction::Import),
         );
@@ -5254,6 +6101,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::Module(_)
         | Value::Class(_)
         | Value::Instance(_)
+        | Value::Super(_)
         | Value::BoundMethod(_)
         | Value::Exception(_)
         | Value::ExceptionType(_)
@@ -5266,10 +6114,7 @@ fn is_truthy(value: &Value) -> bool {
 fn normalize_exception(value: Value) -> Result<Value, RuntimeError> {
     match value {
         Value::Exception(_) => Ok(value),
-        Value::ExceptionType(name) => Ok(Value::Exception(ExceptionObject {
-            name,
-            message: None,
-        })),
+        Value::ExceptionType(name) => Ok(Value::Exception(ExceptionObject::new(name, None))),
         _ => Err(RuntimeError::new("can only raise Exception types")),
     }
 }
@@ -5727,20 +6572,33 @@ fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
 }
 
 fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
-    let class_kind = class.kind();
-    let (attrs, bases) = match &*class_kind {
-        Object::Class(class_data) => (&class_data.attrs, &class_data.bases),
-        _ => return None,
-    };
-    if let Some(value) = attrs.get(name).cloned() {
-        return Some(value);
-    }
-    for base in bases {
-        if let Some(value) = class_attr_lookup(base, name) {
-            return Some(value);
+    for candidate in class_attr_walk(class) {
+        let class_kind = candidate.kind();
+        if let Object::Class(class_data) = &*class_kind {
+            if let Some(value) = class_data.attrs.get(name).cloned() {
+                return Some(value);
+            }
         }
     }
     None
+}
+
+fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
+    let class_kind = class.kind();
+    let class_data = match &*class_kind {
+        Object::Class(class_data) => class_data,
+        _ => return Vec::new(),
+    };
+
+    if !class_data.mro.is_empty() {
+        return class_data.mro.clone();
+    }
+
+    let mut out = vec![class.clone()];
+    for base in &class_data.bases {
+        out.extend(class_attr_walk(base));
+    }
+    out
 }
 
 fn classify_runtime_error(message: &str) -> &'static str {

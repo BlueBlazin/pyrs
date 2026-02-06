@@ -63,16 +63,16 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [ ] P0: bytes/bytearray/memoryview and buffer protocol.
 - [ ] P0: set/frozenset.
 - [ ] P0: Unicode/codec behavior parity (including error handlers).
-- [ ] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`).
-- [ ] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`).
-- [ ] P0: MRO + metaclasses + `super()` semantics.
+- [~] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`) (core VM descriptor hooks implemented; metaclass/slot edge parity pending).
+- [~] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) (`__getattr__`/`__setattr__`/`__delattr__` paths implemented for instances; full `__getattribute__` parity pending).
+- [~] P0: MRO + metaclasses + `super()` semantics (C3 MRO + explicit `super(type, obj)` implemented; metaclass semantics pending).
 - [ ] P0: `__slots__` and instance layout rules.
 - [ ] P1: Weakrefs, `gc` module hooks, finalizers.
 - [ ] P1: Frame objects + `inspect` compatibility (locals/globals/stack).
 
 **Builtins**
 - [~] P0: Core builtin set (print, len, range, etc.).
-- [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, getattr/setattr/delattr, dir, help, input, etc.).
+- [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, dir, help, input, etc.; `getattr`/`setattr`/`delattr`/`hasattr` and explicit-args `super` implemented).
 - [x] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to loader path).
 
 **Import System**

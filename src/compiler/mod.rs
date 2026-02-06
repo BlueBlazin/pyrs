@@ -487,8 +487,11 @@ fn collect_uses_stmt(
                 collect_uses_expr(expr, uses, child_free, enclosing)?;
             }
         }
-        StmtKind::Raise { value } => {
+        StmtKind::Raise { value, cause } => {
             if let Some(expr) = value {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
+            if let Some(expr) = cause {
                 collect_uses_expr(expr, uses, child_free, enclosing)?;
             }
         }
@@ -869,8 +872,15 @@ fn body_has_yield(body: &[Stmt]) -> bool {
                     }
                 }
             }
-            StmtKind::Return { value } | StmtKind::Raise { value } => {
+            StmtKind::Return { value } => {
                 if value.as_ref().map(expr_has_yield).unwrap_or(false) {
+                    return true;
+                }
+            }
+            StmtKind::Raise { value, cause } => {
+                if value.as_ref().map(expr_has_yield).unwrap_or(false)
+                    || cause.as_ref().map(expr_has_yield).unwrap_or(false)
+                {
                     return true;
                 }
             }
@@ -1184,7 +1194,9 @@ impl Compiler {
                 compiler.emit(Opcode::ReturnValue, None);
                 Ok(())
             }
-            StmtKind::Raise { value } => compiler.compile_raise(value.as_ref()),
+            StmtKind::Raise { value, cause } => {
+                compiler.compile_raise(value.as_ref(), cause.as_ref())
+            }
             StmtKind::Assert { test, message } => compiler.compile_assert(test, message.as_ref()),
             StmtKind::Try {
                 body,
@@ -2384,10 +2396,21 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_raise(&mut self, value: Option<&Expr>) -> Result<(), CompileError> {
+    fn compile_raise(
+        &mut self,
+        value: Option<&Expr>,
+        cause: Option<&Expr>,
+    ) -> Result<(), CompileError> {
         if let Some(expr) = value {
             self.compile_expr(expr)?;
-            self.emit(Opcode::Raise, Some(1));
+            if let Some(cause) = cause {
+                self.compile_expr(cause)?;
+                self.emit(Opcode::Raise, Some(2));
+            } else {
+                self.emit(Opcode::Raise, Some(1));
+            }
+        } else if cause.is_some() {
+            return Err(CompileError::new("raise from requires an exception value"));
         } else {
             self.emit(Opcode::Raise, Some(0));
         }

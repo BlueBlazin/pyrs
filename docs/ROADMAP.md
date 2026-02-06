@@ -71,8 +71,8 @@ Release-complete target: Milestone 16; ecosystem-complete target (including nati
 6. Milestone 5: Opcode execution hardening + `.pyc` read/write parity for supported bytecode paths (complete, P0).
 7. Milestone 6: Import system parity (`importlib`/`ModuleSpec`/hooks/packages, P0).
 8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0). (complete)
-9. Milestone 8: Runtime data model parity (descriptor protocol, attribute model, metaclasses/MRO, core types, P0).
-10. Milestone 9: Builtins + stdlib bootstrap required for real apps (P0/P1).
+9. Milestone 8: Runtime data model semantics (descriptor protocol, attribute model hooks, MRO/super, exception chaining, P0). (complete)
+10. Milestone 9: Core runtime types + builtins + stdlib bootstrap required for real apps (P0/P1).
 11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1).
 12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1).
 13. Milestone 12: Performance and observability baseline (P2).
@@ -102,10 +102,10 @@ Status flags: `[ ]` not started, `[x]` complete.
 ### P1 (Major Ecosystem Enablers)
 - [ ] Async/await + async generators.
 - [x] Comprehensions with correct scoping.
-- [ ] Pattern matching (`match`/`case`).
+- [~] Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full families pending.
 - [x] Type annotations (parse + `__annotations__` on modules/classes/functions; eager evaluation only).
-- [ ] Exception chaining (`__cause__`, `__context__`, suppression).
-- [ ] Descriptor protocol + attribute lookup parity.
+- [x] Exception chaining (`__cause__`, `__context__`, suppression metadata) for explicit/implicit raises.
+- [~] Descriptor protocol + attribute lookup parity (descriptor hooks plus `__getattr__`/`__setattr__`/`__delattr__` implemented; full `__getattribute__`/metaclass parity pending).
 - [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.
 - [ ] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
 - [ ] HPy extension loading/execution path.
@@ -186,13 +186,18 @@ Notes:
 
 ### Milestone 8 — Runtime Data Model Parity (P0)
 DoD:
-- Descriptor protocol and full attribute access semantics (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) match CPython.
-- MRO/metaclass/`super()`/`__slots__` behavior is CPython-compatible for core use cases.
-- Core builtin types reach parity needed by stdlib foundations (`set`, `frozenset`, `bytes`, `bytearray`, `memoryview`, `float`, `complex`, unicode/codecs behavior).
-- Exception chaining/context behavior (`__cause__`, `__context__`, suppression) is correct.
+- Descriptor protocol foundations are implemented in the VM for data and non-data descriptors (`__get__`, `__set__`, `__delete__`) in class/instance attribute paths.
+- Attribute model hooks are wired for supported scenarios: `__getattr__`, `__setattr__`, and `__delattr__` on instances, plus builtin `getattr`/`setattr`/`delattr`/`hasattr`.
+- C3 MRO computation is implemented for class creation with `__mro__`/`__bases__` metadata and `super(type, obj)` lookup support.
+- Exception chaining/context semantics are implemented for `raise ... from ...` and implicit chaining (`__cause__`, `__context__`, `__suppress_context__`).
+Status: complete
+Notes:
+- Full metaclass behavior and `__slots__` remain tracked under Milestone 9.
+- Core builtin type parity (`bytes`/`set`/`float`/unicode codecs families) is moved to Milestone 9 to keep runtime-type and stdlib bootstrap integration in one gate.
 
 ### Milestone 9 — Builtins + Stdlib Bootstrap (P0/P1)
 DoD:
+- Core runtime builtin type parity required by stdlib foundations (`set`, `frozenset`, `bytes`, `bytearray`, `memoryview`, `float`, `complex`, unicode/codecs behavior), plus remaining data-model gaps (`metaclass` path and `__slots__` core behavior).
 - Builtins required by stdlib and common apps are present with correct semantics.
 - Foundational stdlib modules are usable: `sys`, `types`, `inspect`, `io`, `os`, `pathlib`, `time`, `datetime`, `collections`, `math`, `re`, `json`, `functools`, `itertools`, `operator`.
 - Pure-Python package installation/execution works for representative no-C-extension packages.
@@ -243,8 +248,8 @@ DoD:
 - Production playbook exists for incident triage, rollback strategy, and reproducible artifact verification.
 
 ## Immediate next steps
-- Start Milestone 8 runtime data-model parity work (descriptor protocol, attribute lookup parity, metaclass/MRO/super semantics, and core builtin type coverage).
-- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 8-10.
+- Start Milestone 9 work: core runtime type coverage (`set`/`frozenset`, `bytes`/`bytearray`/`memoryview`, `float`/`complex`, unicode/codecs) and remaining data-model gaps (`metaclass`, `__slots__`).
+- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 9-10.
 - Continue broad CPython parity tests while landing language/runtime milestones.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 

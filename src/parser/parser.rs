@@ -1200,12 +1200,34 @@ impl Parser {
             self.token_at(pos).kind,
             TokenKind::Newline | TokenKind::Semicolon | TokenKind::Dedent | TokenKind::EndMarker
         ) {
-            return Ok((self.make_stmt(start, StmtKind::Raise { value: None }), pos));
+            return Ok((
+                self.make_stmt(
+                    start,
+                    StmtKind::Raise {
+                        value: None,
+                        cause: None,
+                    },
+                ),
+                pos,
+            ));
         }
         let (expr, next) = self.parse_expr_at(pos)?;
         pos = next;
+        let mut cause = None;
+        if matches!(self.token_at(pos).kind, TokenKind::Keyword(Keyword::From)) {
+            pos += 1;
+            let (expr, next) = self.parse_expr_at(pos)?;
+            cause = Some(expr);
+            pos = next;
+        }
         Ok((
-            self.make_stmt(start, StmtKind::Raise { value: Some(expr) }),
+            self.make_stmt(
+                start,
+                StmtKind::Raise {
+                    value: Some(expr),
+                    cause,
+                },
+            ),
             pos,
         ))
     }
