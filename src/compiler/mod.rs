@@ -543,9 +543,17 @@ fn collect_uses_stmt(
             )?;
             child_free.extend(scope.freevars.into_iter());
         }
-        StmtKind::ClassDef { bases, body, .. } => {
+        StmtKind::ClassDef {
+            bases,
+            metaclass,
+            body,
+            ..
+        } => {
             for base in bases {
                 collect_uses_expr(base, uses, child_free, enclosing)?;
+            }
+            if let Some(meta) = metaclass {
+                collect_uses_expr(meta, uses, child_free, enclosing)?;
             }
             let scope =
                 analyze_scope(ScopeType::Class, &[], &[], &[], None, None, body, enclosing)?;
@@ -1181,10 +1189,11 @@ impl Compiler {
                 name,
                 type_params,
                 bases,
+                metaclass,
                 body,
             } => {
                 let _ = type_params;
-                compiler.compile_class_def(name, bases, body)
+                compiler.compile_class_def(name, bases, metaclass.as_ref(), body)
             }
             StmtKind::Decorated { decorators, stmt } => {
                 compiler.compile_decorated_stmt(decorators, stmt)
@@ -1889,6 +1898,7 @@ impl Compiler {
         &mut self,
         name: &str,
         bases: &[Expr],
+        metaclass: Option<&Expr>,
         body: &[Stmt],
     ) -> Result<(), CompileError> {
         let class_code = self.compile_class(name, body)?;
@@ -1899,6 +1909,11 @@ impl Compiler {
         self.emit(Opcode::BuildTuple, Some(bases.len() as u32));
         let name_idx = self.code.add_const(Value::Str(name.to_string()));
         self.emit(Opcode::LoadConst, Some(name_idx));
+        if let Some(meta) = metaclass {
+            self.compile_expr(meta)?;
+        } else {
+            self.emit(Opcode::LoadConst, Some(0));
+        }
         self.emit(Opcode::BuildClass, Some(code_idx));
         self.emit_store_name_scoped(name)?;
         Ok(())

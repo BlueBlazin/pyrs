@@ -80,6 +80,7 @@ pub enum StmtKind {
         name: String,
         type_params: Vec<String>,
         bases: Vec<Expr>,
+        metaclass: Option<Expr>,
         body: Vec<Stmt>,
     },
     Decorated {

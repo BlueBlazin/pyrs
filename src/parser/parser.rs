@@ -1504,13 +1504,25 @@ impl Parser {
         pos = next;
 
         let mut bases = Vec::new();
+        let mut metaclass = None;
         if matches!(self.token_at(pos).kind, TokenKind::LParen) {
             let (args, next) = self.parse_call_args(pos + 1)?;
             for arg in args {
                 match arg {
                     CallArg::Positional(expr) => bases.push(expr),
-                    CallArg::Keyword { .. } | CallArg::Star(_) | CallArg::DoubleStar(_) => {
-                        return Err(self.error_at(pos, "class bases cannot be keyword arguments"));
+                    CallArg::Keyword { name, value } => {
+                        if name != "metaclass" {
+                            return Err(
+                                self.error_at(pos, "unsupported class keyword argument"),
+                            );
+                        }
+                        if metaclass.is_some() {
+                            return Err(self.error_at(pos, "duplicate metaclass argument"));
+                        }
+                        metaclass = Some(value);
+                    }
+                    CallArg::Star(_) | CallArg::DoubleStar(_) => {
+                        return Err(self.error_at(pos, "class bases cannot use starred arguments"));
                     }
                 }
             }
@@ -1527,6 +1539,7 @@ impl Parser {
                     name,
                     type_params,
                     bases,
+                    metaclass,
                     body,
                 },
             ),

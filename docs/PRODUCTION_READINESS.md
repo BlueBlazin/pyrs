@@ -11,7 +11,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - Language & Grammar -> Milestone 7
 - Semantic Analysis & Compilation -> Milestones 5 and 7
 - Bytecode & VM Execution -> Milestones 4 and 5
-- Runtime Object Model & Data Model -> Milestone 8
+- Runtime Object Model & Data Model -> Milestones 8 and 9
 - Builtins -> Milestone 9
 - Import System -> Milestone 6
 - Standard Library Coverage -> Milestones 9 and 10
@@ -60,18 +60,18 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 **Runtime Object Model & Data Model**
 - [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC.
 - [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (float + mixed int/bool coercion implemented; big-int and complex pending).
-- [ ] P0: bytes/bytearray/memoryview and buffer protocol.
-- [ ] P0: set/frozenset.
-- [ ] P0: Unicode/codec behavior parity (including error handlers).
+- [~] P0: bytes/bytearray/memoryview and buffer protocol (core bytes-like runtime types implemented; full buffer protocol pending).
+- [x] P0: set/frozenset.
+- [~] P0: Unicode/codec behavior parity (including error handlers) (`codecs.encode`/`decode` foundations for `utf-8`/`ascii`/`latin-1` with `strict`/`ignore`/`replace` implemented; full parity pending).
 - [~] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`) (core VM descriptor hooks implemented; metaclass/slot edge parity pending).
 - [~] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) (`__getattr__`/`__setattr__`/`__delattr__` paths implemented for instances; full `__getattribute__` parity pending).
-- [~] P0: MRO + metaclasses + `super()` semantics (C3 MRO + explicit `super(type, obj)` implemented; metaclass semantics pending).
-- [ ] P0: `__slots__` and instance layout rules.
+- [~] P0: MRO + metaclasses + `super()` semantics (C3 MRO + explicit `super(type, obj)` implemented; class-header `metaclass=` and `__build_class__` metaclass kwargs supported; full metaclass precedence semantics pending).
+- [~] P0: `__slots__` and instance layout rules (core restrictions implemented; full layout parity pending).
 - [ ] P1: Weakrefs, `gc` module hooks, finalizers.
 - [ ] P1: Frame objects + `inspect` compatibility (locals/globals/stack).
 
 **Builtins**
-- [~] P0: Core builtin set (print, len, range, float/int coercions, numeric ops, and random module foundations).
+- [~] P0: Core builtin set (print, len, range, float/int coercions, numeric ops, `set`/`frozenset`, bytes-like constructors, `complex`, `iter`/`next`, `type`, and random module foundations).
 - [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, dir, help, input, etc.; `getattr`/`setattr`/`delattr`/`hasattr` and explicit-args `super` implemented).
 - [x] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to loader path).
 
@@ -85,9 +85,9 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 **Standard Library Coverage**
 - [~] P0: Minimal builtins subset.
 - [~] P0: `random` module foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`).
-- [ ] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
-- [ ] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core).
-- [ ] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator`.
+- [~] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
+- [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core).
+- [~] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator`.
 - [ ] P1: `threading`, `multiprocessing`, `asyncio`, `concurrent.futures`.
 - [ ] P1: `subprocess`, `socket`, `ssl`, `http`, `urllib`.
 - [ ] P2: `logging`, `argparse`, `unittest`, `doctest`.

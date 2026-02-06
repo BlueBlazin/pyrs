@@ -17,6 +17,34 @@ fn dict_entries(value: Option<Value>) -> Option<Vec<(Value, Value)>> {
     value.and_then(|val| val.as_dict())
 }
 
+fn set_values(value: Option<Value>) -> Option<Vec<Value>> {
+    match value {
+        Some(Value::Set(obj)) => match &*obj.kind() {
+            Object::Set(values) => Some(values.clone()),
+            _ => None,
+        },
+        Some(Value::FrozenSet(obj)) => match &*obj.kind() {
+            Object::FrozenSet(values) => Some(values.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn bytes_values(value: Option<Value>) -> Option<Vec<u8>> {
+    match value {
+        Some(Value::Bytes(obj)) => match &*obj.kind() {
+            Object::Bytes(values) => Some(values.clone()),
+            _ => None,
+        },
+        Some(Value::ByteArray(obj)) => match &*obj.kind() {
+            Object::ByteArray(values) => Some(values.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn assert_float_global(vm: &Vm, name: &str, expected: f64) {
     match vm.get_global(name) {
         Some(Value::Float(actual)) => {
@@ -875,6 +903,258 @@ d = list('ab')\n";
 }
 
 #[test]
+fn executes_set_bytes_memoryview_and_complex_builtins() {
+    let source = "s = set([1, 2, 2])\n\
+fs = frozenset((1, 2, 2))\n\
+b = bytes('ab')\n\
+ba = bytearray([65, 66, 67])\n\
+mv = memoryview(ba)\n\
+x = b[1]\n\
+y = ba[0]\n\
+ba[1] = 90\n\
+z = ba[1]\n\
+w = mv[2]\n\
+sb = b[0:2]\n\
+c = complex(1, 2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+
+    let mut set_vals = set_values(vm.get_global("s")).expect("set value");
+    set_vals.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    assert_eq!(set_vals, vec![Value::Int(1), Value::Int(2)]);
+
+    let mut frozen_vals = set_values(vm.get_global("fs")).expect("frozenset value");
+    frozen_vals.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    assert_eq!(frozen_vals, vec![Value::Int(1), Value::Int(2)]);
+
+    assert_eq!(bytes_values(vm.get_global("b")), Some(vec![97, 98]));
+    assert_eq!(bytes_values(vm.get_global("ba")), Some(vec![65, 90, 67]));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(98)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(65)));
+    assert_eq!(vm.get_global("z"), Some(Value::Int(90)));
+    assert_eq!(vm.get_global("w"), Some(Value::Int(67)));
+    assert_eq!(bytes_values(vm.get_global("sb")), Some(vec![97, 98]));
+    assert_eq!(
+        vm.get_global("c"),
+        Some(Value::Complex {
+            real: 1.0,
+            imag: 2.0
+        })
+    );
+}
+
+#[test]
+fn executes_iter_and_next_builtins() {
+    let source = "it = iter([1, 2])\n\
+a = next(it)\n\
+b = next(it)\n\
+done = False\n\
+try:\n    next(it)\n\
+except StopIteration:\n    done = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("done"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_stdlib_bootstrap_modules() {
+    let source = "import math\n\
+import json\n\
+import codecs\n\
+import re\n\
+import operator\n\
+import itertools\n\
+import functools\n\
+import collections\n\
+import types\n\
+import inspect\n\
+import datetime\n\
+import pathlib\n\
+import os\n\
+import time\n\
+\n\
+sqrt = math.sqrt(9)\n\
+ceil = math.ceil(2.1)\n\
+finite = math.isfinite(1.0)\n\
+\n\
+encoded = json.dumps({'a': 1, 'b': [2, 3]})\n\
+decoded = json.loads(encoded)\n\
+encoded_ascii = codecs.encode('AZ', 'ascii')\n\
+decoded_ascii = codecs.decode(encoded_ascii, 'ascii')\n\
+decoded_ignore = codecs.decode(bytes([65, 255, 66]), 'ascii', 'ignore')\n\
+decoded_replace = codecs.decode(bytes([65, 255, 66]), 'ascii', 'replace')\n\
+\n\
+m1 = re.match('ab', 'abcd')\n\
+m2 = re.search('bc', 'abcd')\n\
+m3 = re.fullmatch('abcd', 'abcd')\n\
+\n\
+op = operator.add(2, 3)\n\
+contains = operator.contains([1, 2, 3], 2)\n\
+item = operator.getitem([9, 8], 1)\n\
+\n\
+chain_vals = itertools.chain([1, 2], [3])\n\
+repeat_vals = itertools.repeat('x', 3)\n\
+reduced = functools.reduce(operator.add, [1, 2, 3], 0)\n\
+\n\
+counter = collections.Counter('abca')\n\
+dq = collections.deque((4, 5))\n\
+mod = types.ModuleType('tmp')\n\
+class Dummy:\n    pass\n\
+\n\
+is_mod = inspect.ismodule(mod)\n\
+is_class = inspect.isclass(Dummy)\n\
+is_gen = inspect.isgenerator((x for x in [1]))\n\
+\n\
+today = datetime.today()\n\
+now = datetime.now()\n\
+cwd = os.getcwd()\n\
+joined = pathlib.joinpath(cwd, 'foo')\n\
+pth = pathlib.Path(cwd, 'bar')\n\
+t = time.time()\n\
+m = time.monotonic()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+
+    assert_float_global(&vm, "sqrt", 3.0);
+    assert_eq!(vm.get_global("ceil"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("finite"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("op"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("contains"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("item"), Some(Value::Int(8)));
+    assert_eq!(
+        list_values(vm.get_global("chain_vals")),
+        Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+    );
+    assert_eq!(
+        list_values(vm.get_global("repeat_vals")),
+        Some(vec![
+            Value::Str("x".to_string()),
+            Value::Str("x".to_string()),
+            Value::Str("x".to_string())
+        ])
+    );
+    assert_eq!(vm.get_global("reduced"), Some(Value::Int(6)));
+    assert_eq!(vm.get_global("is_mod"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("is_class"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("is_gen"), Some(Value::Bool(true)));
+
+    match vm.get_global("encoded") {
+        Some(Value::Str(text)) => assert!(text.contains("\"a\":1")),
+        other => panic!("expected encoded JSON string, got {other:?}"),
+    }
+    assert_eq!(bytes_values(vm.get_global("encoded_ascii")), Some(vec![65, 90]));
+    assert_eq!(
+        vm.get_global("decoded_ascii"),
+        Some(Value::Str("AZ".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("decoded_ignore"),
+        Some(Value::Str("AB".to_string()))
+    );
+    match vm.get_global("decoded_replace") {
+        Some(Value::Str(text)) => {
+            assert!(text.starts_with('A'));
+            assert!(text.ends_with('B'));
+            assert_eq!(text.chars().count(), 3);
+        }
+        other => panic!("expected decoded replacement string, got {other:?}"),
+    }
+    assert_eq!(
+        tuple_values(vm.get_global("m1")),
+        Some(vec![Value::Int(0), Value::Int(2)])
+    );
+    assert_eq!(
+        tuple_values(vm.get_global("m2")),
+        Some(vec![Value::Int(1), Value::Int(3)])
+    );
+    assert_eq!(
+        tuple_values(vm.get_global("m3")),
+        Some(vec![Value::Int(0), Value::Int(4)])
+    );
+    match vm.get_global("t") {
+        Some(Value::Float(value)) => assert!(value > 0.0),
+        other => panic!("expected time float, got {other:?}"),
+    }
+    match vm.get_global("m") {
+        Some(Value::Float(value)) => assert!(value >= 0.0),
+        other => panic!("expected monotonic float, got {other:?}"),
+    }
+    match vm.get_global("today") {
+        Some(Value::Str(text)) => assert!(text.len() >= 10),
+        other => panic!("expected date string, got {other:?}"),
+    }
+    match vm.get_global("now") {
+        Some(Value::Str(text)) => assert!(text.contains('T')),
+        other => panic!("expected datetime string, got {other:?}"),
+    }
+    match vm.get_global("joined") {
+        Some(Value::Str(text)) => assert!(text.ends_with("foo")),
+        other => panic!("expected joined path string, got {other:?}"),
+    }
+    match vm.get_global("pth") {
+        Some(Value::Str(text)) => assert!(text.ends_with("bar")),
+        other => panic!("expected path string, got {other:?}"),
+    }
+
+    let counter_entries = dict_entries(vm.get_global("counter")).expect("counter dict");
+    assert!(counter_entries.contains(&(Value::Str("a".to_string()), Value::Int(2))));
+    assert!(counter_entries.contains(&(Value::Str("b".to_string()), Value::Int(1))));
+    assert_eq!(
+        list_values(vm.get_global("dq")),
+        Some(vec![Value::Int(4), Value::Int(5)])
+    );
+}
+
+#[test]
+fn executes_io_module_helpers() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_io_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let file = temp_dir.join("sample.txt");
+    let path = file.to_string_lossy().replace('\\', "\\\\");
+
+    let source = format!(
+        "import io\n\
+import os\n\
+io.write_text('{path}', 'hello')\n\
+txt = io.read_text('{path}')\n\
+raw = io.open('{path}', 'rb')\n\
+names = os.listdir('{dir}')\n",
+        dir = temp_dir.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+
+    assert_eq!(vm.get_global("txt"), Some(Value::Str("hello".to_string())));
+    assert_eq!(bytes_values(vm.get_global("raw")), Some(b"hello".to_vec()));
+    match vm.get_global("names") {
+        Some(Value::List(obj)) => match &*obj.kind() {
+            Object::List(values) => {
+                assert!(values.contains(&Value::Str("sample.txt".to_string())));
+            }
+            _ => panic!("expected list"),
+        },
+        other => panic!("expected names list, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
 fn executes_divmod_builtin() {
     let source = "a = divmod(7, 3)\n\
 b = divmod(-7, 3)\n\
@@ -1171,6 +1451,39 @@ fn executes_super_and_mro_lookup() {
     assert_eq!(vm.get_global("out"), Some(Value::Str("B".to_string())));
     assert_eq!(vm.get_global("m1"), Some(Value::Str("B".to_string())));
     assert_eq!(vm.get_global("m2"), Some(Value::Str("C".to_string())));
+}
+
+#[test]
+fn executes_slots_restrictions() {
+    let source = "class Box:\n    __slots__ = ('x',)\n\nb = Box()\nb.x = 3\nok = b.x\nfailed = False\ntry:\n    b.y = 4\nexcept AttributeError:\n    failed = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("failed"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_class_metaclass_keyword_argument() {
+    let source = "def meta(name, bases, namespace):\n    namespace['flag'] = 7\n    return type(name, bases, namespace)\n\nclass Sample(metaclass=meta):\n    pass\n\nclass SlotBox(metaclass=type):\n    __slots__ = ('x',)\n\ns = Sample()\nout = Sample.flag\nslot_ok = False\nslot_fail = False\nbox = SlotBox()\nbox.x = 3\nslot_ok = True\ntry:\n    box.y = 4\nexcept AttributeError:\n    slot_fail = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("out"), Some(Value::Int(7)));
+    assert_eq!(vm.get_global("slot_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("slot_fail"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_type_three_arg_class_creation() {
+    let source = "C = type('C', (), {'x': 7})\nc = C()\nv = c.x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("v"), Some(Value::Int(7)));
 }
 
 #[test]

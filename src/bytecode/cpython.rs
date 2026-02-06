@@ -976,7 +976,7 @@ fn translated_successors(
         Opcode::MakeFunction => vec![(next_ip, pop(2)? + 1)],
         Opcode::MakeFunctionStack => vec![(next_ip, pop(1)? + 1)],
         Opcode::SetFunctionAttribute => vec![(next_ip, pop(2)? + 1)],
-        Opcode::BuildClass => vec![(next_ip, pop(2)? + 1)],
+        Opcode::BuildClass => vec![(next_ip, pop(3)? + 1)],
         Opcode::CallFunction => {
             let argc = arg.ok_or_else(|| CpythonError::new("missing call argc"))? as i32;
             vec![(next_ip, pop(argc + 1)? + 1)]

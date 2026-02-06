@@ -2,8 +2,11 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::bytecode::cpython;
 use crate::bytecode::{CodeObject, Opcode};
@@ -46,6 +49,7 @@ const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;
 const MT_UPPER_MASK: u32 = 0x8000_0000;
 const MT_LOWER_MASK: u32 = 0x7fff_ffff;
+static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Clone)]
 struct Mt19937 {
@@ -138,6 +142,18 @@ enum AttrMutationOutcome {
     ExceptionHandled,
 }
 
+enum ClassBuildOutcome {
+    Value(Value),
+    ExceptionHandled,
+}
+
+#[derive(Clone, Copy)]
+enum ReMode {
+    Search,
+    Match,
+    FullMatch,
+}
+
 struct Frame {
     code: Rc<CodeObject>,
     ip: usize,
@@ -154,6 +170,7 @@ struct Frame {
     return_instance: Option<ObjRef>,
     return_class: bool,
     class_bases: Vec<ObjRef>,
+    class_metaclass: Option<Value>,
     blocks: Vec<Block>,
     active_exception: Option<Value>,
     expect_none_return: bool,
@@ -189,6 +206,7 @@ impl Frame {
             return_instance: None,
             return_class: false,
             class_bases: Vec::new(),
+            class_metaclass: None,
             blocks: Vec::new(),
             active_exception: None,
             expect_none_return: false,
@@ -253,6 +271,7 @@ impl Vm {
         vm.install_sys_module();
         vm.install_importlib_modules();
         vm.install_random_module();
+        vm.install_stdlib_modules();
         vm.install_builtins();
         vm
     }
@@ -334,6 +353,9 @@ impl Vm {
             for base in &frame.class_bases {
                 roots.push(Value::Class(base.clone()));
             }
+            if let Some(meta) = &frame.class_metaclass {
+                roots.push(meta.clone());
+            }
             if let Some(exc) = &frame.active_exception {
                 roots.push(exc.clone());
             }
@@ -354,6 +376,9 @@ impl Vm {
             }
             for base in &frame.class_bases {
                 roots.push(Value::Class(base.clone()));
+            }
+            if let Some(meta) = &frame.class_metaclass {
+                roots.push(meta.clone());
             }
             if let Some(exc) = &frame.active_exception {
                 roots.push(exc.clone());
@@ -533,6 +558,181 @@ impl Vm {
             );
         }
         self.register_module("random", random_module);
+    }
+
+    fn install_builtin_module(
+        &mut self,
+        name: &str,
+        functions: &[(&str, BuiltinFunction)],
+        constants: Vec<(&str, Value)>,
+    ) {
+        let module = match self.heap.alloc_module(ModuleObject::new(name)) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.set_module_metadata(
+            &module,
+            name,
+            None,
+            Some(BUILTIN_MODULE_LOADER),
+            false,
+            Vec::new(),
+            false,
+        );
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            for (entry_name, builtin) in functions {
+                module_data
+                    .globals
+                    .insert((*entry_name).to_string(), Value::Builtin(*builtin));
+            }
+            for (entry_name, value) in constants {
+                module_data.globals.insert(entry_name.to_string(), value);
+            }
+        }
+        self.register_module(name, module);
+    }
+
+    fn install_stdlib_modules(&mut self) {
+        self.install_builtin_module(
+            "math",
+            &[
+                ("sqrt", BuiltinFunction::MathSqrt),
+                ("floor", BuiltinFunction::MathFloor),
+                ("ceil", BuiltinFunction::MathCeil),
+                ("isfinite", BuiltinFunction::MathIsFinite),
+                ("isinf", BuiltinFunction::MathIsInf),
+                ("isnan", BuiltinFunction::MathIsNaN),
+            ],
+            vec![
+                ("pi", Value::Float(std::f64::consts::PI)),
+                ("e", Value::Float(std::f64::consts::E)),
+                ("tau", Value::Float(std::f64::consts::TAU)),
+                ("inf", Value::Float(f64::INFINITY)),
+                ("nan", Value::Float(f64::NAN)),
+            ],
+        );
+        self.install_builtin_module(
+            "time",
+            &[
+                ("time", BuiltinFunction::TimeTime),
+                ("monotonic", BuiltinFunction::TimeMonotonic),
+                ("sleep", BuiltinFunction::TimeSleep),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "os",
+            &[
+                ("getcwd", BuiltinFunction::OsGetCwd),
+                ("listdir", BuiltinFunction::OsListDir),
+                ("path_exists", BuiltinFunction::OsPathExists),
+                ("path_join", BuiltinFunction::OsPathJoin),
+            ],
+            vec![
+                ("sep", Value::Str(std::path::MAIN_SEPARATOR.to_string())),
+                ("pathsep", Value::Str(if cfg!(windows) { ";" } else { ":" }.to_string())),
+            ],
+        );
+        self.install_builtin_module(
+            "pathlib",
+            &[
+                ("Path", BuiltinFunction::OsPathJoin),
+                ("joinpath", BuiltinFunction::OsPathJoin),
+                ("exists", BuiltinFunction::OsPathExists),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "json",
+            &[
+                ("dumps", BuiltinFunction::JsonDumps),
+                ("loads", BuiltinFunction::JsonLoads),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "codecs",
+            &[
+                ("encode", BuiltinFunction::CodecsEncode),
+                ("decode", BuiltinFunction::CodecsDecode),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "re",
+            &[
+                ("search", BuiltinFunction::ReSearch),
+                ("match", BuiltinFunction::ReMatch),
+                ("fullmatch", BuiltinFunction::ReFullMatch),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "operator",
+            &[
+                ("add", BuiltinFunction::OperatorAdd),
+                ("sub", BuiltinFunction::OperatorSub),
+                ("mul", BuiltinFunction::OperatorMul),
+                ("truediv", BuiltinFunction::OperatorTrueDiv),
+                ("eq", BuiltinFunction::OperatorEq),
+                ("contains", BuiltinFunction::OperatorContains),
+                ("getitem", BuiltinFunction::OperatorGetItem),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "itertools",
+            &[
+                ("chain", BuiltinFunction::ItertoolsChain),
+                ("repeat", BuiltinFunction::ItertoolsRepeat),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "functools",
+            &[("reduce", BuiltinFunction::FunctoolsReduce)],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "collections",
+            &[
+                ("Counter", BuiltinFunction::CollectionsCounter),
+                ("deque", BuiltinFunction::CollectionsDeque),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "types",
+            &[("ModuleType", BuiltinFunction::TypesModuleType)],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "inspect",
+            &[
+                ("isfunction", BuiltinFunction::InspectIsFunction),
+                ("isclass", BuiltinFunction::InspectIsClass),
+                ("ismodule", BuiltinFunction::InspectIsModule),
+                ("isgenerator", BuiltinFunction::InspectIsGenerator),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "io",
+            &[
+                ("open", BuiltinFunction::IoOpen),
+                ("read_text", BuiltinFunction::IoReadText),
+                ("write_text", BuiltinFunction::IoWriteText),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "datetime",
+            &[
+                ("now", BuiltinFunction::DateTimeNow),
+                ("today", BuiltinFunction::DateToday),
+            ],
+            Vec::new(),
+        );
     }
 
     fn sync_sys_path_from_module_paths(&mut self) {
@@ -1273,7 +1473,14 @@ impl Vm {
                     continue;
                 }
                 let value = if frame.return_class {
-                    self.class_value_from_module(&frame.module, frame.class_bases)
+                    match self.class_value_from_module(
+                        &frame.module,
+                        frame.class_bases,
+                        frame.class_metaclass,
+                    )? {
+                        ClassBuildOutcome::Value(value) => value,
+                        ClassBuildOutcome::ExceptionHandled => continue,
+                    }
                 } else if let Some(instance) = frame.return_instance {
                     Value::Instance(instance)
                 } else if frame.return_module {
@@ -2186,6 +2393,61 @@ impl Vm {
                                 Value::Dict(_) => {
                                     return Err(RuntimeError::new("slicing unsupported for dict"));
                                 }
+                                Value::Bytes(obj) => match &*obj.kind() {
+                                    Object::Bytes(values) => {
+                                        let indices =
+                                            slice_indices(values.len(), lower, upper, step)?;
+                                        let mut result = Vec::with_capacity(indices.len());
+                                        for idx in indices {
+                                            result.push(values[idx]);
+                                        }
+                                        self.push_value(self.heap.alloc_bytes(result));
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
+                                    }
+                                },
+                                Value::ByteArray(obj) => match &*obj.kind() {
+                                    Object::ByteArray(values) => {
+                                        let indices =
+                                            slice_indices(values.len(), lower, upper, step)?;
+                                        let mut result = Vec::with_capacity(indices.len());
+                                        for idx in indices {
+                                            result.push(values[idx]);
+                                        }
+                                        self.push_value(self.heap.alloc_bytearray(result));
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
+                                    }
+                                },
+                                Value::MemoryView(obj) => match &*obj.kind() {
+                                    Object::MemoryView(view) => match &*view.source.kind() {
+                                        Object::Bytes(values) | Object::ByteArray(values) => {
+                                            let indices =
+                                                slice_indices(values.len(), lower, upper, step)?;
+                                            let mut result = Vec::with_capacity(indices.len());
+                                            for idx in indices {
+                                                result.push(values[idx]);
+                                            }
+                                            self.push_value(self.heap.alloc_bytes(result));
+                                        }
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "subscript unsupported type",
+                                            ));
+                                        }
+                                    },
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
+                                    }
+                                },
                                 _ => return Err(RuntimeError::new("subscript unsupported type")),
                             },
                             index => match value {
@@ -2261,6 +2523,70 @@ impl Vm {
                                         ));
                                     }
                                 },
+                                Value::Bytes(obj) => match &*obj.kind() {
+                                    Object::Bytes(values) => {
+                                        let mut index_int = value_to_int(index)? as isize;
+                                        if index_int < 0 {
+                                            index_int += values.len() as isize;
+                                        }
+                                        if index_int < 0 || index_int as usize >= values.len() {
+                                            return Err(RuntimeError::new("index out of range"));
+                                        }
+                                        self.push_value(Value::Int(values[index_int as usize] as i64));
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
+                                    }
+                                },
+                                Value::ByteArray(obj) => match &*obj.kind() {
+                                    Object::ByteArray(values) => {
+                                        let mut index_int = value_to_int(index)? as isize;
+                                        if index_int < 0 {
+                                            index_int += values.len() as isize;
+                                        }
+                                        if index_int < 0 || index_int as usize >= values.len() {
+                                            return Err(RuntimeError::new("index out of range"));
+                                        }
+                                        self.push_value(Value::Int(values[index_int as usize] as i64));
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
+                                    }
+                                },
+                                Value::MemoryView(obj) => match &*obj.kind() {
+                                    Object::MemoryView(view) => match &*view.source.kind() {
+                                        Object::Bytes(values) | Object::ByteArray(values) => {
+                                            let mut index_int = value_to_int(index)? as isize;
+                                            if index_int < 0 {
+                                                index_int += values.len() as isize;
+                                            }
+                                            if index_int < 0
+                                                || index_int as usize >= values.len()
+                                            {
+                                                return Err(RuntimeError::new(
+                                                    "index out of range",
+                                                ));
+                                            }
+                                            self.push_value(Value::Int(
+                                                values[index_int as usize] as i64,
+                                            ));
+                                        }
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "subscript unsupported type",
+                                            ));
+                                        }
+                                    },
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "subscript unsupported type",
+                                        ));
+                                    }
+                                },
                                 _ => return Err(RuntimeError::new("subscript unsupported type")),
                             },
                         }
@@ -2304,6 +2630,66 @@ impl Vm {
                                         }
                                     }
                                     self.push_value(Value::Dict(obj));
+                                }
+                                Value::ByteArray(obj) => {
+                                    if let Object::ByteArray(values) = &mut *obj.kind_mut() {
+                                        let mut idx = value_to_int(index)? as isize;
+                                        if idx < 0 {
+                                            idx += values.len() as isize;
+                                        }
+                                        if idx < 0 || idx as usize >= values.len() {
+                                            return Err(RuntimeError::new("index out of range"));
+                                        }
+                                        let byte = value_to_int(value)?;
+                                        if !(0..=255).contains(&byte) {
+                                            return Err(RuntimeError::new(
+                                                "byte must be in range(0, 256)",
+                                            ));
+                                        }
+                                        values[idx as usize] = byte as u8;
+                                    }
+                                    self.push_value(Value::ByteArray(obj));
+                                }
+                                Value::MemoryView(obj) => {
+                                    let source = match &*obj.kind() {
+                                        Object::MemoryView(view) => view.source.clone(),
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "store subscript unsupported type",
+                                            ));
+                                        }
+                                    };
+                                    match &mut *source.kind_mut() {
+                                        Object::ByteArray(values) => {
+                                            let mut idx = value_to_int(index)? as isize;
+                                            if idx < 0 {
+                                                idx += values.len() as isize;
+                                            }
+                                            if idx < 0 || idx as usize >= values.len() {
+                                                return Err(RuntimeError::new(
+                                                    "index out of range",
+                                                ));
+                                            }
+                                            let byte = value_to_int(value)?;
+                                            if !(0..=255).contains(&byte) {
+                                                return Err(RuntimeError::new(
+                                                    "byte must be in range(0, 256)",
+                                                ));
+                                            }
+                                            values[idx as usize] = byte as u8;
+                                        }
+                                        Object::Bytes(_) => {
+                                            return Err(RuntimeError::new(
+                                                "cannot modify read-only memory",
+                                            ));
+                                        }
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "store subscript unsupported type",
+                                            ));
+                                        }
+                                    }
+                                    self.push_value(Value::MemoryView(obj));
                                 }
                                 _ => {
                                     return Err(RuntimeError::new(
@@ -2413,6 +2799,12 @@ impl Vm {
                                 ));
                             }
                         };
+                        let metaclass_value = self.pop_value()?;
+                        let class_metaclass = if matches!(metaclass_value, Value::None) {
+                            None
+                        } else {
+                            Some(metaclass_value)
+                        };
                         let name_value = self.pop_value()?;
                         let bases_value = self.pop_value()?;
                         let class_name = match name_value {
@@ -2466,6 +2858,7 @@ impl Vm {
                         );
                         frame.return_class = true;
                         frame.class_bases = base_classes;
+                        frame.class_metaclass = class_metaclass;
                         self.frames.push(frame);
                     }
                     Opcode::MakeFunctionStack => {
@@ -3644,6 +4037,22 @@ impl Vm {
                                 kind: IteratorKind::Dict(obj),
                                 index: 0,
                             },
+                            Value::Set(obj) | Value::FrozenSet(obj) => IteratorObject {
+                                kind: IteratorKind::Set(obj),
+                                index: 0,
+                            },
+                            Value::Bytes(obj) => IteratorObject {
+                                kind: IteratorKind::Bytes(obj),
+                                index: 0,
+                            },
+                            Value::ByteArray(obj) => IteratorObject {
+                                kind: IteratorKind::ByteArray(obj),
+                                index: 0,
+                            },
+                            Value::MemoryView(obj) => IteratorObject {
+                                kind: IteratorKind::MemoryView(obj),
+                                index: 0,
+                            },
                             Value::Generator(obj) => {
                                 self.push_value(Value::Generator(obj));
                                 return Ok(None);
@@ -3678,60 +4087,7 @@ impl Vm {
                                 }
                             },
                             Value::Iterator(iterator_ref) => {
-                                let next_value = {
-                                    let mut iter = iterator_ref.kind_mut();
-                                    match &mut *iter {
-                                        Object::Iterator(state) => match &mut state.kind {
-                                            IteratorKind::List(list) => match &*list.kind() {
-                                                Object::List(values) => {
-                                                    if state.index >= values.len() {
-                                                        None
-                                                    } else {
-                                                        let value = values[state.index].clone();
-                                                        state.index += 1;
-                                                        Some(value)
-                                                    }
-                                                }
-                                                _ => None,
-                                            },
-                                            IteratorKind::Tuple(list) => match &*list.kind() {
-                                                Object::Tuple(values) => {
-                                                    if state.index >= values.len() {
-                                                        None
-                                                    } else {
-                                                        let value = values[state.index].clone();
-                                                        state.index += 1;
-                                                        Some(value)
-                                                    }
-                                                }
-                                                _ => None,
-                                            },
-                                            IteratorKind::Str(text) => {
-                                                let chars: Vec<char> = text.chars().collect();
-                                                if state.index >= chars.len() {
-                                                    None
-                                                } else {
-                                                    let ch = chars[state.index];
-                                                    state.index += 1;
-                                                    Some(Value::Str(ch.to_string()))
-                                                }
-                                            }
-                                            IteratorKind::Dict(dict) => match &*dict.kind() {
-                                                Object::Dict(entries) => {
-                                                    if state.index >= entries.len() {
-                                                        None
-                                                    } else {
-                                                        let value = entries[state.index].0.clone();
-                                                        state.index += 1;
-                                                        Some(value)
-                                                    }
-                                                }
-                                                _ => None,
-                                            },
-                                        },
-                                        _ => None,
-                                    }
-                                };
+                                let next_value = self.iterator_next_value(&iterator_ref);
                                 if let Some(value) = next_value {
                                     self.push_value(Value::Iterator(iterator_ref));
                                     self.push_value(value);
@@ -3953,7 +4309,14 @@ impl Vm {
                             return Ok(None);
                         }
                         let value = if frame.return_class {
-                            self.class_value_from_module(&frame.module, frame.class_bases)
+                            match self.class_value_from_module(
+                                &frame.module,
+                                frame.class_bases,
+                                frame.class_metaclass,
+                            )? {
+                                ClassBuildOutcome::Value(value) => value,
+                                ClassBuildOutcome::ExceptionHandled => return Ok(None),
+                            }
                         } else if let Some(instance) = frame.return_instance {
                             Value::Instance(instance)
                         } else if frame.return_module {
@@ -3980,7 +4343,14 @@ impl Vm {
                             return Ok(None);
                         }
                         let value = if frame.return_class {
-                            self.class_value_from_module(&frame.module, frame.class_bases)
+                            match self.class_value_from_module(
+                                &frame.module,
+                                frame.class_bases,
+                                frame.class_metaclass,
+                            )? {
+                                ClassBuildOutcome::Value(value) => value,
+                                ClassBuildOutcome::ExceptionHandled => return Ok(None),
+                            }
                         } else if let Some(instance) = frame.return_instance {
                             Value::Instance(instance)
                         } else if frame.return_module {
@@ -4140,16 +4510,85 @@ impl Vm {
         }
     }
 
-    fn class_value_from_module(&mut self, module: &ObjRef, bases: Vec<ObjRef>) -> Value {
+    fn class_value_from_module(
+        &mut self,
+        module: &ObjRef,
+        bases: Vec<ObjRef>,
+        metaclass: Option<Value>,
+    ) -> Result<ClassBuildOutcome, RuntimeError> {
         let (name, attrs) = match &*module.kind() {
             Object::Module(module_data) => (module_data.name.clone(), module_data.globals.clone()),
             _ => ("<class>".to_string(), HashMap::new()),
         };
+
+        if let Some(meta) = metaclass {
+            if matches!(meta, Value::Builtin(BuiltinFunction::Type)) {
+                return Ok(ClassBuildOutcome::Value(
+                    self.build_default_class_value(name, attrs, bases),
+                ));
+            }
+            if self.frames.is_empty() {
+                return Err(RuntimeError::new("metaclass call requires active frame"));
+            }
+            let namespace = self.heap.alloc_dict(
+                attrs.iter()
+                    .map(|(key, value)| (Value::Str(key.clone()), value.clone()))
+                    .collect::<Vec<_>>(),
+            );
+            let bases_tuple = self.heap.alloc_tuple(
+                bases.iter()
+                    .cloned()
+                    .map(Value::Class)
+                    .collect::<Vec<_>>(),
+            );
+            return match self.call_internal(
+                meta,
+                vec![Value::Str(name), bases_tuple, namespace],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => {
+                    if matches!(value, Value::Class(_)) {
+                        Ok(ClassBuildOutcome::Value(value))
+                    } else {
+                        Err(RuntimeError::new("metaclass must return a class object"))
+                    }
+                }
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Ok(ClassBuildOutcome::ExceptionHandled)
+                }
+            };
+        }
+
+        Ok(ClassBuildOutcome::Value(
+            self.build_default_class_value(name, attrs, bases),
+        ))
+    }
+
+    fn build_default_class_value(
+        &mut self,
+        name: String,
+        attrs: HashMap<String, Value>,
+        bases: Vec<ObjRef>,
+    ) -> Value {
         let class = ClassObject::new(name, bases.clone());
         let class_value = self.heap.alloc_class(class);
         if let Value::Class(class_ref) = &class_value {
             if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                 class_data.attrs.extend(attrs);
+                if let Some(slot_names) =
+                    slot_names_from_value(class_data.attrs.get("__slots__").cloned())
+                {
+                    class_data.slots = Some(slot_names.clone());
+                    class_data.attrs.insert(
+                        "__slots__".to_string(),
+                        self.heap.alloc_tuple(
+                            slot_names
+                                .into_iter()
+                                .map(Value::Str)
+                                .collect::<Vec<_>>(),
+                        ),
+                    );
+                }
                 class_data
                     .attrs
                     .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
@@ -4812,6 +5251,17 @@ impl Vm {
             }
         }
 
+        if let Some(allowed_slots) = collect_slot_names(&class_ref) {
+            let allowed = allowed_slots.iter().any(|name| name == attr_name);
+            if !allowed {
+                return Err(RuntimeError::new(format!(
+                    "'{}' object has no attribute '{}'",
+                    class_name_for_instance(instance).unwrap_or_else(|| "object".to_string()),
+                    attr_name
+                )));
+            }
+        }
+
         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
             instance_data.attrs.insert(attr_name.to_string(), value);
         }
@@ -5030,6 +5480,22 @@ impl Vm {
                 })),
                 _ => Err(RuntimeError::new("yield from expects iterable")),
             },
+            Value::Set(obj) | Value::FrozenSet(obj) => Ok(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::Set(obj),
+                index: 0,
+            })),
+            Value::Bytes(obj) => Ok(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::Bytes(obj),
+                index: 0,
+            })),
+            Value::ByteArray(obj) => Ok(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::ByteArray(obj),
+                index: 0,
+            })),
+            Value::MemoryView(obj) => Ok(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::MemoryView(obj),
+                index: 0,
+            })),
             _ => Err(RuntimeError::new("yield from expects iterable")),
         }
     }
@@ -5041,60 +5507,7 @@ impl Vm {
         match iterator {
             Value::Generator(obj) => self.generator_for_iter_next(obj),
             Value::Iterator(iterator_ref) => {
-                let next_value = {
-                    let mut iter = iterator_ref.kind_mut();
-                    match &mut *iter {
-                        Object::Iterator(state) => match &mut state.kind {
-                            IteratorKind::List(list) => match &*list.kind() {
-                                Object::List(values) => {
-                                    if state.index >= values.len() {
-                                        None
-                                    } else {
-                                        let value = values[state.index].clone();
-                                        state.index += 1;
-                                        Some(value)
-                                    }
-                                }
-                                _ => None,
-                            },
-                            IteratorKind::Tuple(list) => match &*list.kind() {
-                                Object::Tuple(values) => {
-                                    if state.index >= values.len() {
-                                        None
-                                    } else {
-                                        let value = values[state.index].clone();
-                                        state.index += 1;
-                                        Some(value)
-                                    }
-                                }
-                                _ => None,
-                            },
-                            IteratorKind::Str(text) => {
-                                let chars: Vec<char> = text.chars().collect();
-                                if state.index >= chars.len() {
-                                    None
-                                } else {
-                                    let ch = chars[state.index];
-                                    state.index += 1;
-                                    Some(Value::Str(ch.to_string()))
-                                }
-                            }
-                            IteratorKind::Dict(dict) => match &*dict.kind() {
-                                Object::Dict(entries) => {
-                                    if state.index >= entries.len() {
-                                        None
-                                    } else {
-                                        let value = entries[state.index].0.clone();
-                                        state.index += 1;
-                                        Some(value)
-                                    }
-                                }
-                                _ => None,
-                            },
-                        },
-                        _ => None,
-                    }
-                };
+                let next_value = self.iterator_next_value(iterator_ref);
                 if let Some(value) = next_value {
                     Ok(GeneratorResumeOutcome::Yield(value))
                 } else {
@@ -5179,11 +5592,121 @@ impl Vm {
                     IteratorKind::Tuple(_) => "tuple_iterator",
                     IteratorKind::Str(_) => "str_iterator",
                     IteratorKind::Dict(_) => "dict_keyiterator",
+                    IteratorKind::Set(_) => "set_iterator",
+                    IteratorKind::Bytes(_) => "bytes_iterator",
+                    IteratorKind::ByteArray(_) => "bytearray_iterator",
+                    IteratorKind::MemoryView(_) => "memoryview_iterator",
                 },
                 _ => "iterator",
             },
             Value::Generator(_) => "generator",
             _ => "object",
+        }
+    }
+
+    fn iterator_next_value(&self, iterator_ref: &ObjRef) -> Option<Value> {
+        let mut iter = iterator_ref.kind_mut();
+        match &mut *iter {
+            Object::Iterator(state) => match &mut state.kind {
+                IteratorKind::List(list) => match &*list.kind() {
+                    Object::List(values) => {
+                        if state.index >= values.len() {
+                            None
+                        } else {
+                            let value = values[state.index].clone();
+                            state.index += 1;
+                            Some(value)
+                        }
+                    }
+                    _ => None,
+                },
+                IteratorKind::Tuple(list) => match &*list.kind() {
+                    Object::Tuple(values) => {
+                        if state.index >= values.len() {
+                            None
+                        } else {
+                            let value = values[state.index].clone();
+                            state.index += 1;
+                            Some(value)
+                        }
+                    }
+                    _ => None,
+                },
+                IteratorKind::Str(text) => {
+                    let chars: Vec<char> = text.chars().collect();
+                    if state.index >= chars.len() {
+                        None
+                    } else {
+                        let ch = chars[state.index];
+                        state.index += 1;
+                        Some(Value::Str(ch.to_string()))
+                    }
+                }
+                IteratorKind::Dict(dict) => match &*dict.kind() {
+                    Object::Dict(entries) => {
+                        if state.index >= entries.len() {
+                            None
+                        } else {
+                            let value = entries[state.index].0.clone();
+                            state.index += 1;
+                            Some(value)
+                        }
+                    }
+                    _ => None,
+                },
+                IteratorKind::Set(set) => match &*set.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => {
+                        if state.index >= values.len() {
+                            None
+                        } else {
+                            let value = values[state.index].clone();
+                            state.index += 1;
+                            Some(value)
+                        }
+                    }
+                    _ => None,
+                },
+                IteratorKind::Bytes(bytes) => match &*bytes.kind() {
+                    Object::Bytes(values) => {
+                        if state.index >= values.len() {
+                            None
+                        } else {
+                            let value = Value::Int(values[state.index] as i64);
+                            state.index += 1;
+                            Some(value)
+                        }
+                    }
+                    _ => None,
+                },
+                IteratorKind::ByteArray(bytes) => match &*bytes.kind() {
+                    Object::ByteArray(values) => {
+                        if state.index >= values.len() {
+                            None
+                        } else {
+                            let value = Value::Int(values[state.index] as i64);
+                            state.index += 1;
+                            Some(value)
+                        }
+                    }
+                    _ => None,
+                },
+                IteratorKind::MemoryView(view_ref) => match &*view_ref.kind() {
+                    Object::MemoryView(view) => match &*view.source.kind() {
+                        Object::Bytes(values) | Object::ByteArray(values) => {
+                            if state.index >= values.len() {
+                                None
+                            } else {
+                                let value = Value::Int(values[state.index] as i64);
+                                state.index += 1;
+                                Some(value)
+                            }
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+            },
+            _ => None,
         }
     }
 
@@ -5349,6 +5872,8 @@ impl Vm {
             BuiltinFunction::SetAttr => self.builtin_setattr(args, kwargs),
             BuiltinFunction::DelAttr => self.builtin_delattr(args, kwargs),
             BuiltinFunction::HasAttr => self.builtin_hasattr(args, kwargs),
+            BuiltinFunction::Iter => self.builtin_iter(args, kwargs),
+            BuiltinFunction::Next => self.builtin_next(args, kwargs),
             BuiltinFunction::Super => self.builtin_super(args, kwargs),
             BuiltinFunction::Import => self.builtin_import(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
@@ -5360,6 +5885,48 @@ impl Vm {
             BuiltinFunction::RandomGetRandBits => self.builtin_random_getrandbits(args, kwargs),
             BuiltinFunction::RandomChoice => self.builtin_random_choice(args, kwargs),
             BuiltinFunction::RandomShuffle => self.builtin_random_shuffle(args, kwargs),
+            BuiltinFunction::MathSqrt => self.builtin_math_sqrt(args, kwargs),
+            BuiltinFunction::MathFloor => self.builtin_math_floor(args, kwargs),
+            BuiltinFunction::MathCeil => self.builtin_math_ceil(args, kwargs),
+            BuiltinFunction::MathIsFinite => self.builtin_math_isfinite(args, kwargs),
+            BuiltinFunction::MathIsInf => self.builtin_math_isinf(args, kwargs),
+            BuiltinFunction::MathIsNaN => self.builtin_math_isnan(args, kwargs),
+            BuiltinFunction::TimeTime => self.builtin_time_time(args, kwargs),
+            BuiltinFunction::TimeMonotonic => self.builtin_time_monotonic(args, kwargs),
+            BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
+            BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),
+            BuiltinFunction::OsListDir => self.builtin_os_listdir(args, kwargs),
+            BuiltinFunction::OsPathExists => self.builtin_os_path_exists(args, kwargs),
+            BuiltinFunction::OsPathJoin => self.builtin_os_path_join(args, kwargs),
+            BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
+            BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
+            BuiltinFunction::CodecsEncode => self.builtin_codecs_encode(args, kwargs),
+            BuiltinFunction::CodecsDecode => self.builtin_codecs_decode(args, kwargs),
+            BuiltinFunction::ReSearch => self.builtin_re_search(args, kwargs),
+            BuiltinFunction::ReMatch => self.builtin_re_match(args, kwargs),
+            BuiltinFunction::ReFullMatch => self.builtin_re_fullmatch(args, kwargs),
+            BuiltinFunction::OperatorAdd => self.builtin_operator_add(args, kwargs),
+            BuiltinFunction::OperatorSub => self.builtin_operator_sub(args, kwargs),
+            BuiltinFunction::OperatorMul => self.builtin_operator_mul(args, kwargs),
+            BuiltinFunction::OperatorTrueDiv => self.builtin_operator_truediv(args, kwargs),
+            BuiltinFunction::OperatorEq => self.builtin_operator_eq(args, kwargs),
+            BuiltinFunction::OperatorContains => self.builtin_operator_contains(args, kwargs),
+            BuiltinFunction::OperatorGetItem => self.builtin_operator_getitem(args, kwargs),
+            BuiltinFunction::ItertoolsChain => self.builtin_itertools_chain(args, kwargs),
+            BuiltinFunction::ItertoolsRepeat => self.builtin_itertools_repeat(args, kwargs),
+            BuiltinFunction::FunctoolsReduce => self.builtin_functools_reduce(args, kwargs),
+            BuiltinFunction::CollectionsCounter => self.builtin_collections_counter(args, kwargs),
+            BuiltinFunction::CollectionsDeque => self.builtin_collections_deque(args, kwargs),
+            BuiltinFunction::InspectIsFunction => self.builtin_inspect_isfunction(args, kwargs),
+            BuiltinFunction::InspectIsClass => self.builtin_inspect_isclass(args, kwargs),
+            BuiltinFunction::InspectIsModule => self.builtin_inspect_ismodule(args, kwargs),
+            BuiltinFunction::InspectIsGenerator => self.builtin_inspect_isgenerator(args, kwargs),
+            BuiltinFunction::TypesModuleType => self.builtin_types_moduletype(args, kwargs),
+            BuiltinFunction::IoOpen => self.builtin_io_open(args, kwargs),
+            BuiltinFunction::IoReadText => self.builtin_io_read_text(args, kwargs),
+            BuiltinFunction::IoWriteText => self.builtin_io_write_text(args, kwargs),
+            BuiltinFunction::DateTimeNow => self.builtin_datetime_now(args, kwargs),
+            BuiltinFunction::DateToday => self.builtin_datetime_today(args, kwargs),
             _ => {
                 if kwargs.is_empty() {
                     builtin.call(&self.heap, args)
@@ -5438,6 +6005,64 @@ impl Vm {
             Ok(self.heap.alloc_dict(entries))
         } else {
             Ok(self.heap.alloc_dict(Vec::new()))
+        }
+    }
+
+    fn builtin_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("iter() expects one argument"));
+        }
+        let source = args.remove(0);
+        self.to_iterator_value(source)
+            .map_err(|_| RuntimeError::new("object is not iterable"))
+    }
+
+    fn builtin_next(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("next() expects 1-2 arguments"));
+        }
+        let default = if args.len() == 2 {
+            Some(args.pop().expect("checked len"))
+        } else {
+            None
+        };
+        let target = args.pop().expect("checked len");
+        let iterator = self
+            .to_iterator_value(target)
+            .map_err(|_| RuntimeError::new("next() argument is not iterable"))?;
+        match iterator {
+            Value::Generator(obj) => match self.generator_for_iter_next(&obj)? {
+                GeneratorResumeOutcome::Yield(value) => Ok(value),
+                GeneratorResumeOutcome::Complete(_) => {
+                    if let Some(default) = default {
+                        Ok(default)
+                    } else {
+                        Err(RuntimeError::new("StopIteration"))
+                    }
+                }
+                GeneratorResumeOutcome::PropagatedException => {
+                    self.propagate_pending_generator_exception()?;
+                    Err(RuntimeError::new("StopIteration"))
+                }
+            },
+            Value::Iterator(iterator_ref) => {
+                if let Some(value) = self.iterator_next_value(&iterator_ref) {
+                    Ok(value)
+                } else if let Some(default) = default {
+                    Ok(default)
+                } else {
+                    Err(RuntimeError::new("StopIteration"))
+                }
+            }
+            _ => Err(RuntimeError::new("next() argument is not iterable")),
         }
     }
 
@@ -6264,6 +6889,917 @@ impl Vm {
         }
     }
 
+    fn builtin_math_sqrt(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("sqrt() expects one argument"));
+        }
+        let value = value_to_f64(args[0].clone())?;
+        if value < 0.0 {
+            return Err(RuntimeError::new("math domain error"));
+        }
+        Ok(Value::Float(value.sqrt()))
+    }
+
+    fn builtin_math_floor(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("floor() expects one argument"));
+        }
+        let value = value_to_f64(args[0].clone())?.floor();
+        if value < i64::MIN as f64 || value > i64::MAX as f64 {
+            return Err(RuntimeError::new("integer overflow"));
+        }
+        Ok(Value::Int(value as i64))
+    }
+
+    fn builtin_math_ceil(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("ceil() expects one argument"));
+        }
+        let value = value_to_f64(args[0].clone())?.ceil();
+        if value < i64::MIN as f64 || value > i64::MAX as f64 {
+            return Err(RuntimeError::new("integer overflow"));
+        }
+        Ok(Value::Int(value as i64))
+    }
+
+    fn builtin_math_isfinite(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("isfinite() expects one argument"));
+        }
+        Ok(Value::Bool(value_to_f64(args[0].clone())?.is_finite()))
+    }
+
+    fn builtin_math_isinf(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("isinf() expects one argument"));
+        }
+        Ok(Value::Bool(value_to_f64(args[0].clone())?.is_infinite()))
+    }
+
+    fn builtin_math_isnan(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("isnan() expects one argument"));
+        }
+        Ok(Value::Bool(value_to_f64(args[0].clone())?.is_nan()))
+    }
+
+    fn builtin_time_time(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("time() expects no arguments"));
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| RuntimeError::new("system time before epoch"))?;
+        Ok(Value::Float(now.as_secs_f64()))
+    }
+
+    fn builtin_time_monotonic(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("monotonic() expects no arguments"));
+        }
+        let start = MONOTONIC_START.get_or_init(Instant::now);
+        Ok(Value::Float(start.elapsed().as_secs_f64()))
+    }
+
+    fn builtin_time_sleep(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("sleep() expects one argument"));
+        }
+        let seconds = value_to_f64(args[0].clone())?;
+        if seconds < 0.0 {
+            return Err(RuntimeError::new("sleep length must be non-negative"));
+        }
+        std::thread::sleep(Duration::from_secs_f64(seconds));
+        Ok(Value::None)
+    }
+
+    fn builtin_os_getcwd(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("getcwd() expects no arguments"));
+        }
+        let cwd = std::env::current_dir()
+            .map_err(|err| RuntimeError::new(format!("getcwd failed: {err}")))?;
+        Ok(Value::Str(cwd.to_string_lossy().to_string()))
+    }
+
+    fn builtin_os_listdir(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new("listdir() expects at most one argument"));
+        }
+        let path = if args.is_empty() {
+            ".".to_string()
+        } else {
+            value_to_path(&args[0])?
+        };
+        let mut names = Vec::new();
+        let entries =
+            fs::read_dir(&path).map_err(|err| RuntimeError::new(format!("listdir failed: {err}")))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| RuntimeError::new(format!("listdir failed: {err}")))?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            names.push(Value::Str(name));
+        }
+        names.sort_by(|a, b| format_value(a).cmp(&format_value(b)));
+        Ok(self.heap.alloc_list(names))
+    }
+
+    fn builtin_os_path_exists(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("path_exists() expects one argument"));
+        }
+        let path = value_to_path(&args[0])?;
+        Ok(Value::Bool(PathBuf::from(path).exists()))
+    }
+
+    fn builtin_os_path_join(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("path_join() does not accept keyword arguments"));
+        }
+        if args.is_empty() {
+            return Ok(Value::Str(".".to_string()));
+        }
+        let mut out = PathBuf::from(value_to_path(&args[0])?);
+        for part in args.iter().skip(1) {
+            out.push(value_to_path(part)?);
+        }
+        Ok(Value::Str(out.to_string_lossy().to_string()))
+    }
+
+    fn builtin_json_dumps(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("dumps() expects one argument"));
+        }
+        let text = json_serialize_value(&args[0])?;
+        Ok(Value::Str(text))
+    }
+
+    fn builtin_json_loads(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("loads() expects one argument"));
+        }
+        let text = match &args[0] {
+            Value::Str(text) => text.clone(),
+            _ => return Err(RuntimeError::new("loads() expects a string")),
+        };
+        let node = parse_json_node(&text)?;
+        Ok(json_node_to_value(node, &self.heap))
+    }
+
+    fn builtin_codecs_encode(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "encode() expects object, optional encoding, optional errors",
+            ));
+        }
+        let mut encoding = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        let mut errors = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("encoding") {
+            if encoding.is_some() {
+                return Err(RuntimeError::new("encode() got multiple values for encoding"));
+            }
+            encoding = Some(value);
+        }
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new("encode() got multiple values for errors"));
+            }
+            errors = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "encode() got an unexpected keyword argument",
+            ));
+        }
+        let source = args.remove(0);
+        let text = match source {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::new("encode() argument must be str")),
+        };
+        let encoding = normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
+        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        let encoded = encode_text_bytes(&text, &encoding, &errors)?;
+        Ok(self.heap.alloc_bytes(encoded))
+    }
+
+    fn builtin_codecs_decode(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "decode() expects object, optional encoding, optional errors",
+            ));
+        }
+        let mut encoding = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        let mut errors = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("encoding") {
+            if encoding.is_some() {
+                return Err(RuntimeError::new("decode() got multiple values for encoding"));
+            }
+            encoding = Some(value);
+        }
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new("decode() got multiple values for errors"));
+            }
+            errors = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "decode() got an unexpected keyword argument",
+            ));
+        }
+        let source = args.remove(0);
+        let bytes = bytes_like_from_value(source)?;
+        let encoding = normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
+        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        let decoded = decode_text_bytes(&bytes, &encoding, &errors)?;
+        Ok(Value::Str(decoded))
+    }
+
+    fn builtin_re_search(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_re_match_mode(args, kwargs, ReMode::Search)
+    }
+
+    fn builtin_re_match(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_re_match_mode(args, kwargs, ReMode::Match)
+    }
+
+    fn builtin_re_fullmatch(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_re_match_mode(args, kwargs, ReMode::FullMatch)
+    }
+
+    fn builtin_re_match_mode(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        mode: ReMode,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 {
+            return Err(RuntimeError::new("re function expects pattern and string"));
+        }
+        let pattern = match &args[0] {
+            Value::Str(value) => value.clone(),
+            _ => return Err(RuntimeError::new("pattern must be string")),
+        };
+        let text = match &args[1] {
+            Value::Str(value) => value.clone(),
+            _ => return Err(RuntimeError::new("string must be string")),
+        };
+        let found = match mode {
+            ReMode::Search => text.find(&pattern),
+            ReMode::Match => text.starts_with(&pattern).then_some(0),
+            ReMode::FullMatch => (text == pattern).then_some(0),
+        };
+        if let Some(start) = found {
+            let end = start + pattern.len();
+            Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Int(start as i64), Value::Int(end as i64)]))
+        } else {
+            Ok(Value::None)
+        }
+    }
+
+    fn builtin_operator_add(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, |left, right| add_values(left, right, &self.heap))
+    }
+
+    fn builtin_operator_sub(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, sub_values)
+    }
+
+    fn builtin_operator_mul(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, |left, right| mul_values(left, right, &self.heap))
+    }
+
+    fn builtin_operator_truediv(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, div_values)
+    }
+
+    fn builtin_operator_eq(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("operator.eq expects two arguments"));
+        }
+        Ok(Value::Bool(args[0] == args[1]))
+    }
+
+    fn builtin_operator_contains(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("operator.contains expects two arguments"));
+        }
+        Ok(Value::Bool(compare_in(&args[1], &args[0])?))
+    }
+
+    fn builtin_operator_getitem(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("operator.getitem expects two arguments"));
+        }
+        self.getitem_value(args[0].clone(), args[1].clone())
+    }
+
+    fn builtin_itertools_chain(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("chain() does not accept keyword arguments"));
+        }
+        let mut out = Vec::new();
+        for source in args {
+            out.extend(self.collect_iterable_values(source)?);
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_repeat(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("repeat() expects value and count"));
+        }
+        let count = value_to_int(args[1].clone())?;
+        if count < 0 {
+            return Err(RuntimeError::new("repeat count must be >= 0"));
+        }
+        let mut out = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            out.push(args[0].clone());
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_functools_reduce(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new("reduce() expects 2-3 arguments"));
+        }
+        let callable = args[0].clone();
+        let values = self.collect_iterable_values(args[1].clone())?;
+        let mut iter = values.into_iter();
+        let mut accumulator = if args.len() == 3 {
+            args[2].clone()
+        } else {
+            iter.next()
+                .ok_or_else(|| RuntimeError::new("reduce() of empty iterable with no initial value"))?
+        };
+
+        for item in iter {
+            match self.call_internal(
+                callable.clone(),
+                vec![accumulator.clone(), item],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => accumulator = value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(RuntimeError::new("reduce() callback raised"));
+                }
+            }
+        }
+        Ok(accumulator)
+    }
+
+    fn builtin_collections_counter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new("Counter() expects at most one argument"));
+        }
+        let mut entries: Vec<(Value, Value)> = Vec::new();
+        if let Some(source) = args.into_iter().next() {
+            for item in self.collect_iterable_values(source)? {
+                if let Some((_, count)) = entries.iter_mut().find(|(key, _)| *key == item) {
+                    *count = add_values(count.clone(), Value::Int(1), &self.heap)?;
+                } else {
+                    entries.push((item, Value::Int(1)));
+                }
+            }
+        }
+        Ok(self.heap.alloc_dict(entries))
+    }
+
+    fn builtin_collections_deque(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new("deque() expects at most one argument"));
+        }
+        if let Some(source) = args.into_iter().next() {
+            let values = self.collect_iterable_values(source)?;
+            Ok(self.heap.alloc_list(values))
+        } else {
+            Ok(self.heap.alloc_list(Vec::new()))
+        }
+    }
+
+    fn builtin_inspect_isfunction(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| {
+            matches!(value, Value::Function(_) | Value::BoundMethod(_))
+        })
+    }
+
+    fn builtin_inspect_isclass(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| matches!(value, Value::Class(_)))
+    }
+
+    fn builtin_inspect_ismodule(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| matches!(value, Value::Module(_)))
+    }
+
+    fn builtin_inspect_isgenerator(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| matches!(value, Value::Generator(_)))
+    }
+
+    fn builtin_types_moduletype(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("ModuleType() expects one argument"));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name.clone(),
+            _ => return Err(RuntimeError::new("module name must be string")),
+        };
+        Ok(self.alloc_module(name))
+    }
+
+    fn builtin_io_open(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new("open() expects path, optional mode, optional payload"));
+        }
+        let path = value_to_path(&args[0])?;
+        let mode = if args.len() >= 2 {
+            match &args[1] {
+                Value::Str(mode) => mode.clone(),
+                _ => return Err(RuntimeError::new("mode must be string")),
+            }
+        } else {
+            "r".to_string()
+        };
+
+        if mode.starts_with('r') {
+            if mode.contains('b') {
+                let bytes = fs::read(&path)
+                    .map_err(|err| RuntimeError::new(format!("open() read failed: {err}")))?;
+                return Ok(self.heap.alloc_bytes(bytes));
+            }
+            let text = fs::read_to_string(&path)
+                .map_err(|err| RuntimeError::new(format!("open() read failed: {err}")))?;
+            return Ok(Value::Str(text));
+        }
+
+        if !(mode.starts_with('w') || mode.starts_with('a')) {
+            return Err(RuntimeError::new("unsupported open mode"));
+        }
+        if args.len() < 3 {
+            return Err(RuntimeError::new("write mode requires payload argument"));
+        }
+
+        if mode.contains('b') {
+            let payload = value_to_bytes_payload(args[2].clone())?;
+            if mode.starts_with('a') {
+                use std::io::Write;
+                let mut file = fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&path)
+                    .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
+                file.write_all(&payload)
+                    .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
+            } else {
+                fs::write(&path, payload)
+                    .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
+            }
+            return Ok(Value::None);
+        }
+
+        let payload = match &args[2] {
+            Value::Str(text) => text.clone(),
+            other => format_value(other),
+        };
+        if mode.starts_with('a') {
+            use std::io::Write;
+            let mut file = fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&path)
+                .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
+            file.write_all(payload.as_bytes())
+                .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
+        } else {
+            fs::write(&path, payload)
+                .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_io_read_text(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("read_text() expects one argument"));
+        }
+        let path = value_to_path(&args[0])?;
+        let text = fs::read_to_string(path)
+            .map_err(|err| RuntimeError::new(format!("read_text failed: {err}")))?;
+        Ok(Value::Str(text))
+    }
+
+    fn builtin_io_write_text(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("write_text() expects path and text"));
+        }
+        let path = value_to_path(&args[0])?;
+        let text = match &args[1] {
+            Value::Str(text) => text.clone(),
+            other => format_value(other),
+        };
+        fs::write(path, text).map_err(|err| RuntimeError::new(format!("write_text failed: {err}")))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_datetime_now(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("now() expects no arguments"));
+        }
+        Ok(Value::Str(current_utc_iso()))
+    }
+
+    fn builtin_datetime_today(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("today() expects no arguments"));
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| RuntimeError::new("system time before epoch"))?;
+        let days = (now.as_secs() / 86_400) as i64;
+        let (year, month, day) = civil_from_days(days);
+        Ok(Value::Str(format!("{year:04}-{month:02}-{day:02}")))
+    }
+
+    fn getitem_value(&mut self, value: Value, index: Value) -> Result<Value, RuntimeError> {
+        match index {
+            Value::Slice { lower, upper, step } => match value {
+                Value::List(obj) => match &*obj.kind() {
+                    Object::List(values) => {
+                        let indices = slice_indices(values.len(), lower, upper, step)?;
+                        let mut result = Vec::with_capacity(indices.len());
+                        for idx in indices {
+                            result.push(values[idx].clone());
+                        }
+                        Ok(self.heap.alloc_list(result))
+                    }
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::Tuple(obj) => match &*obj.kind() {
+                    Object::Tuple(values) => {
+                        let indices = slice_indices(values.len(), lower, upper, step)?;
+                        let mut result = Vec::with_capacity(indices.len());
+                        for idx in indices {
+                            result.push(values[idx].clone());
+                        }
+                        Ok(self.heap.alloc_tuple(result))
+                    }
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::Str(value) => {
+                    let chars: Vec<char> = value.chars().collect();
+                    let indices = slice_indices(chars.len(), lower, upper, step)?;
+                    let mut result = String::new();
+                    for idx in indices {
+                        result.push(chars[idx]);
+                    }
+                    Ok(Value::Str(result))
+                }
+                Value::Bytes(obj) => match &*obj.kind() {
+                    Object::Bytes(values) => {
+                        let indices = slice_indices(values.len(), lower, upper, step)?;
+                        let mut result = Vec::with_capacity(indices.len());
+                        for idx in indices {
+                            result.push(values[idx]);
+                        }
+                        Ok(self.heap.alloc_bytes(result))
+                    }
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::ByteArray(obj) => match &*obj.kind() {
+                    Object::ByteArray(values) => {
+                        let indices = slice_indices(values.len(), lower, upper, step)?;
+                        let mut result = Vec::with_capacity(indices.len());
+                        for idx in indices {
+                            result.push(values[idx]);
+                        }
+                        Ok(self.heap.alloc_bytearray(result))
+                    }
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::MemoryView(obj) => match &*obj.kind() {
+                    Object::MemoryView(view) => match &*view.source.kind() {
+                        Object::Bytes(values) | Object::ByteArray(values) => {
+                            let indices = slice_indices(values.len(), lower, upper, step)?;
+                            let mut result = Vec::with_capacity(indices.len());
+                            for idx in indices {
+                                result.push(values[idx]);
+                            }
+                            Ok(self.heap.alloc_bytes(result))
+                        }
+                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                    },
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::Dict(_) => Err(RuntimeError::new("slicing unsupported for dict")),
+                _ => Err(RuntimeError::new("subscript unsupported type")),
+            },
+            index => match value {
+                Value::List(obj) => match &*obj.kind() {
+                    Object::List(values) => {
+                        let mut index_int = value_to_int(index)? as isize;
+                        if index_int < 0 {
+                            index_int += values.len() as isize;
+                        }
+                        if index_int < 0 || index_int as usize >= values.len() {
+                            return Err(RuntimeError::new("list index out of range"));
+                        }
+                        Ok(values[index_int as usize].clone())
+                    }
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::Tuple(obj) => match &*obj.kind() {
+                    Object::Tuple(values) => {
+                        let mut index_int = value_to_int(index)? as isize;
+                        if index_int < 0 {
+                            index_int += values.len() as isize;
+                        }
+                        if index_int < 0 || index_int as usize >= values.len() {
+                            return Err(RuntimeError::new("tuple index out of range"));
+                        }
+                        Ok(values[index_int as usize].clone())
+                    }
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::Str(value) => {
+                    let mut index_int = value_to_int(index)? as isize;
+                    let chars: Vec<char> = value.chars().collect();
+                    if index_int < 0 {
+                        index_int += chars.len() as isize;
+                    }
+                    if index_int < 0 || index_int as usize >= chars.len() {
+                        return Err(RuntimeError::new("string index out of range"));
+                    }
+                    Ok(Value::Str(chars[index_int as usize].to_string()))
+                }
+                Value::Dict(obj) => match &*obj.kind() {
+                    Object::Dict(entries) => entries
+                        .iter()
+                        .find(|(key, _)| *key == index)
+                        .map(|(_, value)| value.clone())
+                        .ok_or_else(|| RuntimeError::new("key not found")),
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::Bytes(obj) => match &*obj.kind() {
+                    Object::Bytes(values) => {
+                        let mut index_int = value_to_int(index)? as isize;
+                        if index_int < 0 {
+                            index_int += values.len() as isize;
+                        }
+                        if index_int < 0 || index_int as usize >= values.len() {
+                            return Err(RuntimeError::new("index out of range"));
+                        }
+                        Ok(Value::Int(values[index_int as usize] as i64))
+                    }
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::ByteArray(obj) => match &*obj.kind() {
+                    Object::ByteArray(values) => {
+                        let mut index_int = value_to_int(index)? as isize;
+                        if index_int < 0 {
+                            index_int += values.len() as isize;
+                        }
+                        if index_int < 0 || index_int as usize >= values.len() {
+                            return Err(RuntimeError::new("index out of range"));
+                        }
+                        Ok(Value::Int(values[index_int as usize] as i64))
+                    }
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                Value::MemoryView(obj) => match &*obj.kind() {
+                    Object::MemoryView(view) => match &*view.source.kind() {
+                        Object::Bytes(values) | Object::ByteArray(values) => {
+                            let mut index_int = value_to_int(index)? as isize;
+                            if index_int < 0 {
+                                index_int += values.len() as isize;
+                            }
+                            if index_int < 0 || index_int as usize >= values.len() {
+                                return Err(RuntimeError::new("index out of range"));
+                            }
+                            Ok(Value::Int(values[index_int as usize] as i64))
+                        }
+                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                    },
+                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                },
+                _ => Err(RuntimeError::new("subscript unsupported type")),
+            },
+        }
+    }
+
+    fn collect_iterable_values(&mut self, source: Value) -> Result<Vec<Value>, RuntimeError> {
+        let iter = self
+            .to_iterator_value(source)
+            .map_err(|_| RuntimeError::new("expected iterable"))?;
+        match iter {
+            Value::Iterator(iterator_ref) => {
+                let mut out = Vec::new();
+                while let Some(value) = self.iterator_next_value(&iterator_ref) {
+                    out.push(value);
+                }
+                Ok(out)
+            }
+            Value::Generator(generator) => {
+                let mut out = Vec::new();
+                loop {
+                    match self.generator_for_iter_next(&generator)? {
+                        GeneratorResumeOutcome::Yield(value) => out.push(value),
+                        GeneratorResumeOutcome::Complete(_) => break,
+                        GeneratorResumeOutcome::PropagatedException => {
+                            self.propagate_pending_generator_exception()?;
+                            return Err(RuntimeError::new("iteration failed"));
+                        }
+                    }
+                }
+                Ok(out)
+            }
+            _ => Err(RuntimeError::new("expected iterable")),
+        }
+    }
+
     fn random_randbelow(&mut self, upper: i64) -> Result<i64, RuntimeError> {
         if upper <= 0 {
             return Err(RuntimeError::new("empty range for randrange()"));
@@ -6313,6 +7849,26 @@ impl Vm {
             .insert("list".to_string(), Value::Builtin(BuiltinFunction::List));
         self.builtins
             .insert("tuple".to_string(), Value::Builtin(BuiltinFunction::Tuple));
+        self.builtins
+            .insert("set".to_string(), Value::Builtin(BuiltinFunction::Set));
+        self.builtins.insert(
+            "frozenset".to_string(),
+            Value::Builtin(BuiltinFunction::FrozenSet),
+        );
+        self.builtins
+            .insert("bytes".to_string(), Value::Builtin(BuiltinFunction::Bytes));
+        self.builtins.insert(
+            "bytearray".to_string(),
+            Value::Builtin(BuiltinFunction::ByteArray),
+        );
+        self.builtins.insert(
+            "memoryview".to_string(),
+            Value::Builtin(BuiltinFunction::MemoryView),
+        );
+        self.builtins.insert(
+            "complex".to_string(),
+            Value::Builtin(BuiltinFunction::Complex),
+        );
         self.builtins.insert(
             "divmod".to_string(),
             Value::Builtin(BuiltinFunction::DivMod),
@@ -6327,6 +7883,12 @@ impl Vm {
         );
         self.builtins
             .insert("id".to_string(), Value::Builtin(BuiltinFunction::Id));
+        self.builtins
+            .insert("iter".to_string(), Value::Builtin(BuiltinFunction::Iter));
+        self.builtins
+            .insert("next".to_string(), Value::Builtin(BuiltinFunction::Next));
+        self.builtins
+            .insert("type".to_string(), Value::Builtin(BuiltinFunction::Type));
         self.builtins.insert(
             "locals".to_string(),
             Value::Builtin(BuiltinFunction::Locals),
@@ -6414,11 +7976,17 @@ impl Vm {
     fn call_build_class(
         &mut self,
         mut args: Vec<Value>,
-        _kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Option<Value>, RuntimeError> {
         if args.len() < 2 {
             return Err(RuntimeError::new(
                 "__build_class__ expects at least a function and a name",
+            ));
+        }
+        let metaclass = kwargs.remove("metaclass");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "__build_class__ got an unexpected keyword argument",
             ));
         }
         let name = match args.remove(1) {
@@ -6462,6 +8030,7 @@ impl Vm {
         );
         frame.return_class = true;
         frame.class_bases = base_classes;
+        frame.class_metaclass = metaclass.filter(|value| !matches!(value, Value::None));
         self.frames.push(frame);
         Ok(None)
     }
@@ -6618,12 +8187,626 @@ fn mod_float(left: f64, right: f64) -> Result<f64, RuntimeError> {
     Ok(value)
 }
 
+fn binary_operator<F>(
+    args: Vec<Value>,
+    kwargs: HashMap<String, Value>,
+    op: F,
+) -> Result<Value, RuntimeError>
+where
+    F: FnOnce(Value, Value) -> Result<Value, RuntimeError>,
+{
+    if !kwargs.is_empty() || args.len() != 2 {
+        return Err(RuntimeError::new("operator expects two arguments"));
+    }
+    op(args[0].clone(), args[1].clone())
+}
+
+fn unary_predicate<F>(
+    args: Vec<Value>,
+    kwargs: HashMap<String, Value>,
+    predicate: F,
+) -> Result<Value, RuntimeError>
+where
+    F: FnOnce(&Value) -> bool,
+{
+    if !kwargs.is_empty() || args.len() != 1 {
+        return Err(RuntimeError::new("predicate expects one argument"));
+    }
+    Ok(Value::Bool(predicate(&args[0])))
+}
+
+fn value_to_f64(value: Value) -> Result<f64, RuntimeError> {
+    match value {
+        Value::Float(value) => Ok(value),
+        Value::Int(value) => Ok(value as f64),
+        Value::Bool(value) => Ok(if value { 1.0 } else { 0.0 }),
+        Value::Complex { real, imag } if imag == 0.0 => Ok(real),
+        Value::Str(value) => value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| RuntimeError::new("expected numeric value")),
+        _ => Err(RuntimeError::new("expected numeric value")),
+    }
+}
+
+fn value_to_path(value: &Value) -> Result<String, RuntimeError> {
+    match value {
+        Value::Str(path) => Ok(path.clone()),
+        _ => Err(RuntimeError::new("path must be string")),
+    }
+}
+
+fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
+    match value {
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("expected bytes-like payload")),
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("expected bytes-like payload")),
+        },
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => match &*view.source.kind() {
+                Object::Bytes(values) | Object::ByteArray(values) => Ok(values.clone()),
+                _ => Err(RuntimeError::new("expected bytes-like payload")),
+            },
+            _ => Err(RuntimeError::new("expected bytes-like payload")),
+        },
+        Value::Str(text) => Ok(text.into_bytes()),
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => {
+                let mut out = Vec::with_capacity(values.len());
+                for value in values {
+                    let byte = value_to_int(value.clone())?;
+                    if !(0..=255).contains(&byte) {
+                        return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                    }
+                    out.push(byte as u8);
+                }
+                Ok(out)
+            }
+            _ => Err(RuntimeError::new("expected bytes-like payload")),
+        },
+        other => Err(RuntimeError::new(format!(
+            "unsupported payload type: {}",
+            format_value(&other)
+        ))),
+    }
+}
+
+fn bytes_like_from_value(value: Value) -> Result<Vec<u8>, RuntimeError> {
+    match value {
+        Value::Str(_) => Err(RuntimeError::new("expected bytes-like value")),
+        other => value_to_bytes_payload(other),
+    }
+}
+
+fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
+    let name = match value {
+        Value::Str(name) => name.to_ascii_lowercase().replace('_', "-"),
+        _ => return Err(RuntimeError::new("encoding must be string")),
+    };
+    match name.as_str() {
+        "utf-8" | "utf8" => Ok("utf-8".to_string()),
+        "ascii" => Ok("ascii".to_string()),
+        "latin-1" | "latin1" => Ok("latin-1".to_string()),
+        _ => Err(RuntimeError::new("unsupported encoding")),
+    }
+}
+
+fn normalize_codec_errors(value: Value) -> Result<String, RuntimeError> {
+    let mode = match value {
+        Value::Str(mode) => mode.to_ascii_lowercase(),
+        _ => return Err(RuntimeError::new("errors must be string")),
+    };
+    match mode.as_str() {
+        "strict" | "ignore" | "replace" => Ok(mode),
+        _ => Err(RuntimeError::new("unsupported error handler")),
+    }
+}
+
+fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>, RuntimeError> {
+    match encoding {
+        "utf-8" => Ok(text.as_bytes().to_vec()),
+        "ascii" => {
+            let mut out = Vec::new();
+            for ch in text.chars() {
+                let code = ch as u32;
+                if code <= 0x7F {
+                    out.push(code as u8);
+                    continue;
+                }
+                match errors {
+                    "strict" => return Err(RuntimeError::new("ascii codec can't encode character")),
+                    "ignore" => {}
+                    "replace" => out.push(b'?'),
+                    _ => return Err(RuntimeError::new("unsupported error handler")),
+                }
+            }
+            Ok(out)
+        }
+        "latin-1" => {
+            let mut out = Vec::new();
+            for ch in text.chars() {
+                let code = ch as u32;
+                if code <= 0xFF {
+                    out.push(code as u8);
+                    continue;
+                }
+                match errors {
+                    "strict" => {
+                        return Err(RuntimeError::new("latin-1 codec can't encode character"));
+                    }
+                    "ignore" => {}
+                    "replace" => out.push(b'?'),
+                    _ => return Err(RuntimeError::new("unsupported error handler")),
+                }
+            }
+            Ok(out)
+        }
+        _ => Err(RuntimeError::new("unsupported encoding")),
+    }
+}
+
+fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<String, RuntimeError> {
+    match encoding {
+        "utf-8" => decode_utf8_bytes(bytes, errors),
+        "ascii" => {
+            let mut out = String::new();
+            for byte in bytes {
+                if *byte <= 0x7F {
+                    out.push(*byte as char);
+                    continue;
+                }
+                match errors {
+                    "strict" => return Err(RuntimeError::new("ascii codec can't decode byte")),
+                    "ignore" => {}
+                    "replace" => out.push('\u{FFFD}'),
+                    _ => return Err(RuntimeError::new("unsupported error handler")),
+                }
+            }
+            Ok(out)
+        }
+        "latin-1" => {
+            let mut out = String::with_capacity(bytes.len());
+            for byte in bytes {
+                out.push(*byte as char);
+            }
+            Ok(out)
+        }
+        _ => Err(RuntimeError::new("unsupported encoding")),
+    }
+}
+
+fn decode_utf8_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError> {
+    if errors == "strict" {
+        return std::str::from_utf8(bytes)
+            .map(|value| value.to_string())
+            .map_err(|_| RuntimeError::new("utf-8 codec can't decode bytes"));
+    }
+    let mut out = String::new();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        match std::str::from_utf8(&bytes[pos..]) {
+            Ok(rest) => {
+                out.push_str(rest);
+                break;
+            }
+            Err(err) => {
+                let valid = err.valid_up_to();
+                if valid > 0 {
+                    let fragment = std::str::from_utf8(&bytes[pos..pos + valid]).map_err(|_| {
+                        RuntimeError::new("utf-8 codec can't decode bytes")
+                    })?;
+                    out.push_str(fragment);
+                    pos += valid;
+                }
+
+                let invalid_len = err.error_len();
+                match errors {
+                    "ignore" => {
+                        if let Some(len) = invalid_len {
+                            pos += len;
+                        } else {
+                            break;
+                        }
+                    }
+                    "replace" => {
+                        out.push('\u{FFFD}');
+                        if let Some(len) = invalid_len {
+                            pos += len;
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => return Err(RuntimeError::new("unsupported error handler")),
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn json_escape_string(text: &str) -> String {
+    let mut out = String::new();
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn json_serialize_value(value: &Value) -> Result<String, RuntimeError> {
+    match value {
+        Value::None => Ok("null".to_string()),
+        Value::Bool(value) => Ok(if *value {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        }),
+        Value::Int(value) => Ok(value.to_string()),
+        Value::Float(value) => {
+            if !value.is_finite() {
+                return Err(RuntimeError::new("json cannot encode NaN or Infinity"));
+            }
+            Ok(value.to_string())
+        }
+        Value::Str(value) => Ok(json_escape_string(value)),
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => {
+                let mut parts = Vec::with_capacity(values.len());
+                for value in values {
+                    parts.push(json_serialize_value(value)?);
+                }
+                Ok(format!("[{}]", parts.join(",")))
+            }
+            _ => Err(RuntimeError::new("json unsupported type")),
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => {
+                let mut parts = Vec::with_capacity(values.len());
+                for value in values {
+                    parts.push(json_serialize_value(value)?);
+                }
+                Ok(format!("[{}]", parts.join(",")))
+            }
+            _ => Err(RuntimeError::new("json unsupported type")),
+        },
+        Value::Set(obj) => match &*obj.kind() {
+            Object::Set(values) => {
+                let mut parts = Vec::with_capacity(values.len());
+                for value in values {
+                    parts.push(json_serialize_value(value)?);
+                }
+                Ok(format!("[{}]", parts.join(",")))
+            }
+            _ => Err(RuntimeError::new("json unsupported type")),
+        },
+        Value::FrozenSet(obj) => match &*obj.kind() {
+            Object::FrozenSet(values) => {
+                let mut parts = Vec::with_capacity(values.len());
+                for value in values {
+                    parts.push(json_serialize_value(value)?);
+                }
+                Ok(format!("[{}]", parts.join(",")))
+            }
+            _ => Err(RuntimeError::new("json unsupported type")),
+        },
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(entries) => {
+                let mut parts = Vec::with_capacity(entries.len());
+                for (key, value) in entries {
+                    let key = match key {
+                        Value::Str(text) => text,
+                        _ => return Err(RuntimeError::new("json object keys must be strings")),
+                    };
+                    parts.push(format!(
+                        "{}:{}",
+                        json_escape_string(key),
+                        json_serialize_value(value)?
+                    ));
+                }
+                Ok(format!("{{{}}}", parts.join(",")))
+            }
+            _ => Err(RuntimeError::new("json unsupported type")),
+        },
+        _ => Err(RuntimeError::new("json unsupported type")),
+    }
+}
+
+#[derive(Debug)]
+enum JsonNode {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Array(Vec<JsonNode>),
+    Object(Vec<(String, JsonNode)>),
+}
+
+struct JsonParser<'a> {
+    source: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> JsonParser<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            source: source.as_bytes(),
+            pos: 0,
+        }
+    }
+
+    fn parse(mut self) -> Result<JsonNode, RuntimeError> {
+        self.skip_ws();
+        let value = self.parse_value()?;
+        self.skip_ws();
+        if self.pos != self.source.len() {
+            return Err(RuntimeError::new("invalid JSON trailing data"));
+        }
+        Ok(value)
+    }
+
+    fn parse_value(&mut self) -> Result<JsonNode, RuntimeError> {
+        self.skip_ws();
+        let byte = self
+            .peek()
+            .ok_or_else(|| RuntimeError::new("unexpected end of JSON"))?;
+        match byte {
+            b'n' => self.parse_literal(b"null", JsonNode::Null),
+            b't' => self.parse_literal(b"true", JsonNode::Bool(true)),
+            b'f' => self.parse_literal(b"false", JsonNode::Bool(false)),
+            b'"' => self.parse_string().map(JsonNode::String),
+            b'[' => self.parse_array(),
+            b'{' => self.parse_object(),
+            b'-' | b'0'..=b'9' => self.parse_number(),
+            _ => Err(RuntimeError::new("invalid JSON value")),
+        }
+    }
+
+    fn parse_literal(&mut self, text: &[u8], node: JsonNode) -> Result<JsonNode, RuntimeError> {
+        if self.source.get(self.pos..self.pos + text.len()) == Some(text) {
+            self.pos += text.len();
+            Ok(node)
+        } else {
+            Err(RuntimeError::new("invalid JSON literal"))
+        }
+    }
+
+    fn parse_string(&mut self) -> Result<String, RuntimeError> {
+        self.expect(b'"')?;
+        let mut out = String::new();
+        while let Some(byte) = self.next() {
+            match byte {
+                b'"' => return Ok(out),
+                b'\\' => {
+                    let esc = self
+                        .next()
+                        .ok_or_else(|| RuntimeError::new("invalid JSON escape"))?;
+                    match esc {
+                        b'"' => out.push('"'),
+                        b'\\' => out.push('\\'),
+                        b'/' => out.push('/'),
+                        b'b' => out.push('\u{0008}'),
+                        b'f' => out.push('\u{000C}'),
+                        b'n' => out.push('\n'),
+                        b'r' => out.push('\r'),
+                        b't' => out.push('\t'),
+                        b'u' => {
+                            let code = self.parse_hex_u16()?;
+                            let ch = char::from_u32(code as u32)
+                                .ok_or_else(|| RuntimeError::new("invalid unicode escape"))?;
+                            out.push(ch);
+                        }
+                        _ => return Err(RuntimeError::new("invalid JSON escape")),
+                    }
+                }
+                b => out.push(b as char),
+            }
+        }
+        Err(RuntimeError::new("unterminated JSON string"))
+    }
+
+    fn parse_hex_u16(&mut self) -> Result<u16, RuntimeError> {
+        let mut value: u16 = 0;
+        for _ in 0..4 {
+            let byte = self
+                .next()
+                .ok_or_else(|| RuntimeError::new("invalid unicode escape"))?;
+            value <<= 4;
+            value |= match byte {
+                b'0'..=b'9' => (byte - b'0') as u16,
+                b'a'..=b'f' => (byte - b'a' + 10) as u16,
+                b'A'..=b'F' => (byte - b'A' + 10) as u16,
+                _ => return Err(RuntimeError::new("invalid unicode escape")),
+            };
+        }
+        Ok(value)
+    }
+
+    fn parse_array(&mut self) -> Result<JsonNode, RuntimeError> {
+        self.expect(b'[')?;
+        self.skip_ws();
+        let mut values = Vec::new();
+        if self.peek() == Some(b']') {
+            self.pos += 1;
+            return Ok(JsonNode::Array(values));
+        }
+        loop {
+            values.push(self.parse_value()?);
+            self.skip_ws();
+            match self.next() {
+                Some(b',') => {
+                    self.skip_ws();
+                }
+                Some(b']') => break,
+                _ => return Err(RuntimeError::new("invalid JSON array")),
+            }
+        }
+        Ok(JsonNode::Array(values))
+    }
+
+    fn parse_object(&mut self) -> Result<JsonNode, RuntimeError> {
+        self.expect(b'{')?;
+        self.skip_ws();
+        let mut values = Vec::new();
+        if self.peek() == Some(b'}') {
+            self.pos += 1;
+            return Ok(JsonNode::Object(values));
+        }
+        loop {
+            let key = self.parse_string()?;
+            self.skip_ws();
+            self.expect(b':')?;
+            self.skip_ws();
+            let value = self.parse_value()?;
+            values.push((key, value));
+            self.skip_ws();
+            match self.next() {
+                Some(b',') => {
+                    self.skip_ws();
+                }
+                Some(b'}') => break,
+                _ => return Err(RuntimeError::new("invalid JSON object")),
+            }
+        }
+        Ok(JsonNode::Object(values))
+    }
+
+    fn parse_number(&mut self) -> Result<JsonNode, RuntimeError> {
+        let start = self.pos;
+        if self.peek() == Some(b'-') {
+            self.pos += 1;
+        }
+        while matches!(self.peek(), Some(b'0'..=b'9')) {
+            self.pos += 1;
+        }
+        if self.peek() == Some(b'.') {
+            self.pos += 1;
+            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                self.pos += 1;
+            }
+        }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            self.pos += 1;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.pos += 1;
+            }
+            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                self.pos += 1;
+            }
+        }
+        let text = std::str::from_utf8(&self.source[start..self.pos])
+            .map_err(|_| RuntimeError::new("invalid JSON number"))?;
+        if text.contains('.') || text.contains('e') || text.contains('E') {
+            let value = text
+                .parse::<f64>()
+                .map_err(|_| RuntimeError::new("invalid JSON number"))?;
+            Ok(JsonNode::Float(value))
+        } else {
+            let value = text
+                .parse::<i64>()
+                .map_err(|_| RuntimeError::new("invalid JSON number"))?;
+            Ok(JsonNode::Int(value))
+        }
+    }
+
+    fn skip_ws(&mut self) {
+        while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+            self.pos += 1;
+        }
+    }
+
+    fn expect(&mut self, byte: u8) -> Result<(), RuntimeError> {
+        match self.next() {
+            Some(found) if found == byte => Ok(()),
+            _ => Err(RuntimeError::new("invalid JSON syntax")),
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.source.get(self.pos).copied()
+    }
+
+    fn next(&mut self) -> Option<u8> {
+        let value = self.peek()?;
+        self.pos += 1;
+        Some(value)
+    }
+}
+
+fn parse_json_node(source: &str) -> Result<JsonNode, RuntimeError> {
+    JsonParser::new(source).parse()
+}
+
+fn json_node_to_value(node: JsonNode, heap: &Heap) -> Value {
+    match node {
+        JsonNode::Null => Value::None,
+        JsonNode::Bool(value) => Value::Bool(value),
+        JsonNode::Int(value) => Value::Int(value),
+        JsonNode::Float(value) => Value::Float(value),
+        JsonNode::String(value) => Value::Str(value),
+        JsonNode::Array(values) => heap.alloc_list(
+            values
+                .into_iter()
+                .map(|value| json_node_to_value(value, heap))
+                .collect(),
+        ),
+        JsonNode::Object(entries) => heap.alloc_dict(
+            entries
+                .into_iter()
+                .map(|(key, value)| (Value::Str(key), json_node_to_value(value, heap)))
+                .collect(),
+        ),
+    }
+}
+
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year as i32, m as u32, d as u32)
+}
+
+fn current_utc_iso() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0));
+    let total_secs = now.as_secs() as i64;
+    let days = total_secs.div_euclid(86_400);
+    let sec_of_day = total_secs.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let hour = sec_of_day / 3600;
+    let minute = (sec_of_day % 3600) / 60;
+    let second = sec_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
 fn is_truthy(value: &Value) -> bool {
     match value {
         Value::None => false,
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
         Value::Float(value) => *value != 0.0,
+        Value::Complex { real, imag } => *real != 0.0 || *imag != 0.0,
         Value::Str(value) => !value.is_empty(),
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => !values.is_empty(),
@@ -6635,6 +8818,29 @@ fn is_truthy(value: &Value) -> bool {
         },
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Set(obj) => match &*obj.kind() {
+            Object::Set(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::FrozenSet(obj) => match &*obj.kind() {
+            Object::FrozenSet(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => match &*view.source.kind() {
+                Object::Bytes(values) | Object::ByteArray(values) => !values.is_empty(),
+                _ => true,
+            },
             _ => true,
         },
         Value::Cell(obj) => match &*obj.kind() {
@@ -7147,6 +9353,72 @@ fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
     out
 }
 
+fn slot_names_from_value(value: Option<Value>) -> Option<Vec<String>> {
+    let value = value?;
+    let mut slots = Vec::new();
+    match value {
+        Value::Str(name) => slots.push(name),
+        Value::Tuple(obj) => {
+            if let Object::Tuple(values) = &*obj.kind() {
+                for value in values {
+                    if let Value::Str(name) = value {
+                        slots.push(name.clone());
+                    } else {
+                        return None;
+                    }
+                }
+            } else {
+                return None;
+            }
+        }
+        Value::List(obj) => {
+            if let Object::List(values) = &*obj.kind() {
+                for value in values {
+                    if let Value::Str(name) = value {
+                        slots.push(name.clone());
+                    } else {
+                        return None;
+                    }
+                }
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    Some(slots)
+}
+
+fn collect_slot_names(class: &ObjRef) -> Option<Vec<String>> {
+    let mut has_slots = false;
+    let mut names = Vec::new();
+    for candidate in class_attr_walk(class) {
+        if let Object::Class(class_data) = &*candidate.kind() {
+            if let Some(slots) = &class_data.slots {
+                has_slots = true;
+                for slot in slots {
+                    if !names.iter().any(|existing| existing == slot) {
+                        names.push(slot.clone());
+                    }
+                }
+            }
+        }
+    }
+    if has_slots { Some(names) } else { None }
+}
+
+fn class_name_for_instance(instance: &ObjRef) -> Option<String> {
+    let kind = instance.kind();
+    let class = match &*kind {
+        Object::Instance(instance_data) => instance_data.class.clone(),
+        _ => return None,
+    };
+    match &*class.kind() {
+        Object::Class(class_data) => Some(class_data.name.clone()),
+        _ => None,
+    }
+}
+
 fn classify_runtime_error(message: &str) -> &'static str {
     if message.trim() == "StopIteration" {
         return "StopIteration";
@@ -7356,9 +9628,50 @@ fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeError> {
             Object::Dict(entries) => Ok(entries.iter().any(|(key, _)| key == left)),
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
+        Value::Set(obj) => match &*obj.kind() {
+            Object::Set(values) => Ok(values.iter().any(|value| value == left)),
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
+        },
+        Value::FrozenSet(obj) => match &*obj.kind() {
+            Object::FrozenSet(values) => Ok(values.iter().any(|value| value == left)),
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
+        },
         Value::Str(haystack) => match left {
             Value::Str(needle) => Ok(haystack.contains(needle)),
             _ => Err(RuntimeError::new("in expects string on left")),
+        },
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => {
+                let needle = value_to_int(left.clone())?;
+                if !(0..=255).contains(&needle) {
+                    return Ok(false);
+                }
+                Ok(values.iter().any(|value| *value as i64 == needle))
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => {
+                let needle = value_to_int(left.clone())?;
+                if !(0..=255).contains(&needle) {
+                    return Ok(false);
+                }
+                Ok(values.iter().any(|value| *value as i64 == needle))
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
+        },
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => match &*view.source.kind() {
+                Object::Bytes(values) | Object::ByteArray(values) => {
+                    let needle = value_to_int(left.clone())?;
+                    if !(0..=255).contains(&needle) {
+                        return Ok(false);
+                    }
+                    Ok(values.iter().any(|value| *value as i64 == needle))
+                }
+                _ => Err(RuntimeError::new("unsupported operand type for in")),
+            },
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         _ => Err(RuntimeError::new("unsupported operand type for in")),
     }

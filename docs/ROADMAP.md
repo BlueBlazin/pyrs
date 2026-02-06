@@ -69,10 +69,10 @@ Release-complete target: Milestone 16; ecosystem-complete target (including nati
 4. Milestone 3: Closures + frame metadata + traceback foundations. (complete)
 5. Milestone 4: Generator and iteration parity (complete, P0).
 6. Milestone 5: Opcode execution hardening + `.pyc` read/write parity for supported bytecode paths (complete, P0).
-7. Milestone 6: Import system parity (`importlib`/`ModuleSpec`/hooks/packages, P0).
+7. Milestone 6: Import system parity (`importlib`/`ModuleSpec`/hooks/packages, P0). (complete)
 8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0). (complete)
 9. Milestone 8: Runtime data model semantics (descriptor protocol, attribute model hooks, MRO/super, exception chaining, P0). (complete)
-10. Milestone 9: Core runtime types + builtins + stdlib bootstrap required for real apps (P0/P1).
+10. Milestone 9: Core runtime types + builtins + stdlib bootstrap required for real apps (P0/P1). (complete)
 11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1).
 12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1).
 13. Milestone 12: Performance and observability baseline (P2).
@@ -106,8 +106,8 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Type annotations (parse + `__annotations__` on modules/classes/functions; eager evaluation only).
 - [x] Exception chaining (`__cause__`, `__context__`, suppression metadata) for explicit/implicit raises.
 - [~] Descriptor protocol + attribute lookup parity (descriptor hooks plus `__getattr__`/`__setattr__`/`__delattr__` implemented; full `__getattribute__`/metaclass parity pending).
-- [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.
-- [ ] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
+- [~] Core stdlib: `sys`, `types`, `inspect`, `io`.
+- [~] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`.
 - [ ] HPy extension loading/execution path.
 - [ ] Cross-platform release qualification matrix (Linux/macOS/Windows) with parity gates.
 
@@ -192,8 +192,8 @@ DoD:
 - Exception chaining/context semantics are implemented for `raise ... from ...` and implicit chaining (`__cause__`, `__context__`, `__suppress_context__`).
 Status: complete
 Notes:
-- Full metaclass behavior and `__slots__` remain tracked under Milestone 9.
-- Core builtin type parity (`bytes`/`set`/`float`/unicode codecs families) is moved to Milestone 9 to keep runtime-type and stdlib bootstrap integration in one gate.
+- Full metaclass precedence/selection semantics and custom metaclass class-object call edge cases are tracked in Milestone 10+.
+- Core builtin type parity (`bytes`/`set`/`float`/unicode codecs foundations) is delivered in Milestone 9.
 
 ### Milestone 9 — Builtins + Stdlib Bootstrap (P0/P1)
 DoD:
@@ -201,11 +201,14 @@ DoD:
 - Builtins required by stdlib and common apps are present with correct semantics.
 - Foundational stdlib modules are usable: `sys`, `types`, `inspect`, `io`, `os`, `pathlib`, `time`, `datetime`, `collections`, `math`, `re`, `json`, `functools`, `itertools`, `operator`.
 - Pure-Python package installation/execution works for representative no-C-extension packages.
-Status: in progress
+Status: complete
 Progress:
 - Float foundations landed end-to-end: parser/AST/compiler/VM/runtime support float literals, `/`, `//`, `%`, `**`, unary `+/-`, mixed int-bool-float comparisons, and `float()` builtin conversion paths.
 - CPython marshal/translation now supports float constants (`g` binary float marshal tag) for `.pyc` decode/execute flows.
 - Builtin `random` module foundations landed (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`) with deterministic seed behavior and regression tests.
+- Runtime types and builtins landed for `set`/`frozenset`, `bytes`/`bytearray`/`memoryview`, `complex`, `iter`, `next`, and dynamic `type(...)` class creation with `__slots__` enforcement.
+- Class header metaclass keyword path landed (`class C(metaclass=...)`) with VM frame plumbing and `__build_class__` metaclass kwargs handling.
+- `codecs` stdlib foundation landed (`encode`/`decode` for `utf-8`/`ascii`/`latin-1` with `strict`/`ignore`/`replace` error modes).
 
 ### Milestone 10 — Async and Concurrency Semantics (P1)
 DoD:
@@ -253,8 +256,8 @@ DoD:
 - Production playbook exists for incident triage, rollback strategy, and reproducible artifact verification.
 
 ## Immediate next steps
-- Continue Milestone 9 work: remaining core runtime type coverage (`set`/`frozenset`, `bytes`/`bytearray`/`memoryview`, `complex`, unicode/codecs) and remaining data-model gaps (`metaclass`, `__slots__`).
-- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 9-10.
+- Start Milestone 10 work: full coroutine runtime semantics (`async`/`await`, async iterators/generators, cancellation/finalization behavior) and event-loop integration foundations.
+- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 10-11.
 - Continue broad CPython parity tests while landing language/runtime milestones.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 

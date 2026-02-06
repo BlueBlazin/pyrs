@@ -67,11 +67,13 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             name,
             type_params,
             bases,
+            metaclass,
             body,
         } => StmtKind::ClassDef {
             name: name.clone(),
             type_params: type_params.clone(),
             bases: bases.iter().map(strip_expr).collect(),
+            metaclass: metaclass.as_ref().map(strip_expr),
             body: body.iter().map(strip_stmt).collect(),
         },
         StmtKind::Decorated { decorators, stmt } => StmtKind::Decorated {

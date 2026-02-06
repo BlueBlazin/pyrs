@@ -58,6 +58,7 @@ pub struct ClassObject {
     pub bases: Vec<ObjRef>,
     pub mro: Vec<ObjRef>,
     pub attrs: HashMap<String, Value>,
+    pub slots: Option<Vec<String>>,
 }
 
 impl ClassObject {
@@ -67,6 +68,7 @@ impl ClassObject {
             bases,
             mro: Vec::new(),
             attrs: HashMap::new(),
+            slots: None,
         }
     }
 }
@@ -192,6 +194,11 @@ pub enum Object {
     List(Vec<Value>),
     Tuple(Vec<Value>),
     Dict(Vec<(Value, Value)>),
+    Set(Vec<Value>),
+    FrozenSet(Vec<Value>),
+    Bytes(Vec<u8>),
+    ByteArray(Vec<u8>),
+    MemoryView(MemoryViewObject),
     Iterator(IteratorObject),
     Generator(GeneratorObject),
     Module(ModuleObject),
@@ -227,6 +234,15 @@ pub enum IteratorKind {
     Tuple(ObjRef),
     Str(String),
     Dict(ObjRef),
+    Set(ObjRef),
+    Bytes(ObjRef),
+    ByteArray(ObjRef),
+    MemoryView(ObjRef),
+}
+
+#[derive(Debug)]
+pub struct MemoryViewObject {
+    pub source: ObjRef,
 }
 
 #[derive(Debug)]
@@ -242,6 +258,7 @@ enum ImmediateKey {
     Bool(bool),
     Int(i64),
     Float(u64),
+    Complex(u64, u64),
     Str(String),
     Code(u64),
     Exception(String, Option<String>),
@@ -285,6 +302,26 @@ impl Heap {
 
     pub fn alloc_dict(&self, values: Vec<(Value, Value)>) -> Value {
         Value::Dict(self.alloc(Object::Dict(values)))
+    }
+
+    pub fn alloc_set(&self, values: Vec<Value>) -> Value {
+        Value::Set(self.alloc(Object::Set(values)))
+    }
+
+    pub fn alloc_frozenset(&self, values: Vec<Value>) -> Value {
+        Value::FrozenSet(self.alloc(Object::FrozenSet(values)))
+    }
+
+    pub fn alloc_bytes(&self, values: Vec<u8>) -> Value {
+        Value::Bytes(self.alloc(Object::Bytes(values)))
+    }
+
+    pub fn alloc_bytearray(&self, values: Vec<u8>) -> Value {
+        Value::ByteArray(self.alloc(Object::ByteArray(values)))
+    }
+
+    pub fn alloc_memoryview(&self, source: ObjRef) -> Value {
+        Value::MemoryView(self.alloc(Object::MemoryView(MemoryViewObject { source })))
     }
 
     pub fn alloc_module(&self, module: ModuleObject) -> Value {
@@ -337,10 +374,18 @@ impl Heap {
             Value::Bool(value) => self.id_for_immediate(ImmediateKey::Bool(*value)),
             Value::Int(value) => self.id_for_immediate(ImmediateKey::Int(*value)),
             Value::Float(value) => self.id_for_immediate(ImmediateKey::Float(value.to_bits())),
+            Value::Complex { real, imag } => {
+                self.id_for_immediate(ImmediateKey::Complex(real.to_bits(), imag.to_bits()))
+            }
             Value::Str(value) => self.id_for_immediate(ImmediateKey::Str(value.clone())),
             Value::List(obj)
             | Value::Tuple(obj)
             | Value::Dict(obj)
+            | Value::Set(obj)
+            | Value::FrozenSet(obj)
+            | Value::Bytes(obj)
+            | Value::ByteArray(obj)
+            | Value::MemoryView(obj)
             | Value::Iterator(obj)
             | Value::Generator(obj)
             | Value::Module(obj)
@@ -420,6 +465,11 @@ fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         Value::List(obj)
         | Value::Tuple(obj)
         | Value::Dict(obj)
+        | Value::Set(obj)
+        | Value::FrozenSet(obj)
+        | Value::Bytes(obj)
+        | Value::ByteArray(obj)
+        | Value::MemoryView(obj)
         | Value::Iterator(obj)
         | Value::Generator(obj)
         | Value::Module(obj)
@@ -453,10 +503,23 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 }
             }
         }
-        Object::Iterator(iterator) => match &iterator.kind {
-            IteratorKind::List(list) | IteratorKind::Tuple(list) | IteratorKind::Dict(list) => {
-                stack.push(list.clone());
+        Object::Set(values) | Object::FrozenSet(values) => {
+            for value in values {
+                trace_value(value, stack, marked);
             }
+        }
+        Object::Bytes(_) | Object::ByteArray(_) => {}
+        Object::MemoryView(view) => {
+            stack.push(view.source.clone());
+        }
+        Object::Iterator(iterator) => match &iterator.kind {
+            IteratorKind::List(list)
+            | IteratorKind::Tuple(list)
+            | IteratorKind::Dict(list)
+            | IteratorKind::Set(list)
+            | IteratorKind::Bytes(list)
+            | IteratorKind::ByteArray(list)
+            | IteratorKind::MemoryView(list) => stack.push(list.clone()),
             IteratorKind::Str(_) => {}
         },
         Object::Generator(_) => {}
@@ -526,8 +589,21 @@ fn clear_object_refs(obj: &ObjRef) {
         Object::Dict(entries) => {
             entries.clear();
         }
+        Object::Set(values) | Object::FrozenSet(values) => {
+            values.clear();
+        }
+        Object::Bytes(values) | Object::ByteArray(values) => {
+            values.clear();
+        }
+        Object::MemoryView(_) => {}
         Object::Iterator(iterator) => match &mut iterator.kind {
-            IteratorKind::List(_) | IteratorKind::Tuple(_) | IteratorKind::Dict(_) => {
+            IteratorKind::List(_)
+            | IteratorKind::Tuple(_)
+            | IteratorKind::Dict(_)
+            | IteratorKind::Set(_)
+            | IteratorKind::Bytes(_)
+            | IteratorKind::ByteArray(_)
+            | IteratorKind::MemoryView(_) => {
                 iterator.kind = IteratorKind::Str(String::new());
                 iterator.index = 0;
             }
@@ -548,6 +624,7 @@ fn clear_object_refs(obj: &ObjRef) {
             class.bases.clear();
             class.mro.clear();
             class.attrs.clear();
+            class.slots = None;
         }
         Object::Instance(instance) => {
             instance.attrs.clear();
@@ -573,10 +650,16 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
+    Complex { real: f64, imag: f64 },
     Str(String),
     List(ObjRef),
     Tuple(ObjRef),
     Dict(ObjRef),
+    Set(ObjRef),
+    FrozenSet(ObjRef),
+    Bytes(ObjRef),
+    ByteArray(ObjRef),
+    MemoryView(ObjRef),
     Iterator(ObjRef),
     Generator(ObjRef),
     Module(ObjRef),
@@ -663,6 +746,16 @@ impl PartialEq for Value {
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::Float(a), Value::Int(b)) => *a == (*b as f64),
             (Value::Float(a), Value::Bool(b)) => *a == (*b as i64 as f64),
+            (
+                Value::Complex {
+                    real: a_real,
+                    imag: a_imag,
+                },
+                Value::Complex {
+                    real: b_real,
+                    imag: b_imag,
+                },
+            ) => a_real.to_bits() == b_real.to_bits() && a_imag.to_bits() == b_imag.to_bits(),
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::List(a), Value::List(b)) => match (&*a.kind(), &*b.kind()) {
                 (Object::List(left), Object::List(right)) => left == right,
@@ -676,6 +769,20 @@ impl PartialEq for Value {
                 (Object::Dict(left), Object::Dict(right)) => left == right,
                 _ => false,
             },
+            (Value::Set(a), Value::Set(b)) | (Value::FrozenSet(a), Value::FrozenSet(b)) => {
+                match (&*a.kind(), &*b.kind()) {
+                    (Object::Set(left), Object::Set(right))
+                    | (Object::FrozenSet(left), Object::FrozenSet(right)) => left == right,
+                    _ => false,
+                }
+            }
+            (Value::Bytes(a), Value::Bytes(b))
+            | (Value::ByteArray(a), Value::ByteArray(b)) => match (&*a.kind(), &*b.kind()) {
+                (Object::Bytes(left), Object::Bytes(right))
+                | (Object::ByteArray(left), Object::ByteArray(right)) => left == right,
+                _ => false,
+            },
+            (Value::MemoryView(a), Value::MemoryView(b)) => a.id() == b.id(),
             (Value::Iterator(a), Value::Iterator(b)) => a.id() == b.id(),
             (Value::Generator(a), Value::Generator(b)) => a.id() == b.id(),
             (Value::Module(a), Value::Module(b))
@@ -727,9 +834,18 @@ pub enum BuiltinFunction {
     Pow,
     List,
     Tuple,
+    Set,
+    FrozenSet,
+    Bytes,
+    ByteArray,
+    MemoryView,
+    Complex,
     DivMod,
     Sorted,
     Enumerate,
+    Iter,
+    Next,
+    Type,
     GetAttr,
     SetAttr,
     DelAttr,
@@ -749,6 +865,48 @@ pub enum BuiltinFunction {
     RandomGetRandBits,
     RandomChoice,
     RandomShuffle,
+    MathSqrt,
+    MathFloor,
+    MathCeil,
+    MathIsFinite,
+    MathIsInf,
+    MathIsNaN,
+    TimeTime,
+    TimeMonotonic,
+    TimeSleep,
+    OsGetCwd,
+    OsListDir,
+    OsPathExists,
+    OsPathJoin,
+    JsonDumps,
+    JsonLoads,
+    CodecsEncode,
+    CodecsDecode,
+    ReSearch,
+    ReMatch,
+    ReFullMatch,
+    OperatorAdd,
+    OperatorSub,
+    OperatorMul,
+    OperatorTrueDiv,
+    OperatorEq,
+    OperatorContains,
+    OperatorGetItem,
+    ItertoolsChain,
+    ItertoolsRepeat,
+    FunctoolsReduce,
+    CollectionsCounter,
+    CollectionsDeque,
+    InspectIsFunction,
+    InspectIsClass,
+    InspectIsModule,
+    InspectIsGenerator,
+    TypesModuleType,
+    IoOpen,
+    IoReadText,
+    IoWriteText,
+    DateTimeNow,
+    DateToday,
 }
 
 impl BuiltinFunction {
@@ -778,6 +936,31 @@ impl BuiltinFunction {
                     },
                     Value::Dict(obj) => match &*obj.kind() {
                         Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::Set(obj) => match &*obj.kind() {
+                        Object::Set(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::FrozenSet(obj) => match &*obj.kind() {
+                        Object::FrozenSet(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::Bytes(obj) => match &*obj.kind() {
+                        Object::Bytes(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::ByteArray(obj) => match &*obj.kind() {
+                        Object::ByteArray(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::MemoryView(obj) => match &*obj.kind() {
+                        Object::MemoryView(view) => match &*view.source.kind() {
+                            Object::Bytes(values) | Object::ByteArray(values) => {
+                                Ok(Value::Int(values.len() as i64))
+                            }
+                            _ => Err(RuntimeError::new("len() unsupported type")),
+                        },
                         _ => Err(RuntimeError::new("len() unsupported type")),
                     },
                     _ => Err(RuntimeError::new("len() unsupported type")),
@@ -972,6 +1155,35 @@ impl BuiltinFunction {
                     },
                     Value::Str(value) => Ok(heap
                         .alloc_list(value.chars().map(|ch| Value::Str(ch.to_string())).collect())),
+                    Value::Set(obj) => match &*obj.kind() {
+                        Object::Set(values) => Ok(heap.alloc_list(values.clone())),
+                        _ => Err(RuntimeError::new("list() unsupported type")),
+                    },
+                    Value::FrozenSet(obj) => match &*obj.kind() {
+                        Object::FrozenSet(values) => Ok(heap.alloc_list(values.clone())),
+                        _ => Err(RuntimeError::new("list() unsupported type")),
+                    },
+                    Value::Bytes(obj) => match &*obj.kind() {
+                        Object::Bytes(values) => Ok(heap.alloc_list(
+                            values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                        )),
+                        _ => Err(RuntimeError::new("list() unsupported type")),
+                    },
+                    Value::ByteArray(obj) => match &*obj.kind() {
+                        Object::ByteArray(values) => Ok(heap.alloc_list(
+                            values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                        )),
+                        _ => Err(RuntimeError::new("list() unsupported type")),
+                    },
+                    Value::MemoryView(obj) => match &*obj.kind() {
+                        Object::MemoryView(view) => match &*view.source.kind() {
+                            Object::Bytes(values) | Object::ByteArray(values) => Ok(heap.alloc_list(
+                                values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                            )),
+                            _ => Err(RuntimeError::new("list() unsupported type")),
+                        },
+                        _ => Err(RuntimeError::new("list() unsupported type")),
+                    },
                     _ => Err(RuntimeError::new("list() unsupported type")),
                 }
             }
@@ -993,8 +1205,179 @@ impl BuiltinFunction {
                     },
                     Value::Str(value) => Ok(heap
                         .alloc_tuple(value.chars().map(|ch| Value::Str(ch.to_string())).collect())),
+                    Value::Set(obj) => match &*obj.kind() {
+                        Object::Set(values) => Ok(heap.alloc_tuple(values.clone())),
+                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                    },
+                    Value::FrozenSet(obj) => match &*obj.kind() {
+                        Object::FrozenSet(values) => Ok(heap.alloc_tuple(values.clone())),
+                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                    },
+                    Value::Bytes(obj) => match &*obj.kind() {
+                        Object::Bytes(values) => Ok(heap.alloc_tuple(
+                            values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                        )),
+                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                    },
+                    Value::ByteArray(obj) => match &*obj.kind() {
+                        Object::ByteArray(values) => Ok(heap.alloc_tuple(
+                            values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                        )),
+                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                    },
+                    Value::MemoryView(obj) => match &*obj.kind() {
+                        Object::MemoryView(view) => match &*view.source.kind() {
+                            Object::Bytes(values) | Object::ByteArray(values) => Ok(heap.alloc_tuple(
+                                values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                            )),
+                            _ => Err(RuntimeError::new("tuple() unsupported type")),
+                        },
+                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                    },
                     _ => Err(RuntimeError::new("tuple() unsupported type")),
                 }
+            }
+            BuiltinFunction::Set => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("set() expects at most one argument"));
+                }
+                let values = if let Some(source) = args.into_iter().next() {
+                    iterable_values(source)?
+                } else {
+                    Vec::new()
+                };
+                Ok(heap.alloc_set(dedup_values(values)))
+            }
+            BuiltinFunction::FrozenSet => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("frozenset() expects at most one argument"));
+                }
+                let values = if let Some(source) = args.into_iter().next() {
+                    iterable_values(source)?
+                } else {
+                    Vec::new()
+                };
+                Ok(heap.alloc_frozenset(dedup_values(values)))
+            }
+            BuiltinFunction::Bytes => {
+                if args.len() > 2 {
+                    return Err(RuntimeError::new("bytes() expects at most 2 arguments"));
+                }
+                let bytes = if args.is_empty() {
+                    Vec::new()
+                } else if args.len() == 2 {
+                    let mut it = args.into_iter();
+                    let source = it.next().unwrap_or(Value::None);
+                    let encoding = it.next().unwrap_or(Value::None);
+                    value_to_bytes_with_encoding(source, Some(encoding))?
+                } else {
+                    value_to_bytes_with_encoding(args[0].clone(), None)?
+                };
+                Ok(heap.alloc_bytes(bytes))
+            }
+            BuiltinFunction::ByteArray => {
+                if args.len() > 2 {
+                    return Err(RuntimeError::new("bytearray() expects at most 2 arguments"));
+                }
+                let bytes = if args.is_empty() {
+                    Vec::new()
+                } else if args.len() == 2 {
+                    let mut it = args.into_iter();
+                    let source = it.next().unwrap_or(Value::None);
+                    let encoding = it.next().unwrap_or(Value::None);
+                    value_to_bytes_with_encoding(source, Some(encoding))?
+                } else {
+                    value_to_bytes_with_encoding(args[0].clone(), None)?
+                };
+                Ok(heap.alloc_bytearray(bytes))
+            }
+            BuiltinFunction::MemoryView => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("memoryview() expects one argument"));
+                }
+                let source = match &args[0] {
+                    Value::Bytes(obj) | Value::ByteArray(obj) => obj.clone(),
+                    _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
+                };
+                Ok(heap.alloc_memoryview(source))
+            }
+            BuiltinFunction::Complex => {
+                if args.len() > 2 {
+                    return Err(RuntimeError::new("complex() expects at most 2 arguments"));
+                }
+                let (real, imag) = if args.is_empty() {
+                    (0.0, 0.0)
+                } else if args.len() == 1 {
+                    value_to_complex_pair(args[0].clone())?
+                } else {
+                    let real = value_to_float(args[0].clone())?;
+                    let imag = value_to_float(args[1].clone())?;
+                    (real, imag)
+                };
+                Ok(Value::Complex { real, imag })
+            }
+            BuiltinFunction::Type => {
+                if args.len() == 1 {
+                    return builtin_type_of(&args[0]);
+                }
+                if args.len() != 3 {
+                    return Err(RuntimeError::new("type() expects 1 or 3 arguments"));
+                }
+                let name = match &args[0] {
+                    Value::Str(name) => name.clone(),
+                    _ => return Err(RuntimeError::new("type() first argument must be string")),
+                };
+                let bases = match &args[1] {
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => values
+                            .iter()
+                            .map(|value| match value {
+                                Value::Class(class) => Ok(class.clone()),
+                                _ => Err(RuntimeError::new("type() bases must be classes")),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                        _ => return Err(RuntimeError::new("type() bases must be tuple")),
+                    },
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => values
+                            .iter()
+                            .map(|value| match value {
+                                Value::Class(class) => Ok(class.clone()),
+                                _ => Err(RuntimeError::new("type() bases must be classes")),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                        _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                    },
+                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                };
+                let attrs = match &args[2] {
+                    Value::Dict(obj) => match &*obj.kind() {
+                        Object::Dict(entries) => {
+                            let mut out = HashMap::new();
+                            for (key, value) in entries {
+                                let key = match key {
+                                    Value::Str(name) => name.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "type() dict keys must be strings",
+                                        ));
+                                    }
+                                };
+                                out.insert(key, value.clone());
+                            }
+                            out
+                        }
+                        _ => return Err(RuntimeError::new("type() third argument must be dict")),
+                    },
+                    _ => return Err(RuntimeError::new("type() third argument must be dict")),
+                };
+                let mut class = ClassObject::new(name.clone(), bases);
+                class.attrs = attrs;
+                class
+                    .attrs
+                    .entry("__name__".to_string())
+                    .or_insert_with(|| Value::Str(name));
+                Ok(heap.alloc_class(class))
             }
             BuiltinFunction::DivMod => {
                 if args.len() != 2 {
@@ -1111,6 +1494,8 @@ impl BuiltinFunction {
             | BuiltinFunction::SetAttr
             | BuiltinFunction::DelAttr
             | BuiltinFunction::HasAttr
+            | BuiltinFunction::Iter
+            | BuiltinFunction::Next
             | BuiltinFunction::Super
             | BuiltinFunction::Locals
             | BuiltinFunction::Globals
@@ -1120,7 +1505,49 @@ impl BuiltinFunction {
             | BuiltinFunction::RandomRandInt
             | BuiltinFunction::RandomGetRandBits
             | BuiltinFunction::RandomChoice
-            | BuiltinFunction::RandomShuffle => {
+            | BuiltinFunction::RandomShuffle
+            | BuiltinFunction::MathSqrt
+            | BuiltinFunction::MathFloor
+            | BuiltinFunction::MathCeil
+            | BuiltinFunction::MathIsFinite
+            | BuiltinFunction::MathIsInf
+            | BuiltinFunction::MathIsNaN
+            | BuiltinFunction::TimeTime
+            | BuiltinFunction::TimeMonotonic
+            | BuiltinFunction::TimeSleep
+            | BuiltinFunction::OsGetCwd
+            | BuiltinFunction::OsListDir
+            | BuiltinFunction::OsPathExists
+            | BuiltinFunction::OsPathJoin
+            | BuiltinFunction::JsonDumps
+            | BuiltinFunction::JsonLoads
+            | BuiltinFunction::CodecsEncode
+            | BuiltinFunction::CodecsDecode
+            | BuiltinFunction::ReSearch
+            | BuiltinFunction::ReMatch
+            | BuiltinFunction::ReFullMatch
+            | BuiltinFunction::OperatorAdd
+            | BuiltinFunction::OperatorSub
+            | BuiltinFunction::OperatorMul
+            | BuiltinFunction::OperatorTrueDiv
+            | BuiltinFunction::OperatorEq
+            | BuiltinFunction::OperatorContains
+            | BuiltinFunction::OperatorGetItem
+            | BuiltinFunction::ItertoolsChain
+            | BuiltinFunction::ItertoolsRepeat
+            | BuiltinFunction::FunctoolsReduce
+            | BuiltinFunction::CollectionsCounter
+            | BuiltinFunction::CollectionsDeque
+            | BuiltinFunction::InspectIsFunction
+            | BuiltinFunction::InspectIsClass
+            | BuiltinFunction::InspectIsModule
+            | BuiltinFunction::InspectIsGenerator
+            | BuiltinFunction::TypesModuleType
+            | BuiltinFunction::IoOpen
+            | BuiltinFunction::IoReadText
+            | BuiltinFunction::IoWriteText
+            | BuiltinFunction::DateTimeNow
+            | BuiltinFunction::DateToday => {
                 Err(RuntimeError::new("builtin requires VM context"))
             }
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
@@ -1233,6 +1660,197 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
         Value::Int(value) => Ok(value),
         Value::Bool(value) => Ok(if value { 1 } else { 0 }),
         _ => Err(RuntimeError::new("expected integer")),
+    }
+}
+
+fn value_to_float(value: Value) -> Result<f64, RuntimeError> {
+    match value {
+        Value::Float(value) => Ok(value),
+        Value::Int(value) => Ok(value as f64),
+        Value::Bool(value) => Ok(if value { 1.0 } else { 0.0 }),
+        Value::Complex { real, imag } if imag == 0.0 => Ok(real),
+        Value::Str(value) => value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| RuntimeError::new("invalid float literal")),
+        _ => Err(RuntimeError::new("expected numeric value")),
+    }
+}
+
+fn value_to_complex_pair(value: Value) -> Result<(f64, f64), RuntimeError> {
+    match value {
+        Value::Complex { real, imag } => Ok((real, imag)),
+        Value::Str(text) => parse_complex_literal(&text),
+        other => Ok((value_to_float(other)?, 0.0)),
+    }
+}
+
+fn parse_complex_literal(text: &str) -> Result<(f64, f64), RuntimeError> {
+    let trimmed = text.trim();
+    if trimmed.ends_with('j') || trimmed.ends_with('J') {
+        let without_j = &trimmed[..trimmed.len() - 1];
+        let core = without_j.trim();
+        if core.is_empty() || core == "+" {
+            return Ok((0.0, 1.0));
+        }
+        if core == "-" {
+            return Ok((0.0, -1.0));
+        }
+
+        let mut split_idx = None;
+        for (idx, ch) in core.char_indices().skip(1) {
+            if ch == '+' || ch == '-' {
+                split_idx = Some(idx);
+            }
+        }
+        if let Some(idx) = split_idx {
+            let (real_part, imag_part) = core.split_at(idx);
+            let real = real_part
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| RuntimeError::new("complex() invalid literal"))?;
+            let imag = imag_part
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| RuntimeError::new("complex() invalid literal"))?;
+            Ok((real, imag))
+        } else {
+            let imag = core
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| RuntimeError::new("complex() invalid literal"))?;
+            Ok((0.0, imag))
+        }
+    } else {
+        let real = trimmed
+            .parse::<f64>()
+            .map_err(|_| RuntimeError::new("complex() invalid literal"))?;
+        Ok((real, 0.0))
+    }
+}
+
+fn dedup_values(values: Vec<Value>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for value in values {
+        if !out.iter().any(|existing| *existing == value) {
+            out.push(value);
+        }
+    }
+    out
+}
+
+fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
+    match source {
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
+        Value::Set(obj) => match &*obj.kind() {
+            Object::Set(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
+        Value::FrozenSet(obj) => match &*obj.kind() {
+            Object::FrozenSet(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(values) => Ok(values.iter().map(|(key, _)| key.clone()).collect()),
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect()),
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => {
+                Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
+            }
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => match &*view.source.kind() {
+                Object::Bytes(values) | Object::ByteArray(values) => {
+                    Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
+                }
+                _ => Err(RuntimeError::new("expected iterable")),
+            },
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
+        Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),
+        _ => Err(RuntimeError::new("expected iterable")),
+    }
+}
+
+fn value_to_bytes_with_encoding(
+    value: Value,
+    encoding: Option<Value>,
+) -> Result<Vec<u8>, RuntimeError> {
+    let encoding_name = match encoding {
+        Some(Value::Str(name)) => name.to_ascii_lowercase(),
+        Some(_) => return Err(RuntimeError::new("encoding must be string")),
+        None => "utf-8".to_string(),
+    };
+
+    if !matches!(encoding_name.as_str(), "utf-8" | "utf8" | "ascii" | "latin-1" | "latin1") {
+        return Err(RuntimeError::new("unsupported encoding"));
+    }
+
+    match value {
+        Value::None => Ok(Vec::new()),
+        Value::Int(size) => {
+            if size < 0 {
+                return Err(RuntimeError::new("negative count"));
+            }
+            Ok(vec![0; size as usize])
+        }
+        Value::Str(text) => {
+            if matches!(encoding_name.as_str(), "ascii") && !text.is_ascii() {
+                return Err(RuntimeError::new("ascii codec can't encode character"));
+            }
+            if matches!(encoding_name.as_str(), "latin-1" | "latin1") {
+                let mut out = Vec::with_capacity(text.len());
+                for ch in text.chars() {
+                    let code = ch as u32;
+                    if code > 0xFF {
+                        return Err(RuntimeError::new("latin-1 codec can't encode character"));
+                    }
+                    out.push(code as u8);
+                }
+                Ok(out)
+            } else {
+                Ok(text.into_bytes())
+            }
+        }
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("bytes() unsupported type")),
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("bytes() unsupported type")),
+        },
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => match &*view.source.kind() {
+                Object::Bytes(values) | Object::ByteArray(values) => Ok(values.clone()),
+                _ => Err(RuntimeError::new("bytes() unsupported type")),
+            },
+            _ => Err(RuntimeError::new("bytes() unsupported type")),
+        },
+        other => {
+            let mut out = Vec::new();
+            for item in iterable_values(other)? {
+                let value = value_to_int(item)?;
+                if !(0..=255).contains(&value) {
+                    return Err(RuntimeError::new("bytes must be in range(0, 256)"));
+                }
+                out.push(value as u8);
+            }
+            Ok(out)
+        }
     }
 }
 
@@ -1361,6 +1979,43 @@ fn compare_values(left: &Value, right: &Value) -> Result<Ordering, RuntimeError>
     }
 }
 
+fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
+    let ty = match value {
+        Value::None => Value::Str("NoneType".to_string()),
+        Value::Bool(_) => Value::Builtin(BuiltinFunction::Bool),
+        Value::Int(_) => Value::Builtin(BuiltinFunction::Int),
+        Value::Float(_) => Value::Builtin(BuiltinFunction::Float),
+        Value::Complex { .. } => Value::Builtin(BuiltinFunction::Complex),
+        Value::Str(_) => Value::Builtin(BuiltinFunction::Str),
+        Value::List(_) => Value::Builtin(BuiltinFunction::List),
+        Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
+        Value::Dict(_) => Value::Str("dict".to_string()),
+        Value::Set(_) => Value::Builtin(BuiltinFunction::Set),
+        Value::FrozenSet(_) => Value::Builtin(BuiltinFunction::FrozenSet),
+        Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
+        Value::ByteArray(_) => Value::Builtin(BuiltinFunction::ByteArray),
+        Value::MemoryView(_) => Value::Builtin(BuiltinFunction::MemoryView),
+        Value::Iterator(_) => Value::Str("iterator".to_string()),
+        Value::Generator(_) => Value::Str("generator".to_string()),
+        Value::Module(_) => Value::Str("module".to_string()),
+        Value::Class(class) => Value::Class(class.clone()),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(obj) => Value::Class(obj.class.clone()),
+            _ => Value::Str("object".to_string()),
+        },
+        Value::Super(_) => Value::Str("super".to_string()),
+        Value::BoundMethod(_) => Value::Str("method".to_string()),
+        Value::Function(_) => Value::Str("function".to_string()),
+        Value::Cell(_) => Value::Str("cell".to_string()),
+        Value::Exception(_) => Value::ExceptionType("BaseException".to_string()),
+        Value::ExceptionType(_) => Value::Str("type".to_string()),
+        Value::Slice { .. } => Value::Builtin(BuiltinFunction::Slice),
+        Value::Code(_) => Value::Str("code".to_string()),
+        Value::Builtin(_) => Value::Str("builtin_function_or_method".to_string()),
+    };
+    Ok(ty)
+}
+
 fn format_float(value: f64) -> String {
     if value.is_nan() {
         return "nan".to_string();
@@ -1378,6 +2033,31 @@ fn format_float(value: f64) -> String {
     text
 }
 
+fn format_bytes(values: &[u8], mutable: bool) -> String {
+    let mut out = String::new();
+    if mutable {
+        out.push_str("bytearray(");
+    }
+    out.push('b');
+    out.push('\'');
+    for byte in values {
+        match *byte {
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            b'\\' => out.push_str("\\\\"),
+            b'\'' => out.push_str("\\'"),
+            32..=126 => out.push(*byte as char),
+            _ => out.push_str(&format!("\\x{:02x}", byte)),
+        }
+    }
+    out.push('\'');
+    if mutable {
+        out.push(')');
+    }
+    out
+}
+
 pub fn format_value(value: &Value) -> String {
     match value {
         Value::None => "None".to_string(),
@@ -1390,6 +2070,13 @@ pub fn format_value(value: &Value) -> String {
         }
         Value::Int(value) => value.to_string(),
         Value::Float(value) => format_float(*value),
+        Value::Complex { real, imag } => {
+            if *real == 0.0 {
+                format!("{}j", format_float(*imag))
+            } else {
+                format!("({}+{}j)", format_float(*real), format_float(*imag))
+            }
+        }
         Value::Str(value) => value.clone(),
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => {
@@ -1424,6 +2111,42 @@ pub fn format_value(value: &Value) -> String {
                 format!("{{{}}}", parts.join(", "))
             }
             _ => "<dict>".to_string(),
+        },
+        Value::Set(obj) => match &*obj.kind() {
+            Object::Set(values) => {
+                if values.is_empty() {
+                    "set()".to_string()
+                } else {
+                    let mut parts = Vec::new();
+                    for value in values {
+                        parts.push(format_value(value));
+                    }
+                    format!("{{{}}}", parts.join(", "))
+                }
+            }
+            _ => "<set>".to_string(),
+        },
+        Value::FrozenSet(obj) => match &*obj.kind() {
+            Object::FrozenSet(values) => {
+                let mut parts = Vec::new();
+                for value in values {
+                    parts.push(format_value(value));
+                }
+                format!("frozenset({{{}}})", parts.join(", "))
+            }
+            _ => "<frozenset>".to_string(),
+        },
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => format_bytes(values, false),
+            _ => "<bytes>".to_string(),
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => format_bytes(values, true),
+            _ => "<bytearray>".to_string(),
+        },
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => format!("<memory at 0x{:x}>", view.source.id()),
+            _ => "<memoryview>".to_string(),
         },
         Value::Iterator(_) => "<iterator>".to_string(),
         Value::Generator(_) => "<generator>".to_string(),
@@ -1481,6 +2204,7 @@ fn is_truthy_value(value: &Value) -> bool {
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
         Value::Float(value) => *value != 0.0,
+        Value::Complex { real, imag } => *real != 0.0 || *imag != 0.0,
         Value::Str(value) => !value.is_empty(),
         Value::Cell(_) => true,
         Value::List(obj) => match &*obj.kind() {
@@ -1493,6 +2217,29 @@ fn is_truthy_value(value: &Value) -> bool {
         },
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Set(obj) => match &*obj.kind() {
+            Object::Set(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::FrozenSet(obj) => match &*obj.kind() {
+            Object::FrozenSet(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => match &*view.source.kind() {
+                Object::Bytes(values) | Object::ByteArray(values) => !values.is_empty(),
+                _ => true,
+            },
             _ => true,
         },
         Value::Iterator(_) => true,
