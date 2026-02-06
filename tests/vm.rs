@@ -1558,6 +1558,77 @@ fn executes_dunder_import_relative_level_inside_package() {
 }
 
 #[test]
+fn executes_namespace_package_import() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_namespace_pkg_{unique}"));
+    let ns_dir = temp_dir.join("ns");
+    std::fs::create_dir_all(&ns_dir).expect("create temp dir");
+    std::fs::write(ns_dir.join("mod.py"), "value = 53\n").expect("write sub module");
+
+    let source = "\
+import ns.mod\n\
+x = ns.mod.value\n\
+path_len = len(ns.__path__)\n\
+is_pkg = ns.__spec__['is_package']\n\
+is_namespace = ns.__spec__['is_namespace']\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(53)));
+    assert_eq!(vm.get_global("path_len"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("is_pkg"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("is_namespace"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(ns_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&ns_dir);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn aggregates_namespace_package_paths_across_module_roots() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let root_a = std::env::temp_dir().join(format!("pyrs_ns_root_a_{unique}"));
+    let root_b = std::env::temp_dir().join(format!("pyrs_ns_root_b_{unique}"));
+    let ns_a = root_a.join("ns");
+    let ns_b = root_b.join("ns");
+    std::fs::create_dir_all(&ns_a).expect("create root a");
+    std::fs::create_dir_all(&ns_b).expect("create root b");
+    std::fs::write(ns_a.join("a.py"), "value = 2\n").expect("write module a");
+    std::fs::write(ns_b.join("b.py"), "value = 5\n").expect("write module b");
+
+    let source = "\
+import ns.a\n\
+import ns.b\n\
+total = ns.a.value + ns.b.value\n\
+path_len = len(ns.__path__)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&root_a);
+    vm.add_module_path(&root_b);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("total"), Some(Value::Int(7)));
+    assert_eq!(vm.get_global("path_len"), Some(Value::Int(2)));
+
+    let _ = std::fs::remove_file(ns_a.join("a.py"));
+    let _ = std::fs::remove_file(ns_b.join("b.py"));
+    let _ = std::fs::remove_dir(&ns_a);
+    let _ = std::fs::remove_dir(&ns_b);
+    let _ = std::fs::remove_dir(&root_a);
+    let _ = std::fs::remove_dir(&root_b);
+}
+
+#[test]
 fn executes_len_on_list() {
     let source = "x = len([1, 2, 3])";
     let module = parser::parse_module(source).expect("parse should succeed");

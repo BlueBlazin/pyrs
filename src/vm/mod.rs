@@ -32,7 +32,8 @@ struct TraceFrame {
 struct ModuleSourceInfo {
     path: PathBuf,
     is_package: bool,
-    package_dir: Option<PathBuf>,
+    package_dirs: Vec<PathBuf>,
+    is_namespace: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,7 +161,7 @@ impl Vm {
             generator_resume_outcome: None,
         };
         let main = vm.main_module.clone();
-        vm.set_module_metadata(&main, "__main__", None, false, None);
+        vm.set_module_metadata(&main, "__main__", None, false, Vec::new(), false);
         vm.install_sys_module();
         vm.install_builtins();
         vm
@@ -319,7 +320,7 @@ impl Vm {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
-        self.set_module_metadata(&sys_module, "sys", None, false, None);
+        self.set_module_metadata(&sys_module, "sys", None, false, Vec::new(), false);
         if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
             module_data
                 .globals
@@ -425,23 +426,33 @@ impl Vm {
             .find_module_source(name)
             .ok_or_else(|| RuntimeError::new(format!("module '{name}' not found")))?;
 
-        let source = std::fs::read_to_string(&source_info.path)
-            .map_err(|err| RuntimeError::new(format!("failed to read module '{name}': {err}")))?;
-
         let module = match self.heap.alloc_module(ModuleObject::new(name)) {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
+        let origin = if source_info.is_namespace {
+            None
+        } else {
+            Some(&source_info.path)
+        };
         self.set_module_metadata(
             &module,
             name,
-            Some(&source_info.path),
+            origin,
             source_info.is_package,
-            source_info.package_dir.as_ref(),
+            source_info.package_dirs.clone(),
+            source_info.is_namespace,
         );
 
         self.register_module(name, module.clone());
         self.link_module_chain(name, module.clone());
+
+        if source_info.is_namespace {
+            return Ok(module);
+        }
+
+        let source = std::fs::read_to_string(&source_info.path)
+            .map_err(|err| RuntimeError::new(format!("failed to read module '{name}': {err}")))?;
 
         let module_ast = parser::parse_module(&source).map_err(|err| {
             RuntimeError::new(format!(
@@ -466,13 +477,15 @@ impl Vm {
         self.sync_module_paths_from_sys();
         let rel_name = name.replace('.', "/");
         let filename = format!("{rel_name}.py");
+        let mut namespace_dirs = Vec::new();
         for base in &self.module_paths {
             let candidate = base.join(&filename);
             if candidate.exists() {
                 return Some(ModuleSourceInfo {
                     path: candidate,
                     is_package: false,
-                    package_dir: None,
+                    package_dirs: Vec::new(),
+                    is_namespace: false,
                 });
             }
             let package_dir = base.join(&rel_name);
@@ -481,9 +494,21 @@ impl Vm {
                 return Some(ModuleSourceInfo {
                     path: package_init,
                     is_package: true,
-                    package_dir: Some(package_dir),
+                    package_dirs: vec![package_dir],
+                    is_namespace: false,
                 });
             }
+            if package_dir.is_dir() {
+                namespace_dirs.push(package_dir);
+            }
+        }
+        if !namespace_dirs.is_empty() {
+            return Some(ModuleSourceInfo {
+                path: namespace_dirs[0].clone(),
+                is_package: true,
+                package_dirs: namespace_dirs,
+                is_namespace: true,
+            });
         }
         None
     }
@@ -522,7 +547,7 @@ impl Vm {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
-        self.set_module_metadata(&module, name, None, false, None);
+        self.set_module_metadata(&module, name, None, false, Vec::new(), false);
         self.register_module(name, module.clone());
         module
     }
@@ -533,7 +558,8 @@ impl Vm {
         name: &str,
         origin: Option<&PathBuf>,
         is_package: bool,
-        package_dir: Option<&PathBuf>,
+        package_dirs: Vec<PathBuf>,
+        is_namespace: bool,
     ) {
         let package_name = if is_package {
             name.to_string()
@@ -546,7 +572,9 @@ impl Vm {
             .rsplit_once('.')
             .map(|(parent, _)| parent.to_string())
             .unwrap_or_default();
-        let loader_value = if origin.is_some() {
+        let loader_value = if is_namespace {
+            Value::None
+        } else if origin.is_some() {
             Value::Str("pyrs.SourceFileLoader".to_string())
         } else {
             Value::None
@@ -556,7 +584,7 @@ impl Vm {
             .unwrap_or(Value::None);
         let submodule_locations = if is_package {
             let mut entries = Vec::new();
-            if let Some(dir) = package_dir {
+            for dir in package_dirs.iter() {
                 entries.push(Value::Str(dir.to_string_lossy().to_string()));
             }
             self.heap.alloc_list(entries)
@@ -575,6 +603,10 @@ impl Vm {
             (
                 Value::Str("is_package".to_string()),
                 Value::Bool(is_package),
+            ),
+            (
+                Value::Str("is_namespace".to_string()),
+                Value::Bool(is_namespace),
             ),
         ]);
 
