@@ -436,7 +436,7 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 '\'' | '"' => {
-                    let lexeme = self.consume_string(ch)?;
+                    let lexeme = self.consume_string(ch, false)?;
                     tokens.push(Token::new(TokenKind::String, lexeme, offset, line, column));
                 }
                 '0'..='9' => {
@@ -444,12 +444,7 @@ impl<'a> Lexer<'a> {
                     tokens.push(Token::new(TokenKind::Number, lexeme, offset, line, column));
                 }
                 _ if ch == '_' || ch.is_alphabetic() => {
-                    if let Some((is_fstring, string_content)) = self.consume_prefixed_string()? {
-                        let kind = if is_fstring {
-                            TokenKind::FString
-                        } else {
-                            TokenKind::String
-                        };
+                    if let Some((kind, string_content)) = self.consume_prefixed_string()? {
                         tokens.push(Token::new(kind, string_content, offset, line, column));
                         continue;
                     }
@@ -659,7 +654,7 @@ impl<'a> Lexer<'a> {
         self.source[start..self.offset].to_string()
     }
 
-    fn consume_prefixed_string(&mut self) -> Result<Option<(bool, String)>, LexError> {
+    fn consume_prefixed_string(&mut self) -> Result<Option<(TokenKind, String)>, LexError> {
         let mut probe = self.offset;
         let mut prefix = String::new();
         while prefix.len() < 2 {
@@ -687,27 +682,171 @@ impl<'a> Lexer<'a> {
 
         let mut seen = std::collections::HashSet::new();
         let mut has_f = false;
+        let mut has_r = false;
+        let mut has_b = false;
         for ch in prefix.chars() {
             let lowered = ch.to_ascii_lowercase();
-            if !matches!(lowered, 'r' | 'u' | 'b' | 'f') {
+            if !matches!(lowered, 'r' | 'u' | 'b' | 'f' | 't') {
                 return Ok(None);
             }
             if lowered == 'f' {
                 has_f = true;
             }
+            if lowered == 'r' {
+                has_r = true;
+            }
+            if lowered == 'b' {
+                has_b = true;
+            }
             if !seen.insert(lowered) {
                 return Ok(None);
             }
+        }
+        if has_f && has_b {
+            return Err(LexError::new(
+                "bytes f-strings are not supported",
+                self.offset,
+                self.line,
+                self.column,
+            ));
         }
 
         for _ in 0..prefix.len() {
             self.advance();
         }
-        let content = self.consume_string(quote)?;
-        Ok(Some((has_f, content)))
+        let content = if has_f {
+            self.consume_fstring(quote, has_r)?
+        } else {
+            self.consume_string(quote, has_r)?
+        };
+        let kind = if has_f {
+            TokenKind::FString
+        } else if has_b {
+            TokenKind::Bytes
+        } else {
+            TokenKind::String
+        };
+        Ok(Some((kind, content)))
     }
 
-    fn consume_string(&mut self, quote: char) -> Result<String, LexError> {
+    fn consume_fstring(&mut self, quote: char, raw: bool) -> Result<String, LexError> {
+        let start_offset = self.offset;
+        let start_line = self.line;
+        let start_column = self.column;
+        let is_triple = self.peek_char_at(1) == Some(quote) && self.peek_char_at(2) == Some(quote);
+        if is_triple {
+            self.advance();
+            self.advance();
+            self.advance();
+        } else {
+            self.advance();
+        }
+
+        let mut content = String::new();
+        let mut expr_depth = 0usize;
+        while let Some(ch) = self.peek_char() {
+            if expr_depth == 0 {
+                if is_triple {
+                    if ch == quote
+                        && self.peek_char_at(1) == Some(quote)
+                        && self.peek_char_at(2) == Some(quote)
+                    {
+                        self.advance();
+                        self.advance();
+                        self.advance();
+                        return Ok(content);
+                    }
+                } else if ch == quote {
+                    if raw && self.raw_quote_is_escaped() {
+                        self.advance();
+                        content.push(ch);
+                        continue;
+                    }
+                    self.advance();
+                    return Ok(content);
+                }
+            }
+
+            if ch == '\n' && !is_triple {
+                return Err(LexError::new(
+                    "unterminated string literal",
+                    start_offset,
+                    start_line,
+                    start_column,
+                ));
+            }
+
+            if ch == '{' {
+                if expr_depth == 0 && self.peek_char_at(1) == Some('{') {
+                    self.advance();
+                    self.advance();
+                    content.push('{');
+                    content.push('{');
+                    continue;
+                }
+                expr_depth += 1;
+                self.advance();
+                content.push(ch);
+                continue;
+            }
+
+            if ch == '}' {
+                if expr_depth == 0 && self.peek_char_at(1) == Some('}') {
+                    self.advance();
+                    self.advance();
+                    content.push('}');
+                    content.push('}');
+                    continue;
+                }
+                if expr_depth > 0 {
+                    expr_depth -= 1;
+                }
+                self.advance();
+                content.push(ch);
+                continue;
+            }
+
+            if ch == '\\' && raw {
+                self.advance();
+                content.push('\\');
+                continue;
+            }
+
+            if ch == '\\' {
+                self.advance();
+                if expr_depth > 0 {
+                    let next = self.peek_char().ok_or_else(|| {
+                        LexError::new(
+                            "unterminated escape sequence",
+                            start_offset,
+                            start_line,
+                            start_column,
+                        )
+                    })?;
+                    self.advance();
+                    content.push('\\');
+                    content.push(next);
+                    continue;
+                }
+                let escaped =
+                    self.consume_escaped_char(start_offset, start_line, start_column)?;
+                content.push(escaped);
+                continue;
+            }
+
+            self.advance();
+            content.push(ch);
+        }
+
+        Err(LexError::new(
+            "unterminated string literal",
+            start_offset,
+            start_line,
+            start_column,
+        ))
+    }
+
+    fn consume_string(&mut self, quote: char, raw: bool) -> Result<String, LexError> {
         let start_offset = self.offset;
         let start_line = self.line;
         let start_column = self.column;
@@ -733,6 +872,11 @@ impl<'a> Lexer<'a> {
                     return Ok(content);
                 }
             } else if ch == quote {
+                if raw && self.raw_quote_is_escaped() {
+                    self.advance();
+                    content.push(ch);
+                    continue;
+                }
                 self.advance();
                 return Ok(content);
             }
@@ -746,26 +890,16 @@ impl<'a> Lexer<'a> {
                 ));
             }
 
+            if ch == '\\' && raw {
+                self.advance();
+                content.push('\\');
+                continue;
+            }
+
             if ch == '\\' {
                 self.advance();
-                let escaped = match self.peek_char() {
-                    Some('n') => '\n',
-                    Some('t') => '\t',
-                    Some('r') => '\r',
-                    Some('\\') => '\\',
-                    Some('\'') => '\'',
-                    Some('"') => '"',
-                    Some(other) => other,
-                    None => {
-                        return Err(LexError::new(
-                            "unterminated escape sequence",
-                            start_offset,
-                            start_line,
-                            start_column,
-                        ));
-                    }
-                };
-                self.advance();
+                let escaped =
+                    self.consume_escaped_char(start_offset, start_line, start_column)?;
                 content.push(escaped);
                 continue;
             }
@@ -780,6 +914,104 @@ impl<'a> Lexer<'a> {
             start_line,
             start_column,
         ))
+    }
+
+    fn consume_escaped_char(
+        &mut self,
+        start_offset: usize,
+        start_line: usize,
+        start_column: usize,
+    ) -> Result<char, LexError> {
+        match self.peek_char() {
+            Some('n') => {
+                self.advance();
+                Ok('\n')
+            }
+            Some('t') => {
+                self.advance();
+                Ok('\t')
+            }
+            Some('r') => {
+                self.advance();
+                Ok('\r')
+            }
+            Some('\\') => {
+                self.advance();
+                Ok('\\')
+            }
+            Some('\'') => {
+                self.advance();
+                Ok('\'')
+            }
+            Some('"') => {
+                self.advance();
+                Ok('"')
+            }
+            Some('x') => {
+                self.advance();
+                let high = self.peek_char().ok_or_else(|| {
+                    LexError::new(
+                        "unterminated escape sequence",
+                        start_offset,
+                        start_line,
+                        start_column,
+                    )
+                })?;
+                if !high.is_ascii_hexdigit() {
+                    return Err(LexError::new(
+                        "invalid hex escape",
+                        start_offset,
+                        start_line,
+                        start_column,
+                    ));
+                }
+                self.advance();
+                let low = self.peek_char().ok_or_else(|| {
+                    LexError::new(
+                        "unterminated escape sequence",
+                        start_offset,
+                        start_line,
+                        start_column,
+                    )
+                })?;
+                if !low.is_ascii_hexdigit() {
+                    return Err(LexError::new(
+                        "invalid hex escape",
+                        start_offset,
+                        start_line,
+                        start_column,
+                    ));
+                }
+                self.advance();
+                let value = ((high.to_digit(16).unwrap_or(0) << 4) | low.to_digit(16).unwrap_or(0))
+                    as u8;
+                Ok(value as char)
+            }
+            Some(other) => {
+                self.advance();
+                Ok(other)
+            }
+            None => Err(LexError::new(
+                "unterminated escape sequence",
+                start_offset,
+                start_line,
+                start_column,
+            )),
+        }
+    }
+
+    fn raw_quote_is_escaped(&self) -> bool {
+        let bytes = self.source.as_bytes();
+        if self.offset == 0 || self.offset > bytes.len() {
+            return false;
+        }
+        let mut index = self.offset;
+        let mut backslashes = 0usize;
+        while index > 0 && bytes[index - 1] == b'\\' {
+            backslashes += 1;
+            index -= 1;
+        }
+        backslashes % 2 == 1
     }
 
     fn consume_indentation(&mut self) -> IndentResult {

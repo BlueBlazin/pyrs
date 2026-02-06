@@ -45,6 +45,7 @@ pub enum TokenKind {
     Name,
     Number,
     String,
+    Bytes,
     Newline,
     Indent,
     Dedent,

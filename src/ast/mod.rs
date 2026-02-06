@@ -81,6 +81,7 @@ pub enum StmtKind {
         type_params: Vec<String>,
         bases: Vec<Expr>,
         metaclass: Option<Expr>,
+        keywords: Vec<(String, Expr)>,
         body: Vec<Stmt>,
     },
     Decorated {
@@ -199,7 +200,7 @@ pub enum ExprKind {
     },
     List(Vec<Expr>),
     Tuple(Vec<Expr>),
-    Dict(Vec<(Expr, Expr)>),
+    Dict(Vec<DictEntry>),
     Subscript {
         value: Box<Expr>,
         index: Box<Expr>,
@@ -260,6 +261,12 @@ pub enum ExprKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DictEntry {
+    Pair(Expr, Expr),
+    Unpack(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComprehensionClause {
     pub is_async: bool,
     pub target: AssignTarget,
@@ -277,6 +284,7 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssignTarget {
     Name(String),
+    Starred(Box<AssignTarget>),
     Tuple(Vec<AssignTarget>),
     List(Vec<AssignTarget>),
     Subscript { value: Box<Expr>, index: Box<Expr> },

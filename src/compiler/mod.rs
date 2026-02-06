@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ast::{
-    AssignTarget, CallArg, ComprehensionClause, Constant, ExceptHandler, Expr, ExprKind, MatchCase,
-    Module, Parameter, Pattern, Span, Stmt, StmtKind,
+    AssignTarget, CallArg, ComprehensionClause, Constant, DictEntry, ExceptHandler, Expr,
+    ExprKind, MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
 };
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
@@ -309,10 +309,44 @@ fn collect_locals_stmt(
         StmtKind::AugAssign { target, .. } | StmtKind::AnnAssign { target, .. } => {
             collect_locals_target(target, locals);
         }
-        StmtKind::For { target, .. } => collect_locals_target(target, locals),
-        StmtKind::With { target, .. } => {
+        StmtKind::Delete { targets } => {
+            for target in targets {
+                collect_locals_target(target, locals);
+            }
+        }
+        StmtKind::If { body, orelse, .. } => {
+            for stmt in body {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
+            for stmt in orelse {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
+        }
+        StmtKind::While { body, orelse, .. } => {
+            for stmt in body {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
+            for stmt in orelse {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
+        }
+        StmtKind::For {
+            target, body, orelse, ..
+        } => {
+            collect_locals_target(target, locals);
+            for stmt in body {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
+            for stmt in orelse {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
+        }
+        StmtKind::With { target, body, .. } => {
             if let Some(target) = target {
                 collect_locals_target(target, locals);
+            }
+            for stmt in body {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
             }
         }
         StmtKind::FunctionDef { name, .. } | StmtKind::ClassDef { name, .. } => {
@@ -337,16 +371,36 @@ fn collect_locals_stmt(
                 locals.insert(binding);
             }
         }
-        StmtKind::Try { handlers, .. } => {
+        StmtKind::Try {
+            body,
+            handlers,
+            orelse,
+            finalbody,
+        } => {
+            for stmt in body {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
+            for stmt in orelse {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
+            for stmt in finalbody {
+                collect_locals_stmt(stmt, locals, globals, nonlocals);
+            }
             for handler in handlers {
                 if let Some(name) = &handler.name {
                     locals.insert(name.clone());
+                }
+                for stmt in &handler.body {
+                    collect_locals_stmt(stmt, locals, globals, nonlocals);
                 }
             }
         }
         StmtKind::Match { cases, .. } => {
             for case in cases {
                 collect_pattern_locals(&case.pattern, locals);
+                for stmt in &case.body {
+                    collect_locals_stmt(stmt, locals, globals, nonlocals);
+                }
             }
         }
         StmtKind::Decorated { stmt, .. } => {
@@ -376,6 +430,9 @@ fn collect_locals_target(target: &AssignTarget, locals: &mut HashSet<String>) {
     match target {
         AssignTarget::Name(name) => {
             locals.insert(name.clone());
+        }
+        AssignTarget::Starred(item) => {
+            collect_locals_target(item, locals);
         }
         AssignTarget::Tuple(items) | AssignTarget::List(items) => {
             for item in items {
@@ -556,6 +613,7 @@ fn collect_uses_stmt(
         StmtKind::ClassDef {
             bases,
             metaclass,
+            keywords,
             body,
             ..
         } => {
@@ -564,6 +622,9 @@ fn collect_uses_stmt(
             }
             if let Some(meta) = metaclass {
                 collect_uses_expr(meta, uses, child_free, enclosing)?;
+            }
+            for (_name, value) in keywords {
+                collect_uses_expr(value, uses, child_free, enclosing)?;
             }
             let scope =
                 analyze_scope(ScopeType::Class, &[], &[], &[], None, None, body, enclosing)?;
@@ -604,6 +665,9 @@ fn collect_target_uses(
     enclosing: &HashSet<String>,
 ) -> Result<(), CompileError> {
     match target {
+        AssignTarget::Starred(item) => {
+            collect_target_uses(item, uses, child_free, enclosing)?;
+        }
         AssignTarget::Subscript { value, index } => {
             collect_uses_expr(value, uses, child_free, enclosing)?;
             collect_uses_expr(index, uses, child_free, enclosing)?;
@@ -658,9 +722,16 @@ fn collect_uses_expr(
             }
         }
         ExprKind::Dict(entries) => {
-            for (key, value) in entries {
-                collect_uses_expr(key, uses, child_free, enclosing)?;
-                collect_uses_expr(value, uses, child_free, enclosing)?;
+            for entry in entries {
+                match entry {
+                    DictEntry::Pair(key, value) => {
+                        collect_uses_expr(key, uses, child_free, enclosing)?;
+                        collect_uses_expr(value, uses, child_free, enclosing)?;
+                    }
+                    DictEntry::Unpack(value) => {
+                        collect_uses_expr(value, uses, child_free, enclosing)?;
+                    }
+                }
             }
         }
         ExprKind::Subscript { value, index } => {
@@ -722,28 +793,27 @@ fn collect_uses_expr(
         ExprKind::Await { value } => {
             collect_uses_expr(value, uses, child_free, enclosing)?;
         }
-        ExprKind::ListComp { elt, clauses } | ExprKind::GeneratorExp { elt, clauses } => {
-            collect_uses_expr(elt, uses, child_free, enclosing)?;
-            for clause in clauses {
-                collect_uses_expr(&clause.iter, uses, child_free, enclosing)?;
-                for cond in &clause.ifs {
-                    collect_uses_expr(cond, uses, child_free, enclosing)?;
-                }
-            }
+        ExprKind::ListComp { elt, clauses } => {
+            let body = build_list_comp_body(elt, clauses);
+            let scope =
+                analyze_scope(ScopeType::Function, &[], &[], &[], None, None, &body, enclosing)?;
+            child_free.extend(scope.freevars.into_iter());
+        }
+        ExprKind::GeneratorExp { elt, clauses } => {
+            let body = build_genexpr_body(elt, clauses);
+            let scope =
+                analyze_scope(ScopeType::Function, &[], &[], &[], None, None, &body, enclosing)?;
+            child_free.extend(scope.freevars.into_iter());
         }
         ExprKind::DictComp {
             key,
             value,
             clauses,
         } => {
-            collect_uses_expr(key, uses, child_free, enclosing)?;
-            collect_uses_expr(value, uses, child_free, enclosing)?;
-            for clause in clauses {
-                collect_uses_expr(&clause.iter, uses, child_free, enclosing)?;
-                for cond in &clause.ifs {
-                    collect_uses_expr(cond, uses, child_free, enclosing)?;
-                }
-            }
+            let body = build_dict_comp_body(key, value, clauses);
+            let scope =
+                analyze_scope(ScopeType::Function, &[], &[], &[], None, None, &body, enclosing)?;
+            child_free.extend(scope.freevars.into_iter());
         }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(expr) = lower.as_ref() {
@@ -964,9 +1034,10 @@ fn expr_has_yield(expr: &Expr) -> bool {
             false
         }
         ExprKind::List(values) | ExprKind::Tuple(values) => values.iter().any(expr_has_yield),
-        ExprKind::Dict(entries) => entries
-            .iter()
-            .any(|(key, value)| expr_has_yield(key) || expr_has_yield(value)),
+        ExprKind::Dict(entries) => entries.iter().any(|entry| match entry {
+            DictEntry::Pair(key, value) => expr_has_yield(key) || expr_has_yield(value),
+            DictEntry::Unpack(value) => expr_has_yield(value),
+        }),
         ExprKind::Subscript { value, index } => expr_has_yield(value) || expr_has_yield(index),
         ExprKind::Attribute { value, .. } => expr_has_yield(value),
         ExprKind::IfExpr { test, body, orelse } => {
@@ -1174,7 +1245,7 @@ impl Compiler {
                 returns,
                 body,
             } => {
-                let _ = type_params;
+                let drop_annotations = !type_params.is_empty();
                 let func_code = compiler.compile_function(
                     name,
                     *is_async,
@@ -1185,13 +1256,37 @@ impl Compiler {
                     kwarg,
                     body,
                 )?;
+                let mut ann_posonly = posonly_params.clone();
+                let mut ann_params = params.clone();
+                let mut ann_kwonly = kwonly_params.clone();
+                let mut ann_vararg = vararg.clone();
+                let mut ann_kwarg = kwarg.clone();
+                if drop_annotations {
+                    for param in ann_posonly
+                        .iter_mut()
+                        .chain(ann_params.iter_mut())
+                        .chain(ann_kwonly.iter_mut())
+                    {
+                        param.annotation = None;
+                    }
+                    if let Some(param) = &mut ann_vararg {
+                        param.annotation = None;
+                    }
+                    if let Some(param) = &mut ann_kwarg {
+                        param.annotation = None;
+                    }
+                }
                 compiler.emit_function_with_defaults(
-                    posonly_params,
-                    params,
-                    kwonly_params,
-                    vararg,
-                    kwarg,
-                    returns.as_ref(),
+                    &ann_posonly,
+                    &ann_params,
+                    &ann_kwonly,
+                    &ann_vararg,
+                    &ann_kwarg,
+                    if drop_annotations {
+                        None
+                    } else {
+                        returns.as_ref()
+                    },
                     func_code,
                 )?;
                 compiler.emit_store_name_scoped(name)?;
@@ -1202,10 +1297,11 @@ impl Compiler {
                 type_params,
                 bases,
                 metaclass,
+                keywords,
                 body,
             } => {
                 let _ = type_params;
-                compiler.compile_class_def(name, bases, metaclass.as_ref(), body)
+                compiler.compile_class_def(name, bases, metaclass.as_ref(), keywords, body)
             }
             StmtKind::Delete { targets } => compiler.compile_delete(targets),
             StmtKind::Decorated { decorators, stmt } => {
@@ -1277,8 +1373,12 @@ impl Compiler {
                 for alias in names {
                     let attr_idx = compiler.code.add_name(alias.name.clone());
                     compiler.emit(Opcode::ImportFromCpython, Some(attr_idx));
-                    let target = alias.asname.as_deref().unwrap_or(&alias.name);
-                    compiler.emit_store_name_scoped(target)?;
+                    if alias.name == "*" {
+                        compiler.emit(Opcode::PopTop, None);
+                    } else {
+                        let target = alias.asname.as_deref().unwrap_or(&alias.name);
+                        compiler.emit_store_name_scoped(target)?;
+                    }
                 }
                 compiler.emit(Opcode::PopTop, None);
                 Ok(())
@@ -1556,9 +1656,28 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::Dict(entries) => {
-                for (key, value) in entries {
-                    compiler.compile_expr(key)?;
-                    compiler.compile_expr(value)?;
+                if entries.iter().any(|entry| matches!(entry, DictEntry::Unpack(_))) {
+                    compiler.emit(Opcode::BuildDict, Some(0));
+                    for entry in entries {
+                        match entry {
+                            DictEntry::Pair(key, value) => {
+                                compiler.compile_expr(key)?;
+                                compiler.compile_expr(value)?;
+                                compiler.emit(Opcode::DictSet, None);
+                            }
+                            DictEntry::Unpack(mapping) => {
+                                compiler.compile_expr(mapping)?;
+                                compiler.emit(Opcode::DictUpdate, None);
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                for entry in entries {
+                    if let DictEntry::Pair(key, value) = entry {
+                        compiler.compile_expr(key)?;
+                        compiler.compile_expr(value)?;
+                    }
                 }
                 compiler.emit(Opcode::BuildDict, Some(entries.len() as u32));
                 Ok(())
@@ -1935,6 +2054,7 @@ impl Compiler {
         name: &str,
         bases: &[Expr],
         metaclass: Option<&Expr>,
+        keywords: &[(String, Expr)],
         body: &[Stmt],
     ) -> Result<(), CompileError> {
         let class_code = self.compile_class(name, body)?;
@@ -1950,6 +2070,11 @@ impl Compiler {
         } else {
             self.emit(Opcode::LoadConst, Some(0));
         }
+        for (name, value) in keywords {
+            self.emit_const(Value::Str(name.clone()));
+            self.compile_expr(value)?;
+        }
+        self.emit(Opcode::BuildDict, Some(keywords.len() as u32));
         self.emit(Opcode::BuildClass, Some(code_idx));
         self.emit_store_name_scoped(name)?;
         Ok(())
@@ -1972,7 +2097,6 @@ impl Compiler {
         decorators: &[Expr],
         stmt: &Stmt,
     ) -> Result<(), CompileError> {
-        self.compile_stmt(stmt)?;
         let target_name = match &stmt.node {
             StmtKind::FunctionDef { name, .. } | StmtKind::ClassDef { name, .. } => name.clone(),
             _ => {
@@ -1982,6 +2106,8 @@ impl Compiler {
             }
         };
 
+        // Decorator expressions are evaluated before the function/class object is
+        // created and bound to the target name.
         let mut temp_names = Vec::new();
         for decorator in decorators {
             let temp = self.fresh_temp("decorator");
@@ -1989,6 +2115,8 @@ impl Compiler {
             self.emit_store_name(&temp);
             temp_names.push(temp);
         }
+
+        self.compile_stmt(stmt)?;
 
         for temp in temp_names.iter().rev() {
             self.emit_load_name(temp)?;
@@ -2073,38 +2201,7 @@ impl Compiler {
         elt: &Expr,
         clauses: &[ComprehensionClause],
     ) -> Result<(), CompileError> {
-        let result_name = "__pyrs_comp_result".to_string();
-        let append_stmt = Stmt {
-            span: elt.span,
-            node: StmtKind::AugAssign {
-                target: AssignTarget::Name(result_name.clone()),
-                op: crate::ast::AugOp::Add,
-                value: Expr {
-                    span: elt.span,
-                    node: ExprKind::List(vec![elt.clone()]),
-                },
-            },
-        };
-        let mut body = vec![Stmt {
-            span: elt.span,
-            node: StmtKind::Assign {
-                targets: vec![AssignTarget::Name(result_name.clone())],
-                value: Expr {
-                    span: elt.span,
-                    node: ExprKind::List(Vec::new()),
-                },
-            },
-        }];
-        body.extend(build_comp_stmt_chain(clauses, vec![append_stmt], elt.span));
-        body.push(Stmt {
-            span: elt.span,
-            node: StmtKind::Return {
-                value: Some(Expr {
-                    span: elt.span,
-                    node: ExprKind::Name(result_name),
-                }),
-            },
-        });
+        let body = build_list_comp_body(elt, clauses);
         self.emit_comp_function("<listcomp>", body)
     }
 
@@ -2114,41 +2211,7 @@ impl Compiler {
         value: &Expr,
         clauses: &[ComprehensionClause],
     ) -> Result<(), CompileError> {
-        let result_name = "__pyrs_comp_result".to_string();
-        let assign_stmt = Stmt {
-            span: key.span,
-            node: StmtKind::Assign {
-                targets: vec![AssignTarget::Subscript {
-                    value: Box::new(Expr {
-                        span: key.span,
-                        node: ExprKind::Name(result_name.clone()),
-                    }),
-                    index: Box::new(key.clone()),
-                }],
-                value: value.clone(),
-            },
-        };
-
-        let mut body = vec![Stmt {
-            span: key.span,
-            node: StmtKind::Assign {
-                targets: vec![AssignTarget::Name(result_name.clone())],
-                value: Expr {
-                    span: key.span,
-                    node: ExprKind::Dict(Vec::new()),
-                },
-            },
-        }];
-        body.extend(build_comp_stmt_chain(clauses, vec![assign_stmt], key.span));
-        body.push(Stmt {
-            span: key.span,
-            node: StmtKind::Return {
-                value: Some(Expr {
-                    span: key.span,
-                    node: ExprKind::Name(result_name),
-                }),
-            },
-        });
+        let body = build_dict_comp_body(key, value, clauses);
         self.emit_comp_function("<dictcomp>", body)
     }
 
@@ -2157,16 +2220,7 @@ impl Compiler {
         elt: &Expr,
         clauses: &[ComprehensionClause],
     ) -> Result<(), CompileError> {
-        let yield_stmt = Stmt {
-            span: elt.span,
-            node: StmtKind::Expr(Expr {
-                span: elt.span,
-                node: ExprKind::Yield {
-                    value: Some(Box::new(elt.clone())),
-                },
-            }),
-        };
-        let body = build_comp_stmt_chain(clauses, vec![yield_stmt], elt.span);
+        let body = build_genexpr_body(elt, clauses);
         self.emit_comp_function("<genexpr>", body)
     }
 
@@ -2237,6 +2291,7 @@ impl Compiler {
                 self.emit(Opcode::DeleteName, Some(idx));
                 Ok(())
             }
+            AssignTarget::Starred(_) => Err(CompileError::new("cannot delete starred target")),
             AssignTarget::Attribute { value, name } => {
                 self.compile_expr(value)?;
                 let idx = self.code.add_name(name.clone());
@@ -2296,8 +2351,32 @@ impl Compiler {
                 self.emit_store_name_scoped(name)?;
                 Ok(())
             }
+            AssignTarget::Starred(item) => self.compile_store_target_from_stack(item),
             AssignTarget::Tuple(items) | AssignTarget::List(items) => {
-                self.emit(Opcode::UnpackSequence, Some(items.len() as u32));
+                let starred = items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, item)| {
+                        if matches!(item, AssignTarget::Starred(_)) {
+                            Some(idx)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if starred.len() > 1 {
+                    return Err(CompileError::new(
+                        "multiple starred targets in assignment",
+                    ));
+                }
+                if let Some(star_idx) = starred.first().copied() {
+                    let before = star_idx as u32;
+                    let after = (items.len() - star_idx - 1) as u32;
+                    let packed = (after << 16) | before;
+                    self.emit(Opcode::UnpackEx, Some(packed));
+                } else {
+                    self.emit(Opcode::UnpackSequence, Some(items.len() as u32));
+                }
                 for item in items.iter().rev() {
                     self.compile_store_target_from_stack(item)?;
                 }
@@ -2967,6 +3046,93 @@ impl Compiler {
         }
         Ok(())
     }
+}
+
+fn build_list_comp_body(elt: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt> {
+    let result_name = "__pyrs_comp_result".to_string();
+    let append_stmt = Stmt {
+        span: elt.span,
+        node: StmtKind::AugAssign {
+            target: AssignTarget::Name(result_name.clone()),
+            op: crate::ast::AugOp::Add,
+            value: Expr {
+                span: elt.span,
+                node: ExprKind::List(vec![elt.clone()]),
+            },
+        },
+    };
+    let mut body = vec![Stmt {
+        span: elt.span,
+        node: StmtKind::Assign {
+            targets: vec![AssignTarget::Name(result_name.clone())],
+            value: Expr {
+                span: elt.span,
+                node: ExprKind::List(Vec::new()),
+            },
+        },
+    }];
+    body.extend(build_comp_stmt_chain(clauses, vec![append_stmt], elt.span));
+    body.push(Stmt {
+        span: elt.span,
+        node: StmtKind::Return {
+            value: Some(Expr {
+                span: elt.span,
+                node: ExprKind::Name(result_name),
+            }),
+        },
+    });
+    body
+}
+
+fn build_dict_comp_body(key: &Expr, value: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt> {
+    let result_name = "__pyrs_comp_result".to_string();
+    let assign_stmt = Stmt {
+        span: key.span,
+        node: StmtKind::Assign {
+            targets: vec![AssignTarget::Subscript {
+                value: Box::new(Expr {
+                    span: key.span,
+                    node: ExprKind::Name(result_name.clone()),
+                }),
+                index: Box::new(key.clone()),
+            }],
+            value: value.clone(),
+        },
+    };
+    let mut body = vec![Stmt {
+        span: key.span,
+        node: StmtKind::Assign {
+            targets: vec![AssignTarget::Name(result_name.clone())],
+            value: Expr {
+                span: key.span,
+                node: ExprKind::Dict(Vec::new()),
+            },
+        },
+    }];
+    body.extend(build_comp_stmt_chain(clauses, vec![assign_stmt], key.span));
+    body.push(Stmt {
+        span: key.span,
+        node: StmtKind::Return {
+            value: Some(Expr {
+                span: key.span,
+                node: ExprKind::Name(result_name),
+            }),
+        },
+    });
+    body
+}
+
+fn build_genexpr_body(elt: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt> {
+    let yield_stmt = Stmt {
+        span: elt.span,
+        node: StmtKind::Expr(Expr {
+            span: elt.span,
+            node: ExprKind::Yield {
+                value: Some(Box::new(elt.clone())),
+            },
+        }),
+    };
+    build_comp_stmt_chain(clauses, vec![yield_stmt], elt.span)
 }
 
 fn build_comp_stmt_chain(

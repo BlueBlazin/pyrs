@@ -108,12 +108,29 @@ fn module_path(lib: &Path, entry: &str) -> Option<PathBuf> {
     None
 }
 
+fn module_name(entry: &str) -> Option<String> {
+    let without_suffix = entry.strip_suffix(".py")?;
+    let without_init = without_suffix
+        .strip_suffix("/__init__")
+        .unwrap_or(without_suffix);
+    let normalized = without_init.replace('/', ".");
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 fn run_entry(lib: &Path, entry: &str) -> Result<(), String> {
-    let path = module_path(lib, entry).ok_or_else(|| "missing module".to_string())?;
-    let source = fs::read_to_string(&path).map_err(|err| format!("read error {err}"))?;
+    let _path = module_path(lib, entry).ok_or_else(|| "missing module".to_string())?;
+    let import_name = module_name(entry).ok_or_else(|| "invalid module entry".to_string())?;
+    let lib_path = lib.to_string_lossy();
+    let source = format!(
+        "import sys\nimport importlib\nsys.path = [{lib_path:?}]\nimportlib.import_module({import_name:?})\n"
+    );
     let module =
         parser::parse_module(&source).map_err(|err| format!("parse error {}", err.message))?;
-    let code = compiler::compile_module_with_filename(&module, &path.to_string_lossy())
+    let code = compiler::compile_module_with_filename(&module, "<cpython_harness>")
         .map_err(|err| format!("compile error {}", err.message))?;
     let mut vm = Vm::new();
     vm.add_module_path(lib);

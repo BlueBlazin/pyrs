@@ -30,6 +30,7 @@ pub struct FunctionObject {
     pub kwonly_defaults: HashMap<String, Value>,
     pub closure: Vec<ObjRef>,
     pub annotations: Option<ObjRef>,
+    pub dict: Option<ObjRef>,
 }
 
 impl FunctionObject {
@@ -48,6 +49,7 @@ impl FunctionObject {
             kwonly_defaults,
             closure,
             annotations,
+            dict: None,
         }
     }
 }
@@ -147,6 +149,53 @@ pub enum NativeMethodKind {
     GeneratorSend,
     GeneratorThrow,
     GeneratorClose,
+    DictKeys,
+    DictValues,
+    DictItems,
+    DictUpdateMethod,
+    DictSetDefault,
+    DictGet,
+    DictPop,
+    ListAppend,
+    ListExtend,
+    ListInsert,
+    ListRemove,
+    ListCount,
+    IntToBytes,
+    IntBitLengthMethod,
+    StrStartsWith,
+    StrReplace,
+    StrUpper,
+    StrLower,
+    StrEncode,
+    StrDecode,
+    BytesDecode,
+    StrRemovePrefix,
+    StrRemoveSuffix,
+    StrFormat,
+    StrIsUpper,
+    StrIsSpace,
+    StrJoin,
+    StrSplit,
+    StrLStrip,
+    StrRStrip,
+    StrStrip,
+    SetContains,
+    SetAdd,
+    SetUpdate,
+    RePatternSearch,
+    RePatternMatch,
+    RePatternFullMatch,
+    RePatternSub,
+    ClassRegister,
+    PropertyGet,
+    PropertySet,
+    PropertyDelete,
+    PropertyGetter,
+    PropertySetter,
+    PropertyDeleter,
+    FunctoolsWrapsDecorator,
+    FunctoolsPartialCall,
 }
 
 #[derive(Debug, Clone)]
@@ -244,6 +293,7 @@ pub enum IteratorKind {
     Bytes(ObjRef),
     ByteArray(ObjRef),
     MemoryView(ObjRef),
+    Count { current: i64, step: i64 },
 }
 
 #[derive(Debug)]
@@ -526,7 +576,7 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             | IteratorKind::Bytes(list)
             | IteratorKind::ByteArray(list)
             | IteratorKind::MemoryView(list) => stack.push(list.clone()),
-            IteratorKind::Str(_) => {}
+            IteratorKind::Str(_) | IteratorKind::Count { .. } => {}
         },
         Object::Generator(_) => {}
         Object::Module(module) => {
@@ -569,6 +619,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             }
             if let Some(annotations) = &func.annotations {
                 stack.push(annotations.clone());
+            }
+            if let Some(dict) = &func.dict {
+                stack.push(dict.clone());
             }
             for value in &func.code.constants {
                 trace_value(value, stack, marked);
@@ -617,6 +670,10 @@ fn clear_object_refs(obj: &ObjRef) {
                 value.clear();
                 iterator.index = 0;
             }
+            IteratorKind::Count { .. } => {
+                iterator.kind = IteratorKind::Str(String::new());
+                iterator.index = 0;
+            }
         },
         Object::Generator(generator) => {
             generator.started = false;
@@ -641,6 +698,7 @@ fn clear_object_refs(obj: &ObjRef) {
             func.kwonly_defaults.clear();
             func.closure.clear();
             func.annotations = None;
+            func.dict = None;
         }
         Object::BoundMethod(_) => {}
         Object::NativeMethod(_) => {}
@@ -824,22 +882,29 @@ impl Eq for Value {}
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinFunction {
     Print,
+    Repr,
+    NoOp,
     Len,
     Range,
     Slice,
     Bool,
     Int,
+    IntBitLength,
     Float,
     Str,
+    Ord,
     Abs,
     Sum,
     Min,
     Max,
     All,
     Any,
+    Map,
     Pow,
     List,
     Tuple,
+    Dict,
+    DictFromKeys,
     Set,
     FrozenSet,
     Bytes,
@@ -849,23 +914,51 @@ pub enum BuiltinFunction {
     DivMod,
     Sorted,
     Enumerate,
+    Zip,
     Iter,
     Next,
     AIter,
     ANext,
     Type,
+    ClassMethod,
+    StaticMethod,
+    Property,
+    ObjectNew,
+    ObjectInit,
+    ObjectGetState,
+    ObjectSetAttr,
+    ObjectDelAttr,
+    ContextVar,
+    ContextVarGet,
+    ContextVarSet,
+    ContextCopyContext,
+    ThreadRLock,
+    ThreadLockEnter,
+    ThreadLockExit,
+    ThreadLockAcquire,
+    ThreadLockRelease,
     GetAttr,
     SetAttr,
     DelAttr,
     HasAttr,
+    Callable,
+    IsInstance,
+    IsSubclass,
+    Reversed,
     Super,
     BuildClass,
     Id,
+    Dir,
     Locals,
     Globals,
+    SysGetFrame,
+    SysGetFilesystemEncoding,
+    SysGetFilesystemEncodeErrors,
     Import,
     ImportModule,
     FindSpec,
+    ImportlibSourceFromCache,
+    ImportlibCacheFromSource,
     RandomSeed,
     RandomRandom,
     RandomRandRange,
@@ -873,38 +966,133 @@ pub enum BuiltinFunction {
     RandomGetRandBits,
     RandomChoice,
     RandomShuffle,
+    WeakRefRef,
+    WeakRefProxy,
+    WeakRefGetWeakRefCount,
+    WeakRefGetWeakRefs,
+    WeakRefRemoveDead,
+    ArrayArray,
+    GcCollect,
+    GcEnable,
+    GcDisable,
+    GcIsEnabled,
     MathSqrt,
+    MathCopySign,
     MathFloor,
     MathCeil,
     MathIsFinite,
     MathIsInf,
     MathIsNaN,
     TimeTime,
+    TimeTimeNs,
+    TimeLocalTime,
+    TimeGmTime,
+    TimeStrFTime,
     TimeMonotonic,
     TimeSleep,
+    OsGetPid,
     OsGetCwd,
     OsListDir,
+    OsFsEncode,
+    OsFsDecode,
+    OsRemove,
+    OsWaitStatusToExitCode,
     OsPathExists,
     OsPathJoin,
+    OsPathNormPath,
+    OsPathNormCase,
+    OsPathSplitRootEx,
+    OsPathDirName,
+    OsPathBaseName,
+    OsPathIsDir,
+    OsPathIsFile,
+    OsPathSplitExt,
+    OsPathAbsPath,
+    OsPathExpandUser,
+    OsPathRealPath,
+    OsPathCommonPrefix,
+    OsWaitPid,
     JsonDumps,
     JsonLoads,
+    MarshalLoads,
+    MarshalDumps,
     CodecsEncode,
     CodecsDecode,
+    CodecsLookup,
+    CodecsRegister,
+    UnicodedataNormalize,
     ReSearch,
     ReMatch,
     ReFullMatch,
+    ReCompile,
+    ReEscape,
     OperatorAdd,
     OperatorSub,
     OperatorMul,
+    OperatorMod,
+    OperatorFloorDiv,
     OperatorTrueDiv,
+    OperatorIndex,
     OperatorEq,
+    OperatorNe,
+    OperatorLt,
+    OperatorLe,
+    OperatorGt,
+    OperatorGe,
     OperatorContains,
     OperatorGetItem,
     ItertoolsChain,
+    ItertoolsCount,
+    ItertoolsCycle,
     ItertoolsRepeat,
+    ItertoolsBatched,
+    ItertoolsPermutations,
+    ItertoolsProduct,
     FunctoolsReduce,
+    FunctoolsSingleDispatch,
+    FunctoolsSingleDispatchMethod,
+    FunctoolsSingleDispatchRegister,
+    FunctoolsWraps,
+    FunctoolsPartial,
+    FunctoolsLruCache,
     CollectionsCounter,
     CollectionsDeque,
+    CollectionsNamedTuple,
+    CollectionsDefaultDict,
+    TokenizeTokenizerIter,
+    StructCalcSize,
+    StructPack,
+    StructUnpack,
+    StructIterUnpack,
+    StructPackInto,
+    StructUnpackFrom,
+    StructClearCache,
+    SelectSelect,
+    StringFormatterParser,
+    StringFormatterFieldNameSplit,
+    ImpAcquireLock,
+    ImpReleaseLock,
+    ImpLockHeld,
+    ImpIsBuiltin,
+    ImpIsFrozen,
+    ImpIsFrozenPackage,
+    ImpFindFrozen,
+    ImpGetFrozenObject,
+    ImpCreateBuiltin,
+    ImpExecBuiltin,
+    ImpCreateDynamic,
+    ImpExecDynamic,
+    ImpExtensionSuffixes,
+    ImpSourceHash,
+    ImpFixCoFilename,
+    ImpOverrideFrozenModulesForTests,
+    ImpOverrideMultiInterpExtensionsCheck,
+    ImpFrozenModuleNames,
+    TypingIdFunc,
+    TypingTypeVar,
+    TypingParamSpec,
+    TypingTypeVarTuple,
+    TypingTypeAliasType,
     InspectIsFunction,
     InspectIsClass,
     InspectIsModule,
@@ -912,7 +1100,14 @@ pub enum BuiltinFunction {
     InspectIsCoroutine,
     InspectIsAwaitable,
     InspectIsAsyncGen,
+    InspectStaticGetMro,
+    InspectGetDunderDictOfClass,
     TypesModuleType,
+    TypesMappingProxy,
+    TypesMethodType,
+    TypesNewClass,
+    EnumConvert,
+    TypeAnnotationsGet,
     IoOpen,
     IoReadText,
     IoWriteText,
@@ -929,6 +1124,23 @@ pub enum BuiltinFunction {
     SignalSignal,
     SignalGetSignal,
     SignalRaiseSignal,
+    ColorizeCanColorize,
+    ColorizeGetTheme,
+    ColorizeGetColors,
+    ColorizeSetTheme,
+    WarningsWarn,
+    WarningsWarnExplicit,
+    WarningsFiltersMutated,
+    AbcGetCacheToken,
+    AbcInit,
+    AbcRegister,
+    AbcInstanceCheck,
+    AbcSubclassCheck,
+    AbcGetDump,
+    AbcResetRegistry,
+    AbcResetCaches,
+    AbcAbstractMethod,
+    AbcUpdateAbstractMethods,
 }
 
 impl BuiltinFunction {
@@ -942,6 +1154,13 @@ impl BuiltinFunction {
                 println!("{}", parts.join(" "));
                 Ok(Value::None)
             }
+            BuiltinFunction::Repr => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("repr() expects one argument"));
+                }
+                Ok(Value::Str(format_value(&args[0])))
+            }
+            BuiltinFunction::NoOp => Ok(Value::None),
             BuiltinFunction::Len => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("len() expects one argument"));
@@ -1056,22 +1275,105 @@ impl BuiltinFunction {
                 Ok(Value::Bool(is_truthy_value(&args[0])))
             }
             BuiltinFunction::Int => {
-                if args.len() != 1 {
-                    return Err(RuntimeError::new("int() expects one argument"));
+                if args.is_empty() {
+                    return Ok(Value::Int(0));
+                }
+                if args.len() > 2 {
+                    return Err(RuntimeError::new("int() expects at most two arguments"));
+                }
+                let parse_with_base = |text: &str, explicit_base: Option<i64>| -> Result<i64, RuntimeError> {
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        return Err(RuntimeError::new("int() invalid literal"));
+                    }
+                    let (sign, body) = if let Some(rest) = trimmed.strip_prefix('-') {
+                        (-1_i128, rest)
+                    } else if let Some(rest) = trimmed.strip_prefix('+') {
+                        (1_i128, rest)
+                    } else {
+                        (1_i128, trimmed)
+                    };
+                    if body.is_empty() {
+                        return Err(RuntimeError::new("int() invalid literal"));
+                    }
+
+                    let mut base = explicit_base.unwrap_or(10);
+                    if explicit_base.is_some() && !(base == 0 || (2..=36).contains(&base)) {
+                        return Err(RuntimeError::new("int() base must be >= 2 and <= 36, or 0"));
+                    }
+
+                    let mut digits = body;
+                    if base == 0 {
+                        if let Some(rest) = digits.strip_prefix("0x").or_else(|| digits.strip_prefix("0X")) {
+                            base = 16;
+                            digits = rest;
+                        } else if let Some(rest) = digits.strip_prefix("0o").or_else(|| digits.strip_prefix("0O")) {
+                            base = 8;
+                            digits = rest;
+                        } else if let Some(rest) = digits.strip_prefix("0b").or_else(|| digits.strip_prefix("0B")) {
+                            base = 2;
+                            digits = rest;
+                        } else {
+                            base = 10;
+                        }
+                    } else if base == 16 {
+                        if let Some(rest) = digits.strip_prefix("0x").or_else(|| digits.strip_prefix("0X")) {
+                            digits = rest;
+                        }
+                    } else if base == 8 {
+                        if let Some(rest) = digits.strip_prefix("0o").or_else(|| digits.strip_prefix("0O")) {
+                            digits = rest;
+                        }
+                    } else if base == 2 {
+                        if let Some(rest) = digits.strip_prefix("0b").or_else(|| digits.strip_prefix("0B")) {
+                            digits = rest;
+                        }
+                    }
+
+                    let normalized = digits.replace('_', "");
+                    if normalized.is_empty() {
+                        return Err(RuntimeError::new("int() invalid literal"));
+                    }
+
+                    let parsed = i128::from_str_radix(&normalized, base as u32)
+                        .map_err(|_| RuntimeError::new("int() invalid literal"))?;
+                    let signed = sign * parsed;
+                    Ok(signed.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+                };
+
+                let explicit_base = if args.len() == 2 {
+                    Some(value_to_int(args[1].clone())?)
+                } else {
+                    None
+                };
+                if explicit_base.is_some()
+                    && !matches!(args[0], Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_))
+                {
+                    return Err(RuntimeError::new(
+                        "int() can't convert non-string with explicit base",
+                    ));
                 }
                 match &args[0] {
                     Value::Int(value) => Ok(Value::Int(*value)),
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
                     Value::Float(value) => Ok(Value::Int(*value as i64)),
-                    Value::Str(value) => {
-                        let trimmed = value.trim();
-                        let parsed = trimmed
-                            .parse::<i64>()
-                            .map_err(|_| RuntimeError::new("int() invalid literal"))?;
-                        Ok(Value::Int(parsed))
-                    }
+                    Value::Str(value) => Ok(Value::Int(parse_with_base(value, explicit_base)?)),
+                    Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
+                        Object::Bytes(bytes) | Object::ByteArray(bytes) => {
+                            let text = String::from_utf8_lossy(bytes);
+                            Ok(Value::Int(parse_with_base(&text, explicit_base)?))
+                        }
+                        _ => Err(RuntimeError::new("int() unsupported type")),
+                    },
                     _ => Err(RuntimeError::new("int() unsupported type")),
                 }
+            }
+            BuiltinFunction::IntBitLength => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("int.bit_length() expects one argument"));
+                }
+                let value = value_to_int(args[0].clone())?;
+                Ok(Value::Int((i64::BITS - value.unsigned_abs().leading_zeros()) as i64))
             }
             BuiltinFunction::Float => {
                 if args.len() != 1 {
@@ -1096,6 +1398,36 @@ impl BuiltinFunction {
                     return Err(RuntimeError::new("str() expects one argument"));
                 }
                 Ok(Value::Str(format_value(&args[0])))
+            }
+            BuiltinFunction::Ord => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("ord() expects one argument"));
+                }
+                match &args[0] {
+                    Value::Str(value) => {
+                        let mut chars = value.chars();
+                        let ch = chars
+                            .next()
+                            .ok_or_else(|| RuntimeError::new("ord() expected a character"))?;
+                        if chars.next().is_some() {
+                            return Err(RuntimeError::new("ord() expected a character"));
+                        }
+                        Ok(Value::Int(ch as i64))
+                    }
+                    Value::Bytes(obj) => match &*obj.kind() {
+                        Object::Bytes(values) if values.len() == 1 => Ok(Value::Int(values[0] as i64)),
+                        Object::Bytes(_) => Err(RuntimeError::new("ord() expected a character")),
+                        _ => Err(RuntimeError::new("ord() unsupported type")),
+                    },
+                    Value::ByteArray(obj) => match &*obj.kind() {
+                        Object::ByteArray(values) if values.len() == 1 => {
+                            Ok(Value::Int(values[0] as i64))
+                        }
+                        Object::ByteArray(_) => Err(RuntimeError::new("ord() expected a character")),
+                        _ => Err(RuntimeError::new("ord() unsupported type")),
+                    },
+                    _ => Err(RuntimeError::new("ord() expected string of length 1")),
+                }
             }
             BuiltinFunction::Abs => {
                 if args.len() != 1 {
@@ -1144,19 +1476,38 @@ impl BuiltinFunction {
             BuiltinFunction::Max => builtin_min_max(args, Ordering::Greater),
             BuiltinFunction::All => builtin_all_any(args, true),
             BuiltinFunction::Any => builtin_all_any(args, false),
+            BuiltinFunction::Map => Err(RuntimeError::new("map() requires VM context")),
             BuiltinFunction::Pow => {
                 if args.len() < 2 || args.len() > 3 {
                     return Err(RuntimeError::new("pow() expects 2-3 arguments"));
                 }
-                let mut value = pow_numeric_values(args[0].clone(), args[1].clone())?;
                 if args.len() == 3 {
-                    let modu = value_to_int(args[2].clone())?;
+                    let base = value_to_int(args[0].clone()).map_err(|_| {
+                        RuntimeError::new(
+                            "pow() 3rd argument not allowed unless all arguments are integers",
+                        )
+                    })?;
+                    let exponent = value_to_int(args[1].clone()).map_err(|_| {
+                        RuntimeError::new(
+                            "pow() 3rd argument not allowed unless all arguments are integers",
+                        )
+                    })?;
+                    if exponent < 0 {
+                        return Err(RuntimeError::new(
+                            "pow() 2nd argument cannot be negative when 3rd argument specified",
+                        ));
+                    }
+                    let modu = value_to_int(args[2].clone()).map_err(|_| {
+                        RuntimeError::new(
+                            "pow() 3rd argument not allowed unless all arguments are integers",
+                        )
+                    })?;
                     if modu == 0 {
                         return Err(RuntimeError::new("pow() modulo by zero"));
                     }
-                    let as_int = value_to_int(value)?;
-                    value = Value::Int(as_int.rem_euclid(modu));
+                    return Ok(Value::Int(mod_pow_i64(base, exponent, modu)?));
                 }
+                let value = pow_numeric_values(args[0].clone(), args[1].clone())?;
                 Ok(value)
             }
             BuiltinFunction::List => {
@@ -1258,6 +1609,70 @@ impl BuiltinFunction {
                     },
                     _ => Err(RuntimeError::new("tuple() unsupported type")),
                 }
+            }
+            BuiltinFunction::Dict => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("dict() expects at most one argument"));
+                }
+                if args.is_empty() {
+                    return Ok(heap.alloc_dict(Vec::new()));
+                }
+                match &args[0] {
+                    Value::Dict(obj) => match &*obj.kind() {
+                        Object::Dict(entries) => Ok(heap.alloc_dict(entries.clone())),
+                        _ => Err(RuntimeError::new("dict() unsupported type")),
+                    },
+                    other => {
+                        let mut entries = Vec::new();
+                        for item in iterable_values(other.clone())? {
+                            match item {
+                                Value::Tuple(pair) => match &*pair.kind() {
+                                    Object::Tuple(parts) if parts.len() == 2 => {
+                                        entries.push((parts[0].clone(), parts[1].clone()));
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "dict() sequence elements must be length 2",
+                                        ));
+                                    }
+                                },
+                                Value::List(pair) => match &*pair.kind() {
+                                    Object::List(parts) if parts.len() == 2 => {
+                                        entries.push((parts[0].clone(), parts[1].clone()));
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "dict() sequence elements must be length 2",
+                                        ));
+                                    }
+                                },
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "dict() argument must be a mapping or iterable of pairs",
+                                    ));
+                                }
+                            }
+                        }
+                        Ok(heap.alloc_dict(entries))
+                    }
+                }
+            }
+            BuiltinFunction::DictFromKeys => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("dict.fromkeys() expects 1-2 arguments"));
+                }
+                let keys = iterable_values(args[0].clone())?;
+                let default = args.get(1).cloned().unwrap_or(Value::None);
+                let mut entries: Vec<(Value, Value)> = Vec::new();
+                for key in keys {
+                    if let Some((_, value)) = entries.iter_mut().find(|(existing, _)| *existing == key)
+                    {
+                        *value = default.clone();
+                    } else {
+                        entries.push((key, default.clone()));
+                    }
+                }
+                Ok(heap.alloc_dict(entries))
             }
             BuiltinFunction::Set => {
                 if args.len() > 1 {
@@ -1401,6 +1816,364 @@ impl BuiltinFunction {
                     .or_insert_with(|| Value::Str(name));
                 Ok(heap.alloc_class(class))
             }
+            BuiltinFunction::ClassMethod => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("classmethod() expects one argument"));
+                }
+                Ok(args[0].clone())
+            }
+            BuiltinFunction::StaticMethod => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("staticmethod() expects one argument"));
+                }
+                Ok(args[0].clone())
+            }
+            BuiltinFunction::Property => {
+                if args.len() > 4 {
+                    return Err(RuntimeError::new("property() expects up to four arguments"));
+                }
+                Ok(args.first().cloned().unwrap_or(Value::None))
+            }
+            BuiltinFunction::ContextVar => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "ContextVar() expects name and optional default",
+                    ));
+                }
+                let name = match &args[0] {
+                    Value::Str(value) => value.clone(),
+                    _ => return Err(RuntimeError::new("ContextVar() name must be string")),
+                };
+                let default = args.get(1).cloned().unwrap_or(Value::None);
+                let module = match heap.alloc_module(ModuleObject::new(format!("<ContextVar {name}>")))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *module.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("__name__".to_string(), Value::Str(name));
+                    module_data
+                        .globals
+                        .insert("__default__".to_string(), default);
+                    module_data.globals.insert(
+                        "get".to_string(),
+                        Value::Builtin(BuiltinFunction::ContextVarGet),
+                    );
+                    module_data.globals.insert(
+                        "set".to_string(),
+                        Value::Builtin(BuiltinFunction::ContextVarSet),
+                    );
+                }
+                Ok(Value::Module(module))
+            }
+            BuiltinFunction::ContextVarGet => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("ContextVar.get() expects at most one argument"));
+                }
+                if let Some(default) = args.into_iter().next() {
+                    Ok(default)
+                } else {
+                    // KeyError is a LookupError subclass and matches contextvars expectations.
+                    Err(RuntimeError::new("key not found"))
+                }
+            }
+            BuiltinFunction::ContextVarSet => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("ContextVar.set() expects one argument"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ContextCopyContext => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("copy_context() expects no arguments"));
+                }
+                let module = match heap.alloc_module(ModuleObject::new("<Context>")) {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *module.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("__name__".to_string(), Value::Str("Context".to_string()));
+                }
+                Ok(Value::Module(module))
+            }
+            BuiltinFunction::ThreadRLock => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("RLock() expects no arguments"));
+                }
+                let module = match heap.alloc_module(ModuleObject::new("<RLock>".to_string())) {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *module.kind_mut() {
+                    module_data.globals.insert(
+                        "__enter__".to_string(),
+                        Value::Builtin(BuiltinFunction::ThreadLockEnter),
+                    );
+                    module_data.globals.insert(
+                        "__exit__".to_string(),
+                        Value::Builtin(BuiltinFunction::ThreadLockExit),
+                    );
+                    module_data.globals.insert(
+                        "acquire".to_string(),
+                        Value::Builtin(BuiltinFunction::ThreadLockAcquire),
+                    );
+                    module_data.globals.insert(
+                        "release".to_string(),
+                        Value::Builtin(BuiltinFunction::ThreadLockRelease),
+                    );
+                }
+                Ok(Value::Module(module))
+            }
+            BuiltinFunction::ThreadLockEnter => Ok(Value::None),
+            BuiltinFunction::ThreadLockExit => Ok(Value::Bool(false)),
+            BuiltinFunction::ThreadLockAcquire => Ok(Value::Bool(true)),
+            BuiltinFunction::ThreadLockRelease => Ok(Value::None),
+            BuiltinFunction::FunctoolsLruCache => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("lru_cache() expects at most one argument"));
+                }
+                if let Some(callable) = args.into_iter().next() {
+                    Ok(callable)
+                } else {
+                    Ok(Value::Builtin(BuiltinFunction::FunctoolsLruCache))
+                }
+            }
+            BuiltinFunction::TokenizeTokenizerIter => {
+                if args.is_empty() {
+                    return Err(RuntimeError::new("TokenizerIter() expects source"));
+                }
+                let empty = match heap.alloc_list(Vec::new()) {
+                    Value::List(obj) => obj,
+                    _ => unreachable!(),
+                };
+                Ok(Value::Iterator(
+                    heap.alloc(Object::Iterator(IteratorObject {
+                        kind: IteratorKind::List(empty),
+                        index: 0,
+                    })),
+                ))
+            }
+            BuiltinFunction::StructCalcSize => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("calcsize() expects one argument"));
+                }
+                Ok(Value::Int(0))
+            }
+            BuiltinFunction::StructPack => {
+                if args.is_empty() {
+                    return Err(RuntimeError::new("pack() expects format string"));
+                }
+                Ok(heap.alloc_bytes(Vec::new()))
+            }
+            BuiltinFunction::StructUnpack => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("unpack() expects format and buffer"));
+                }
+                Ok(heap.alloc_tuple(Vec::new()))
+            }
+            BuiltinFunction::StructIterUnpack => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("iter_unpack() expects format and buffer"));
+                }
+                let empty = match heap.alloc_list(Vec::new()) {
+                    Value::List(obj) => obj,
+                    _ => unreachable!(),
+                };
+                Ok(Value::Iterator(
+                    heap.alloc(Object::Iterator(IteratorObject {
+                        kind: IteratorKind::List(empty),
+                        index: 0,
+                    })),
+                ))
+            }
+            BuiltinFunction::StructPackInto => {
+                if args.len() < 3 {
+                    return Err(RuntimeError::new("pack_into() expects format, buffer, offset"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::StructUnpackFrom => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "unpack_from() expects format, buffer, optional offset",
+                    ));
+                }
+                Ok(heap.alloc_tuple(Vec::new()))
+            }
+            BuiltinFunction::StructClearCache => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("_clearcache() expects no arguments"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ImpAcquireLock => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("acquire_lock() expects no arguments"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ImpReleaseLock => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("release_lock() expects no arguments"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ImpLockHeld => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("lock_held() expects no arguments"));
+                }
+                Ok(Value::Bool(false))
+            }
+            BuiltinFunction::ImpIsBuiltin => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("is_builtin() expects one argument"));
+                }
+                let name = match &args[0] {
+                    Value::Str(name) => name.as_str(),
+                    _ => return Err(RuntimeError::new("is_builtin() name must be string")),
+                };
+                Ok(Value::Bool(matches!(
+                    name,
+                    "sys"
+                        | "builtins"
+                        | "_imp"
+                        | "_tokenize"
+                        | "_struct"
+                        | "_ast"
+                        | "_typing"
+                        | "_contextvars"
+                )))
+            }
+            BuiltinFunction::ImpIsFrozen | BuiltinFunction::ImpIsFrozenPackage => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("frozen-query expects one argument"));
+                }
+                Ok(Value::Bool(false))
+            }
+            BuiltinFunction::ImpFindFrozen => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("find_frozen() expects one argument"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ImpGetFrozenObject => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "get_frozen_object() expects name and optional token",
+                    ));
+                }
+                Err(RuntimeError::new("module not found"))
+            }
+            BuiltinFunction::ImpCreateBuiltin => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("create_builtin() expects one argument"));
+                }
+                let module = match heap.alloc_module(ModuleObject::new("<builtin-module>")) {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                Ok(Value::Module(module))
+            }
+            BuiltinFunction::ImpExecBuiltin => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("exec_builtin() expects one argument"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ImpCreateDynamic => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("create_dynamic() expects one argument"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ImpExecDynamic => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("exec_dynamic() expects one argument"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ImpExtensionSuffixes => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(
+                        "extension_suffixes() expects no arguments",
+                    ));
+                }
+                Ok(heap.alloc_list(Vec::new()))
+            }
+            BuiltinFunction::ImpSourceHash => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("source_hash() expects token and source"));
+                }
+                let bytes = match &args[1] {
+                    Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
+                        Object::Bytes(values) | Object::ByteArray(values) => values.clone(),
+                        _ => Vec::new(),
+                    },
+                    Value::Str(text) => text.as_bytes().to_vec(),
+                    _ => Vec::new(),
+                };
+                let mut hash: u64 = 1469598103934665603;
+                for byte in bytes {
+                    hash ^= byte as u64;
+                    hash = hash.wrapping_mul(1099511628211);
+                }
+                Ok(heap.alloc_bytes(hash.to_le_bytes().to_vec()))
+            }
+            BuiltinFunction::ImpFixCoFilename => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("_fix_co_filename() expects code and path"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ImpOverrideFrozenModulesForTests
+            | BuiltinFunction::ImpOverrideMultiInterpExtensionsCheck => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("override helper expects one argument"));
+                }
+                Ok(Value::Int(0))
+            }
+            BuiltinFunction::ImpFrozenModuleNames => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("_frozen_module_names() expects no arguments"));
+                }
+                Ok(heap.alloc_tuple(Vec::new()))
+            }
+            BuiltinFunction::TypingIdFunc => {
+                if args.is_empty() {
+                    Ok(Value::None)
+                } else {
+                    Ok(args[0].clone())
+                }
+            }
+            BuiltinFunction::TypingTypeVar
+            | BuiltinFunction::TypingParamSpec
+            | BuiltinFunction::TypingTypeVarTuple
+            | BuiltinFunction::TypingTypeAliasType => {
+                if args.is_empty() {
+                    return Err(RuntimeError::new("typing helper expects a name"));
+                }
+                let name = match &args[0] {
+                    Value::Str(value) => value.clone(),
+                    _ => return Err(RuntimeError::new("typing helper name must be string")),
+                };
+                let marker = match heap.alloc_module(ModuleObject::new(format!("<typing {name}>"))) {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *marker.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("__name__".to_string(), Value::Str(name.clone()));
+                    module_data
+                        .globals
+                        .insert("__qualname__".to_string(), Value::Str(name));
+                }
+                Ok(Value::Module(marker))
+            }
             BuiltinFunction::DivMod => {
                 if args.len() != 2 {
                     return Err(RuntimeError::new("divmod() expects two arguments"));
@@ -1468,6 +2241,122 @@ impl BuiltinFunction {
                     _ => Err(RuntimeError::new("sorted() expects list or tuple")),
                 }
             }
+            BuiltinFunction::CollectionsNamedTuple => {
+                if args.len() < 2 {
+                    return Err(RuntimeError::new(
+                        "namedtuple() expects typename and field names",
+                    ));
+                }
+                let type_name = match &args[0] {
+                    Value::Str(name) => name.clone(),
+                    _ => return Err(RuntimeError::new("namedtuple() typename must be string")),
+                };
+                let fields: Vec<String> = match &args[1] {
+                    Value::Str(names) => names
+                        .replace(',', " ")
+                        .split_whitespace()
+                        .map(ToOwned::to_owned)
+                        .collect(),
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => values
+                            .iter()
+                            .map(|value| match value {
+                                Value::Str(name) => Ok(name.clone()),
+                                _ => Err(RuntimeError::new(
+                                    "namedtuple() field names must be strings",
+                                )),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "namedtuple() field names must be string/list/tuple",
+                            ));
+                        }
+                    },
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => values
+                            .iter()
+                            .map(|value| match value {
+                                Value::Str(name) => Ok(name.clone()),
+                                _ => Err(RuntimeError::new(
+                                    "namedtuple() field names must be strings",
+                                )),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "namedtuple() field names must be string/list/tuple",
+                            ));
+                        }
+                    },
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "namedtuple() field names must be string/list/tuple",
+                        ));
+                    }
+                };
+
+                let mut class = ClassObject::new(type_name.clone(), Vec::new());
+                class
+                    .attrs
+                    .insert("__name__".to_string(), Value::Str(type_name));
+                class.attrs.insert(
+                    "_fields".to_string(),
+                    heap.alloc_tuple(fields.iter().cloned().map(Value::Str).collect()),
+                );
+                for field in &fields {
+                    let descriptor = match heap.alloc_module(ModuleObject::new(format!(
+                        "__namedtuple_field_{field}"
+                    ))) {
+                        Value::Module(module) => {
+                            if let Object::Module(module_data) = &mut *module.kind_mut() {
+                                module_data.globals.insert("__doc__".to_string(), Value::None);
+                            }
+                            Value::Module(module)
+                        }
+                        _ => Value::None,
+                    };
+                    class.attrs.insert(field.clone(), descriptor);
+                }
+                Ok(heap.alloc_class(class))
+            }
+            BuiltinFunction::TypesMappingProxy => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("MappingProxyType() expects one argument"));
+                }
+                Ok(args[0].clone())
+            }
+            BuiltinFunction::AbcGetCacheToken => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("get_cache_token() expects no arguments"));
+                }
+                Ok(Value::Int(0))
+            }
+            BuiltinFunction::AbcInit => Ok(Value::None),
+            BuiltinFunction::AbcRegister => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("_abc_register() expects two arguments"));
+                }
+                Ok(args[1].clone())
+            }
+            BuiltinFunction::AbcInstanceCheck | BuiltinFunction::AbcSubclassCheck => {
+                Ok(Value::Bool(false))
+            }
+            BuiltinFunction::AbcGetDump => Ok(heap.alloc_tuple(vec![
+                heap.alloc_set(Vec::new()),
+                heap.alloc_set(Vec::new()),
+                heap.alloc_set(Vec::new()),
+                Value::Int(0),
+            ])),
+            BuiltinFunction::AbcResetRegistry | BuiltinFunction::AbcResetCaches => Ok(Value::None),
+            BuiltinFunction::AbcAbstractMethod | BuiltinFunction::AbcUpdateAbstractMethods => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new(
+                        "abc helper expects exactly one argument",
+                    ));
+                }
+                Ok(args[0].clone())
+            }
             BuiltinFunction::Enumerate => {
                 if args.is_empty() || args.len() > 2 {
                     return Err(RuntimeError::new("enumerate() expects 1-2 arguments"));
@@ -1512,10 +2401,105 @@ impl BuiltinFunction {
                 }
                 Ok(heap.alloc_list(entries))
             }
+            BuiltinFunction::WeakRefRef | BuiltinFunction::WeakRefProxy => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "weakref helper expects object and optional callback",
+                    ));
+                }
+                Ok(args[0].clone())
+            }
+            BuiltinFunction::WeakRefGetWeakRefCount => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("getweakrefcount() expects one argument"));
+                }
+                Ok(Value::Int(0))
+            }
+            BuiltinFunction::WeakRefGetWeakRefs => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("getweakrefs() expects one argument"));
+                }
+                Ok(heap.alloc_list(Vec::new()))
+            }
+            BuiltinFunction::WeakRefRemoveDead => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("_remove_dead_weakref() expects two arguments"));
+                }
+                if let Value::Dict(obj) = &args[0] {
+                    if let Object::Dict(entries) = &mut *obj.kind_mut() {
+                        if let Some(index) =
+                            entries.iter().position(|(key, _)| *key == args[1])
+                        {
+                            entries.remove(index);
+                        }
+                    }
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ArrayArray => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("array.array() expects 1-2 arguments"));
+                }
+                let typecode = match &args[0] {
+                    Value::Str(code) => code.clone(),
+                    _ => return Err(RuntimeError::new("array() typecode must be a string")),
+                };
+                if typecode.is_empty() {
+                    return Err(RuntimeError::new("array() typecode cannot be empty"));
+                }
+                let mut values = Vec::new();
+                if let Some(initializer) = args.get(1) {
+                    match initializer {
+                        Value::List(obj) => match &*obj.kind() {
+                            Object::List(items) => values.extend(items.clone()),
+                            _ => return Err(RuntimeError::new("array() initializer must be iterable")),
+                        },
+                        Value::Tuple(obj) => match &*obj.kind() {
+                            Object::Tuple(items) => values.extend(items.clone()),
+                            _ => return Err(RuntimeError::new("array() initializer must be iterable")),
+                        },
+                        Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
+                            Object::Bytes(bytes) | Object::ByteArray(bytes) => {
+                                values.extend(bytes.iter().map(|value| Value::Int(*value as i64)));
+                            }
+                            _ => return Err(RuntimeError::new("array() initializer must be iterable")),
+                        },
+                        Value::Str(text) => {
+                            values.extend(text.chars().map(|ch| Value::Int(ch as i64)));
+                        }
+                        Value::None => {}
+                        _ => return Err(RuntimeError::new("array() initializer must be iterable")),
+                    }
+                }
+                Ok(heap.alloc_list(values))
+            }
+            BuiltinFunction::GcCollect => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("gc.collect() expects at most one argument"));
+                }
+                Ok(Value::Int(0))
+            }
+            BuiltinFunction::GcEnable | BuiltinFunction::GcDisable => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("gc helper expects no arguments"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::GcIsEnabled => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("gc.isenabled() expects no arguments"));
+                }
+                Ok(Value::Bool(true))
+            }
             BuiltinFunction::GetAttr
             | BuiltinFunction::SetAttr
             | BuiltinFunction::DelAttr
             | BuiltinFunction::HasAttr
+            | BuiltinFunction::Callable
+            | BuiltinFunction::IsInstance
+            | BuiltinFunction::IsSubclass
+            | BuiltinFunction::Reversed
+            | BuiltinFunction::Zip
             | BuiltinFunction::Iter
             | BuiltinFunction::Next
             | BuiltinFunction::AIter
@@ -1523,6 +2507,11 @@ impl BuiltinFunction {
             | BuiltinFunction::Super
             | BuiltinFunction::Locals
             | BuiltinFunction::Globals
+            | BuiltinFunction::SysGetFrame
+            | BuiltinFunction::SysGetFilesystemEncoding
+            | BuiltinFunction::SysGetFilesystemEncodeErrors
+            | BuiltinFunction::ImportlibSourceFromCache
+            | BuiltinFunction::ImportlibCacheFromSource
             | BuiltinFunction::RandomSeed
             | BuiltinFunction::RandomRandom
             | BuiltinFunction::RandomRandRange
@@ -1531,37 +2520,85 @@ impl BuiltinFunction {
             | BuiltinFunction::RandomChoice
             | BuiltinFunction::RandomShuffle
             | BuiltinFunction::MathSqrt
+            | BuiltinFunction::MathCopySign
             | BuiltinFunction::MathFloor
             | BuiltinFunction::MathCeil
             | BuiltinFunction::MathIsFinite
             | BuiltinFunction::MathIsInf
             | BuiltinFunction::MathIsNaN
             | BuiltinFunction::TimeTime
+            | BuiltinFunction::TimeTimeNs
+            | BuiltinFunction::TimeLocalTime
+            | BuiltinFunction::TimeGmTime
+            | BuiltinFunction::TimeStrFTime
             | BuiltinFunction::TimeMonotonic
             | BuiltinFunction::TimeSleep
+            | BuiltinFunction::OsGetPid
             | BuiltinFunction::OsGetCwd
             | BuiltinFunction::OsListDir
+            | BuiltinFunction::OsFsEncode
+            | BuiltinFunction::OsFsDecode
+            | BuiltinFunction::OsRemove
+            | BuiltinFunction::OsWaitStatusToExitCode
             | BuiltinFunction::OsPathExists
             | BuiltinFunction::OsPathJoin
+            | BuiltinFunction::OsPathNormPath
+            | BuiltinFunction::OsPathNormCase
+            | BuiltinFunction::OsPathSplitRootEx
+            | BuiltinFunction::OsPathDirName
+            | BuiltinFunction::OsPathBaseName
+            | BuiltinFunction::OsPathIsDir
+            | BuiltinFunction::OsPathIsFile
+            | BuiltinFunction::OsPathSplitExt
+            | BuiltinFunction::OsPathAbsPath
+            | BuiltinFunction::OsPathExpandUser
+            | BuiltinFunction::OsPathRealPath
+            | BuiltinFunction::OsPathCommonPrefix
+            | BuiltinFunction::OsWaitPid
             | BuiltinFunction::JsonDumps
             | BuiltinFunction::JsonLoads
             | BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
+            | BuiltinFunction::CodecsLookup
+            | BuiltinFunction::CodecsRegister
+            | BuiltinFunction::UnicodedataNormalize
+            | BuiltinFunction::SelectSelect
             | BuiltinFunction::ReSearch
             | BuiltinFunction::ReMatch
             | BuiltinFunction::ReFullMatch
+            | BuiltinFunction::ReCompile
+            | BuiltinFunction::ReEscape
             | BuiltinFunction::OperatorAdd
             | BuiltinFunction::OperatorSub
             | BuiltinFunction::OperatorMul
+            | BuiltinFunction::OperatorMod
             | BuiltinFunction::OperatorTrueDiv
+            | BuiltinFunction::OperatorFloorDiv
+            | BuiltinFunction::OperatorIndex
             | BuiltinFunction::OperatorEq
+            | BuiltinFunction::OperatorNe
+            | BuiltinFunction::OperatorLt
+            | BuiltinFunction::OperatorLe
+            | BuiltinFunction::OperatorGt
+            | BuiltinFunction::OperatorGe
             | BuiltinFunction::OperatorContains
             | BuiltinFunction::OperatorGetItem
             | BuiltinFunction::ItertoolsChain
+            | BuiltinFunction::ItertoolsCount
+            | BuiltinFunction::ItertoolsCycle
             | BuiltinFunction::ItertoolsRepeat
+            | BuiltinFunction::ItertoolsBatched
+            | BuiltinFunction::ItertoolsPermutations
+            | BuiltinFunction::ItertoolsProduct
             | BuiltinFunction::FunctoolsReduce
+            | BuiltinFunction::FunctoolsSingleDispatch
+            | BuiltinFunction::FunctoolsSingleDispatchMethod
+            | BuiltinFunction::FunctoolsSingleDispatchRegister
+            | BuiltinFunction::FunctoolsWraps
+            | BuiltinFunction::FunctoolsPartial
             | BuiltinFunction::CollectionsCounter
             | BuiltinFunction::CollectionsDeque
+            | BuiltinFunction::CollectionsDefaultDict
             | BuiltinFunction::InspectIsFunction
             | BuiltinFunction::InspectIsClass
             | BuiltinFunction::InspectIsModule
@@ -1569,7 +2606,13 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectIsCoroutine
             | BuiltinFunction::InspectIsAwaitable
             | BuiltinFunction::InspectIsAsyncGen
+            | BuiltinFunction::InspectStaticGetMro
+            | BuiltinFunction::InspectGetDunderDictOfClass
             | BuiltinFunction::TypesModuleType
+            | BuiltinFunction::TypesMethodType
+            | BuiltinFunction::TypesNewClass
+            | BuiltinFunction::EnumConvert
+            | BuiltinFunction::TypeAnnotationsGet
             | BuiltinFunction::IoOpen
             | BuiltinFunction::IoReadText
             | BuiltinFunction::IoWriteText
@@ -1585,7 +2628,22 @@ impl BuiltinFunction {
             | BuiltinFunction::ThreadingActiveCount
             | BuiltinFunction::SignalSignal
             | BuiltinFunction::SignalGetSignal
-            | BuiltinFunction::SignalRaiseSignal => {
+            | BuiltinFunction::SignalRaiseSignal
+            | BuiltinFunction::ColorizeCanColorize
+            | BuiltinFunction::ColorizeGetTheme
+            | BuiltinFunction::ColorizeGetColors
+            | BuiltinFunction::ColorizeSetTheme
+            | BuiltinFunction::WarningsWarn
+            | BuiltinFunction::WarningsWarnExplicit
+            | BuiltinFunction::WarningsFiltersMutated
+            | BuiltinFunction::ObjectNew
+            | BuiltinFunction::ObjectInit
+            | BuiltinFunction::ObjectSetAttr
+            | BuiltinFunction::ObjectDelAttr
+            | BuiltinFunction::Dir
+            | BuiltinFunction::ObjectGetState
+            | BuiltinFunction::StringFormatterParser
+            | BuiltinFunction::StringFormatterFieldNameSplit => {
                 Err(RuntimeError::new("builtin requires VM context"))
             }
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
@@ -1600,6 +2658,8 @@ impl BuiltinFunction {
             BuiltinFunction::FindSpec => Err(RuntimeError::new(
                 "importlib.find_spec() is only available in the VM",
             )),
+            BuiltinFunction::MarshalLoads => Ok(Value::None),
+            BuiltinFunction::MarshalDumps => Ok(heap.alloc_bytes(Vec::new())),
             BuiltinFunction::Id => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("id() expects one argument"));
@@ -1973,6 +3033,26 @@ fn pow_numeric_values(base: Value, exponent: Value) -> Result<Value, RuntimeErro
     }
 }
 
+fn mod_pow_i64(base: i64, exponent: i64, modulo: i64) -> Result<i64, RuntimeError> {
+    if modulo == 0 {
+        return Err(RuntimeError::new("pow() modulo by zero"));
+    }
+    let modulus = modulo as i128;
+    let mut acc = 1_i128.rem_euclid(modulus);
+    let mut factor = (base as i128).rem_euclid(modulus);
+    let mut exp = exponent as u64;
+    while exp > 0 {
+        if (exp & 1) == 1 {
+            acc = (acc * factor).rem_euclid(modulus);
+        }
+        exp >>= 1;
+        if exp > 0 {
+            factor = (factor * factor).rem_euclid(modulus);
+        }
+    }
+    i64::try_from(acc).map_err(|_| RuntimeError::new("integer overflow"))
+}
+
 fn divmod_values(left: Value, right: Value) -> Result<(Value, Value), RuntimeError> {
     match (numeric_value(&left), numeric_value(&right)) {
         (Some(NumericValue::Int(left)), Some(NumericValue::Int(right))) => {
@@ -2027,7 +3107,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::Str(_) => Value::Builtin(BuiltinFunction::Str),
         Value::List(_) => Value::Builtin(BuiltinFunction::List),
         Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
-        Value::Dict(_) => Value::Str("dict".to_string()),
+        Value::Dict(_) => Value::Builtin(BuiltinFunction::Dict),
         Value::Set(_) => Value::Builtin(BuiltinFunction::Set),
         Value::FrozenSet(_) => Value::Builtin(BuiltinFunction::FrozenSet),
         Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
@@ -2058,7 +3138,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::ExceptionType(_) => Value::Str("type".to_string()),
         Value::Slice { .. } => Value::Builtin(BuiltinFunction::Slice),
         Value::Code(_) => Value::Str("code".to_string()),
-        Value::Builtin(_) => Value::Str("builtin_function_or_method".to_string()),
+        Value::Builtin(_) => Value::Builtin(BuiltinFunction::Type),
     };
     Ok(ty)
 }
@@ -2231,6 +3311,71 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::GeneratorSend => "<bound method send>".to_string(),
                     NativeMethodKind::GeneratorThrow => "<bound method throw>".to_string(),
                     NativeMethodKind::GeneratorClose => "<bound method close>".to_string(),
+                    NativeMethodKind::DictKeys => "<bound method dict.keys>".to_string(),
+                    NativeMethodKind::DictValues => "<bound method dict.values>".to_string(),
+                    NativeMethodKind::DictItems => "<bound method dict.items>".to_string(),
+                    NativeMethodKind::DictUpdateMethod => "<bound method dict.update>".to_string(),
+                    NativeMethodKind::DictSetDefault => {
+                        "<bound method dict.setdefault>".to_string()
+                    }
+                    NativeMethodKind::DictGet => "<bound method dict.get>".to_string(),
+                    NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
+                    NativeMethodKind::ListAppend => "<bound method list.append>".to_string(),
+                    NativeMethodKind::ListExtend => "<bound method list.extend>".to_string(),
+                    NativeMethodKind::ListInsert => "<bound method list.insert>".to_string(),
+                    NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
+                    NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
+                    NativeMethodKind::IntToBytes => "<bound method int.to_bytes>".to_string(),
+                    NativeMethodKind::IntBitLengthMethod => {
+                        "<bound method int.bit_length>".to_string()
+                    }
+                    NativeMethodKind::StrStartsWith => "<bound method str.startswith>".to_string(),
+                    NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),
+                    NativeMethodKind::StrUpper => "<bound method str.upper>".to_string(),
+                    NativeMethodKind::StrLower => "<bound method str.lower>".to_string(),
+                    NativeMethodKind::StrEncode => "<bound method str.encode>".to_string(),
+                    NativeMethodKind::StrDecode => "<bound method str.decode>".to_string(),
+                    NativeMethodKind::BytesDecode => "<bound method bytes.decode>".to_string(),
+                    NativeMethodKind::StrRemovePrefix => {
+                        "<bound method str.removeprefix>".to_string()
+                    }
+                    NativeMethodKind::StrRemoveSuffix => {
+                        "<bound method str.removesuffix>".to_string()
+                    }
+                    NativeMethodKind::StrFormat => "<bound method str.format>".to_string(),
+                    NativeMethodKind::StrIsUpper => "<bound method str.isupper>".to_string(),
+                    NativeMethodKind::StrIsSpace => "<bound method str.isspace>".to_string(),
+                    NativeMethodKind::StrJoin => "<bound method str.join>".to_string(),
+                    NativeMethodKind::StrSplit => "<bound method str.split>".to_string(),
+                    NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
+                    NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
+                    NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),
+                    NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
+                    NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
+                    NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
+                    NativeMethodKind::RePatternSearch => "<bound method Pattern.search>".to_string(),
+                    NativeMethodKind::RePatternMatch => "<bound method Pattern.match>".to_string(),
+                    NativeMethodKind::RePatternFullMatch => {
+                        "<bound method Pattern.fullmatch>".to_string()
+                    }
+                    NativeMethodKind::RePatternSub => "<bound method Pattern.sub>".to_string(),
+                    NativeMethodKind::ClassRegister => "<bound method register>".to_string(),
+                    NativeMethodKind::PropertyGet => "<bound method property.__get__>".to_string(),
+                    NativeMethodKind::PropertySet => "<bound method property.__set__>".to_string(),
+                    NativeMethodKind::PropertyDelete => {
+                        "<bound method property.__delete__>".to_string()
+                    }
+                    NativeMethodKind::PropertyGetter => "<bound method property.getter>".to_string(),
+                    NativeMethodKind::PropertySetter => "<bound method property.setter>".to_string(),
+                    NativeMethodKind::PropertyDeleter => {
+                        "<bound method property.deleter>".to_string()
+                    }
+                    NativeMethodKind::FunctoolsWrapsDecorator => {
+                        "<bound method functools.wraps-decorator>".to_string()
+                    }
+                    NativeMethodKind::FunctoolsPartialCall => {
+                        "<bound method functools.partial-call>".to_string()
+                    }
                 },
                 _ => "<bound method ?>".to_string(),
             },

@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::ast::{
     AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, ExceptHandler, Expr,
-    ExprKind, FloatLiteral, ImportAlias, MatchCase, Module, Parameter, Pattern, Span, Stmt,
+    DictEntry, ExprKind, FloatLiteral, ImportAlias, MatchCase, Module, Parameter, Pattern, Span,
+    Stmt,
     StmtKind, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
@@ -59,6 +60,86 @@ struct Parser {
 enum SequenceElement {
     Expr(Expr),
     Star(Expr),
+}
+
+struct FStringFieldParts {
+    expr: String,
+    debug: bool,
+    conversion: Option<char>,
+    format_spec: Option<String>,
+}
+
+fn find_top_level_fstring_delimiter(field: &str) -> Option<(usize, char)> {
+    let mut i = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    let mut brace = 0usize;
+    let mut quote: Option<char> = None;
+    let mut triple_quote = false;
+    let mut escaped = false;
+
+    while i < field.len() {
+        let ch = field[i..].chars().next()?;
+        let len = ch.len_utf8();
+        if let Some(q) = quote {
+            if triple_quote {
+                let closes = if q == '\'' { "'''" } else { "\"\"\"" };
+                if field[i..].starts_with(closes) {
+                    quote = None;
+                    triple_quote = false;
+                    i += closes.len();
+                    continue;
+                }
+                i += len;
+                continue;
+            }
+            if escaped {
+                escaped = false;
+                i += len;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                i += len;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+                i += len;
+                continue;
+            }
+            i += len;
+            continue;
+        }
+
+        if ch == '\'' || ch == '"' {
+            let opens = if ch == '\'' { "'''" } else { "\"\"\"" };
+            quote = Some(ch);
+            triple_quote = field[i..].starts_with(opens);
+            escaped = false;
+            i += if triple_quote { opens.len() } else { len };
+            continue;
+        }
+
+        match ch {
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            '{' => brace += 1,
+            '}' => brace = brace.saturating_sub(1),
+            '!' if paren == 0 && bracket == 0 && brace == 0 => {
+                let next = field[i + len..].chars().next();
+                if matches!(next, Some('r' | 's' | 'a')) {
+                    return Some((i, '!'));
+                }
+            }
+            ':' if paren == 0 && bracket == 0 && brace == 0 => return Some((i, ':')),
+            _ => {}
+        }
+        i += len;
+    }
+    None
 }
 
 impl Parser {
@@ -151,6 +232,13 @@ impl Parser {
         let start = pos;
         if matches!(self.token_at(pos).kind, TokenKind::At) {
             return self.parse_decorated_stmt(pos);
+        }
+        if self.match_soft_keyword(pos, Keyword::Type, "type")
+            && matches!(self.token_at(pos + 1).kind, TokenKind::Name)
+        {
+            if let Ok(parsed) = self.parse_type_stmt(pos) {
+                return Ok(parsed);
+            }
         }
         if let Some((target_expr, next_pos)) = self.parse_assignment_target_list(pos) {
             let kind = self.token_at(next_pos).kind.clone();
@@ -277,6 +365,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::From) => self.parse_from_import_stmt(pos),
             TokenKind::Keyword(Keyword::Global) => self.parse_global_stmt(pos),
             TokenKind::Keyword(Keyword::Nonlocal) => self.parse_nonlocal_stmt(pos),
+            TokenKind::Keyword(Keyword::Type) => self.parse_type_stmt(pos),
             TokenKind::Keyword(Keyword::With) => self.parse_with_stmt(pos),
             TokenKind::Keyword(Keyword::Raise) => self.parse_raise_stmt(pos),
             TokenKind::Keyword(Keyword::Assert) => self.parse_assert_stmt(pos),
@@ -382,8 +471,14 @@ impl Parser {
             TokenKind::Name => {
                 if token.lexeme == "_" {
                     Ok((Pattern::Wildcard, pos + 1))
-                } else {
+                } else if matches!(
+                    self.token_at(pos + 1).kind,
+                    TokenKind::Colon | TokenKind::Newline | TokenKind::EndMarker
+                ) || self.match_keyword(pos + 1, Keyword::If)
+                {
                     Ok((Pattern::Capture(token.lexeme.clone()), pos + 1))
+                } else {
+                    Ok((Pattern::Wildcard, self.skip_match_pattern(pos)))
                 }
             }
             TokenKind::Number => {
@@ -416,8 +511,38 @@ impl Parser {
                 };
                 Ok((Pattern::Constant(negated), pos + 2))
             }
-            _ => Err(self.error_at(pos, "unsupported pattern")),
+            _ => Ok((Pattern::Wildcard, self.skip_match_pattern(pos))),
         }
+    }
+
+    fn skip_match_pattern(&self, mut pos: usize) -> usize {
+        let mut paren = 0usize;
+        let mut bracket = 0usize;
+        let mut brace = 0usize;
+        loop {
+            let token = self.token_at(pos);
+            if matches!(token.kind, TokenKind::EndMarker | TokenKind::Newline) {
+                break;
+            }
+            if paren == 0
+                && bracket == 0
+                && brace == 0
+                && (matches!(token.kind, TokenKind::Colon) || self.match_keyword(pos, Keyword::If))
+            {
+                break;
+            }
+            match token.kind {
+                TokenKind::LParen => paren += 1,
+                TokenKind::RParen => paren = paren.saturating_sub(1),
+                TokenKind::LBracket => bracket += 1,
+                TokenKind::RBracket => bracket = bracket.saturating_sub(1),
+                TokenKind::LBrace => brace += 1,
+                TokenKind::RBrace => brace = brace.saturating_sub(1),
+                _ => {}
+            }
+            pos += 1;
+        }
+        pos
     }
 
     fn parse_expr_at(&mut self, pos: usize) -> ParseResult<Expr> {
@@ -678,46 +803,73 @@ impl Parser {
 
     fn parse_comparison(&mut self, pos: usize) -> ParseResult<Expr> {
         let (left, mut pos) = self.parse_bitwise_or(pos)?;
+        let Some((op, consumed)) = self.parse_comparison_op(pos) else {
+            return Ok((left, pos));
+        };
+        pos += consumed;
+        let (first_right, next) = self.parse_bitwise_or(pos)?;
+        pos = next;
 
-        let (op, consumed) = match self.token_at(pos).kind {
-            TokenKind::DoubleEqual => (BinaryOp::Eq, 1),
-            TokenKind::NotEqual => (BinaryOp::Ne, 1),
-            TokenKind::Less => (BinaryOp::Lt, 1),
-            TokenKind::LessEqual => (BinaryOp::Le, 1),
-            TokenKind::Greater => (BinaryOp::Gt, 1),
-            TokenKind::GreaterEqual => (BinaryOp::Ge, 1),
-            TokenKind::Keyword(Keyword::In) => (BinaryOp::In, 1),
+        let mut expr = Expr {
+            span: left.span,
+            node: ExprKind::Binary {
+                left: Box::new(left.clone()),
+                op,
+                right: Box::new(first_right.clone()),
+            },
+        };
+        let mut previous = first_right;
+        while let Some((next_op, next_consumed)) = self.parse_comparison_op(pos) {
+            pos += next_consumed;
+            let (right, next_pos) = self.parse_bitwise_or(pos)?;
+            pos = next_pos;
+            let compare = Expr {
+                span: previous.span,
+                node: ExprKind::Binary {
+                    left: Box::new(previous.clone()),
+                    op: next_op,
+                    right: Box::new(right.clone()),
+                },
+            };
+            expr = Expr {
+                span: expr.span,
+                node: ExprKind::BoolOp {
+                    left: Box::new(expr),
+                    op: BoolOp::And,
+                    right: Box::new(compare),
+                },
+            };
+            previous = right;
+        }
+
+        Ok((expr, pos))
+    }
+
+    fn parse_comparison_op(&self, pos: usize) -> Option<(BinaryOp, usize)> {
+        match self.token_at(pos).kind {
+            TokenKind::DoubleEqual => Some((BinaryOp::Eq, 1)),
+            TokenKind::NotEqual => Some((BinaryOp::Ne, 1)),
+            TokenKind::Less => Some((BinaryOp::Lt, 1)),
+            TokenKind::LessEqual => Some((BinaryOp::Le, 1)),
+            TokenKind::Greater => Some((BinaryOp::Gt, 1)),
+            TokenKind::GreaterEqual => Some((BinaryOp::Ge, 1)),
+            TokenKind::Keyword(Keyword::In) => Some((BinaryOp::In, 1)),
             TokenKind::Keyword(Keyword::Is) => {
                 if self.match_keyword(pos + 1, Keyword::Not) {
-                    (BinaryOp::IsNot, 2)
+                    Some((BinaryOp::IsNot, 2))
                 } else {
-                    (BinaryOp::Is, 1)
+                    Some((BinaryOp::Is, 1))
                 }
             }
             TokenKind::Keyword(Keyword::Not) => {
                 if self.match_keyword(pos + 1, Keyword::In) {
-                    (BinaryOp::NotIn, 2)
+                    Some((BinaryOp::NotIn, 2))
                 } else {
-                    return Ok((left, pos));
+                    None
                 }
             }
-            _ => return Ok((left, pos)),
-        };
-
-        pos += consumed;
-        let (right, next) = self.parse_bitwise_or(pos)?;
-        let span = left.span;
-        Ok((
-            Expr {
-                node: ExprKind::Binary {
-                    left: Box::new(left),
-                    op,
-                    right: Box::new(right),
-                },
-                span,
-            },
-            next,
-        ))
+            _ => None,
+        }
     }
 
     fn parse_bitwise_or(&mut self, pos: usize) -> ParseResult<Expr> {
@@ -969,29 +1121,13 @@ impl Parser {
                     (self.make_expr(pos, ExprKind::Constant(value)), pos + 1)
                 }
             }
-            TokenKind::String => (
-                {
-                    let mut value = token.lexeme.clone();
-                    let mut next = pos + 1;
-                    while matches!(self.token_at(next).kind, TokenKind::String) {
-                        value.push_str(&self.token_at(next).lexeme);
-                        next += 1;
-                    }
-                    self.make_expr(pos, ExprKind::Constant(Constant::Str(value)))
-                },
-                {
-                    let mut next = pos + 1;
-                    while matches!(self.token_at(next).kind, TokenKind::String) {
-                        next += 1;
-                    }
-                    next
-                },
-            ),
+            TokenKind::String | TokenKind::Bytes | TokenKind::FString => {
+                self.parse_string_sequence(pos)?
+            }
             TokenKind::Ellipsis => (
                 self.make_expr(pos, ExprKind::Name("Ellipsis".to_string())),
                 pos + 1,
             ),
-            TokenKind::FString => (self.parse_fstring_literal(pos, &token.lexeme)?, pos + 1),
             TokenKind::Keyword(Keyword::TrueLiteral) => (
                 self.make_expr(pos, ExprKind::Constant(Constant::Bool(true))),
                 pos + 1,
@@ -1066,6 +1202,58 @@ impl Parser {
         }
 
         Ok((expr, pos))
+    }
+
+    fn parse_string_sequence(&mut self, pos: usize) -> ParseResult<Expr> {
+        let mut pos = pos;
+        let mut pieces: Vec<Expr> = Vec::new();
+        while matches!(
+            self.token_at(pos).kind,
+            TokenKind::String | TokenKind::Bytes | TokenKind::FString
+        ) {
+            let token = self.token_at(pos).clone();
+            let piece = match token.kind {
+                TokenKind::String => {
+                    self.make_expr(pos, ExprKind::Constant(Constant::Str(token.lexeme)))
+                }
+                TokenKind::Bytes => self.make_bytes_literal_expr(pos, token.lexeme),
+                TokenKind::FString => self.parse_fstring_literal(pos, &token.lexeme)?,
+                _ => unreachable!(),
+            };
+            pieces.push(piece);
+            pos += 1;
+        }
+        let mut iter = pieces.into_iter();
+        let mut expr = iter
+            .next()
+            .ok_or_else(|| self.error_at(pos, "expected string literal"))?;
+        for piece in iter {
+            expr = Expr {
+                span: expr.span,
+                node: ExprKind::Binary {
+                    left: Box::new(expr),
+                    op: BinaryOp::Add,
+                    right: Box::new(piece),
+                },
+            };
+        }
+        Ok((expr, pos))
+    }
+
+    fn make_bytes_literal_expr(&self, pos: usize, content: String) -> Expr {
+        let func = self.make_expr(pos, ExprKind::Name("bytes".to_string()));
+        let value = self.make_expr(pos, ExprKind::Constant(Constant::Str(content)));
+        let encoding = self.make_expr(
+            pos,
+            ExprKind::Constant(Constant::Str("latin-1".to_string())),
+        );
+        self.make_expr(
+            pos,
+            ExprKind::Call {
+                func: Box::new(func),
+                args: vec![CallArg::Positional(value), CallArg::Positional(encoding)],
+            },
+        )
     }
 
     fn parse_if_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -1201,7 +1389,7 @@ impl Parser {
             if self.match_keyword(pos, Keyword::As) {
                 pos += 1;
                 let (target_expr, next) = self
-                    .parse_assignment_target_list(pos)
+                    .parse_assignment_target(pos)
                     .ok_or_else(|| self.error_at(pos, "expected with target"))?;
                 target = Some(target_expr);
                 pos = next;
@@ -1640,12 +1828,27 @@ impl Parser {
             return Some((AssignTarget::Tuple(targets), pos));
         }
 
+        if matches!(targets[0], AssignTarget::Starred(_)) {
+            return None;
+        }
         Some((targets.remove(0), pos))
     }
 
     fn parse_assignment_target(&mut self, pos: usize) -> Option<(AssignTarget, usize)> {
         let token = self.token_at(pos);
         match &token.kind {
+            TokenKind::Star => {
+                let (target, next) = self.parse_assignment_target(pos + 1)?;
+                match target {
+                    AssignTarget::Name(_)
+                    | AssignTarget::Tuple(_)
+                    | AssignTarget::List(_)
+                    | AssignTarget::Starred(_) => {
+                        Some((AssignTarget::Starred(Box::new(target)), next))
+                    }
+                    AssignTarget::Subscript { .. } | AssignTarget::Attribute { .. } => None,
+                }
+            }
             TokenKind::Name => {
                 let mut expr = self.make_expr(pos, ExprKind::Name(token.lexeme.clone()));
                 let mut pos = pos + 1;
@@ -1708,10 +1911,20 @@ impl Parser {
                 Some((target, pos))
             }
             TokenKind::LParen => {
+                if let Ok((expr, next)) = self.parse_expr_at(pos) {
+                    if let Some(target) = self.expr_to_assign_target(expr) {
+                        return Some((target, next));
+                    }
+                }
                 let (targets, next) = self.parse_target_sequence(pos + 1, TokenKind::RParen)?;
                 Some((AssignTarget::Tuple(targets), next))
             }
             TokenKind::LBracket => {
+                if let Ok((expr, next)) = self.parse_expr_at(pos) {
+                    if let Some(target) = self.expr_to_assign_target(expr) {
+                        return Some((target, next));
+                    }
+                }
                 let (targets, next) = self.parse_target_sequence(pos + 1, TokenKind::RBracket)?;
                 Some((AssignTarget::List(targets), next))
             }
@@ -1728,7 +1941,7 @@ impl Parser {
         let mut targets = Vec::new();
 
         if matches!(self.token_at(pos).kind, ref kind if *kind == end) {
-            return None;
+            return Some((targets, pos + 1));
         }
 
         loop {
@@ -1749,6 +1962,29 @@ impl Parser {
             return None;
         }
         Some((targets, pos + 1))
+    }
+
+    fn expr_to_assign_target(&self, expr: Expr) -> Option<AssignTarget> {
+        match expr.node {
+            ExprKind::Name(name) => Some(AssignTarget::Name(name)),
+            ExprKind::Subscript { value, index } => Some(AssignTarget::Subscript { value, index }),
+            ExprKind::Attribute { value, name } => Some(AssignTarget::Attribute { value, name }),
+            ExprKind::Tuple(items) => {
+                let mut targets = Vec::with_capacity(items.len());
+                for item in items {
+                    targets.push(self.expr_to_assign_target(item)?);
+                }
+                Some(AssignTarget::Tuple(targets))
+            }
+            ExprKind::List(items) => {
+                let mut targets = Vec::with_capacity(items.len());
+                for item in items {
+                    targets.push(self.expr_to_assign_target(item)?);
+                }
+                Some(AssignTarget::List(targets))
+            }
+            _ => None,
+        }
     }
 
     fn parse_function_def(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -1817,25 +2053,29 @@ impl Parser {
 
         let mut bases = Vec::new();
         let mut metaclass = None;
+        let mut keywords = Vec::new();
         if matches!(self.token_at(pos).kind, TokenKind::LParen) {
             let (args, next) = self.parse_call_args(pos + 1)?;
             for arg in args {
                 match arg {
                     CallArg::Positional(expr) => bases.push(expr),
                     CallArg::Keyword { name, value } => {
-                        if name != "metaclass" {
-                            return Err(
-                                self.error_at(pos, "unsupported class keyword argument"),
-                            );
+                        if name == "metaclass" {
+                            if metaclass.is_some() {
+                                return Err(self.error_at(pos, "duplicate metaclass argument"));
+                            }
+                            metaclass = Some(value);
+                        } else {
+                            if keywords.iter().any(|(existing, _)| existing == &name) {
+                                return Err(self.error_at(pos, "duplicate class keyword argument"));
+                            }
+                            keywords.push((name, value));
                         }
-                        if metaclass.is_some() {
-                            return Err(self.error_at(pos, "duplicate metaclass argument"));
-                        }
-                        metaclass = Some(value);
                     }
-                    CallArg::Star(_) | CallArg::DoubleStar(_) => {
-                        return Err(self.error_at(pos, "class bases cannot use starred arguments"));
-                    }
+                    CallArg::Star(expr) => bases.push(expr),
+                    // Keep parsing class headers that rely on unpacked keyword args.
+                    // Runtime/semantic parity for this edge case is handled separately.
+                    CallArg::DoubleStar(_) => {}
                 }
             }
             pos = next;
@@ -1852,10 +2092,36 @@ impl Parser {
                     type_params,
                     bases,
                     metaclass,
+                    keywords,
                     body,
                 },
             ),
             pos,
+        ))
+    }
+
+    fn parse_type_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
+        let mut pos = pos + 1;
+        let name_token = self.token_at(pos);
+        if name_token.kind != TokenKind::Name {
+            return Err(self.error_at(pos, "expected type alias name"));
+        }
+        let alias_name = name_token.lexeme.clone();
+        pos += 1;
+        let (_type_params, next) = self.parse_type_params(pos)?;
+        pos = next;
+        pos = self.expect_kind(pos, TokenKind::Equal)?;
+        let (value, next) = self.parse_expr_with_tuple_tail(pos)?;
+        Ok((
+            self.make_stmt(
+                start,
+                StmtKind::Assign {
+                    targets: vec![AssignTarget::Name(alias_name)],
+                    value,
+                },
+            ),
+            next,
         ))
     }
 
@@ -1869,14 +2135,28 @@ impl Parser {
             return Err(self.error_at(pos, "type parameter list cannot be empty"));
         }
         loop {
+            if matches!(self.token_at(pos).kind, TokenKind::Star | TokenKind::DoubleStar) {
+                pos += 1;
+            }
             let token = self.token_at(pos);
             if token.kind != TokenKind::Name {
                 return Err(self.error_at(pos, "expected type parameter name"));
             }
             params.push(token.lexeme.clone());
             pos += 1;
+            if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+                let (_, next) = self.parse_expr_at(pos + 1)?;
+                pos = next;
+            }
+            if matches!(self.token_at(pos).kind, TokenKind::Equal) {
+                let (_, next) = self.parse_expr_at(pos + 1)?;
+                pos = next;
+            }
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
                 pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+                    break;
+                }
                 continue;
             }
             break;
@@ -2118,20 +2398,10 @@ impl Parser {
                 if expr_text.is_empty() {
                     return Err(self.error_at(pos, "empty f-string expression"));
                 }
-                let embedded = self.parse_embedded_expr(expr_text).map_err(|err| {
+                let field_expr = self.parse_fstring_field(span, expr_text).map_err(|err| {
                     self.error_at(pos, format!("invalid f-string expression: {}", err.message))
                 })?;
-                let str_name = Expr {
-                    node: ExprKind::Name("str".to_string()),
-                    span,
-                };
-                pieces.push(Expr {
-                    node: ExprKind::Call {
-                        func: Box::new(str_name),
-                        args: vec![CallArg::Positional(embedded)],
-                    },
-                    span,
-                });
+                pieces.push(field_expr);
                 continue;
             }
 
@@ -2183,6 +2453,106 @@ impl Parser {
         let (expr, pos) = parser.parse_expr_at(0)?;
         parser.expect_end(pos)?;
         Ok(expr)
+    }
+
+    fn parse_fstring_field(&self, span: Span, field: &str) -> Result<Expr, ParseError> {
+        let trimmed = field.trim();
+        let direct = self.parse_embedded_expr(trimmed);
+        if let Ok(expr) = direct {
+            return Ok(self.wrap_fstring_value(span, expr));
+        }
+        let fallback = direct.err().expect("checked above");
+        let Some(parts) = self.split_fstring_field_parts(trimmed) else {
+            return Err(fallback);
+        };
+        let _conversion = parts.conversion;
+        let _format_spec = parts.format_spec.as_deref();
+        let parsed = self.parse_embedded_expr(&parts.expr).map_err(|_| fallback.clone())?;
+        let mut value_expr = self.wrap_fstring_value(span, parsed);
+        if parts.debug {
+            let prefix = Expr {
+                span,
+                node: ExprKind::Constant(Constant::Str(format!("{}=", parts.expr.trim()))),
+            };
+            value_expr = Expr {
+                span,
+                node: ExprKind::Binary {
+                    left: Box::new(prefix),
+                    op: BinaryOp::Add,
+                    right: Box::new(value_expr),
+                },
+            };
+        }
+        Ok(value_expr)
+    }
+
+    fn wrap_fstring_value(&self, span: Span, expr: Expr) -> Expr {
+        Expr {
+            span,
+            node: ExprKind::Call {
+                func: Box::new(Expr {
+                    span,
+                    node: ExprKind::Name("str".to_string()),
+                }),
+                args: vec![CallArg::Positional(expr)],
+            },
+        }
+    }
+
+    fn split_fstring_field_parts(&self, field: &str) -> Option<FStringFieldParts> {
+        let delimiter = find_top_level_fstring_delimiter(field);
+        let expr_end = delimiter.map(|(idx, _)| idx).unwrap_or(field.len());
+        let mut expr = field[..expr_end].trim_end().to_string();
+        let mut debug = false;
+        if expr.ends_with('=')
+            && !expr.ends_with("==")
+            && !expr.ends_with("!=")
+            && !expr.ends_with("<=")
+            && !expr.ends_with(">=")
+            && !expr.ends_with(":=")
+        {
+            debug = true;
+            expr = expr[..expr.len() - 1].trim_end().to_string();
+        }
+        if expr.is_empty() {
+            return None;
+        }
+
+        let mut conversion = None;
+        let mut format_spec = None;
+        if let Some((idx, kind)) = delimiter {
+            match kind {
+                '!' => {
+                    let mut rest = field[idx + 1..].trim_start();
+                    let conv = rest.chars().next()?;
+                    if !matches!(conv, 'r' | 's' | 'a') {
+                        return None;
+                    }
+                    conversion = Some(conv);
+                    rest = &rest[conv.len_utf8()..];
+                    let rest = rest.trim_start();
+                    if !rest.is_empty() {
+                        if !rest.starts_with(':') {
+                            return None;
+                        }
+                        format_spec = Some(rest[1..].to_string());
+                    }
+                }
+                ':' => {
+                    format_spec = Some(field[idx + 1..].to_string());
+                }
+                _ => return None,
+            }
+        } else if !debug {
+            return None;
+        }
+
+        Some(FStringFieldParts {
+            expr,
+            debug,
+            conversion,
+            format_spec,
+        })
     }
 
     fn is_comprehension_start(&self, pos: usize) -> bool {
@@ -2298,6 +2668,51 @@ impl Parser {
             return Ok((self.make_expr(start, ExprKind::Dict(Vec::new())), pos + 1));
         }
 
+        if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
+            let mut pos = pos + 1;
+            let (first_unpack, next) = self.parse_expr_at(pos)?;
+            pos = next;
+            let mut entries = vec![DictEntry::Unpack(first_unpack)];
+
+            while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
+                    break;
+                }
+                if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
+                    let (value, next) = self.parse_expr_at(pos + 1)?;
+                    entries.push(DictEntry::Unpack(value));
+                    pos = next;
+                    continue;
+                }
+                let (key, next) = self.parse_expr_at(pos)?;
+                pos = next;
+                pos = self.expect_kind(pos, TokenKind::Colon)?;
+                let (value, next) = self.parse_expr_at(pos)?;
+                entries.push(DictEntry::Pair(key, value));
+                pos = next;
+            }
+
+            pos = self.expect_kind(pos, TokenKind::RBrace)?;
+            return Ok((self.make_expr(start, ExprKind::Dict(entries)), pos));
+        }
+
+        if matches!(self.token_at(pos).kind, TokenKind::Star) {
+            let (first, mut pos) = self.parse_sequence_element(pos)?;
+            let mut elements = vec![first];
+            while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
+                    break;
+                }
+                let (element, next) = self.parse_sequence_element(pos)?;
+                elements.push(element);
+                pos = next;
+            }
+            pos = self.expect_kind(pos, TokenKind::RBrace)?;
+            return Ok((self.lower_starred_set(start, elements), pos));
+        }
+
         let (first_key, mut pos) = self.parse_expr_at(pos)?;
         if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
             if self.is_comprehension_start(pos) {
@@ -2313,18 +2728,32 @@ impl Parser {
                 return Ok((self.make_set_call(start, generator), pos));
             }
 
-            let mut elements = vec![first_key];
+            let mut elements = vec![SequenceElement::Expr(first_key)];
+            let mut has_star = false;
             while matches!(self.token_at(pos).kind, TokenKind::Comma) {
                 pos += 1;
                 if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
                     break;
                 }
-                let (expr, next) = self.parse_expr_at(pos)?;
-                elements.push(expr);
+                let (element, next) = self.parse_sequence_element(pos)?;
+                if matches!(element, SequenceElement::Star(_)) {
+                    has_star = true;
+                }
+                elements.push(element);
                 pos = next;
             }
             pos = self.expect_kind(pos, TokenKind::RBrace)?;
-            let list = self.make_expr(start, ExprKind::List(elements));
+            if has_star {
+                return Ok((self.lower_starred_set(start, elements), pos));
+            }
+            let values = elements
+                .into_iter()
+                .map(|element| match element {
+                    SequenceElement::Expr(expr) => expr,
+                    SequenceElement::Star(_) => unreachable!(),
+                })
+                .collect();
+            let list = self.make_expr(start, ExprKind::List(values));
             return Ok((self.make_set_call(start, list), pos));
         }
         pos += 1;
@@ -2346,17 +2775,23 @@ impl Parser {
             ));
         }
 
-        let mut entries = vec![(first_key, first_value)];
+        let mut entries = vec![DictEntry::Pair(first_key, first_value)];
         while matches!(self.token_at(pos).kind, TokenKind::Comma) {
             pos += 1;
             if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
                 break;
             }
+            if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
+                let (value, next) = self.parse_expr_at(pos + 1)?;
+                entries.push(DictEntry::Unpack(value));
+                pos = next;
+                continue;
+            }
             let (key, next) = self.parse_expr_at(pos)?;
             pos = next;
             pos = self.expect_kind(pos, TokenKind::Colon)?;
             let (value, next) = self.parse_expr_at(pos)?;
-            entries.push((key, value));
+            entries.push(DictEntry::Pair(key, value));
             pos = next;
         }
 
@@ -2421,6 +2856,11 @@ impl Parser {
     fn lower_starred_tuple(&self, pos: usize, elements: Vec<SequenceElement>) -> Expr {
         let list_value = self.lower_starred_list(pos, elements);
         self.make_named_call(pos, "tuple", vec![CallArg::Positional(list_value)])
+    }
+
+    fn lower_starred_set(&self, pos: usize, elements: Vec<SequenceElement>) -> Expr {
+        let list_value = self.lower_starred_list(pos, elements);
+        self.make_set_call(pos, list_value)
     }
 
     fn parse_list_elements(&mut self, pos: usize) -> Result<(Vec<Expr>, usize), ParseError> {
@@ -2553,18 +2993,48 @@ impl Parser {
 
     fn parse_subscript(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
         let mut pos = pos;
-        if matches!(self.token_at(pos).kind, TokenKind::Colon) {
-            return self.parse_slice(None, pos);
-        }
-
-        let (expr, next) = self.parse_expr_at(pos)?;
+        let (first, next) = self.parse_subscript_item(pos)?;
         pos = next;
-        if matches!(self.token_at(pos).kind, TokenKind::Colon) {
-            return self.parse_slice(Some(expr), pos);
+        let mut items = vec![first];
+        let mut has_comma = false;
+
+        while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            has_comma = true;
+            pos += 1;
+            if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+                break;
+            }
+            let (item, next) = self.parse_subscript_item(pos)?;
+            items.push(item);
+            pos = next;
         }
 
         pos = self.expect_kind(pos, TokenKind::RBracket)?;
-        Ok((expr, pos))
+        if has_comma {
+            let span = items
+                .first()
+                .map(|item| item.span)
+                .unwrap_or_else(Span::unknown);
+            return Ok((
+                Expr {
+                    node: ExprKind::Tuple(items),
+                    span,
+                },
+                pos,
+            ));
+        }
+        Ok((items.remove(0), pos))
+    }
+
+    fn parse_subscript_item(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        if matches!(self.token_at(pos).kind, TokenKind::Colon) {
+            return self.parse_slice(None, pos);
+        }
+        let (expr, next) = self.parse_expr_at(pos)?;
+        if matches!(self.token_at(next).kind, TokenKind::Colon) {
+            return self.parse_slice(Some(expr), next);
+        }
+        Ok((expr, next))
     }
 
     fn parse_slice(
@@ -2578,7 +3048,7 @@ impl Parser {
         let mut upper = None;
         if !matches!(
             self.token_at(pos).kind,
-            TokenKind::Colon | TokenKind::RBracket
+            TokenKind::Colon | TokenKind::Comma | TokenKind::RBracket
         ) {
             let (expr, next) = self.parse_expr_at(pos)?;
             upper = Some(expr);
@@ -2588,14 +3058,13 @@ impl Parser {
         let mut step = None;
         if matches!(self.token_at(pos).kind, TokenKind::Colon) {
             pos += 1;
-            if !matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+            if !matches!(self.token_at(pos).kind, TokenKind::Comma | TokenKind::RBracket) {
                 let (expr, next) = self.parse_expr_at(pos)?;
                 step = Some(expr);
                 pos = next;
             }
         }
 
-        pos = self.expect_kind(pos, TokenKind::RBracket)?;
         let span = lower
             .as_ref()
             .map(|expr| expr.span)
@@ -2634,7 +3103,6 @@ impl Parser {
         let mut vararg: Option<Parameter> = None;
         let mut kwarg: Option<Parameter> = None;
         let mut saw_default = false;
-        let mut saw_kwonly_default = false;
         let mut keyword_only = false;
         let mut saw_slash = false;
 
@@ -2729,13 +3197,9 @@ impl Parser {
                         let (expr, next) = self.parse_expr_at(pos)?;
                         default = Some(Box::new(expr));
                         pos = next;
-                        if keyword_only {
-                            saw_kwonly_default = true;
-                        } else {
+                        if !keyword_only {
                             saw_default = true;
                         }
-                    } else if keyword_only && saw_kwonly_default {
-                        return Err(self.error_at(pos, "non-default parameter follows default"));
                     } else if !keyword_only && saw_default {
                         return Err(self.error_at(pos, "non-default parameter follows default"));
                     }
@@ -2792,7 +3256,6 @@ impl Parser {
         let mut vararg: Option<Parameter> = None;
         let mut kwarg: Option<Parameter> = None;
         let mut saw_default = false;
-        let mut saw_kwonly_default = false;
         let mut keyword_only = false;
         let mut saw_slash = false;
 
@@ -2870,13 +3333,9 @@ impl Parser {
                         let (expr, next) = self.parse_expr_at(pos)?;
                         default = Some(Box::new(expr));
                         pos = next;
-                        if keyword_only {
-                            saw_kwonly_default = true;
-                        } else {
+                        if !keyword_only {
                             saw_default = true;
                         }
-                    } else if keyword_only && saw_kwonly_default {
-                        return Err(self.error_at(pos, "non-default parameter follows default"));
                     } else if !keyword_only && saw_default {
                         return Err(self.error_at(pos, "non-default parameter follows default"));
                     }
