@@ -55,14 +55,18 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] `signal` foundations (`signal`, `getsignal`, `raise_signal`, core constants)
 
 ## CPython Tests
-- [x] Establish test harness runner (optional; set `PYRS_CPYTHON_LIB`)
-- [x] Smoke tests passing (local harness + integration tests)
-- [ ] Incremental `Lib/test` coverage
+- [x] First-class CPython harness with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`)
+- [x] Owned allowlist tracking (`tests/cpython_allowlist.txt`) with stale-entry detection in harness
+- [x] Differential tests vs CPython (`tests/differential_cpython.rs`)
+- [x] Parser/compiler/VM fuzzing (`tests/fuzz_parser_vm.rs` + existing arithmetic fuzz)
+- [~] Incremental `Lib/test` coverage expansion (broader suite growth and allowlist reduction ongoing)
 
 ## Real-world Apps
-- [ ] CLI tools (simple)
+- [x] Curated pure-Python smoke/regression suite (`tests/realworld_smoke.rs`)
+- [~] CLI tools (simple; foundational smoke coverage in place)
 - [ ] Web apps (minimal framework)
 - [ ] Data processing (pure Python first, extension-backed packages once Milestone 15 starts)
+- [x] Sandboxed parity profile script (`scripts/run_parity_gate.sh`) for constrained local execution (`env_clear`, isolated temp dirs, timeout in smoke tests)
 
 ## Native Extension Ecosystem
 - [ ] Limited C-API/abi3 extension loading/execution parity for supported API surface

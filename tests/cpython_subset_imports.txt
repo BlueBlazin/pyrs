@@ -1,5 +1,0 @@
-# CPython Lib/test modules focused on import semantics.
-# This list is intentionally small and evolves as Milestone 6 import parity expands.
-test_import
-test_pkg
-test_pkgutil

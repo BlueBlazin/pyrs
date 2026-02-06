@@ -101,11 +101,11 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [ ] P2: Rich error messages with caret spans and suggestions.
 
 **Testing & QA**
-- [~] P0: CPython `Lib/test` subset harness.
-- [~] P0: Import-focused CPython subset harness (`tests/cpython_subset_imports.txt`) scaffolded.
-- [ ] P0: Large `Lib/test` subset + CI gating.
-- [ ] P1: Differential tests vs CPython on real‑world scripts.
-- [ ] P1: Fuzzing for parser + VM (syntax + runtime).
+- [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
+- [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
+- [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
+- [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).
+- [x] P1: Curated real-world smoke/regression suite with constrained subprocess profile (`tests/realworld_smoke.rs`, `scripts/run_parity_gate.sh`).
 - [ ] P2: Deterministic reproduction harness for crash bugs.
 
 **Performance & Profiling**

@@ -1,0 +1,12 @@
+# CPython Lib/test import-system-focused parity suite (source path relative to Lib/).
+# Expected failures are tracked in tests/cpython_allowlist.txt.
+test/relimport.py
+test/test_pkg.py
+test/test_pkgutil.py
+test/test___all__.py
+test/test_importlib/__init__.py
+test/test_importlib/import_/test_relative_imports.py
+test/test_importlib/import_/test_path.py
+test/test_importlib/import_/test_packages.py
+test/test_importlib/resources/test_resource.py
+test/test_importlib/util.py

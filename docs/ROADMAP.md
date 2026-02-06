@@ -74,7 +74,7 @@ Release-complete target: Milestone 16; ecosystem-complete target (including nati
 9. Milestone 8: Runtime data model semantics (descriptor protocol, attribute model hooks, MRO/super, exception chaining, P0). (complete)
 10. Milestone 9: Core runtime types + builtins + stdlib bootstrap required for real apps (P0/P1). (complete)
 11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1). (complete)
-12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1).
+12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1). (complete)
 13. Milestone 12: Performance and observability baseline (P2).
 14. Milestone 13: Packaging/distribution and ecosystem usability (P1/P2).
 15. Milestone 14: Future hooks and extension-path architecture documentation (P3).
@@ -229,6 +229,13 @@ DoD:
 - Differential tests versus CPython and parser/VM fuzzing run continuously.
 - Real-world pure-Python applications pass curated smoke/regression suites.
 - Residual Milestone 8/9 semantic gaps (`__getattribute__` edge parity, metaclass precedence/selection, `__slots__` layout edge cases, full codecs behavior) are either closed or explicitly scoped with failing tests and ownership.
+Status: complete
+Progress:
+- CPython harness is now first-class and non-ignored (`tests/cpython_harness.rs`) with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`) plus strict allowlist ownership/category tracking (`tests/cpython_allowlist.txt`) and stale-allowlist detection.
+- Differential-vs-CPython coverage landed in `tests/differential_cpython.rs` for curated corpus and arithmetic fuzz expressions.
+- Parser/compiler/VM no-panic fuzzing landed in `tests/fuzz_parser_vm.rs`.
+- Curated real-world smoke coverage landed in `tests/realworld_smoke.rs` and is executed in a constrained subprocess profile (`env_clear`, isolated temp cwd/home, and timeout enforcement).
+- Milestone parity profile is codified in `scripts/run_parity_gate.sh` (`PYRS_PARITY_STRICT=1`) and currently passes.
 
 ### Milestone 12 — Performance and Observability Baseline (P2)
 DoD:
@@ -263,10 +270,10 @@ DoD:
 - Production playbook exists for incident triage, rollback strategy, and reproducible artifact verification.
 
 ## Immediate next steps
-- Start Milestone 11 parity gate work: promote CPython `Lib/test` harness from optional/ignored mode to first-class parity gating and expand coverage breadth.
-- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 10-11.
-- Run Milestone 11 parity closure for remaining Milestone 8/9 semantic deltas while CPython harness coverage expands.
-- Continue broad CPython parity tests while landing language/runtime milestones.
+- Start Milestone 12 performance and observability work: baseline benchmark harness and first optimization tier with regression protections.
+- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 12-13.
+- Continue shrinking CPython harness allowlist by converting parser/runtime gaps into owned fixes.
+- Wire parity/profile gates into CI so regressions block merges by default.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 
 ## Testing Focus Note
@@ -276,6 +283,6 @@ After Milestone 2 (CPython bytecode compatibility), prioritize a testing push:
 - Integration tests with real scripts and package layouts.
 
 Status:
-- CPython `Lib/test` subset harness stub in place (ignored by default; set `PYRS_CPYTHON_LIB`).
-- Property/fuzz tests added for arithmetic expressions.
-- Integration test added for multi-module package execution.
+- CPython `Lib/test` subset harness is active by default (set `PYRS_CPYTHON_LIB` to point at CPython `Lib`; set `PYRS_CPYTHON_OPTIONAL=1` only when intentionally skipping on machines without local CPython sources).
+- Differential testing is active (`tests/differential_cpython.rs`) and parser/VM fuzzing is active (`tests/fuzz_parser_vm.rs`).
+- Curated real-world smoke tests are active and execute in a constrained subprocess profile (`tests/realworld_smoke.rs`).

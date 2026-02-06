@@ -1,0 +1,60 @@
+# CPython harness expected failures.
+# Format: <path-relative-to-Lib>|<category>|<owner>
+# Categories:
+# - parser-gap: tokenizer/grammar surface still incomplete versus CPython 3.14.
+# - stdlib-gap: dependency on CPython stdlib modules not implemented in pyrs.
+# - runtime-gap: VM semantic mismatch for currently unimplemented behavior.
+
+test/test_bool.py|parser-gap|milestone7-tokenizer-parity
+test/test_binop.py|parser-gap|milestone7-tokenizer-parity
+test/test_augassign.py|parser-gap|milestone7-tokenizer-parity
+test/test_contains.py|parser-gap|milestone7-tokenizer-parity
+test/test_enumerate.py|parser-gap|milestone7-indentation-parity
+test/test_decorators.py|parser-gap|milestone7-indentation-parity
+test/test_dict.py|parser-gap|milestone7-operator-token-parity
+test/test_dictcomps.py|parser-gap|milestone7-indentation-parity
+test/test_listcomps.py|parser-gap|milestone7-string-lexing-parity
+test/test_setcomps.py|parser-gap|milestone7-string-lexing-parity
+test/test_generators.py|parser-gap|milestone7-string-lexing-parity
+test/test_coroutines.py|parser-gap|milestone7-string-lexing-parity
+test/test_asyncgen.py|parser-gap|milestone7-string-lexing-parity
+test/test_class.py|parser-gap|milestone7-string-lexing-parity
+test/test_descr.py|parser-gap|milestone7-indentation-parity
+test/test_exception_group.py|parser-gap|milestone7-indentation-parity
+test/test_except_star.py|parser-gap|milestone7-string-lexing-parity
+test/test_exceptions.py|parser-gap|milestone7-string-lexing-parity
+test/test_compare.py|parser-gap|milestone7-string-lexing-parity
+test/test_call.py|parser-gap|milestone7-operator-token-parity
+test/test_funcattrs.py|parser-gap|milestone7-string-lexing-parity
+test/test_fstring.py|parser-gap|milestone7-fstring-pep701-parity
+test/test_annotationlib.py|parser-gap|milestone7-operator-token-parity
+test/test_codecs.py|parser-gap|milestone7-string-lexing-parity
+test/test_bytes.py|parser-gap|milestone7-bytes-literal-parity
+test/test_float.py|parser-gap|milestone7-indentation-parity
+test/test_int.py|parser-gap|milestone7-indentation-parity
+test/test_math.py|parser-gap|milestone7-string-lexing-parity
+test/test_re.py|parser-gap|milestone7-string-lexing-parity
+test/test_datetime.py|parser-gap|milestone7-expression-parity
+test/test_collections.py|parser-gap|milestone7-indentation-parity
+test/test_functools.py|parser-gap|milestone7-indentation-parity
+test/test_itertools.py|parser-gap|milestone7-operator-token-parity
+test/test_operator.py|parser-gap|milestone7-expression-parity
+test/test_contextlib.py|parser-gap|milestone7-string-lexing-parity
+test/test_contextlib_async.py|parser-gap|milestone7-import-grammar-parity
+test/test_with.py|parser-gap|milestone7-indentation-parity
+test/test_typing.py|parser-gap|milestone7-indentation-parity
+test/test_os.py|parser-gap|milestone7-operator-token-parity
+test/test_io.py|parser-gap|milestone7-string-lexing-parity
+test/test_threading.py|parser-gap|milestone7-bytes-literal-parity
+test/test_signal.py|parser-gap|milestone7-indentation-parity
+
+test/relimport.py|parser-gap|milestone7-import-grammar-parity
+test/test_pkg.py|parser-gap|milestone7-string-lexing-parity
+test/test_pkgutil.py|parser-gap|milestone7-indentation-parity
+test/test___all__.py|parser-gap|milestone7-expression-parity
+test/test_importlib/__init__.py|stdlib-gap|milestone11-importlib-support
+test/test_importlib/import_/test_relative_imports.py|parser-gap|milestone7-string-lexing-parity
+test/test_importlib/import_/test_path.py|parser-gap|milestone7-indentation-parity
+test/test_importlib/import_/test_packages.py|parser-gap|milestone7-indentation-parity
+test/test_importlib/resources/test_resource.py|parser-gap|milestone7-string-lexing-parity
+test/test_importlib/util.py|parser-gap|milestone7-string-lexing-parity

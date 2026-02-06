@@ -46,6 +46,10 @@ pub enum PyObject {
     Bool(bool),
     Int(i64),
     Float(f64),
+    Complex {
+        real: f64,
+        imag: f64,
+    },
     Str(String),
     Bytes(Vec<u8>),
     Tuple(Vec<PyObject>),
@@ -548,6 +552,10 @@ impl<'a> Translator<'a> {
             PyObject::Bool(value) => Ok(Value::Bool(*value)),
             PyObject::Int(value) => Ok(Value::Int(*value)),
             PyObject::Float(value) => Ok(Value::Float(*value)),
+            PyObject::Complex { real, imag } => Ok(Value::Complex {
+                real: *real,
+                imag: *imag,
+            }),
             PyObject::Str(value) => Ok(Value::Str(value.clone())),
             PyObject::Tuple(items) => {
                 let mut values = Vec::with_capacity(items.len());
@@ -1111,6 +1119,11 @@ impl MarshalWriter {
                 self.write_u8(b'g');
                 self.data.extend_from_slice(&value.to_le_bytes());
             }
+            PyObject::Complex { real, imag } => {
+                self.write_u8(b'y');
+                self.data.extend_from_slice(&real.to_le_bytes());
+                self.data.extend_from_slice(&imag.to_le_bytes());
+            }
             PyObject::Str(value) => {
                 self.write_u8(b'u');
                 self.write_bytes_long(value.as_bytes())?;
@@ -1244,6 +1257,11 @@ impl<'a> MarshalReader<'a> {
             'i' => PyObject::Int(self.read_i32()? as i64),
             'l' => PyObject::Int(self.read_long()?),
             'g' => PyObject::Float(f64::from_le_bytes(self.read_exact(8)?.try_into().unwrap())),
+            'y' => {
+                let real = f64::from_le_bytes(self.read_exact(8)?.try_into().unwrap());
+                let imag = f64::from_le_bytes(self.read_exact(8)?.try_into().unwrap());
+                PyObject::Complex { real, imag }
+            }
             'f' => {
                 let len = self.read_u8()? as usize;
                 let bytes = self.read_exact(len)?;
