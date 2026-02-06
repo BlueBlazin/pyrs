@@ -475,6 +475,13 @@ impl Vm {
 
     fn find_module_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
         self.sync_module_paths_from_sys();
+        if let Some((parent_name, child_name)) = name.rsplit_once('.') {
+            if let Some(parent_paths) = self.package_search_paths(parent_name) {
+                if let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths) {
+                    return Some(source);
+                }
+            }
+        }
         let rel_name = name.replace('.', "/");
         let filename = format!("{rel_name}.py");
         let mut namespace_dirs = Vec::new();
@@ -511,6 +518,78 @@ impl Vm {
             });
         }
         None
+    }
+
+    fn package_search_paths(&self, package_name: &str) -> Option<Vec<PathBuf>> {
+        let package = self.modules.get(package_name)?.clone();
+        let package_kind = package.kind();
+        let module_data = match &*package_kind {
+            Object::Module(module) => module,
+            _ => return None,
+        };
+        let path_value = module_data.globals.get("__path__")?;
+        let path_list = match path_value {
+            Value::List(list) => list.clone(),
+            _ => return None,
+        };
+        let list_kind = path_list.kind();
+        let values = match &*list_kind {
+            Object::List(values) => values,
+            _ => return None,
+        };
+        let mut roots = Vec::new();
+        for value in values {
+            if let Value::Str(path) = value {
+                roots.push(PathBuf::from(path));
+            }
+        }
+        if roots.is_empty() {
+            None
+        } else {
+            Some(roots)
+        }
+    }
+
+    fn find_module_source_in_roots(
+        &self,
+        module_name: &str,
+        roots: &[PathBuf],
+    ) -> Option<ModuleSourceInfo> {
+        let mut namespace_dirs = Vec::new();
+        for root in roots {
+            let candidate = root.join(format!("{module_name}.py"));
+            if candidate.exists() {
+                return Some(ModuleSourceInfo {
+                    path: candidate,
+                    is_package: false,
+                    package_dirs: Vec::new(),
+                    is_namespace: false,
+                });
+            }
+            let package_dir = root.join(module_name);
+            let package_init = package_dir.join("__init__.py");
+            if package_init.exists() {
+                return Some(ModuleSourceInfo {
+                    path: package_init,
+                    is_package: true,
+                    package_dirs: vec![package_dir],
+                    is_namespace: false,
+                });
+            }
+            if package_dir.is_dir() {
+                namespace_dirs.push(package_dir);
+            }
+        }
+        if !namespace_dirs.is_empty() {
+            Some(ModuleSourceInfo {
+                path: namespace_dirs[0].clone(),
+                is_package: true,
+                package_dirs: namespace_dirs,
+                is_namespace: true,
+            })
+        } else {
+            None
+        }
     }
 
     fn find_module_file(&mut self, name: &str) -> Option<PathBuf> {

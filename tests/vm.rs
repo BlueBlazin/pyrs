@@ -1629,6 +1629,38 @@ path_len = len(ns.__path__)\n";
 }
 
 #[test]
+fn resolves_submodule_using_package_dunder_path() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let root_dir = std::env::temp_dir().join(format!("pyrs_pkg_path_root_{unique}"));
+    let pkg_dir = root_dir.join("pkg");
+    let external_dir = std::env::temp_dir().join(format!("pyrs_pkg_path_external_{unique}"));
+    std::fs::create_dir_all(&pkg_dir).expect("create pkg dir");
+    std::fs::create_dir_all(&external_dir).expect("create external dir");
+    std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
+    std::fs::write(external_dir.join("sub.py"), "value = 59\n").expect("write external submodule");
+
+    let path_literal = external_dir.to_string_lossy().replace('\\', "\\\\");
+    let source =
+        format!("import pkg\npkg.__path__ = ['{path_literal}']\nimport pkg.sub\nx = pkg.sub.value\n");
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&root_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(59)));
+
+    let _ = std::fs::remove_file(external_dir.join("sub.py"));
+    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
+    let _ = std::fs::remove_dir(&external_dir);
+    let _ = std::fs::remove_dir(&pkg_dir);
+    let _ = std::fs::remove_dir(&root_dir);
+}
+
+#[test]
 fn executes_len_on_list() {
     let source = "x = len([1, 2, 3])";
     let module = parser::parse_module(source).expect("parse should succeed");
