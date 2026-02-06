@@ -32,7 +32,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Tracebacks with filename/line/col + frame names
 - [ ] Exception chaining
 - [x] `__annotations__` storage for modules/classes/functions
-- [x] Module/import system baseline (file-based imports, dotted modules, lazy submodule loading on attribute access, relative `from .` imports, `sys.path`-driven source lookup, `sys.modules` exposure, filesystem namespace-package loading, and submodule lookup via package `__path__`)
+- [x] Module/import system baseline (file-based imports, dotted modules, lazy submodule loading on attribute access, relative `from .` imports, `sys.path`-driven source lookup, `sys.modules` exposure, filesystem namespace-package loading, submodule lookup via package `__path__`, and baseline `sys.meta_path` control via default path-finder entry)
 - [~] Module metadata parity foundation (`__package__`, `__spec__`, `__loader__`, `__path__` set for loaded modules/packages; full importlib `ModuleSpec` behavior pending)
 - [x] Classes subset (single inheritance, instance attrs + bound methods)
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC

@@ -1466,6 +1466,53 @@ path_len = len(sys.path)\n";
 }
 
 #[test]
+fn disables_path_imports_when_meta_path_excludes_default_finder() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_meta_path_disabled_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 71\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nsys.meta_path = []\nimport mod\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("module 'mod' not found"));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn re_enables_path_imports_with_default_meta_path_finder() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_meta_path_enabled_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 73\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nsys.meta_path = ['pyrs.PathFinder']\nimport mod\nx = mod.value\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(73)));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn uses_sys_path_mutation_for_module_lookup() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

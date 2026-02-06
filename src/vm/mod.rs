@@ -36,6 +36,8 @@ struct ModuleSourceInfo {
     is_namespace: bool,
 }
 
+const DEFAULT_META_PATH_FINDER: &str = "pyrs.PathFinder";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GeneratorResumeKind {
     Next,
@@ -327,7 +329,7 @@ impl Vm {
                 .insert("path".to_string(), self.heap.alloc_list(Vec::new()));
             module_data
                 .globals
-                .insert("meta_path".to_string(), self.heap.alloc_list(Vec::new()));
+                .insert("meta_path".to_string(), self.heap.alloc_list(vec![Value::Str(DEFAULT_META_PATH_FINDER.to_string())]));
             module_data
                 .globals
                 .insert("path_hooks".to_string(), self.heap.alloc_list(Vec::new()));
@@ -475,6 +477,9 @@ impl Vm {
 
     fn find_module_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
         self.sync_module_paths_from_sys();
+        if !self.default_pathfinder_enabled() {
+            return None;
+        }
         if let Some((parent_name, child_name)) = name.rsplit_once('.') {
             if let Some(parent_paths) = self.package_search_paths(parent_name) {
                 if let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths) {
@@ -518,6 +523,33 @@ impl Vm {
             });
         }
         None
+    }
+
+    fn default_pathfinder_enabled(&self) -> bool {
+        let sys_module = match self.modules.get("sys") {
+            Some(module) => module.clone(),
+            None => return true,
+        };
+        let module_kind = sys_module.kind();
+        let module_data = match &*module_kind {
+            Object::Module(module_data) => module_data,
+            _ => return true,
+        };
+        let meta_path = match module_data.globals.get("meta_path") {
+            Some(value) => value,
+            None => return true,
+        };
+        let meta_path_list = match meta_path {
+            Value::List(list) => list.clone(),
+            _ => return false,
+        };
+        let list_kind = meta_path_list.kind();
+        match &*list_kind {
+            Object::List(values) => values
+                .iter()
+                .any(|value| matches!(value, Value::Str(name) if name == DEFAULT_META_PATH_FINDER)),
+            _ => false,
+        }
     }
 
     fn package_search_paths(&self, package_name: &str) -> Option<Vec<PathBuf>> {
