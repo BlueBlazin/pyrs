@@ -7,17 +7,17 @@ Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (futu
 
 ## Milestone Coverage Map
 Every category below is mapped to the revised roadmap milestones in `docs/ROADMAP.md`, so the remaining plan has no known gaps.
-Milestone 12 execution sequencing is tracked in `docs/MILESTONE_12_BACKLOG.md`.
+Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
-- Language & Grammar -> Milestones 7 and 12
-- Semantic Analysis & Compilation -> Milestones 7 and 12
-- Bytecode & VM Execution -> Milestones 5 and 12
-- Runtime Object Model & Data Model -> Milestones 8, 9, and 12
+- Language & Grammar -> Milestones 7, 12, and 13
+- Semantic Analysis & Compilation -> Milestones 7, 12, and 13
+- Bytecode & VM Execution -> Milestones 5, 12, and 13
+- Runtime Object Model & Data Model -> Milestones 8, 9, 12, and 13
 - Builtins -> Milestones 9 and 13
 - Import System -> Milestones 6 and 13
 - Standard Library Coverage -> Milestones 9, 10, and 13
 - Tooling & UX -> Milestones 13 and 14
-- Testing & QA -> Milestones 11 and 16
+- Testing & QA -> Milestones 11, 13, and 16
 - Performance & Profiling -> Milestone 14
 - Concurrency & Platform -> Milestones 10 and 16
 - Interop & Extensibility -> Milestones 14 and 15
@@ -37,7 +37,7 @@ Milestone 12 execution sequencing is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [~] P0: f‑strings + format spec mini‑language (PEP 701 compatible) (baseline interpolation lowering implemented; full spec pending).
 - [x] P1: Type annotations (`x: T`, `def f(x: T) -> U`, class/instance annotations).
 - [ ] P1: Annotation evaluation semantics matching 3.14 (deferred vs eager).
-- [~] P1: Type parameter syntax / `type` statements (PEP 695 family) (`def`/`class` header type params parsed; `type` statement pending).
+- [~] P1: Type parameter syntax / `type` statements (PEP 695 family) (`def`/`class` header type params and baseline `type` statement lowering are implemented; full runtime semantics pending).
 
 **Semantic Analysis & Compilation**
 - [~] P0: Scope analysis (locals/globals/nonlocals/freevars/cellvars).
@@ -60,7 +60,7 @@ Milestone 12 execution sequencing is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Runtime Object Model & Data Model**
 - [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC.
-- [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (float + mixed int/bool coercion implemented; big-int and complex pending).
+- [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (float/complex and mixed int/bool coercion foundations implemented; big-int parity pending).
 - [~] P0: bytes/bytearray/memoryview and buffer protocol (core bytes-like runtime types implemented; full buffer protocol pending).
 - [x] P0: set/frozenset.
 - [~] P0: Unicode/codec behavior parity (including error handlers) (`codecs.encode`/`decode` foundations for `utf-8`/`ascii`/`latin-1` with `strict`/`ignore`/`replace` implemented; full parity pending).
@@ -103,6 +103,7 @@ Milestone 12 execution sequencing is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Testing & QA**
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
+- [x] P0: Current curated CPython language/import harness suites pass with zero allowlist entries (`tests/cpython_allowlist.txt`).
 - [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).

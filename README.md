@@ -6,8 +6,8 @@
 
 `pyrs` is in active alpha development.
 
-- Milestones 0-11 are complete (language/runtime foundations, import system, async foundations, and parity/test gate foundations).
-- Milestones 12-16 remain (core CPython parity closure, stdlib/packaging usability closure, performance/observability/runtime hooks, extension ecosystem compatibility, and production release hardening).
+- Milestones 0-12 are complete (language/runtime foundations, import system, async foundations, parity/test gate foundations, and current curated harness parity closure).
+- Milestones 13-16 remain (long-tail parity + stdlib/packaging usability closure, performance/observability/runtime hooks, extension ecosystem compatibility, and production release hardening).
 
 ## What Users Can Expect Today
 
@@ -18,7 +18,7 @@
 
 ## Current Limits
 
-- Not full CPython 3.14 parity yet (tokenizer/grammar edge cases and opcode-family completeness are still in progress).
+- Not full CPython 3.14 parity yet (long-tail language/runtime semantics and full opcode-family completeness are still in progress).
 - Stdlib behavior is broad but not complete.
 - C-extension compatibility is not implemented yet (for example, NumPy is out of scope right now).
 - Performance tuning and production hardening are still upcoming milestones.
@@ -78,7 +78,7 @@ The curated smoke/parity tests run subprocesses in a constrained mode (`env_clea
 ## Key Docs
 
 - Roadmap: `docs/ROADMAP.md`
-- Milestone 12 execution backlog: `docs/MILESTONE_12_BACKLOG.md`
+- Milestone 12 completion report: `docs/MILESTONE_12_BACKLOG.md`
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - Production readiness accounting: `docs/PRODUCTION_READINESS.md`
 - Project context for agent workflows: `AGENTS.md`

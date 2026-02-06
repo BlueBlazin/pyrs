@@ -6,13 +6,13 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 ## Parser & Grammar
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
 - [x] Indentation + baseline tokenization (names with Unicode identifier support, explicit line-join backslashes, ints/floats with underscores/base prefixes/exponents, strings with prefixes, operators, and soft-keyword handling for `match`/`case`/`type`)
-- [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
+- [~] Tokenizer parity for current curated CPython suites (additional long-tail lexical parity still pending)
 - [x] Statements subset: pass, expr, assign/augassign (incl chained assignment, tuple/list destructuring targets, and generalized attribute/subscript targets), `del`, if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with (including multi-item forms), class (bases + `metaclass=` keyword path supported), decorators, `match`/`case` (core subset), `except*` parsing, and core async statement semantics (`async def`/`async for`/`async with`)
 - [x] Expressions subset: arithmetic (incl `**`, `/`, `//`, `%`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls (including generator-expression argument form), literals (including implicit adjacent string concatenation and imaginary-number literal lowering), attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await semantics, list/dict comprehensions, generator expressions, starred tuple/list displays, and f-string lowering
 - [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
-- [x] Type parameter syntax on `def`/`class` headers (`def f[T](...)`, `class C[T]: ...`)
+- [~] Type-parameter/type-alias syntax baseline (`def`/`class` type params plus `type Name = ...` parsing/lowering; full PEP 695 runtime semantics pending)
 - [x] `__future__` import placement + unknown-feature compile-time validation
-- [~] Advanced grammar parity gaps remain (`type` statements, full pattern variants, full exception-group semantics, full f-string/PEP 701 coverage)
+- [~] Advanced grammar/runtime parity gaps remain (full pattern variants, full exception-group semantics, full f-string/PEP 701 coverage)
 
 ## Bytecode
 - [x] Opcode source files synced (`opcode.py`, `bytecodes.c`, `opcode.h`)
@@ -57,6 +57,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 ## CPython Tests
 - [x] First-class CPython harness with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`)
 - [x] Owned allowlist tracking (`tests/cpython_allowlist.txt`) with stale-entry detection in harness
+- [x] Current curated language/import harness suites pass with an empty allowlist
 - [x] Differential tests vs CPython (`tests/differential_cpython.rs`)
 - [x] Parser/compiler/VM fuzzing (`tests/fuzz_parser_vm.rs` + existing arithmetic fuzz)
 - [~] Incremental `Lib/test` coverage expansion (broader suite growth and allowlist reduction ongoing)

@@ -75,8 +75,8 @@ Release-complete target: Milestone 16; ecosystem-complete target (including nati
 10. Milestone 9: Core runtime types + builtins + stdlib bootstrap required for real apps (P0/P1). (complete)
 11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1). (complete)
 12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1). (complete)
-13. Milestone 12: Core CPython parity closure (tokenizer/grammar/bytecode/runtime remaining P0 gaps, P0).
-14. Milestone 13: Stdlib and packaging usability closure for pure-Python ecosystem workloads (P0/P1).
+13. Milestone 12: Core CPython parity closure for current harness-owned P0 gaps (complete, P0).
+14. Milestone 13: Remaining language/runtime long-tail parity + stdlib/packaging usability closure for pure-Python ecosystem workloads (P0/P1).
 15. Milestone 14: Performance, observability, and runtime hooks (P1/P2/P3).
 16. Milestone 15: Native extension ecosystem compatibility (limited C-API/abi3 + HPy path, P0/P1).
 17. Milestone 16: Release hardening and production certification (security/reliability/CI/distribution gates, P0/P1).
@@ -97,6 +97,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [x] Import system parity for supported pure-Python scenarios (`importlib`, specs, hooks).
+- [x] Curated CPython harness parity closure for current language/import suites (allowlist burn-down to zero).
 - [ ] Runtime semantic closure for remaining data-model gaps (`__getattribute__`, metaclass precedence, `__slots__` layout edges, full codecs behavior).
 - [ ] Native extension loading parity for limited C-API/abi3 modules.
 - [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, and parity-regression blocking CI.
@@ -185,7 +186,7 @@ DoD:
 Status: complete
 Notes:
 - Core coroutine/event-loop semantics are implemented in Milestone 10.
-- Full tokenizer/grammar parity, full `ExceptionGroup` splitting semantics, and full PEP 701 formatting edge cases are tracked under Milestone 12 and production-readiness checklist items.
+- Full tokenizer/grammar parity, full `ExceptionGroup` splitting semantics, and full PEP 701 formatting edge cases are tracked under Milestone 13 and production-readiness checklist items.
 
 ### Milestone 8 — Runtime Data Model Parity (P0)
 DoD:
@@ -195,7 +196,7 @@ DoD:
 - Exception chaining/context semantics are implemented for `raise ... from ...` and implicit chaining (`__cause__`, `__context__`, `__suppress_context__`).
 Status: complete
 Notes:
-- Full metaclass precedence/selection semantics and custom metaclass class-object call edge cases are tracked in Milestone 12 parity closure.
+- Full metaclass precedence/selection semantics and custom metaclass class-object call edge cases are tracked in Milestone 13 parity closure.
 - Core builtin type parity (`bytes`/`set`/`float`/unicode codecs foundations) is delivered in Milestone 9.
 
 ### Milestone 9 — Builtins + Stdlib Bootstrap (P0/P1)
@@ -227,13 +228,14 @@ Progress:
 ### Milestone 11 — Testing and Parity Gate (P0/P1)
 DoD:
 - CPython `Lib/test` harness is first-class (not ignored by default in CI/profile used for parity).
-- Broad `Lib/test` coverage passes with documented allowlist only for explicit non-goals.
+- Curated `Lib/test` language/import subsets pass with strict ownership tracking for any expected gaps.
 - Differential tests versus CPython and parser/VM fuzzing run continuously.
 - Real-world pure-Python applications pass curated smoke/regression suites.
 - Residual Milestone 8/9 semantic gaps (`__getattribute__` edge parity, metaclass precedence/selection, `__slots__` layout edge cases, full codecs behavior) are either closed or explicitly scoped with failing tests and ownership.
 Status: complete
 Progress:
 - CPython harness is now first-class and non-ignored (`tests/cpython_harness.rs`) with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`) plus strict allowlist ownership/category tracking (`tests/cpython_allowlist.txt`) and stale-allowlist detection.
+- Current curated language/import harness suites pass with an empty allowlist (`tests/cpython_allowlist.txt`).
 - Differential-vs-CPython coverage landed in `tests/differential_cpython.rs` for curated corpus and arithmetic fuzz expressions.
 - Parser/compiler/VM no-panic fuzzing landed in `tests/fuzz_parser_vm.rs`.
 - Curated real-world smoke coverage landed in `tests/realworld_smoke.rs` and is executed in a constrained subprocess profile (`env_clear`, isolated temp cwd/home, and timeout enforcement).
@@ -241,16 +243,22 @@ Progress:
 
 ### Milestone 12 — Core CPython Parity Closure (P0)
 DoD:
-- Tokenizer and grammar parity closure for remaining CPython 3.14 language families (string/bytes lexing edge cases, indentation/comment parity, full pattern families, `type` statement coverage, and f-string PEP 701 edge behavior).
-- Bytecode/VM parity closure for remaining required CPython 3.14 opcode families and exception-unwind semantics needed by harness and real-world suites.
-- Runtime data-model closure for outstanding parity gaps (`__getattribute__`, metaclass precedence/selection, `__slots__` layout edges, and full codecs behavior).
-- CPython harness allowlist is reduced to explicit non-goals only, with owner and rationale for each retained entry.
-- Parity gate suites are integrated as merge-blocking CI checks for the default development profile.
-Execution plan:
-- Ordered work packages and ownership mapping are tracked in `docs/MILESTONE_12_BACKLOG.md`.
+- Close all harness-owned parser/runtime/stdlib allowlist gaps for current curated CPython language/import suites.
+- Land parser/compiler/runtime fixes plus targeted regressions required to run those suites with no expected-failure allowlist entries.
+- Keep parity profile (`scripts/run_parity_gate.sh`) green after closure.
+- Record explicit carry-forward ownership for any remaining long-tail parity work.
+Status: complete
+Progress:
+- CPython harness allowlist has been burned down to zero (`tests/cpython_allowlist.txt`).
+- Curated CPython language/import suites pass under `tests/cpython_harness.rs`.
+- Runtime and stdlib compatibility closure landed for harness blockers (plus broad regression additions in `tests/vm.rs` and `tests/parser.rs`).
+- Parity profile script remains green.
+Execution record:
+- Milestone closure details are tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
-### Milestone 13 — Stdlib and Packaging Usability Closure (P0/P1)
+### Milestone 13 — Long-Tail Parity + Stdlib/Packaging Usability Closure (P0/P1)
 DoD:
+- Remaining language/runtime long-tail parity closes for production blocking semantics (`__getattribute__`, metaclass precedence/selection, `__slots__` edge layout behavior, full codecs behavior, pattern-family completion, `ExceptionGroup` split semantics, and full PEP 701 behavior).
 - Stdlib coverage expands to unblock mainstream pure-Python ecosystems (`subprocess`, `socket`, `ssl`, `http`, `urllib`, `typing`, `dataclasses`, `enum`, `contextvars`, and importlib resource/package helpers).
 - Import and packaging paths close remaining usability gaps (zip/bytecode imports, `importlib.resources`, `pkgutil`, and `site` startup behavior).
 - venv + pip pure-Python package workflows are production-usable and covered by regression tests.
@@ -278,10 +286,9 @@ DoD:
 - Production playbook exists for incident triage, rollback strategy, reproducible artifact verification, and regression-response SLA.
 
 ## Immediate next steps
-- Start Milestone 12 parity closure: tokenizer/grammar completion, remaining opcode-family execution parity, and data-model edge semantics closure.
-- Convert CPython harness allowlist entries into owned closure batches (parser, VM/opcode, runtime, stdlib) with weekly burn-down targets.
-- Wire parity/profile gates into CI as merge-blocking checks before beginning optimization work.
-- Begin Milestone 13 planning in parallel for stdlib/import packaging gaps needed by real pure-Python workloads.
+- Execute Milestone 13 closure batches: long-tail language/runtime parity semantics plus stdlib/import/packaging usability blockers.
+- Expand CPython harness breadth beyond current curated suites while preserving empty-allowlist policy for in-scope tests.
+- Wire parity/profile gates into CI as merge-blocking checks before beginning optimization-heavy work.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 
 ## Testing Focus Note
