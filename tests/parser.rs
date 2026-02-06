@@ -31,8 +31,8 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             body: body.iter().map(strip_stmt).collect(),
             orelse: orelse.iter().map(strip_stmt).collect(),
         },
-        StmtKind::Assign { target, value } => StmtKind::Assign {
-            target: strip_target(target),
+        StmtKind::Assign { targets, value } => StmtKind::Assign {
+            targets: targets.iter().map(strip_target).collect(),
             value: strip_expr(value),
         },
         StmtKind::AugAssign { target, op, value } => StmtKind::AugAssign {
@@ -161,6 +161,9 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
         StmtKind::Match { subject, cases } => StmtKind::Match {
             subject: strip_expr(subject),
             cases: cases.iter().map(strip_case).collect(),
+        },
+        StmtKind::Delete { targets } => StmtKind::Delete {
+            targets: targets.iter().map(strip_target).collect(),
         },
         StmtKind::Break => StmtKind::Break,
         StmtKind::Continue => StmtKind::Continue,
@@ -367,10 +370,24 @@ fn parses_assignment_statement() {
     assert_eq!(
         strip_module(&module),
         vec![spanned_stmt(StmtKind::Assign {
-            target: AssignTarget::Name("x".to_string()),
+            targets: vec![AssignTarget::Name("x".to_string())],
             value: spanned_expr(ExprKind::Constant(Constant::Int(1))),
         })]
     );
+}
+
+#[test]
+fn parses_chained_assignment_statement() {
+    let module = parser::parse_module("a = b = 1").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Assign { targets, value } => {
+            assert_eq!(targets.len(), 2);
+            assert_eq!(targets[0], AssignTarget::Name("a".to_string()));
+            assert_eq!(targets[1], AssignTarget::Name("b".to_string()));
+            assert_eq!(*value, spanned_expr(ExprKind::Constant(Constant::Int(1))));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
 }
 
 #[test]
@@ -378,9 +395,13 @@ fn parses_destructuring_assignment_statement() {
     let module = parser::parse_module("a, b = (1, 2)").expect("parse should succeed");
     match &strip_module(&module)[0].node {
         StmtKind::Assign {
-            target: AssignTarget::Tuple(items),
+            targets,
             ..
         } => {
+            assert_eq!(targets.len(), 1);
+            let AssignTarget::Tuple(items) = &targets[0] else {
+                panic!("unexpected target: {:?}", targets[0]);
+            };
             assert_eq!(items.len(), 2);
             assert_eq!(items[0], AssignTarget::Name("a".to_string()));
             assert_eq!(items[1], AssignTarget::Name("b".to_string()));
@@ -394,9 +415,9 @@ fn parses_subscript_assignment_statement() {
     let module = parser::parse_module("x[0] = 1").expect("parse should succeed");
     match &strip_module(&module)[0].node {
         StmtKind::Assign {
-            target: AssignTarget::Subscript { .. },
+            targets,
             ..
-        } => {}
+        } if matches!(targets.as_slice(), [AssignTarget::Subscript { .. }]) => {}
         other => panic!("unexpected stmt: {other:?}"),
     }
 }
@@ -406,9 +427,29 @@ fn parses_attribute_assignment_statement() {
     let module = parser::parse_module("mod.x = 1").expect("parse should succeed");
     match &strip_module(&module)[0].node {
         StmtKind::Assign {
-            target: AssignTarget::Attribute { name, .. },
+            targets,
             ..
-        } => assert_eq!(name, "x"),
+        } => match targets.as_slice() {
+            [AssignTarget::Attribute { name, .. }] => assert_eq!(name, "x"),
+            _ => panic!("unexpected targets: {targets:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_delete_statement() {
+    let module = parser::parse_module("del x, y").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Delete { targets } => {
+            assert_eq!(
+                targets,
+                &vec![
+                    AssignTarget::Name("x".to_string()),
+                    AssignTarget::Name("y".to_string())
+                ]
+            );
+        }
         other => panic!("unexpected stmt: {other:?}"),
     }
 }

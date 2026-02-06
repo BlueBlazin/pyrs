@@ -301,9 +301,12 @@ fn collect_locals_stmt(
     nonlocals: &mut HashSet<String>,
 ) {
     match &stmt.node {
-        StmtKind::Assign { target, .. }
-        | StmtKind::AugAssign { target, .. }
-        | StmtKind::AnnAssign { target, .. } => {
+        StmtKind::Assign { targets, .. } => {
+            for target in targets {
+                collect_locals_target(target, locals);
+            }
+        }
+        StmtKind::AugAssign { target, .. } | StmtKind::AnnAssign { target, .. } => {
             collect_locals_target(target, locals);
         }
         StmtKind::For { target, .. } => collect_locals_target(target, locals),
@@ -391,8 +394,10 @@ fn collect_uses_stmt(
 ) -> Result<(), CompileError> {
     match &stmt.node {
         StmtKind::Expr(expr) => collect_uses_expr(expr, uses, child_free, enclosing)?,
-        StmtKind::Assign { target, value } => {
-            collect_target_uses(target, uses, child_free, enclosing)?;
+        StmtKind::Assign { targets, value } => {
+            for target in targets {
+                collect_target_uses(target, uses, child_free, enclosing)?;
+            }
             collect_uses_expr(value, uses, child_free, enclosing)?;
         }
         StmtKind::AnnAssign {
@@ -409,6 +414,11 @@ fn collect_uses_stmt(
         StmtKind::AugAssign { target, value, .. } => {
             collect_target_uses(target, uses, child_free, enclosing)?;
             collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
+        StmtKind::Delete { targets } => {
+            for target in targets {
+                collect_target_uses(target, uses, child_free, enclosing)?;
+            }
         }
         StmtKind::If { test, body, orelse } => {
             collect_uses_expr(test, uses, child_free, enclosing)?;
@@ -920,6 +930,7 @@ fn body_has_yield(body: &[Stmt]) -> bool {
             | StmtKind::ImportFrom { .. }
             | StmtKind::Global { .. }
             | StmtKind::Nonlocal { .. }
+            | StmtKind::Delete { .. }
             | StmtKind::Pass
             | StmtKind::Break
             | StmtKind::Continue => {}
@@ -1140,7 +1151,7 @@ impl Compiler {
                 compiler.emit(Opcode::PopTop, None);
                 Ok(())
             }
-            StmtKind::Assign { target, value } => compiler.compile_assign_target(target, value),
+            StmtKind::Assign { targets, value } => compiler.compile_assign_targets(targets, value),
             StmtKind::AnnAssign {
                 target,
                 annotation,
@@ -1196,6 +1207,7 @@ impl Compiler {
                 let _ = type_params;
                 compiler.compile_class_def(name, bases, metaclass.as_ref(), body)
             }
+            StmtKind::Delete { targets } => compiler.compile_delete(targets),
             StmtKind::Decorated { decorators, stmt } => {
                 compiler.compile_decorated_stmt(decorators, stmt)
             }
@@ -1317,10 +1329,16 @@ impl Compiler {
                     crate::ast::BinaryOp::Add => Opcode::BinaryAdd,
                     crate::ast::BinaryOp::Sub => Opcode::BinarySub,
                     crate::ast::BinaryOp::Mul => Opcode::BinaryMul,
+                    crate::ast::BinaryOp::MatMul => Opcode::BinaryMatMul,
                     crate::ast::BinaryOp::Div => Opcode::BinaryDiv,
                     crate::ast::BinaryOp::Pow => Opcode::BinaryPow,
                     crate::ast::BinaryOp::FloorDiv => Opcode::BinaryFloorDiv,
                     crate::ast::BinaryOp::Mod => Opcode::BinaryMod,
+                    crate::ast::BinaryOp::LShift => Opcode::BinaryLShift,
+                    crate::ast::BinaryOp::RShift => Opcode::BinaryRShift,
+                    crate::ast::BinaryOp::BitAnd => Opcode::BinaryAnd,
+                    crate::ast::BinaryOp::BitXor => Opcode::BinaryXor,
+                    crate::ast::BinaryOp::BitOr => Opcode::BinaryOr,
                     crate::ast::BinaryOp::Eq => Opcode::CompareEq,
                     crate::ast::BinaryOp::Ne => Opcode::CompareNe,
                     crate::ast::BinaryOp::Lt => Opcode::CompareLt,
@@ -1341,6 +1359,7 @@ impl Compiler {
                     crate::ast::UnaryOp::Neg => Opcode::UnaryNeg,
                     crate::ast::UnaryOp::Not => Opcode::UnaryNot,
                     crate::ast::UnaryOp::Pos => Opcode::UnaryPos,
+                    crate::ast::UnaryOp::Invert => Opcode::UnaryInvert,
                 };
                 compiler.emit(opcode, None);
                 Ok(())
@@ -2069,7 +2088,7 @@ impl Compiler {
         let mut body = vec![Stmt {
             span: elt.span,
             node: StmtKind::Assign {
-                target: AssignTarget::Name(result_name.clone()),
+                targets: vec![AssignTarget::Name(result_name.clone())],
                 value: Expr {
                     span: elt.span,
                     node: ExprKind::List(Vec::new()),
@@ -2099,13 +2118,13 @@ impl Compiler {
         let assign_stmt = Stmt {
             span: key.span,
             node: StmtKind::Assign {
-                target: AssignTarget::Subscript {
+                targets: vec![AssignTarget::Subscript {
                     value: Box::new(Expr {
                         span: key.span,
                         node: ExprKind::Name(result_name.clone()),
                     }),
                     index: Box::new(key.clone()),
-                },
+                }],
                 value: value.clone(),
             },
         };
@@ -2113,7 +2132,7 @@ impl Compiler {
         let mut body = vec![Stmt {
             span: key.span,
             node: StmtKind::Assign {
-                target: AssignTarget::Name(result_name.clone()),
+                targets: vec![AssignTarget::Name(result_name.clone())],
                 value: Expr {
                     span: key.span,
                     node: ExprKind::Dict(Vec::new()),
@@ -2178,13 +2197,65 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_assign_targets(
+        &mut self,
+        targets: &[AssignTarget],
+        value: &Expr,
+    ) -> Result<(), CompileError> {
+        if targets.is_empty() {
+            return Ok(());
+        }
+        self.compile_expr(value)?;
+        for (idx, target) in targets.iter().enumerate() {
+            if idx + 1 < targets.len() {
+                self.emit(Opcode::DupTop, None);
+            }
+            self.compile_store_target_from_stack(target)?;
+        }
+        Ok(())
+    }
+
     fn compile_assign_target(
         &mut self,
         target: &AssignTarget,
         value: &Expr,
     ) -> Result<(), CompileError> {
-        self.compile_expr(value)?;
-        self.compile_store_target_from_stack(target)
+        self.compile_assign_targets(std::slice::from_ref(target), value)
+    }
+
+    fn compile_delete(&mut self, targets: &[AssignTarget]) -> Result<(), CompileError> {
+        for target in targets {
+            self.compile_delete_target(target)?;
+        }
+        Ok(())
+    }
+
+    fn compile_delete_target(&mut self, target: &AssignTarget) -> Result<(), CompileError> {
+        match target {
+            AssignTarget::Name(name) => {
+                let idx = self.code.add_name(name.clone());
+                self.emit(Opcode::DeleteName, Some(idx));
+                Ok(())
+            }
+            AssignTarget::Attribute { value, name } => {
+                self.compile_expr(value)?;
+                let idx = self.code.add_name(name.clone());
+                self.emit(Opcode::DeleteAttr, Some(idx));
+                Ok(())
+            }
+            AssignTarget::Subscript { value, index } => {
+                self.compile_expr(value)?;
+                self.compile_expr(index)?;
+                self.emit(Opcode::DeleteSubscript, None);
+                Ok(())
+            }
+            AssignTarget::Tuple(items) | AssignTarget::List(items) => {
+                for item in items {
+                    self.compile_delete_target(item)?;
+                }
+                Ok(())
+            }
+        }
     }
 
     fn compile_ann_assign(
@@ -2242,20 +2313,14 @@ impl Compiler {
                 Ok(())
             }
             AssignTarget::Subscript { value, index } => {
-                if let ExprKind::Name(name) = &value.node {
-                    let temp = self.fresh_temp("assign");
-                    self.emit_store_name(&temp);
-                    self.emit_load_name(name)?;
-                    self.compile_expr(index)?;
-                    self.emit_load_name(&temp)?;
-                    self.emit(Opcode::StoreSubscript, None);
-                    self.emit_store_name_scoped(name)?;
-                    Ok(())
-                } else {
-                    Err(CompileError::new(
-                        "only name-based subscript assignments supported",
-                    ))
-                }
+                let temp = self.fresh_temp("assign");
+                self.emit_store_name(&temp);
+                self.compile_expr(value)?;
+                self.compile_expr(index)?;
+                self.emit_load_name(&temp)?;
+                self.emit(Opcode::StoreSubscript, None);
+                self.emit(Opcode::PopTop, None);
+                Ok(())
             }
         }
     }
@@ -2274,10 +2339,16 @@ impl Compiler {
                     crate::ast::AugOp::Add => Opcode::BinaryAdd,
                     crate::ast::AugOp::Sub => Opcode::BinarySub,
                     crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                    crate::ast::AugOp::MatMul => Opcode::BinaryMatMul,
                     crate::ast::AugOp::Div => Opcode::BinaryDiv,
                     crate::ast::AugOp::Mod => Opcode::BinaryMod,
                     crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
                     crate::ast::AugOp::Pow => Opcode::BinaryPow,
+                    crate::ast::AugOp::LShift => Opcode::BinaryLShift,
+                    crate::ast::AugOp::RShift => Opcode::BinaryRShift,
+                    crate::ast::AugOp::BitAnd => Opcode::BinaryAnd,
+                    crate::ast::AugOp::BitXor => Opcode::BinaryXor,
+                    crate::ast::AugOp::BitOr => Opcode::BinaryOr,
                 };
                 self.emit(opcode, None);
                 self.emit_store_name_scoped(name)?;
@@ -2287,32 +2358,41 @@ impl Compiler {
                 value: container,
                 index,
             } => {
-                if let ExprKind::Name(name) = &container.node {
-                    let name = name.clone();
-                    self.emit_load_name(&name)?;
-                    self.compile_expr(index)?;
-                    self.emit(Opcode::Subscript, None);
-                    self.compile_expr(value)?;
-                    let opcode = match op {
-                        crate::ast::AugOp::Add => Opcode::BinaryAdd,
-                        crate::ast::AugOp::Sub => Opcode::BinarySub,
-                        crate::ast::AugOp::Mul => Opcode::BinaryMul,
-                        crate::ast::AugOp::Div => Opcode::BinaryDiv,
-                        crate::ast::AugOp::Mod => Opcode::BinaryMod,
-                        crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
-                        crate::ast::AugOp::Pow => Opcode::BinaryPow,
-                    };
-                    self.emit(opcode, None);
-                    self.emit_load_name(&name)?;
-                    self.compile_expr(index)?;
-                    self.emit(Opcode::StoreSubscript, None);
-                    self.emit_store_name_scoped(&name)?;
-                    Ok(())
-                } else {
-                    Err(CompileError::new(
-                        "only name-based subscript assignments supported",
-                    ))
-                }
+                let container_temp = self.fresh_temp("assign_obj");
+                let index_temp = self.fresh_temp("assign_idx");
+                let value_temp = self.fresh_temp("assign_val");
+                self.compile_expr(container)?;
+                self.emit_store_name(&container_temp);
+                self.compile_expr(index)?;
+                self.emit_store_name(&index_temp);
+
+                self.emit_load_name(&container_temp)?;
+                self.emit_load_name(&index_temp)?;
+                self.emit(Opcode::Subscript, None);
+                self.compile_expr(value)?;
+                let opcode = match op {
+                    crate::ast::AugOp::Add => Opcode::BinaryAdd,
+                    crate::ast::AugOp::Sub => Opcode::BinarySub,
+                    crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                    crate::ast::AugOp::MatMul => Opcode::BinaryMatMul,
+                    crate::ast::AugOp::Div => Opcode::BinaryDiv,
+                    crate::ast::AugOp::Mod => Opcode::BinaryMod,
+                    crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
+                    crate::ast::AugOp::Pow => Opcode::BinaryPow,
+                    crate::ast::AugOp::LShift => Opcode::BinaryLShift,
+                    crate::ast::AugOp::RShift => Opcode::BinaryRShift,
+                    crate::ast::AugOp::BitAnd => Opcode::BinaryAnd,
+                    crate::ast::AugOp::BitXor => Opcode::BinaryXor,
+                    crate::ast::AugOp::BitOr => Opcode::BinaryOr,
+                };
+                self.emit(opcode, None);
+                self.emit_store_name(&value_temp);
+                self.emit_load_name(&container_temp)?;
+                self.emit_load_name(&index_temp)?;
+                self.emit_load_name(&value_temp)?;
+                self.emit(Opcode::StoreSubscript, None);
+                self.emit(Opcode::PopTop, None);
+                Ok(())
             }
             AssignTarget::Attribute {
                 value: object,
@@ -2330,10 +2410,16 @@ impl Compiler {
                     crate::ast::AugOp::Add => Opcode::BinaryAdd,
                     crate::ast::AugOp::Sub => Opcode::BinarySub,
                     crate::ast::AugOp::Mul => Opcode::BinaryMul,
+                    crate::ast::AugOp::MatMul => Opcode::BinaryMatMul,
                     crate::ast::AugOp::Div => Opcode::BinaryDiv,
                     crate::ast::AugOp::Mod => Opcode::BinaryMod,
                     crate::ast::AugOp::FloorDiv => Opcode::BinaryFloorDiv,
                     crate::ast::AugOp::Pow => Opcode::BinaryPow,
+                    crate::ast::AugOp::LShift => Opcode::BinaryLShift,
+                    crate::ast::AugOp::RShift => Opcode::BinaryRShift,
+                    crate::ast::AugOp::BitAnd => Opcode::BinaryAnd,
+                    crate::ast::AugOp::BitXor => Opcode::BinaryXor,
+                    crate::ast::AugOp::BitOr => Opcode::BinaryOr,
                 };
                 self.emit(opcode, None);
                 self.emit_store_name(&value_temp);
@@ -2397,7 +2483,7 @@ impl Compiler {
         let iter_temp = self.fresh_temp("aiter");
         let iter_assign = Stmt::new(
             StmtKind::Assign {
-                target: AssignTarget::Name(iter_temp.clone()),
+                targets: vec![AssignTarget::Name(iter_temp.clone())],
                 value: Expr::new(
                     ExprKind::Call {
                         func: Box::new(Expr::new(ExprKind::Name("aiter".to_string()), span)),
@@ -2412,7 +2498,7 @@ impl Compiler {
 
         let fetch_stmt = Stmt::new(
             StmtKind::Assign {
-                target: target.clone(),
+                targets: vec![target.clone()],
                 value: Expr::new(
                     ExprKind::Await {
                         value: Box::new(Expr::new(
@@ -2516,7 +2602,7 @@ impl Compiler {
 
         let assign_ctx = Stmt::new(
             StmtKind::Assign {
-                target: AssignTarget::Name(ctx_temp.clone()),
+                targets: vec![AssignTarget::Name(ctx_temp.clone())],
                 value: context.clone(),
             },
             span,
@@ -2547,7 +2633,7 @@ impl Compiler {
         let enter_stmt = if let Some(target) = target {
             Stmt::new(
                 StmtKind::Assign {
-                    target: target.clone(),
+                    targets: vec![target.clone()],
                     value: enter_call,
                 },
                 span,

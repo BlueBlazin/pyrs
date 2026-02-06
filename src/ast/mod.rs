@@ -56,7 +56,7 @@ pub enum StmtKind {
         orelse: Vec<Stmt>,
     },
     Assign {
-        target: AssignTarget,
+        targets: Vec<AssignTarget>,
         value: Expr,
     },
     AugAssign {
@@ -144,6 +144,9 @@ pub enum StmtKind {
     Match {
         subject: Expr,
         cases: Vec<MatchCase>,
+    },
+    Delete {
+        targets: Vec<AssignTarget>,
     },
     Break,
     Continue,
@@ -293,10 +296,16 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mul,
+    MatMul,
     Div,
     Pow,
     FloorDiv,
     Mod,
+    LShift,
+    RShift,
+    BitAnd,
+    BitXor,
+    BitOr,
     Eq,
     Ne,
     Lt,
@@ -314,6 +323,7 @@ pub enum UnaryOp {
     Neg,
     Not,
     Pos,
+    Invert,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -327,10 +337,16 @@ pub enum AugOp {
     Add,
     Sub,
     Mul,
+    MatMul,
     Div,
     Mod,
     FloorDiv,
     Pow,
+    LShift,
+    RShift,
+    BitAnd,
+    BitXor,
+    BitOr,
 }
 
 #[derive(Debug, Clone, Copy)]

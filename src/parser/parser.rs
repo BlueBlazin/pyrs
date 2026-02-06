@@ -56,6 +56,11 @@ struct Parser {
     expr_memo: HashMap<usize, Memo<Expr>>,
 }
 
+enum SequenceElement {
+    Expr(Expr),
+    Star(Expr),
+}
+
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
         Self {
@@ -173,12 +178,22 @@ impl Parser {
                 ));
             }
             if kind == TokenKind::Equal {
-                let (value, next) = self.parse_expr_at(next_pos + 1)?;
+                let mut targets = vec![target_expr];
+                let mut value_pos = next_pos + 1;
+                while let Some((next_target, next_after)) = self.parse_assignment_target_list(value_pos)
+                {
+                    if !matches!(self.token_at(next_after).kind, TokenKind::Equal) {
+                        break;
+                    }
+                    targets.push(next_target);
+                    value_pos = next_after + 1;
+                }
+                let (value, next) = self.parse_expr_with_tuple_tail(value_pos)?;
                 return Ok((
                     self.make_stmt(
                         start,
                         StmtKind::Assign {
-                            target: target_expr,
+                            targets,
                             value,
                         },
                     ),
@@ -190,15 +205,21 @@ impl Parser {
                 TokenKind::PlusEqual => Some(crate::ast::AugOp::Add),
                 TokenKind::MinusEqual => Some(crate::ast::AugOp::Sub),
                 TokenKind::StarEqual => Some(crate::ast::AugOp::Mul),
+                TokenKind::AtEqual => Some(crate::ast::AugOp::MatMul),
                 TokenKind::SlashEqual => Some(crate::ast::AugOp::Div),
                 TokenKind::PercentEqual => Some(crate::ast::AugOp::Mod),
                 TokenKind::DoubleSlashEqual => Some(crate::ast::AugOp::FloorDiv),
                 TokenKind::DoubleStarEqual => Some(crate::ast::AugOp::Pow),
+                TokenKind::LeftShiftEqual => Some(crate::ast::AugOp::LShift),
+                TokenKind::RightShiftEqual => Some(crate::ast::AugOp::RShift),
+                TokenKind::AmpersandEqual => Some(crate::ast::AugOp::BitAnd),
+                TokenKind::CaretEqual => Some(crate::ast::AugOp::BitXor),
+                TokenKind::PipeEqual => Some(crate::ast::AugOp::BitOr),
                 _ => None,
             };
 
             if let Some(op) = aug_op {
-                let (value, next) = self.parse_expr_at(next_pos + 1)?;
+                let (value, next) = self.parse_expr_with_tuple_tail(next_pos + 1)?;
                 return Ok((
                     self.make_stmt(
                         start,
@@ -219,10 +240,16 @@ impl Parser {
                     | TokenKind::PlusEqual
                     | TokenKind::MinusEqual
                     | TokenKind::StarEqual
+                    | TokenKind::AtEqual
                     | TokenKind::SlashEqual
                     | TokenKind::DoubleStarEqual
                     | TokenKind::DoubleSlashEqual
                     | TokenKind::PercentEqual
+                    | TokenKind::LeftShiftEqual
+                    | TokenKind::RightShiftEqual
+                    | TokenKind::AmpersandEqual
+                    | TokenKind::CaretEqual
+                    | TokenKind::PipeEqual
                     | TokenKind::ColonEqual
             )
         {
@@ -253,11 +280,12 @@ impl Parser {
             TokenKind::Keyword(Keyword::With) => self.parse_with_stmt(pos),
             TokenKind::Keyword(Keyword::Raise) => self.parse_raise_stmt(pos),
             TokenKind::Keyword(Keyword::Assert) => self.parse_assert_stmt(pos),
+            TokenKind::Keyword(Keyword::Del) => self.parse_del_stmt(pos),
             TokenKind::Keyword(Keyword::Pass) => {
                 Ok((self.make_stmt(start, StmtKind::Pass), pos + 1))
             }
             _ => {
-                let (expr, next) = self.parse_expr_at(pos)?;
+                let (expr, next) = self.parse_expr_with_tuple_tail(pos)?;
                 Ok((self.make_stmt(start, StmtKind::Expr(expr)), next))
             }
         }
@@ -439,6 +467,63 @@ impl Parser {
         ))
     }
 
+    fn parse_expr_with_tuple_tail(&mut self, pos: usize) -> ParseResult<Expr> {
+        let start = pos;
+        let (first, mut pos) = self.parse_sequence_element(pos)?;
+        if !matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            return match first {
+                SequenceElement::Expr(expr) => Ok((expr, pos)),
+                SequenceElement::Star(_) => Err(self.error_at(start, "expected expression")),
+            };
+        }
+
+        let mut elements = vec![first];
+        let mut has_star = matches!(elements.first(), Some(SequenceElement::Star(_)));
+        while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            pos += 1;
+            if matches!(
+                self.token_at(pos).kind,
+                TokenKind::Newline
+                    | TokenKind::Semicolon
+                    | TokenKind::Dedent
+                    | TokenKind::EndMarker
+                    | TokenKind::RParen
+                    | TokenKind::RBracket
+                    | TokenKind::RBrace
+                    | TokenKind::Colon
+            ) {
+                break;
+            }
+            let (element, next) = self.parse_sequence_element(pos)?;
+            if matches!(element, SequenceElement::Star(_)) {
+                has_star = true;
+            }
+            elements.push(element);
+            pos = next;
+        }
+        if has_star {
+            return Ok((self.lower_starred_tuple(start, elements), pos));
+        }
+        let values: Vec<Expr> = elements
+            .into_iter()
+            .map(|element| match element {
+                SequenceElement::Expr(expr) => expr,
+                SequenceElement::Star(_) => unreachable!(),
+            })
+            .collect();
+        let span = values
+            .first()
+            .map(|expr| expr.span)
+            .unwrap_or_else(Span::unknown);
+        Ok((
+            Expr {
+                node: ExprKind::Tuple(values),
+                span,
+            },
+            pos,
+        ))
+    }
+
     fn parse_yield_expr(&mut self, pos: usize) -> ParseResult<Expr> {
         let start = pos;
         let pos = pos + 1;
@@ -592,7 +677,7 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self, pos: usize) -> ParseResult<Expr> {
-        let (left, mut pos) = self.parse_add_sub(pos)?;
+        let (left, mut pos) = self.parse_bitwise_or(pos)?;
 
         let (op, consumed) = match self.token_at(pos).kind {
             TokenKind::DoubleEqual => (BinaryOp::Eq, 1),
@@ -620,7 +705,7 @@ impl Parser {
         };
 
         pos += consumed;
-        let (right, next) = self.parse_add_sub(pos)?;
+        let (right, next) = self.parse_bitwise_or(pos)?;
         let span = left.span;
         Ok((
             Expr {
@@ -633,6 +718,89 @@ impl Parser {
             },
             next,
         ))
+    }
+
+    fn parse_bitwise_or(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (mut left, mut pos) = self.parse_bitwise_xor(pos)?;
+        while matches!(self.token_at(pos).kind, TokenKind::Pipe) {
+            pos += 1;
+            let (right, next) = self.parse_bitwise_xor(pos)?;
+            let span = left.span;
+            left = Expr {
+                node: ExprKind::Binary {
+                    left: Box::new(left),
+                    op: BinaryOp::BitOr,
+                    right: Box::new(right),
+                },
+                span,
+            };
+            pos = next;
+        }
+        Ok((left, pos))
+    }
+
+    fn parse_bitwise_xor(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (mut left, mut pos) = self.parse_bitwise_and(pos)?;
+        while matches!(self.token_at(pos).kind, TokenKind::Caret) {
+            pos += 1;
+            let (right, next) = self.parse_bitwise_and(pos)?;
+            let span = left.span;
+            left = Expr {
+                node: ExprKind::Binary {
+                    left: Box::new(left),
+                    op: BinaryOp::BitXor,
+                    right: Box::new(right),
+                },
+                span,
+            };
+            pos = next;
+        }
+        Ok((left, pos))
+    }
+
+    fn parse_bitwise_and(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (mut left, mut pos) = self.parse_shift(pos)?;
+        while matches!(self.token_at(pos).kind, TokenKind::Ampersand) {
+            pos += 1;
+            let (right, next) = self.parse_shift(pos)?;
+            let span = left.span;
+            left = Expr {
+                node: ExprKind::Binary {
+                    left: Box::new(left),
+                    op: BinaryOp::BitAnd,
+                    right: Box::new(right),
+                },
+                span,
+            };
+            pos = next;
+        }
+        Ok((left, pos))
+    }
+
+    fn parse_shift(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (mut left, mut pos) = self.parse_add_sub(pos)?;
+
+        loop {
+            let op = match self.token_at(pos).kind {
+                TokenKind::LeftShift => BinaryOp::LShift,
+                TokenKind::RightShift => BinaryOp::RShift,
+                _ => break,
+            };
+            pos += 1;
+            let (right, next) = self.parse_add_sub(pos)?;
+            let span = left.span;
+            left = Expr {
+                node: ExprKind::Binary {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+                span,
+            };
+            pos = next;
+        }
+
+        Ok((left, pos))
     }
 
     fn parse_add_sub(&mut self, pos: usize) -> ParseResult<Expr> {
@@ -667,6 +835,7 @@ impl Parser {
         loop {
             let op = match self.token_at(pos).kind {
                 TokenKind::Star => BinaryOp::Mul,
+                TokenKind::At => BinaryOp::MatMul,
                 TokenKind::Slash => BinaryOp::Div,
                 TokenKind::DoubleSlash => BinaryOp::FloorDiv,
                 TokenKind::Percent => BinaryOp::Mod,
@@ -752,6 +921,20 @@ impl Parser {
                 next,
             ));
         }
+        if matches!(self.token_at(pos).kind, TokenKind::Tilde) {
+            let start = pos;
+            let (expr, next) = self.parse_unary(pos + 1)?;
+            return Ok((
+                self.make_expr(
+                    start,
+                    ExprKind::Unary {
+                        op: UnaryOp::Invert,
+                        operand: Box::new(expr),
+                    },
+                ),
+                next,
+            ));
+        }
         self.parse_power(pos)
     }
 
@@ -763,11 +946,49 @@ impl Parser {
                 pos + 1,
             ),
             TokenKind::Number => {
-                let value = self.parse_number_literal(&token.lexeme, pos)?;
-                (self.make_expr(pos, ExprKind::Constant(value)), pos + 1)
+                if let Some(imag) = self.parse_imag_literal(&token.lexeme, pos)? {
+                    let complex_ctor = self.make_expr(pos, ExprKind::Name("complex".to_string()));
+                    let zero = self.make_expr(pos, ExprKind::Constant(Constant::Int(0)));
+                    let imag_part =
+                        self.make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(imag))));
+                    (
+                        self.make_expr(
+                            pos,
+                            ExprKind::Call {
+                                func: Box::new(complex_ctor),
+                                args: vec![
+                                    CallArg::Positional(zero),
+                                    CallArg::Positional(imag_part),
+                                ],
+                            },
+                        ),
+                        pos + 1,
+                    )
+                } else {
+                    let value = self.parse_number_literal(&token.lexeme, pos)?;
+                    (self.make_expr(pos, ExprKind::Constant(value)), pos + 1)
+                }
             }
             TokenKind::String => (
-                self.make_expr(pos, ExprKind::Constant(Constant::Str(token.lexeme.clone()))),
+                {
+                    let mut value = token.lexeme.clone();
+                    let mut next = pos + 1;
+                    while matches!(self.token_at(next).kind, TokenKind::String) {
+                        value.push_str(&self.token_at(next).lexeme);
+                        next += 1;
+                    }
+                    self.make_expr(pos, ExprKind::Constant(Constant::Str(value)))
+                },
+                {
+                    let mut next = pos + 1;
+                    while matches!(self.token_at(next).kind, TokenKind::String) {
+                        next += 1;
+                    }
+                    next
+                },
+            ),
+            TokenKind::Ellipsis => (
+                self.make_expr(pos, ExprKind::Name("Ellipsis".to_string())),
                 pos + 1,
             ),
             TokenKind::FString => (self.parse_fstring_literal(pos, &token.lexeme)?, pos + 1),
@@ -927,7 +1148,7 @@ impl Parser {
             return Err(self.error_at(pos, "expected 'in'"));
         }
         pos += 1;
-        let (iter, next) = self.parse_expr_at(pos)?;
+        let (iter, next) = self.parse_expr_with_tuple_tail(pos)?;
         pos = next;
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
@@ -965,32 +1186,63 @@ impl Parser {
         is_async: bool,
     ) -> ParseResult<Stmt> {
         let mut pos = with_pos + 1;
-        let (context, next) = self.parse_expr_at(pos)?;
-        pos = next;
-
-        let mut target = None;
-        if self.match_keyword(pos, Keyword::As) {
+        let mut parenthesized = false;
+        if matches!(self.token_at(pos).kind, TokenKind::LParen) {
+            parenthesized = true;
             pos += 1;
-            let (target_expr, next) = self
-                .parse_assignment_target_list(pos)
-                .ok_or_else(|| self.error_at(pos, "expected with target"))?;
-            target = Some(target_expr);
-            pos = next;
         }
 
+        let mut items: Vec<(Expr, Option<AssignTarget>)> = Vec::new();
+        loop {
+            let (context, next) = self.parse_expr_at(pos)?;
+            pos = next;
+
+            let mut target = None;
+            if self.match_keyword(pos, Keyword::As) {
+                pos += 1;
+                let (target_expr, next) = self
+                    .parse_assignment_target_list(pos)
+                    .ok_or_else(|| self.error_at(pos, "expected with target"))?;
+                target = Some(target_expr);
+                pos = next;
+            }
+            items.push((context, target));
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if parenthesized && matches!(self.token_at(pos).kind, TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        if parenthesized {
+            pos = self.expect_kind(pos, TokenKind::RParen)?;
+        }
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-        Ok((
-            self.make_stmt(
+
+        let mut nested = body;
+        for (context, target) in items.into_iter().rev() {
+            nested = vec![self.make_stmt(
                 start,
                 StmtKind::With {
                     is_async,
                     context,
                     target,
-                    body,
+                    body: nested,
                 },
-            ),
+            )];
+        }
+        let stmt = nested
+            .into_iter()
+            .next()
+            .ok_or_else(|| self.error_at(start, "empty with statement"))?;
+        Ok((
+            stmt,
             pos,
         ))
     }
@@ -1132,16 +1384,36 @@ impl Parser {
         pos += 1;
 
         let mut names = Vec::new();
-        loop {
-            let (alias, next) = self.parse_import_alias_name(pos)?;
-            names.push(alias);
-            pos = next;
-
-            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
-                pos += 1;
-                continue;
+        if matches!(self.token_at(pos).kind, TokenKind::LParen) {
+            pos += 1;
+            if !matches!(self.token_at(pos).kind, TokenKind::RParen) {
+                loop {
+                    let (alias, next) = self.parse_import_alias_name(pos)?;
+                    names.push(alias);
+                    pos = next;
+                    if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                        pos += 1;
+                        if matches!(self.token_at(pos).kind, TokenKind::RParen) {
+                            break;
+                        }
+                        continue;
+                    }
+                    break;
+                }
             }
-            break;
+            pos = self.expect_kind(pos, TokenKind::RParen)?;
+        } else {
+            loop {
+                let (alias, next) = self.parse_import_alias_name(pos)?;
+                names.push(alias);
+                pos = next;
+
+                if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                    pos += 1;
+                    continue;
+                }
+                break;
+            }
         }
 
         Ok((
@@ -1261,6 +1533,25 @@ impl Parser {
         ))
     }
 
+    fn parse_del_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
+        let mut pos = pos + 1;
+        let mut targets = Vec::new();
+        loop {
+            let (target, next) = self
+                .parse_assignment_target(pos)
+                .ok_or_else(|| self.error_at(pos, "expected deletion target"))?;
+            targets.push(target);
+            pos = next;
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+        Ok((self.make_stmt(start, StmtKind::Delete { targets }), pos))
+    }
+
     fn parse_import_alias(&mut self, pos: usize) -> Result<(ImportAlias, usize), ParseError> {
         let (name, mut pos) = self.parse_import_name(pos)?;
         let mut asname = None;
@@ -1280,6 +1571,15 @@ impl Parser {
     fn parse_import_alias_name(&mut self, pos: usize) -> Result<(ImportAlias, usize), ParseError> {
         let mut pos = pos;
         let token = self.token_at(pos);
+        if token.kind == TokenKind::Star {
+            return Ok((
+                ImportAlias {
+                    name: "*".to_string(),
+                    asname: None,
+                },
+                pos + 1,
+            ));
+        }
         if token.kind != TokenKind::Name {
             return Err(self.error_at(pos, "expected imported name"));
         }
@@ -1352,6 +1652,18 @@ impl Parser {
 
                 loop {
                     match self.token_at(pos).kind {
+                        TokenKind::LParen => {
+                            let (args, next) = self.parse_call_args(pos + 1).ok()?;
+                            let span = expr.span;
+                            expr = Expr {
+                                node: ExprKind::Call {
+                                    func: Box::new(expr),
+                                    args,
+                                },
+                                span,
+                            };
+                            pos = next;
+                        }
                         TokenKind::LBracket => {
                             let (index, next) = self.parse_subscript(pos + 1).ok()?;
                             let span = expr.span;
@@ -1582,7 +1894,7 @@ impl Parser {
         ) {
             return Ok((self.make_stmt(start, StmtKind::Return { value: None }), pos));
         }
-        let (expr, next) = self.parse_expr_at(pos)?;
+        let (expr, next) = self.parse_expr_with_tuple_tail(pos)?;
         pos = next;
         Ok((
             self.make_stmt(start, StmtKind::Return { value: Some(expr) }),
@@ -1622,13 +1934,39 @@ impl Parser {
             {
                 let name = token.lexeme.clone();
                 pos += 2;
-                let (value, next) = self.parse_expr_at(pos)?;
+                let (mut value, next) = self.parse_expr_at(pos)?;
+                let mut next_pos = next;
+                if self.is_comprehension_start(next_pos) {
+                    let (clauses, after) = self.parse_comp_clauses(next_pos)?;
+                    let span = value.span;
+                    value = Expr {
+                        node: ExprKind::GeneratorExp {
+                            elt: Box::new(value),
+                            clauses,
+                        },
+                        span,
+                    };
+                    next_pos = after;
+                }
                 args.push(CallArg::Keyword { name, value });
-                pos = next;
+                pos = next_pos;
             } else {
-                let (expr, next) = self.parse_expr_at(pos)?;
+                let (mut expr, next) = self.parse_expr_at(pos)?;
+                let mut next_pos = next;
+                if self.is_comprehension_start(next_pos) {
+                    let (clauses, after) = self.parse_comp_clauses(next_pos)?;
+                    let span = expr.span;
+                    expr = Expr {
+                        node: ExprKind::GeneratorExp {
+                            elt: Box::new(expr),
+                            clauses,
+                        },
+                        span,
+                    };
+                    next_pos = after;
+                }
                 args.push(CallArg::Positional(expr));
-                pos = next;
+                pos = next_pos;
             }
 
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
@@ -1645,36 +1983,58 @@ impl Parser {
         Ok((args, pos))
     }
 
-    fn parse_int_literal(&self, lexeme: &str, pos: usize) -> Result<i64, ParseError> {
+    fn parse_int_literal(&self, lexeme: &str, _pos: usize) -> Result<i64, ParseError> {
         let normalized = lexeme.replace('_', "");
         if let Some(rest) = normalized
             .strip_prefix("0x")
             .or_else(|| normalized.strip_prefix("0X"))
         {
-            return i64::from_str_radix(rest, 16)
-                .map_err(|_| self.error_at(pos, "invalid integer literal"));
+            return if let Ok(value) = i64::from_str_radix(rest, 16) {
+                Ok(value)
+            } else if let Ok(value) = i128::from_str_radix(rest, 16) {
+                Ok(value.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+            } else {
+                Ok(i64::MAX)
+            };
         }
         if let Some(rest) = normalized
             .strip_prefix("0o")
             .or_else(|| normalized.strip_prefix("0O"))
         {
-            return i64::from_str_radix(rest, 8)
-                .map_err(|_| self.error_at(pos, "invalid integer literal"));
+            return if let Ok(value) = i64::from_str_radix(rest, 8) {
+                Ok(value)
+            } else if let Ok(value) = i128::from_str_radix(rest, 8) {
+                Ok(value.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+            } else {
+                Ok(i64::MAX)
+            };
         }
         if let Some(rest) = normalized
             .strip_prefix("0b")
             .or_else(|| normalized.strip_prefix("0B"))
         {
-            return i64::from_str_radix(rest, 2)
-                .map_err(|_| self.error_at(pos, "invalid integer literal"));
+            return if let Ok(value) = i64::from_str_radix(rest, 2) {
+                Ok(value)
+            } else if let Ok(value) = i128::from_str_radix(rest, 2) {
+                Ok(value.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+            } else {
+                Ok(i64::MAX)
+            };
         }
-        normalized
-            .parse::<i64>()
-            .map_err(|_| self.error_at(pos, "invalid integer literal"))
+        if let Ok(value) = normalized.parse::<i64>() {
+            Ok(value)
+        } else if let Ok(value) = normalized.parse::<i128>() {
+            Ok(value.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+        } else {
+            Ok(i64::MAX)
+        }
     }
 
     fn parse_number_literal(&self, lexeme: &str, pos: usize) -> Result<Constant, ParseError> {
         let normalized = lexeme.replace('_', "");
+        if normalized.ends_with('j') || normalized.ends_with('J') {
+            return Err(self.error_at(pos, "imaginary literals are lowered in parse_atom"));
+        }
         let is_prefixed_int = normalized.starts_with("0x")
             || normalized.starts_with("0X")
             || normalized.starts_with("0o")
@@ -1690,6 +2050,32 @@ impl Parser {
             return Ok(Constant::Float(FloatLiteral(value)));
         }
         self.parse_int_literal(lexeme, pos).map(Constant::Int)
+    }
+
+    fn parse_imag_literal(&self, lexeme: &str, pos: usize) -> Result<Option<f64>, ParseError> {
+        let normalized = lexeme.replace('_', "");
+        let Some(body) = normalized
+            .strip_suffix('j')
+            .or_else(|| normalized.strip_suffix('J'))
+        else {
+            return Ok(None);
+        };
+        if body.is_empty() {
+            return Err(self.error_at(pos, "invalid imaginary literal"));
+        }
+        let value = if body.starts_with("0x")
+            || body.starts_with("0X")
+            || body.starts_with("0o")
+            || body.starts_with("0O")
+            || body.starts_with("0b")
+            || body.starts_with("0B")
+        {
+            self.parse_int_literal(body, pos)? as f64
+        } else {
+            body.parse::<f64>()
+                .map_err(|_| self.error_at(pos, "invalid imaginary literal"))?
+        };
+        Ok(Some(value))
     }
 
     fn parse_fstring_literal(&mut self, pos: usize, content: &str) -> Result<Expr, ParseError> {
@@ -1859,34 +2245,51 @@ impl Parser {
         if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
             return Ok((self.make_expr(start, ExprKind::List(Vec::new())), pos + 1));
         }
-        let (first, mut pos) = self.parse_expr_at(pos)?;
-        if self.is_comprehension_start(pos) {
-            let (clauses, next) = self.parse_comp_clauses(pos)?;
-            let pos = self.expect_kind(next, TokenKind::RBracket)?;
-            return Ok((
-                self.make_expr(
-                    start,
-                    ExprKind::ListComp {
-                        elt: Box::new(first),
-                        clauses,
-                    },
-                ),
-                pos,
-            ));
+        let (first, mut pos) = self.parse_sequence_element(pos)?;
+        if let SequenceElement::Expr(ref first_expr) = first {
+            if self.is_comprehension_start(pos) {
+                let (clauses, next) = self.parse_comp_clauses(pos)?;
+                let pos = self.expect_kind(next, TokenKind::RBracket)?;
+                return Ok((
+                    self.make_expr(
+                        start,
+                        ExprKind::ListComp {
+                            elt: Box::new(first_expr.clone()),
+                            clauses,
+                        },
+                    ),
+                    pos,
+                ));
+            }
         }
 
         let mut elements = vec![first];
+        let mut has_star = matches!(elements.first(), Some(SequenceElement::Star(_)));
         while matches!(self.token_at(pos).kind, TokenKind::Comma) {
             pos += 1;
             if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
                 break;
             }
-            let (expr, next) = self.parse_expr_at(pos)?;
-            elements.push(expr);
+            let (element, next) = self.parse_sequence_element(pos)?;
+            if matches!(element, SequenceElement::Star(_)) {
+                has_star = true;
+            }
+            elements.push(element);
             pos = next;
         }
         pos = self.expect_kind(pos, TokenKind::RBracket)?;
-        Ok((self.make_expr(start, ExprKind::List(elements)), pos))
+        if has_star {
+            Ok((self.lower_starred_list(start, elements), pos))
+        } else {
+            let values = elements
+                .into_iter()
+                .map(|element| match element {
+                    SequenceElement::Expr(expr) => expr,
+                    SequenceElement::Star(_) => unreachable!(),
+                })
+                .collect();
+            Ok((self.make_expr(start, ExprKind::List(values)), pos))
+        }
     }
 
     fn parse_dict_or_comp(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
@@ -1897,7 +2300,32 @@ impl Parser {
 
         let (first_key, mut pos) = self.parse_expr_at(pos)?;
         if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
-            return Err(self.error_at(pos, "set literals are not supported"));
+            if self.is_comprehension_start(pos) {
+                let (clauses, next) = self.parse_comp_clauses(pos)?;
+                let pos = self.expect_kind(next, TokenKind::RBrace)?;
+                let generator = self.make_expr(
+                    start,
+                    ExprKind::GeneratorExp {
+                        elt: Box::new(first_key),
+                        clauses,
+                    },
+                );
+                return Ok((self.make_set_call(start, generator), pos));
+            }
+
+            let mut elements = vec![first_key];
+            while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
+                    break;
+                }
+                let (expr, next) = self.parse_expr_at(pos)?;
+                elements.push(expr);
+                pos = next;
+            }
+            pos = self.expect_kind(pos, TokenKind::RBrace)?;
+            let list = self.make_expr(start, ExprKind::List(elements));
+            return Ok((self.make_set_call(start, list), pos));
         }
         pos += 1;
         let (first_value, mut pos) = self.parse_expr_at(pos)?;
@@ -1936,6 +2364,65 @@ impl Parser {
         Ok((self.make_expr(start, ExprKind::Dict(entries)), pos))
     }
 
+    fn make_set_call(&self, pos: usize, iterable: Expr) -> Expr {
+        self.make_expr(
+            pos,
+            ExprKind::Call {
+                func: Box::new(self.make_expr(pos, ExprKind::Name("set".to_string()))),
+                args: vec![CallArg::Positional(iterable)],
+            },
+        )
+    }
+
+    fn parse_sequence_element(
+        &mut self,
+        pos: usize,
+    ) -> Result<(SequenceElement, usize), ParseError> {
+        if matches!(self.token_at(pos).kind, TokenKind::Star) {
+            let (expr, next) = self.parse_expr_at(pos + 1)?;
+            return Ok((SequenceElement::Star(expr), next));
+        }
+        let (expr, next) = self.parse_expr_at(pos)?;
+        Ok((SequenceElement::Expr(expr), next))
+    }
+
+    fn make_named_call(&self, pos: usize, name: &str, args: Vec<CallArg>) -> Expr {
+        self.make_expr(
+            pos,
+            ExprKind::Call {
+                func: Box::new(self.make_expr(pos, ExprKind::Name(name.to_string()))),
+                args,
+            },
+        )
+    }
+
+    fn lower_starred_list(&self, pos: usize, elements: Vec<SequenceElement>) -> Expr {
+        let mut acc = self.make_expr(pos, ExprKind::List(Vec::new()));
+        for element in elements {
+            let chunk = match element {
+                SequenceElement::Expr(expr) => self.make_expr(pos, ExprKind::List(vec![expr])),
+                SequenceElement::Star(expr) => {
+                    self.make_named_call(pos, "list", vec![CallArg::Positional(expr)])
+                }
+            };
+            let span = acc.span;
+            acc = Expr {
+                node: ExprKind::Binary {
+                    left: Box::new(acc),
+                    op: BinaryOp::Add,
+                    right: Box::new(chunk),
+                },
+                span,
+            };
+        }
+        acc
+    }
+
+    fn lower_starred_tuple(&self, pos: usize, elements: Vec<SequenceElement>) -> Expr {
+        let list_value = self.lower_starred_list(pos, elements);
+        self.make_named_call(pos, "tuple", vec![CallArg::Positional(list_value)])
+    }
+
     fn parse_list_elements(&mut self, pos: usize) -> Result<(Vec<Expr>, usize), ParseError> {
         let mut pos = pos;
         let mut elements = Vec::new();
@@ -1969,49 +2456,69 @@ impl Parser {
             return Ok((self.make_expr(start, ExprKind::Tuple(Vec::new())), pos + 1));
         }
 
-        let (first, mut pos) = self.parse_expr_at(pos)?;
-        if self.is_comprehension_start(pos) {
-            let (clauses, next) = self.parse_comp_clauses(pos)?;
-            let pos = self.expect_kind(next, TokenKind::RParen)?;
-            return Ok((
-                self.make_expr(
-                    start,
-                    ExprKind::GeneratorExp {
-                        elt: Box::new(first),
-                        clauses,
-                    },
-                ),
-                pos,
-            ));
+        let (first, mut pos) = self.parse_sequence_element(pos)?;
+        if let SequenceElement::Expr(first_expr) = &first {
+            if self.is_comprehension_start(pos) {
+                let (clauses, next) = self.parse_comp_clauses(pos)?;
+                let pos = self.expect_kind(next, TokenKind::RParen)?;
+                return Ok((
+                    self.make_expr(
+                        start,
+                        ExprKind::GeneratorExp {
+                            elt: Box::new(first_expr.clone()),
+                            clauses,
+                        },
+                    ),
+                    pos,
+                ));
+            }
         }
         if !matches!(self.token_at(pos).kind, TokenKind::Comma) {
             let pos = self.expect_kind(pos, TokenKind::RParen)?;
-            return Ok((first, pos));
+            return match first {
+                SequenceElement::Expr(expr) => Ok((expr, pos)),
+                SequenceElement::Star(_) => Err(self.error_at(start, "expected expression")),
+            };
         }
 
         let mut elements = vec![first];
+        let mut has_star = matches!(elements.first(), Some(SequenceElement::Star(_)));
         while matches!(self.token_at(pos).kind, TokenKind::Comma) {
             pos += 1;
             if matches!(self.token_at(pos).kind, TokenKind::RParen) {
                 break;
             }
-            let (expr, next) = self.parse_expr_at(pos)?;
-            elements.push(expr);
+            let (element, next) = self.parse_sequence_element(pos)?;
+            if matches!(element, SequenceElement::Star(_)) {
+                has_star = true;
+            }
+            elements.push(element);
             pos = next;
         }
 
         pos = self.expect_kind(pos, TokenKind::RParen)?;
-        let span = elements
-            .first()
-            .map(|expr| expr.span)
-            .unwrap_or_else(Span::unknown);
-        Ok((
-            Expr {
-                node: ExprKind::Tuple(elements),
-                span,
-            },
-            pos,
-        ))
+        if has_star {
+            Ok((self.lower_starred_tuple(start, elements), pos))
+        } else {
+            let values: Vec<Expr> = elements
+                .into_iter()
+                .map(|element| match element {
+                    SequenceElement::Expr(expr) => expr,
+                    SequenceElement::Star(_) => unreachable!(),
+                })
+                .collect();
+            let span = values
+                .first()
+                .map(|expr| expr.span)
+                .unwrap_or_else(Span::unknown);
+            Ok((
+                Expr {
+                    node: ExprKind::Tuple(values),
+                    span,
+                },
+                pos,
+            ))
+        }
     }
 
     fn parse_dict_entries(&mut self, pos: usize) -> Result<(Vec<(Expr, Expr)>, usize), ParseError> {
@@ -2415,8 +2922,7 @@ impl Parser {
         let next_kind = &self.token_at(next).kind;
         let allowed = matches!(
             next_kind,
-            TokenKind::Comma
-                | TokenKind::Equal
+            TokenKind::Equal
                 | TokenKind::Slash
                 | TokenKind::Star
                 | TokenKind::DoubleStar
@@ -2431,6 +2937,9 @@ impl Parser {
     fn parse_block_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {
         let mut pos = pos;
         pos = self.expect_kind(pos, TokenKind::Newline)?;
+        while matches!(self.token_at(pos).kind, TokenKind::Newline) {
+            pos += 1;
+        }
         pos = self.expect_kind(pos, TokenKind::Indent)?;
 
         let mut body = Vec::new();

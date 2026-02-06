@@ -36,6 +36,7 @@ pub struct Lexer<'a> {
     column: usize,
     indent_stack: Vec<usize>,
     at_line_start: bool,
+    paren_level: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -47,6 +48,7 @@ impl<'a> Lexer<'a> {
             column: 1,
             indent_stack: vec![0],
             at_line_start: true,
+            paren_level: 0,
         }
     }
 
@@ -54,7 +56,7 @@ impl<'a> Lexer<'a> {
         let mut tokens = Vec::new();
 
         while self.peek_char().is_some() {
-            if self.at_line_start {
+            if self.at_line_start && self.paren_level == 0 {
                 match self.consume_indentation() {
                     IndentResult::Blank => {
                         self.at_line_start = false;
@@ -93,8 +95,27 @@ impl<'a> Lexer<'a> {
             match ch {
                 '\n' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::Newline, "\n", offset, line, column));
-                    self.at_line_start = true;
+                    if self.paren_level == 0 {
+                        tokens.push(Token::new(TokenKind::Newline, "\n", offset, line, column));
+                        self.at_line_start = true;
+                    } else {
+                        self.at_line_start = false;
+                    }
+                }
+                '\\' => {
+                    self.advance();
+                    if self.peek_char() == Some('\n') {
+                        // Explicit line joining: consume the newline and suppress a token.
+                        self.advance();
+                        self.at_line_start = false;
+                    } else {
+                        return Err(LexError::new(
+                            "unexpected character: \\",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    }
                 }
                 ';' => {
                     self.advance();
@@ -102,30 +123,47 @@ impl<'a> Lexer<'a> {
                 }
                 '(' => {
                     self.advance();
+                    self.paren_level += 1;
                     tokens.push(Token::new(TokenKind::LParen, "(", offset, line, column));
                 }
                 ')' => {
                     self.advance();
+                    if self.paren_level > 0 {
+                        self.paren_level -= 1;
+                    }
                     tokens.push(Token::new(TokenKind::RParen, ")", offset, line, column));
                 }
                 '[' => {
                     self.advance();
+                    self.paren_level += 1;
                     tokens.push(Token::new(TokenKind::LBracket, "[", offset, line, column));
                 }
                 ']' => {
                     self.advance();
+                    if self.paren_level > 0 {
+                        self.paren_level -= 1;
+                    }
                     tokens.push(Token::new(TokenKind::RBracket, "]", offset, line, column));
                 }
                 '{' => {
                     self.advance();
+                    self.paren_level += 1;
                     tokens.push(Token::new(TokenKind::LBrace, "{", offset, line, column));
                 }
                 '}' => {
                     self.advance();
+                    if self.paren_level > 0 {
+                        self.paren_level -= 1;
+                    }
                     tokens.push(Token::new(TokenKind::RBrace, "}", offset, line, column));
                 }
                 '.' => {
-                    if matches!(self.peek_char_at(1), Some(ch) if ch.is_ascii_digit()) {
+                    if self.peek_char_at(1) == Some('.') && self.peek_char_at(2) == Some('.') {
+                        self.advance();
+                        self.advance();
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::Ellipsis, "...", offset, line, column));
+                    } else if matches!(self.peek_char_at(1), Some(ch) if ch.is_ascii_digit()) {
                         let lexeme = self.consume_number_from_dot();
                         tokens.push(Token::new(TokenKind::Number, lexeme, offset, line, column));
                     } else {
@@ -169,7 +207,27 @@ impl<'a> Lexer<'a> {
                 }
                 '<' => {
                     self.advance();
-                    if self.peek_char() == Some('=') {
+                    if self.peek_char() == Some('<') {
+                        self.advance();
+                        if self.peek_char() == Some('=') {
+                            self.advance();
+                            tokens.push(Token::new(
+                                TokenKind::LeftShiftEqual,
+                                "<<=",
+                                offset,
+                                line,
+                                column,
+                            ));
+                        } else {
+                            tokens.push(Token::new(
+                                TokenKind::LeftShift,
+                                "<<",
+                                offset,
+                                line,
+                                column,
+                            ));
+                        }
+                    } else if self.peek_char() == Some('=') {
                         self.advance();
                         tokens.push(Token::new(TokenKind::LessEqual, "<=", offset, line, column));
                     } else {
@@ -178,7 +236,27 @@ impl<'a> Lexer<'a> {
                 }
                 '>' => {
                     self.advance();
-                    if self.peek_char() == Some('=') {
+                    if self.peek_char() == Some('>') {
+                        self.advance();
+                        if self.peek_char() == Some('=') {
+                            self.advance();
+                            tokens.push(Token::new(
+                                TokenKind::RightShiftEqual,
+                                ">>=",
+                                offset,
+                                line,
+                                column,
+                            ));
+                        } else {
+                            tokens.push(Token::new(
+                                TokenKind::RightShift,
+                                ">>",
+                                offset,
+                                line,
+                                column,
+                            ));
+                        }
+                    } else if self.peek_char() == Some('=') {
                         self.advance();
                         tokens.push(Token::new(
                             TokenKind::GreaterEqual,
@@ -311,9 +389,51 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token::new(TokenKind::Percent, "%", offset, line, column));
                     }
                 }
+                '&' => {
+                    self.advance();
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(
+                            TokenKind::AmpersandEqual,
+                            "&=",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Ampersand, "&", offset, line, column));
+                    }
+                }
+                '|' => {
+                    self.advance();
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::PipeEqual, "|=", offset, line, column));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Pipe, "|", offset, line, column));
+                    }
+                }
+                '^' => {
+                    self.advance();
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::CaretEqual, "^=", offset, line, column));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Caret, "^", offset, line, column));
+                    }
+                }
+                '~' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::Tilde, "~", offset, line, column));
+                }
                 '@' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::At, "@", offset, line, column));
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(TokenKind::AtEqual, "@=", offset, line, column));
+                    } else {
+                        tokens.push(Token::new(TokenKind::At, "@", offset, line, column));
+                    }
                 }
                 '\'' | '"' => {
                     let lexeme = self.consume_string(ch)?;
@@ -323,7 +443,7 @@ impl<'a> Lexer<'a> {
                     let lexeme = self.consume_number();
                     tokens.push(Token::new(TokenKind::Number, lexeme, offset, line, column));
                 }
-                '_' | 'a'..='z' | 'A'..='Z' => {
+                _ if ch == '_' || ch.is_alphabetic() => {
                     if let Some((is_fstring, string_content)) = self.consume_prefixed_string()? {
                         let kind = if is_fstring {
                             TokenKind::FString
@@ -369,6 +489,9 @@ impl<'a> Lexer<'a> {
                         "yield" => TokenKind::Keyword(Keyword::Yield),
                         "async" => TokenKind::Keyword(Keyword::Async),
                         "await" => TokenKind::Keyword(Keyword::Await),
+                        "del" => TokenKind::Keyword(Keyword::Del),
+                        // Soft keywords are tokenized as names and disambiguated in parser.
+                        "match" | "case" | "type" => TokenKind::Name,
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));
@@ -438,7 +561,7 @@ impl<'a> Lexer<'a> {
     fn consume_identifier(&mut self) -> String {
         let start = self.offset;
         while let Some(ch) = self.peek_char() {
-            if ch == '_' || ch.is_ascii_alphanumeric() {
+            if ch == '_' || ch.is_alphanumeric() {
                 self.advance();
             } else {
                 break;
@@ -459,6 +582,9 @@ impl<'a> Lexer<'a> {
                     } else {
                         break;
                     }
+                }
+                if matches!(self.peek_char(), Some('j' | 'J')) {
+                    self.advance();
                 }
                 return self.source[start..self.offset].to_string();
             }
@@ -497,6 +623,10 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        if matches!(self.peek_char(), Some('j' | 'J')) {
+            self.advance();
+        }
+
         self.source[start..self.offset].to_string()
     }
 
@@ -522,6 +652,9 @@ impl<'a> Lexer<'a> {
                     break;
                 }
             }
+        }
+        if matches!(self.peek_char(), Some('j' | 'J')) {
+            self.advance();
         }
         self.source[start..self.offset].to_string()
     }
@@ -578,16 +711,33 @@ impl<'a> Lexer<'a> {
         let start_offset = self.offset;
         let start_line = self.line;
         let start_column = self.column;
-        self.advance();
+        let is_triple = self.peek_char_at(1) == Some(quote) && self.peek_char_at(2) == Some(quote);
+        if is_triple {
+            self.advance();
+            self.advance();
+            self.advance();
+        } else {
+            self.advance();
+        }
         let mut content = String::new();
 
         while let Some(ch) = self.peek_char() {
-            if ch == quote {
+            if is_triple {
+                if ch == quote
+                    && self.peek_char_at(1) == Some(quote)
+                    && self.peek_char_at(2) == Some(quote)
+                {
+                    self.advance();
+                    self.advance();
+                    self.advance();
+                    return Ok(content);
+                }
+            } else if ch == quote {
                 self.advance();
                 return Ok(content);
             }
 
-            if ch == '\n' {
+            if ch == '\n' && !is_triple {
                 return Err(LexError::new(
                     "unterminated string literal",
                     start_offset,

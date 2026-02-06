@@ -1925,6 +1925,38 @@ impl Vm {
                         };
                         self.store_name(name, value);
                     }
+                    Opcode::DeleteName => {
+                        let idx = instr
+                            .arg
+                            .ok_or_else(|| RuntimeError::new("missing name argument"))?
+                            as usize;
+                        let name = {
+                            let frame = self.frames.last().expect("frame exists");
+                            frame
+                                .code
+                                .names
+                                .get(idx)
+                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                                .clone()
+                        };
+                        let mut removed = false;
+                        if let Some(frame) = self.frames.last_mut() {
+                            if !frame.is_module {
+                                removed = frame.locals.remove(&name).is_some();
+                            }
+                            if !removed {
+                                if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                                    removed = module_data.globals.remove(&name).is_some();
+                                }
+                            }
+                        }
+                        if !removed {
+                            return Err(RuntimeError::new(format!(
+                                "name '{}' is not defined",
+                                name
+                            )));
+                        }
+                    }
                     Opcode::StoreFast => {
                         let idx = instr
                             .arg
@@ -2129,6 +2161,55 @@ impl Vm {
                             }
                         }
                     }
+                    Opcode::DeleteAttr => {
+                        let idx = instr
+                            .arg
+                            .ok_or_else(|| RuntimeError::new("missing attribute argument"))?
+                            as usize;
+                        let attr_name = {
+                            let frame = self.frames.last().expect("frame exists");
+                            frame
+                                .code
+                                .names
+                                .get(idx)
+                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                                .clone()
+                        };
+                        let target = self.pop_value()?;
+                        match target {
+                            Value::Module(module) => {
+                                if let Object::Module(module_data) = &mut *module.kind_mut() {
+                                    if module_data.globals.remove(&attr_name).is_none() {
+                                        return Err(RuntimeError::new(format!(
+                                            "module attribute '{}' does not exist",
+                                            attr_name
+                                        )));
+                                    }
+                                }
+                            }
+                            Value::Class(class) => {
+                                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                                    if class_data.attrs.remove(&attr_name).is_none() {
+                                        return Err(RuntimeError::new(format!(
+                                            "class attribute '{}' does not exist",
+                                            attr_name
+                                        )));
+                                    }
+                                }
+                            }
+                            Value::Instance(instance) => {
+                                match self.delete_attr_instance(&instance, &attr_name)? {
+                                    AttrMutationOutcome::Done => {}
+                                    AttrMutationOutcome::ExceptionHandled => return Ok(None),
+                                }
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "attribute deletion unsupported type",
+                                ));
+                            }
+                        }
+                    }
                     Opcode::StoreGlobal => {
                         let idx = instr
                             .arg
@@ -2167,6 +2248,11 @@ impl Vm {
                         let left = self.pop_value()?;
                         self.push_value(mul_values(left, right, &self.heap)?);
                     }
+                    Opcode::BinaryMatMul => {
+                        let right = self.pop_value()?;
+                        let left = self.pop_value()?;
+                        self.push_value(matmul_values(left, right)?);
+                    }
                     Opcode::BinaryDiv => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
@@ -2186,6 +2272,31 @@ impl Vm {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
                         self.push_value(mod_values(left, right)?);
+                    }
+                    Opcode::BinaryLShift => {
+                        let right = self.pop_value()?;
+                        let left = self.pop_value()?;
+                        self.push_value(lshift_values(left, right)?);
+                    }
+                    Opcode::BinaryRShift => {
+                        let right = self.pop_value()?;
+                        let left = self.pop_value()?;
+                        self.push_value(rshift_values(left, right)?);
+                    }
+                    Opcode::BinaryAnd => {
+                        let right = self.pop_value()?;
+                        let left = self.pop_value()?;
+                        self.push_value(and_values(left, right)?);
+                    }
+                    Opcode::BinaryXor => {
+                        let right = self.pop_value()?;
+                        let left = self.pop_value()?;
+                        self.push_value(xor_values(left, right)?);
+                    }
+                    Opcode::BinaryOr => {
+                        let right = self.pop_value()?;
+                        let left = self.pop_value()?;
+                        self.push_value(or_values(left, right)?);
                     }
                     Opcode::CompareEq => {
                         let right = self.pop_value()?;
@@ -2250,6 +2361,10 @@ impl Vm {
                     Opcode::UnaryPos => {
                         let value = self.pop_value()?;
                         self.push_value(pos_value(value)?);
+                    }
+                    Opcode::UnaryInvert => {
+                        let value = self.pop_value()?;
+                        self.push_value(invert_value(value)?);
                     }
                     Opcode::ToBool => {
                         let value = self.pop_value()?;
@@ -2782,6 +2897,57 @@ impl Vm {
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "store subscript unsupported type",
+                                    ));
+                                }
+                            },
+                        }
+                    }
+                    Opcode::DeleteSubscript => {
+                        let index = self.pop_value()?;
+                        let target = self.pop_value()?;
+                        match index {
+                            Value::Slice { .. } => {
+                                return Err(RuntimeError::new("slice deletion not supported"));
+                            }
+                            index => match target {
+                                Value::List(obj) => {
+                                    if let Object::List(values) = &mut *obj.kind_mut() {
+                                        let mut idx = value_to_int(index)? as isize;
+                                        if idx < 0 {
+                                            idx += values.len() as isize;
+                                        }
+                                        if idx < 0 || idx as usize >= values.len() {
+                                            return Err(RuntimeError::new(
+                                                "list index out of range",
+                                            ));
+                                        }
+                                        values.remove(idx as usize);
+                                    }
+                                }
+                                Value::Dict(obj) => {
+                                    if let Object::Dict(entries) = &mut *obj.kind_mut() {
+                                        let before = entries.len();
+                                        entries.retain(|(key, _)| *key != index);
+                                        if entries.len() == before {
+                                            return Err(RuntimeError::new("key not found"));
+                                        }
+                                    }
+                                }
+                                Value::ByteArray(obj) => {
+                                    if let Object::ByteArray(values) = &mut *obj.kind_mut() {
+                                        let mut idx = value_to_int(index)? as isize;
+                                        if idx < 0 {
+                                            idx += values.len() as isize;
+                                        }
+                                        if idx < 0 || idx as usize >= values.len() {
+                                            return Err(RuntimeError::new("index out of range"));
+                                        }
+                                        values.remove(idx as usize);
+                                    }
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "subscript deletion unsupported type",
                                     ));
                                 }
                             },
@@ -10213,6 +10379,81 @@ fn pos_value(value: Value) -> Result<Value, RuntimeError> {
         Value::Float(value) => Ok(Value::Float(value)),
         _ => Err(RuntimeError::new("unsupported operand type for +")),
     }
+}
+
+fn invert_value(value: Value) -> Result<Value, RuntimeError> {
+    let value = value_to_int(value).map_err(|_| RuntimeError::new("unsupported operand type for ~"))?;
+    Ok(Value::Int(!value))
+}
+
+fn and_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
+        return Ok(Value::Bool(*left & *right));
+    }
+    let left =
+        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for &"))?;
+    let right =
+        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for &"))?;
+    Ok(Value::Int(left & right))
+}
+
+fn xor_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
+        return Ok(Value::Bool(*left ^ *right));
+    }
+    let left =
+        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for ^"))?;
+    let right =
+        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for ^"))?;
+    Ok(Value::Int(left ^ right))
+}
+
+fn or_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
+        return Ok(Value::Bool(*left | *right));
+    }
+    let left =
+        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for |"))?;
+    let right =
+        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for |"))?;
+    Ok(Value::Int(left | right))
+}
+
+fn lshift_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    let left =
+        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for <<"))?;
+    let right =
+        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for <<"))?;
+    if right < 0 {
+        return Err(RuntimeError::new("negative shift count"));
+    }
+    let shift = right as u32;
+    if shift >= i64::BITS {
+        return Ok(Value::Int(0));
+    }
+    let value = left
+        .checked_shl(shift)
+        .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+    Ok(Value::Int(value))
+}
+
+fn rshift_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    let left =
+        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for >>"))?;
+    let right =
+        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for >>"))?;
+    if right < 0 {
+        return Err(RuntimeError::new("negative shift count"));
+    }
+    let shift = right as u32;
+    if shift >= i64::BITS {
+        return Ok(Value::Int(if left < 0 { -1 } else { 0 }));
+    }
+    Ok(Value::Int(left >> shift))
+}
+
+fn matmul_values(_left: Value, _right: Value) -> Result<Value, RuntimeError> {
+    Err(RuntimeError::new("unsupported operand type for @"))
 }
 
 fn compare_order(left: Value, right: Value) -> Result<Ordering, RuntimeError> {

@@ -78,8 +78,12 @@ fn run_file(path: &str) -> Result<(), String> {
 
     stdlib::initialize();
 
-    let module = parser::parse_module(&source)
-        .map_err(|err| format!("parse error at {}: {}", err.offset, err.message))?;
+    let module = parser::parse_module(&source).map_err(|err| {
+        format!(
+            "parse error at {} (line {}, column {}): {}",
+            err.offset, err.line, err.column, err.message
+        )
+    })?;
 
     let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
@@ -94,8 +98,12 @@ fn run_file(path: &str) -> Result<(), String> {
 fn run_ast(path: &str) -> Result<(), String> {
     let source =
         std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
-    let module = parser::parse_module(&source)
-        .map_err(|err| format!("parse error at {}: {}", err.offset, err.message))?;
+    let module = parser::parse_module(&source).map_err(|err| {
+        format!(
+            "parse error at {} (line {}, column {}): {}",
+            err.offset, err.line, err.column, err.message
+        )
+    })?;
     println!("{module:#?}");
     Ok(())
 }
@@ -103,8 +111,12 @@ fn run_ast(path: &str) -> Result<(), String> {
 fn run_bytecode(path: &str) -> Result<(), String> {
     let source =
         std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
-    let module = parser::parse_module(&source)
-        .map_err(|err| format!("parse error at {}: {}", err.offset, err.message))?;
+    let module = parser::parse_module(&source).map_err(|err| {
+        format!(
+            "parse error at {} (line {}, column {}): {}",
+            err.offset, err.line, err.column, err.message
+        )
+    })?;
     let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
     println!("{}", code.disassemble());
