@@ -1163,9 +1163,10 @@ impl Compiler {
                 returns,
                 body,
             } => {
-                let _ = (type_params, is_async);
+                let _ = type_params;
                 let func_code = compiler.compile_function(
                     name,
+                    *is_async,
                     posonly_params,
                     params,
                     kwonly_params,
@@ -1224,8 +1225,11 @@ impl Compiler {
                 body,
                 orelse,
             } => {
-                let _ = is_async;
-                compiler.compile_for(target, iter, body, orelse)
+                if *is_async {
+                    compiler.compile_async_for(target, iter, body, orelse)
+                } else {
+                    compiler.compile_for(target, iter, body, orelse)
+                }
             }
             StmtKind::Import { names } => {
                 for alias in names {
@@ -1275,8 +1279,11 @@ impl Compiler {
                 target,
                 body,
             } => {
-                let _ = is_async;
-                compiler.compile_with(context, target.as_ref(), body)
+                if *is_async {
+                    compiler.compile_async_with(context, target.as_ref(), body)
+                } else {
+                    compiler.compile_with(context, target.as_ref(), body)
+                }
             }
             StmtKind::Match { subject, cases } => compiler.compile_match(subject, cases),
             StmtKind::Break => compiler.compile_break(),
@@ -1362,6 +1369,7 @@ impl Compiler {
                 };
                 let func_code = compiler.compile_function(
                     "<lambda>",
+                    false,
                     posonly_params,
                     params,
                     kwonly_params,
@@ -1394,7 +1402,12 @@ impl Compiler {
                 compiler.emit(Opcode::YieldFrom, None);
                 Ok(())
             }
-            ExprKind::Await { value } => compiler.compile_expr(value),
+            ExprKind::Await { value } => {
+                compiler.compile_expr(value)?;
+                compiler.emit(Opcode::GetAwaitable, None);
+                compiler.emit(Opcode::YieldFrom, None);
+                Ok(())
+            }
             ExprKind::ListComp { elt, clauses } => compiler.compile_list_comp(elt, clauses),
             ExprKind::DictComp {
                 key,
@@ -1805,6 +1818,7 @@ impl Compiler {
     fn compile_function(
         &mut self,
         name: &str,
+        is_async: bool,
         posonly_params: &[Parameter],
         params: &[Parameter],
         kwonly_params: &[Parameter],
@@ -1833,7 +1847,10 @@ impl Compiler {
             .collect();
         compiler.code.vararg = vararg.as_ref().map(|param| param.name.clone());
         compiler.code.kwarg = kwarg.as_ref().map(|param| param.name.clone());
-        compiler.code.is_generator = body_has_yield(body);
+        let has_yield = body_has_yield(body);
+        compiler.code.is_generator = has_yield || is_async;
+        compiler.code.is_coroutine = is_async && !has_yield;
+        compiler.code.is_async_generator = is_async && has_yield;
         if body_has_ann_assign(body) {
             compiler.init_annotations()?;
         }
@@ -2140,6 +2157,7 @@ impl Compiler {
         let kwarg: Option<Parameter> = None;
         let func_code = self.compile_function(
             name,
+            false,
             &empty_params,
             &empty_params,
             &empty_params,
@@ -2368,6 +2386,86 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_async_for(
+        &mut self,
+        target: &AssignTarget,
+        iter: &Expr,
+        body: &[Stmt],
+        orelse: &[Stmt],
+    ) -> Result<(), CompileError> {
+        let span = iter.span;
+        let iter_temp = self.fresh_temp("aiter");
+        let iter_assign = Stmt::new(
+            StmtKind::Assign {
+                target: AssignTarget::Name(iter_temp.clone()),
+                value: Expr::new(
+                    ExprKind::Call {
+                        func: Box::new(Expr::new(ExprKind::Name("aiter".to_string()), span)),
+                        args: vec![CallArg::Positional(iter.clone())],
+                    },
+                    span,
+                ),
+            },
+            span,
+        );
+        self.compile_stmt(&iter_assign)?;
+
+        let fetch_stmt = Stmt::new(
+            StmtKind::Assign {
+                target: target.clone(),
+                value: Expr::new(
+                    ExprKind::Await {
+                        value: Box::new(Expr::new(
+                            ExprKind::Call {
+                                func: Box::new(Expr::new(
+                                    ExprKind::Name("anext".to_string()),
+                                    span,
+                                )),
+                                args: vec![CallArg::Positional(Expr::new(
+                                    ExprKind::Name(iter_temp.clone()),
+                                    span,
+                                ))],
+                            },
+                            span,
+                        )),
+                    },
+                    span,
+                ),
+            },
+            span,
+        );
+
+        let fetch_try = Stmt::new(
+            StmtKind::Try {
+                body: vec![fetch_stmt],
+                handlers: vec![ExceptHandler {
+                    type_expr: Some(Expr::new(
+                        ExprKind::Name("StopAsyncIteration".to_string()),
+                        span,
+                    )),
+                    name: None,
+                    is_star: false,
+                    body: vec![Stmt::new(StmtKind::Break, span)],
+                }],
+                orelse: Vec::new(),
+                finalbody: Vec::new(),
+            },
+            span,
+        );
+
+        let mut while_body = vec![fetch_try];
+        while_body.extend(body.iter().cloned());
+        let while_stmt = Stmt::new(
+            StmtKind::While {
+                test: Expr::new(ExprKind::Constant(Constant::Bool(true)), span),
+                body: while_body,
+                orelse: orelse.to_vec(),
+            },
+            span,
+        );
+        self.compile_stmt(&while_stmt)
+    }
+
     fn compile_with(
         &mut self,
         context: &Expr,
@@ -2405,6 +2503,108 @@ impl Compiler {
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
         Ok(())
+    }
+
+    fn compile_async_with(
+        &mut self,
+        context: &Expr,
+        target: Option<&AssignTarget>,
+        body: &[Stmt],
+    ) -> Result<(), CompileError> {
+        let span = context.span;
+        let ctx_temp = self.fresh_temp("actx");
+
+        let assign_ctx = Stmt::new(
+            StmtKind::Assign {
+                target: AssignTarget::Name(ctx_temp.clone()),
+                value: context.clone(),
+            },
+            span,
+        );
+        self.compile_stmt(&assign_ctx)?;
+
+        let enter_call = Expr::new(
+            ExprKind::Await {
+                value: Box::new(Expr::new(
+                    ExprKind::Call {
+                        func: Box::new(Expr::new(
+                            ExprKind::Attribute {
+                                value: Box::new(Expr::new(
+                                    ExprKind::Name(ctx_temp.clone()),
+                                    span,
+                                )),
+                                name: "__aenter__".to_string(),
+                            },
+                            span,
+                        )),
+                        args: Vec::new(),
+                    },
+                    span,
+                )),
+            },
+            span,
+        );
+        let enter_stmt = if let Some(target) = target {
+            Stmt::new(
+                StmtKind::Assign {
+                    target: target.clone(),
+                    value: enter_call,
+                },
+                span,
+            )
+        } else {
+            Stmt::new(StmtKind::Expr(enter_call), span)
+        };
+        self.compile_stmt(&enter_stmt)?;
+
+        let exit_call = Stmt::new(
+            StmtKind::Expr(Expr::new(
+                ExprKind::Await {
+                    value: Box::new(Expr::new(
+                        ExprKind::Call {
+                            func: Box::new(Expr::new(
+                                ExprKind::Attribute {
+                                    value: Box::new(Expr::new(
+                                        ExprKind::Name(ctx_temp.clone()),
+                                        span,
+                                    )),
+                                    name: "__aexit__".to_string(),
+                                },
+                                span,
+                            )),
+                            args: vec![
+                                CallArg::Positional(Expr::new(
+                                    ExprKind::Constant(Constant::None),
+                                    span,
+                                )),
+                                CallArg::Positional(Expr::new(
+                                    ExprKind::Constant(Constant::None),
+                                    span,
+                                )),
+                                CallArg::Positional(Expr::new(
+                                    ExprKind::Constant(Constant::None),
+                                    span,
+                                )),
+                            ],
+                        },
+                        span,
+                    )),
+                },
+                span,
+            )),
+            span,
+        );
+
+        let try_stmt = Stmt::new(
+            StmtKind::Try {
+                body: body.to_vec(),
+                handlers: Vec::new(),
+                orelse: Vec::new(),
+                finalbody: vec![exit_call],
+            },
+            span,
+        );
+        self.compile_stmt(&try_stmt)
     }
 
     fn emit_with_exit(&mut self, ctx_temp: &str) -> Result<(), CompileError> {

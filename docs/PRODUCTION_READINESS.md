@@ -29,7 +29,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [x] P0: Decorators on functions/classes.
 - [x] P0: Assignment expressions (`:=`).
 - [x] P0: `yield`, `yield from` (lazy suspension/resume with delegation semantics).
-- [~] P0: `async`/`await`, async comprehensions, async generators (syntax/lowering in place; full coroutine semantics pending).
+- [~] P0: `async`/`await`, async comprehensions, async generators (core coroutine/runtime semantics implemented; async comprehensions and deep parity edge cases pending).
 - [~] P0: `try/except*` (exception groups) and `ExceptionGroup` semantics (syntax/lowering in place; group-splitting semantics pending).
 - [~] P0: Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full pattern families pending.
 - [x] P0: Comprehensions + generator expressions with correct scoping.
@@ -89,7 +89,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [~] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
 - [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core).
 - [~] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator`.
-- [ ] P1: `threading`, `multiprocessing`, `asyncio`, `concurrent.futures`.
+- [~] P1: `threading`, `multiprocessing`, `asyncio`, `concurrent.futures` (`asyncio`/`threading` foundations implemented; broader module parity pending).
 - [ ] P1: `subprocess`, `socket`, `ssl`, `http`, `urllib`.
 - [ ] P2: `logging`, `argparse`, `unittest`, `doctest`.
 - [ ] P2: `typing`, `dataclasses`, `enum`, `contextvars`.
@@ -116,7 +116,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 
 **Concurrency & Platform**
 - [ ] P0: GIL correctness and thread safety.
-- [ ] P1: Signals, `signal` module semantics.
+- [~] P1: Signals, `signal` module semantics (handler registration/lookup/raise foundations implemented; full OS-level parity pending).
 - [ ] P1: Cross‑platform parity (Linux/macOS/Windows).
 
 **Interop & Extensibility**

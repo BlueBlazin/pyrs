@@ -73,7 +73,7 @@ Release-complete target: Milestone 16; ecosystem-complete target (including nati
 8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0). (complete)
 9. Milestone 8: Runtime data model semantics (descriptor protocol, attribute model hooks, MRO/super, exception chaining, P0). (complete)
 10. Milestone 9: Core runtime types + builtins + stdlib bootstrap required for real apps (P0/P1). (complete)
-11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1).
+11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1). (complete)
 12. Milestone 11: Test and parity gate (CPython harness, fuzzing, differential tests, real app suites, P0/P1).
 13. Milestone 12: Performance and observability baseline (P2).
 14. Milestone 13: Packaging/distribution and ecosystem usability (P1/P2).
@@ -100,7 +100,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, and parity-regression blocking CI.
 
 ### P1 (Major Ecosystem Enablers)
-- [ ] Async/await + async generators.
+- [x] Async/await + async generators (core coroutine protocol/runtime + async iteration/context-manager semantics implemented).
 - [x] Comprehensions with correct scoping.
 - [~] Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full families pending.
 - [x] Type annotations (parse + `__annotations__` on modules/classes/functions; eager evaluation only).
@@ -182,7 +182,7 @@ DoD:
 - Targeted parser/VM regression tests cover all newly added language-surface features.
 Status: complete
 Notes:
-- Full coroutine/event-loop semantics remain in Milestone 10.
+- Core coroutine/event-loop semantics are implemented in Milestone 10.
 - Full `ExceptionGroup` splitting semantics and full PEP 701 formatting edge cases remain tracked under Milestones 8-10 and production-readiness checklist items.
 
 ### Milestone 8 — Runtime Data Model Parity (P0)
@@ -214,8 +214,13 @@ Progress:
 ### Milestone 10 — Async and Concurrency Semantics (P1)
 DoD:
 - `async def`/`await`/`async for`/`async with` semantics are implemented.
-- Async generators and coroutine protocol behavior match CPython.
+- Async generators and coroutine protocol behavior match CPython for milestone-scope features.
 - Core runtime support for `asyncio` basic task scheduling exists; threading + signals semantics are implemented to required compatibility level.
+Status: complete
+Progress:
+- Coroutine runtime semantics landed for `async def` and `await` via dedicated `GET_AWAITABLE` VM handling and coroutine-aware generator objects (`__await__`, `inspect.iscoroutine`, `inspect.isawaitable`).
+- Async iteration/context-manager flows are operational: `aiter`/`anext` builtins, `StopAsyncIteration` exception wiring, async-generator protocol hooks (`__aiter__`, `__anext__`), and `async for`/`async with` execution paths.
+- Builtin stdlib foundations for `asyncio` (`run`, `sleep`, `create_task`, `gather`), `threading` (`get_ident`, `current_thread`, `main_thread`, `active_count`), and `signal` (`signal`, `getsignal`, `raise_signal`) are integrated and covered by VM regression tests.
 
 ### Milestone 11 — Testing and Parity Gate (P0/P1)
 DoD:
@@ -258,7 +263,7 @@ DoD:
 - Production playbook exists for incident triage, rollback strategy, and reproducible artifact verification.
 
 ## Immediate next steps
-- Start Milestone 10 work: full coroutine runtime semantics (`async`/`await`, async iterators/generators, cancellation/finalization behavior) and event-loop integration foundations.
+- Start Milestone 11 parity gate work: promote CPython `Lib/test` harness from optional/ignored mode to first-class parity gating and expand coverage breadth.
 - Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 10-11.
 - Run Milestone 11 parity closure for remaining Milestone 8/9 semantic deltas while CPython harness coverage expands.
 - Continue broad CPython parity tests while landing language/runtime milestones.

@@ -2948,14 +2948,65 @@ fn executes_match_case_statement() {
 }
 
 #[test]
-fn executes_async_syntax_lowering() {
-    let source = "class Ctx:\n    def __enter__(self):\n        return 0\n    def __exit__(self, a, b, c):\n        return False\nasync def f(x):\n    return await x\nasync for item in [1, 2]:\n    seen = item\nasync with Ctx():\n    pass\nresult = f(7)\n";
+fn executes_asyncio_run_with_await() {
+    let source = "import asyncio\nasync def inner(x):\n    return x + 1\nasync def outer(x):\n    y = await inner(x)\n    return y * 2\nresult = asyncio.run(outer(10))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("result"), Some(Value::Int(7)));
+    assert_eq!(vm.get_global("result"), Some(Value::Int(22)));
+}
+
+#[test]
+fn executes_async_for_and_async_with() {
+    let source = "import asyncio\nclass AsyncIter:\n    def __init__(self, n):\n        self.n = n\n        self.i = 0\n    def __aiter__(self):\n        return self\n    async def __anext__(self):\n        if self.i >= self.n:\n            raise StopAsyncIteration\n        self.i += 1\n        return self.i\nclass AsyncCtx:\n    async def __aenter__(self):\n        return 5\n    async def __aexit__(self, a, b, c):\n        return False\nasync def run_all():\n    total = 0\n    async for item in AsyncIter(3):\n        total += item\n    async with AsyncCtx() as value:\n        total += value\n    return total\nresult = asyncio.run(run_all())\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("result"), Some(Value::Int(11)));
+}
+
+#[test]
+fn executes_anext_for_async_generator() {
+    let source = "import asyncio\nasync def agen():\n    yield 3\n    yield 4\ng = agen()\na = asyncio.run(anext(g))\nb = asyncio.run(anext(g))\ndone = False\ntry:\n    asyncio.run(anext(g))\nexcept StopAsyncIteration:\n    done = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("a"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(4)));
+    assert_eq!(vm.get_global("done"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_inspect_async_predicates() {
+    let source = "import asyncio\nimport inspect\nasync def coro():\n    return 1\nasync def agen():\n    yield 1\nc = coro()\ng = agen()\nis_coro = inspect.iscoroutine(c)\nis_awaitable = inspect.isawaitable(c)\nis_gen = inspect.isgenerator(c)\nis_async_gen = inspect.isasyncgen(g)\nresult = asyncio.run(c)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("is_coro"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("is_awaitable"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("is_gen"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("is_async_gen"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("result"), Some(Value::Int(1)));
+}
+
+#[test]
+fn executes_threading_and_signal_foundations() {
+    let source = "import signal\nimport threading\nseen = 0\ndef handler(signum, frame):\n    global seen\n    seen = signum\nold = signal.signal(signal.SIGINT, handler)\nsignal.raise_signal(signal.SIGINT)\nident = threading.get_ident()\ncount = threading.active_count()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("seen"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("old"), Some(Value::Int(0)));
+    assert_eq!(vm.get_global("count"), Some(Value::Int(1)));
+    match vm.get_global("ident") {
+        Some(Value::Int(value)) => assert!(value > 0),
+        other => panic!("expected integer thread id, got {other:?}"),
+    }
 }
 
 #[test]

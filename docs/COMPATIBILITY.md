@@ -7,8 +7,8 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
 - [x] Indentation + baseline tokenization (names, ints/floats with underscores/base prefixes/exponents, strings with prefixes, operators, keywords for implemented subset)
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
-- [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with, class (bases + `metaclass=` keyword path supported), decorators, `match`/`case` (core subset), `except*` parsing, and async statement syntax (`async def`/`async for`/`async with` with lowering semantics)
-- [x] Expressions subset: arithmetic (incl `**`, `/`, `//`, `%`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await syntax lowering, list/dict comprehensions, generator expressions, and f-string lowering
+- [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with, class (bases + `metaclass=` keyword path supported), decorators, `match`/`case` (core subset), `except*` parsing, and core async statement semantics (`async def`/`async for`/`async with`)
+- [x] Expressions subset: arithmetic (incl `**`, `/`, `//`, `%`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await semantics, list/dict comprehensions, generator expressions, and f-string lowering
 - [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
 - [x] Type parameter syntax on `def`/`class` headers (`def f[T](...)`, `class C[T]: ...`)
 - [x] `__future__` import placement + unknown-feature compile-time validation
@@ -30,6 +30,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] `bytes`, `bytearray`, `memoryview`, `set`, `frozenset`, `complex`
 - [x] Function + frame model (positional-only params, positional params, defaults, keyword args, keyword-only params, *args/**kwargs; closures + `nonlocal`)
 - [x] Generators (lazy suspended-frame protocol: `__next__`, `send`, `throw`, `close`)
+- [x] Coroutines + async generators (core `__await__` / `__aiter__` / `__anext__`, `aiter`/`anext`, `StopAsyncIteration`)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [x] Tracebacks with filename/line/col + frame names
 - [x] Exception chaining/context metadata (`__cause__`, `__context__`, `__suppress_context__`; `raise ... from ...` and implicit chaining)
@@ -40,7 +41,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
 
 ## Stdlib Coverage
-- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/float/str, abs/sum/min/max/all/any/pow, list/tuple/set/frozenset, bytes/bytearray/memoryview, complex, divmod, iter/next, `type` (1-arg + 3-arg), locals, globals, `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, basic `__import__` name/fromlist/level semantics)
+- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/float/str, abs/sum/min/max/all/any/pow, list/tuple/set/frozenset, bytes/bytearray/memoryview, complex, divmod, iter/next/`aiter`/`anext`, `type` (1-arg + 3-arg), locals, globals, `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, basic `__import__` name/fromlist/level semantics)
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
 - [x] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`)
 - [~] `types`, `inspect`
@@ -49,6 +50,9 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] `math`, `itertools`
 - [~] `json`, `re`, `datetime`
 - [~] `codecs` foundations (`encode`/`decode` for `utf-8`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`)
+- [~] `asyncio` foundations (`run`, `sleep`, `create_task`, `gather`)
+- [~] `threading` foundations (`get_ident`, `current_thread`, `main_thread`, `active_count`)
+- [~] `signal` foundations (`signal`, `getsignal`, `raise_signal`, core constants)
 
 ## CPython Tests
 - [x] Establish test harness runner (optional; set `PYRS_CPYTHON_LIB`)
@@ -83,7 +87,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, parity-regression blocking CI.
 
 ### P1 (Major Ecosystem Enablers)
-- [~] Async/await + async generators (syntax lowering implemented; full coroutine semantics pending).
+- [x] Async/await + async generators (core coroutine/async-iterator protocol and runtime semantics implemented for milestone scope).
 - [x] Comprehensions with correct scoping.
 - [~] Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full pattern families pending.
 - [x] Exception chaining (`__cause__`, `__context__`, suppression metadata).

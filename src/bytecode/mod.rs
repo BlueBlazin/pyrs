@@ -82,6 +82,7 @@ pub enum Opcode {
     PopTop,
     EndFor,
     GetIter,
+    GetAwaitable,
     ForIter,
     YieldValue,
     YieldFrom,
@@ -138,6 +139,8 @@ pub struct CodeObject {
     pub kwarg: Option<String>,
     pub kwonly_params: Vec<String>,
     pub is_generator: bool,
+    pub is_coroutine: bool,
+    pub is_async_generator: bool,
 }
 
 impl CodeObject {
@@ -157,6 +160,8 @@ impl CodeObject {
             kwarg: None,
             kwonly_params: Vec::new(),
             is_generator: false,
+            is_coroutine: false,
+            is_async_generator: false,
         }
     }
 

@@ -1,15 +1,17 @@
 //! Bytecode virtual machine (minimal subset).
 
 use std::cmp::Ordering;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::bytecode::cpython;
-use crate::bytecode::{CodeObject, Opcode};
+use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::parser;
 use crate::runtime::{
@@ -49,6 +51,10 @@ const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;
 const MT_UPPER_MASK: u32 = 0x8000_0000;
 const MT_LOWER_MASK: u32 = 0x7fff_ffff;
+const SIGNAL_DEFAULT: i64 = 0;
+const SIGNAL_IGNORE: i64 = 1;
+const SIGNAL_SIGINT: i64 = 2;
+const SIGNAL_SIGTERM: i64 = 15;
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Clone)]
@@ -235,6 +241,7 @@ pub struct Vm {
     active_generator_resume_boundary: Option<usize>,
     generator_resume_outcome: Option<GeneratorResumeOutcome>,
     run_stop_depth: Option<usize>,
+    signal_handlers: HashMap<i64, Value>,
 }
 
 impl Vm {
@@ -265,6 +272,7 @@ impl Vm {
             active_generator_resume_boundary: None,
             generator_resume_outcome: None,
             run_stop_depth: None,
+            signal_handlers: HashMap::new(),
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -713,6 +721,9 @@ impl Vm {
                 ("isclass", BuiltinFunction::InspectIsClass),
                 ("ismodule", BuiltinFunction::InspectIsModule),
                 ("isgenerator", BuiltinFunction::InspectIsGenerator),
+                ("iscoroutine", BuiltinFunction::InspectIsCoroutine),
+                ("isawaitable", BuiltinFunction::InspectIsAwaitable),
+                ("isasyncgen", BuiltinFunction::InspectIsAsyncGen),
             ],
             Vec::new(),
         );
@@ -732,6 +743,40 @@ impl Vm {
                 ("today", BuiltinFunction::DateToday),
             ],
             Vec::new(),
+        );
+        self.install_builtin_module(
+            "asyncio",
+            &[
+                ("run", BuiltinFunction::AsyncioRun),
+                ("sleep", BuiltinFunction::AsyncioSleep),
+                ("create_task", BuiltinFunction::AsyncioCreateTask),
+                ("gather", BuiltinFunction::AsyncioGather),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "threading",
+            &[
+                ("get_ident", BuiltinFunction::ThreadingGetIdent),
+                ("current_thread", BuiltinFunction::ThreadingCurrentThread),
+                ("main_thread", BuiltinFunction::ThreadingMainThread),
+                ("active_count", BuiltinFunction::ThreadingActiveCount),
+            ],
+            vec![("TIMEOUT_MAX", Value::Float(f64::MAX))],
+        );
+        self.install_builtin_module(
+            "signal",
+            &[
+                ("signal", BuiltinFunction::SignalSignal),
+                ("getsignal", BuiltinFunction::SignalGetSignal),
+                ("raise_signal", BuiltinFunction::SignalRaiseSignal),
+            ],
+            vec![
+                ("SIG_DFL", Value::Int(SIGNAL_DEFAULT)),
+                ("SIG_IGN", Value::Int(SIGNAL_IGNORE)),
+                ("SIGINT", Value::Int(SIGNAL_SIGINT)),
+                ("SIGTERM", Value::Int(SIGNAL_SIGTERM)),
+            ],
         );
     }
 
@@ -1689,6 +1734,11 @@ impl Vm {
                     Opcode::PushNull => {
                         self.push_value(Value::None);
                     }
+                    Opcode::GetAwaitable => {
+                        let value = self.pop_value()?;
+                        let awaitable = self.awaitable_from_value(value)?;
+                        self.push_value(awaitable);
+                    }
                     Opcode::LoadAttr => {
                         let raw = instr
                             .arg
@@ -1761,17 +1811,55 @@ impl Vm {
                                 }
                             }
                             Value::Generator(generator) => {
-                                let kind = match attr_name.as_str() {
-                                    "__iter__" => NativeMethodKind::GeneratorIter,
-                                    "__next__" => NativeMethodKind::GeneratorNext,
-                                    "send" => NativeMethodKind::GeneratorSend,
-                                    "throw" => NativeMethodKind::GeneratorThrow,
-                                    "close" => NativeMethodKind::GeneratorClose,
+                                let kind = match &*generator.kind() {
+                                    Object::Generator(state) if state.is_async_generator => {
+                                        match attr_name.as_str() {
+                                            "__aiter__" => NativeMethodKind::GeneratorIter,
+                                            "__anext__" => NativeMethodKind::GeneratorANext,
+                                            "asend" => NativeMethodKind::GeneratorANext,
+                                            "athrow" => NativeMethodKind::GeneratorThrow,
+                                            "aclose" => NativeMethodKind::GeneratorClose,
+                                            "throw" => NativeMethodKind::GeneratorThrow,
+                                            "close" => NativeMethodKind::GeneratorClose,
+                                            _ => {
+                                                return Err(RuntimeError::new(format!(
+                                                    "async_generator has no attribute '{}'",
+                                                    attr_name
+                                                )));
+                                            }
+                                        }
+                                    }
+                                    Object::Generator(state) if state.is_coroutine => {
+                                        match attr_name.as_str() {
+                                            "__await__" => NativeMethodKind::GeneratorAwait,
+                                            "send" => NativeMethodKind::GeneratorSend,
+                                            "throw" => NativeMethodKind::GeneratorThrow,
+                                            "close" => NativeMethodKind::GeneratorClose,
+                                            _ => {
+                                                return Err(RuntimeError::new(format!(
+                                                    "coroutine has no attribute '{}'",
+                                                    attr_name
+                                                )));
+                                            }
+                                        }
+                                    }
+                                    Object::Generator(_) => match attr_name.as_str() {
+                                        "__iter__" => NativeMethodKind::GeneratorIter,
+                                        "__next__" => NativeMethodKind::GeneratorNext,
+                                        "send" => NativeMethodKind::GeneratorSend,
+                                        "throw" => NativeMethodKind::GeneratorThrow,
+                                        "close" => NativeMethodKind::GeneratorClose,
+                                        _ => {
+                                            return Err(RuntimeError::new(format!(
+                                                "generator has no attribute '{}'",
+                                                attr_name
+                                            )));
+                                        }
+                                    },
                                     _ => {
-                                        return Err(RuntimeError::new(format!(
-                                            "generator has no attribute '{}'",
-                                            attr_name
-                                        )));
+                                        return Err(RuntimeError::new(
+                                            "attribute access unsupported type",
+                                        ));
                                     }
                                 };
                                 let native =
@@ -4020,6 +4108,7 @@ impl Vm {
                     }
                     Opcode::GetIter => {
                         let value = self.pop_value()?;
+                        self.ensure_sync_iterator_target(&value)?;
                         let iterator = match value {
                             Value::List(obj) => IteratorObject {
                                 kind: IteratorKind::List(obj),
@@ -4786,7 +4875,10 @@ impl Vm {
         );
         apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
         if func_data.code.is_generator {
-            let generator = match self.heap.alloc_generator(GeneratorObject::new()) {
+            let generator = match self.heap.alloc_generator(GeneratorObject::new(
+                func_data.code.is_coroutine,
+                func_data.code.is_async_generator,
+            )) {
                 Value::Generator(obj) => obj,
                 _ => unreachable!(),
             };
@@ -5342,6 +5434,40 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Generator(receiver)))
             }
+            NativeMethodKind::GeneratorAwait => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__await__() expects no arguments"));
+                }
+                let is_coroutine = match &*receiver.kind() {
+                    Object::Generator(state) => state.is_coroutine,
+                    _ => false,
+                };
+                if is_coroutine {
+                    Ok(NativeCallResult::Value(Value::Generator(receiver)))
+                } else {
+                    Err(RuntimeError::new("object is not awaitable"))
+                }
+            }
+            NativeMethodKind::GeneratorANext => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__anext__() expects no arguments"));
+                }
+                match &*receiver.kind() {
+                    Object::Generator(state) if state.is_async_generator => {}
+                    _ => return Err(RuntimeError::new("object is not an async generator")),
+                }
+                match self.resume_generator(&receiver, None, None, GeneratorResumeKind::Next)? {
+                    GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(
+                        self.make_immediate_coroutine(value),
+                    )),
+                    GeneratorResumeOutcome::Complete(_) => {
+                        Err(RuntimeError::new("StopAsyncIteration"))
+                    }
+                    GeneratorResumeOutcome::PropagatedException => {
+                        Ok(NativeCallResult::PropagatedException)
+                    }
+                }
+            }
             NativeMethodKind::GeneratorNext => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("__next__() expects no arguments"));
@@ -5443,6 +5569,120 @@ impl Vm {
                 }
             }
         }
+    }
+
+    fn make_immediate_coroutine(&mut self, value: Value) -> Value {
+        let mut code = CodeObject::new("<awaitable>", "<builtin>");
+        let const_idx = code.add_const(value);
+        code.instructions
+            .push(Instruction::new(Opcode::LoadConst, Some(const_idx as u32)));
+        code.instructions
+            .push(Instruction::new(Opcode::ReturnValue, None));
+        code.is_generator = true;
+        code.is_coroutine = true;
+        code.is_async_generator = false;
+        let code = Rc::new(code);
+        let module = self
+            .frames
+            .last()
+            .map(|frame| frame.module.clone())
+            .unwrap_or_else(|| self.main_module.clone());
+        let mut frame = Frame::new(code, module, false, false, Vec::new());
+        let generator = match self.heap.alloc_generator(GeneratorObject::new(true, false)) {
+            Value::Generator(obj) => obj,
+            _ => unreachable!(),
+        };
+        frame.generator_owner = Some(generator.clone());
+        self.generator_states.insert(generator.id(), frame);
+        Value::Generator(generator)
+    }
+
+    fn awaitable_from_value(&mut self, value: Value) -> Result<Value, RuntimeError> {
+        match value {
+            Value::Generator(generator) => {
+                let (is_coroutine, is_async_generator) = match &*generator.kind() {
+                    Object::Generator(state) => (state.is_coroutine, state.is_async_generator),
+                    _ => (false, false),
+                };
+                if is_coroutine {
+                    Ok(Value::Generator(generator))
+                } else if is_async_generator {
+                    Err(RuntimeError::new("async generator object is not awaitable"))
+                } else {
+                    Err(RuntimeError::new("object is not awaitable"))
+                }
+            }
+            Value::Iterator(_) => Err(RuntimeError::new("object is not awaitable")),
+            other => {
+                let method = self
+                    .lookup_bound_special_method(&other, "__await__")?
+                    .ok_or_else(|| RuntimeError::new("object is not awaitable"))?;
+                match self.call_internal(method, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(awaitable) => match awaitable {
+                        Value::Generator(generator) => {
+                            if let Object::Generator(state) = &*generator.kind() {
+                                if state.is_async_generator {
+                                    return Err(RuntimeError::new(
+                                        "__await__() returned an async generator",
+                                    ));
+                                }
+                            }
+                            Ok(Value::Generator(generator))
+                        }
+                        Value::Iterator(iterator) => Ok(Value::Iterator(iterator)),
+                        _ => Err(RuntimeError::new("__await__() returned non-iterator")),
+                    },
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(RuntimeError::new("__await__() failed"))
+                    }
+                }
+            }
+        }
+    }
+
+    fn run_awaitable(&mut self, awaitable: Value) -> Result<Value, RuntimeError> {
+        match self.awaitable_from_value(awaitable)? {
+            Value::Generator(generator) => loop {
+                match self.resume_generator(&generator, None, None, GeneratorResumeKind::Next)? {
+                    GeneratorResumeOutcome::Yield(_) => {}
+                    GeneratorResumeOutcome::Complete(value) => return Ok(value),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        self.propagate_pending_generator_exception()?;
+                        return Err(RuntimeError::new("awaitable execution failed"));
+                    }
+                }
+            },
+            Value::Iterator(iterator) => {
+                while self.iterator_next_value(&iterator).is_some() {}
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::new("object is not awaitable")),
+        }
+    }
+
+    fn is_awaitable_value(&self, value: &Value) -> bool {
+        match value {
+            Value::Generator(generator) => match &*generator.kind() {
+                Object::Generator(state) => state.is_coroutine,
+                _ => false,
+            },
+            Value::Iterator(_) => false,
+            _ => self
+                .class_of_value(value)
+                .and_then(|class| class_attr_lookup(&class, "__await__"))
+                .is_some(),
+        }
+    }
+
+    fn ensure_sync_iterator_target(&self, value: &Value) -> Result<(), RuntimeError> {
+        if let Value::Generator(generator) = value {
+            if let Object::Generator(state) = &*generator.kind() {
+                if state.is_coroutine || state.is_async_generator {
+                    return Err(RuntimeError::new("object is not iterable"));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn generator_for_iter_next(
@@ -5874,6 +6114,8 @@ impl Vm {
             BuiltinFunction::HasAttr => self.builtin_hasattr(args, kwargs),
             BuiltinFunction::Iter => self.builtin_iter(args, kwargs),
             BuiltinFunction::Next => self.builtin_next(args, kwargs),
+            BuiltinFunction::AIter => self.builtin_aiter(args, kwargs),
+            BuiltinFunction::ANext => self.builtin_anext(args, kwargs),
             BuiltinFunction::Super => self.builtin_super(args, kwargs),
             BuiltinFunction::Import => self.builtin_import(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
@@ -5921,12 +6163,30 @@ impl Vm {
             BuiltinFunction::InspectIsClass => self.builtin_inspect_isclass(args, kwargs),
             BuiltinFunction::InspectIsModule => self.builtin_inspect_ismodule(args, kwargs),
             BuiltinFunction::InspectIsGenerator => self.builtin_inspect_isgenerator(args, kwargs),
+            BuiltinFunction::InspectIsCoroutine => self.builtin_inspect_iscoroutine(args, kwargs),
+            BuiltinFunction::InspectIsAwaitable => self.builtin_inspect_isawaitable(args, kwargs),
+            BuiltinFunction::InspectIsAsyncGen => self.builtin_inspect_isasyncgen(args, kwargs),
             BuiltinFunction::TypesModuleType => self.builtin_types_moduletype(args, kwargs),
             BuiltinFunction::IoOpen => self.builtin_io_open(args, kwargs),
             BuiltinFunction::IoReadText => self.builtin_io_read_text(args, kwargs),
             BuiltinFunction::IoWriteText => self.builtin_io_write_text(args, kwargs),
             BuiltinFunction::DateTimeNow => self.builtin_datetime_now(args, kwargs),
             BuiltinFunction::DateToday => self.builtin_datetime_today(args, kwargs),
+            BuiltinFunction::AsyncioRun => self.builtin_asyncio_run(args, kwargs),
+            BuiltinFunction::AsyncioSleep => self.builtin_asyncio_sleep(args, kwargs),
+            BuiltinFunction::AsyncioCreateTask => self.builtin_asyncio_create_task(args, kwargs),
+            BuiltinFunction::AsyncioGather => self.builtin_asyncio_gather(args, kwargs),
+            BuiltinFunction::ThreadingGetIdent => self.builtin_threading_get_ident(args, kwargs),
+            BuiltinFunction::ThreadingCurrentThread => {
+                self.builtin_threading_current_thread(args, kwargs)
+            }
+            BuiltinFunction::ThreadingMainThread => self.builtin_threading_main_thread(args, kwargs),
+            BuiltinFunction::ThreadingActiveCount => {
+                self.builtin_threading_active_count(args, kwargs)
+            }
+            BuiltinFunction::SignalSignal => self.builtin_signal_signal(args, kwargs),
+            BuiltinFunction::SignalGetSignal => self.builtin_signal_getsignal(args, kwargs),
+            BuiltinFunction::SignalRaiseSignal => self.builtin_signal_raise_signal(args, kwargs),
             _ => {
                 if kwargs.is_empty() {
                     builtin.call(&self.heap, args)
@@ -6017,6 +6277,7 @@ impl Vm {
             return Err(RuntimeError::new("iter() expects one argument"));
         }
         let source = args.remove(0);
+        self.ensure_sync_iterator_target(&source)?;
         self.to_iterator_value(source)
             .map_err(|_| RuntimeError::new("object is not iterable"))
     }
@@ -6035,6 +6296,7 @@ impl Vm {
             None
         };
         let target = args.pop().expect("checked len");
+        self.ensure_sync_iterator_target(&target)?;
         let iterator = self
             .to_iterator_value(target)
             .map_err(|_| RuntimeError::new("next() argument is not iterable"))?;
@@ -6063,6 +6325,92 @@ impl Vm {
                 }
             }
             _ => Err(RuntimeError::new("next() argument is not iterable")),
+        }
+    }
+
+    fn builtin_aiter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("aiter() expects one argument"));
+        }
+        let source = args.remove(0);
+        let source_is_async_generator = if let Value::Generator(generator) = &source {
+            matches!(&*generator.kind(), Object::Generator(state) if state.is_async_generator)
+        } else {
+            false
+        };
+        if source_is_async_generator {
+            return Ok(source);
+        }
+        let method = self
+            .lookup_bound_special_method(&source, "__aiter__")?
+            .ok_or_else(|| RuntimeError::new("object is not async iterable"))?;
+        match self.call_internal(method, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(RuntimeError::new("aiter() failed"))
+            }
+        }
+    }
+
+    fn builtin_anext(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("anext() expects 1-2 arguments"));
+        }
+        let default = if args.len() == 2 {
+            Some(args.pop().expect("checked len"))
+        } else {
+            None
+        };
+        let target = args.pop().expect("checked len");
+
+        let target_is_async_generator = if let Value::Generator(generator) = &target {
+            matches!(&*generator.kind(), Object::Generator(state) if state.is_async_generator)
+        } else {
+            false
+        };
+
+        if target_is_async_generator {
+            let generator = match &target {
+                Value::Generator(generator) => generator,
+                _ => unreachable!(),
+            };
+            return match self.resume_generator(generator, None, None, GeneratorResumeKind::Next)? {
+                GeneratorResumeOutcome::Yield(value) => Ok(self.make_immediate_coroutine(value)),
+                GeneratorResumeOutcome::Complete(_) => {
+                    if let Some(default) = default {
+                        Ok(self.make_immediate_coroutine(default))
+                    } else {
+                        Err(RuntimeError::new("StopAsyncIteration"))
+                    }
+                }
+                GeneratorResumeOutcome::PropagatedException => {
+                    self.propagate_pending_generator_exception()?;
+                    Err(RuntimeError::new("StopAsyncIteration"))
+                }
+            }
+        }
+
+        let method = self
+            .lookup_bound_special_method(&target, "__anext__")?
+            .ok_or_else(|| RuntimeError::new("object is not an async iterator"))?;
+        match self.call_internal(method, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                if default.is_some() && self.active_exception_is("StopAsyncIteration") {
+                    self.clear_active_exception();
+                    Ok(self.make_immediate_coroutine(default.expect("checked is_some")))
+                } else {
+                    Err(RuntimeError::new("anext() failed"))
+                }
+            }
         }
     }
 
@@ -6133,18 +6481,48 @@ impl Vm {
                 }
             }
             Value::Generator(generator) => {
-                let kind = match name.as_str() {
-                    "__iter__" => NativeMethodKind::GeneratorIter,
-                    "__next__" => NativeMethodKind::GeneratorNext,
-                    "send" => NativeMethodKind::GeneratorSend,
-                    "throw" => NativeMethodKind::GeneratorThrow,
-                    "close" => NativeMethodKind::GeneratorClose,
-                    _ => {
-                        return Err(RuntimeError::new(format!(
-                            "generator has no attribute '{}'",
-                            name
-                        )));
-                    }
+                let kind = match &*generator.kind() {
+                    Object::Generator(state) if state.is_async_generator => match name.as_str() {
+                        "__aiter__" => NativeMethodKind::GeneratorIter,
+                        "__anext__" => NativeMethodKind::GeneratorANext,
+                        "asend" => NativeMethodKind::GeneratorANext,
+                        "athrow" => NativeMethodKind::GeneratorThrow,
+                        "aclose" => NativeMethodKind::GeneratorClose,
+                        "throw" => NativeMethodKind::GeneratorThrow,
+                        "close" => NativeMethodKind::GeneratorClose,
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "async_generator has no attribute '{}'",
+                                name
+                            )));
+                        }
+                    },
+                    Object::Generator(state) if state.is_coroutine => match name.as_str() {
+                        "__await__" => NativeMethodKind::GeneratorAwait,
+                        "send" => NativeMethodKind::GeneratorSend,
+                        "throw" => NativeMethodKind::GeneratorThrow,
+                        "close" => NativeMethodKind::GeneratorClose,
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "coroutine has no attribute '{}'",
+                                name
+                            )));
+                        }
+                    },
+                    Object::Generator(_) => match name.as_str() {
+                        "__iter__" => NativeMethodKind::GeneratorIter,
+                        "__next__" => NativeMethodKind::GeneratorNext,
+                        "send" => NativeMethodKind::GeneratorSend,
+                        "throw" => NativeMethodKind::GeneratorThrow,
+                        "close" => NativeMethodKind::GeneratorClose,
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "generator has no attribute '{}'",
+                                name
+                            )));
+                        }
+                    },
+                    _ => return Err(RuntimeError::new("attribute access unsupported type")),
                 };
                 let native = self.heap.alloc_native_method(NativeMethodObject::new(kind));
                 let bound = BoundMethod::new(native, generator);
@@ -7454,7 +7832,55 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        unary_predicate(args, kwargs, |value| matches!(value, Value::Generator(_)))
+        unary_predicate(args, kwargs, |value| {
+            if let Value::Generator(generator) = value {
+                if let Object::Generator(state) = &*generator.kind() {
+                    return !state.is_coroutine && !state.is_async_generator;
+                }
+            }
+            false
+        })
+    }
+
+    fn builtin_inspect_iscoroutine(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| {
+            if let Value::Generator(generator) = value {
+                if let Object::Generator(state) = &*generator.kind() {
+                    return state.is_coroutine;
+                }
+            }
+            false
+        })
+    }
+
+    fn builtin_inspect_isawaitable(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("predicate expects one argument"));
+        }
+        Ok(Value::Bool(self.is_awaitable_value(&args[0])))
+    }
+
+    fn builtin_inspect_isasyncgen(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| {
+            if let Value::Generator(generator) = value {
+                if let Object::Generator(state) = &*generator.kind() {
+                    return state.is_async_generator;
+                }
+            }
+            false
+        })
     }
 
     fn builtin_types_moduletype(
@@ -7602,6 +8028,192 @@ impl Vm {
         let days = (now.as_secs() / 86_400) as i64;
         let (year, month, day) = civil_from_days(days);
         Ok(Value::Str(format!("{year:04}-{month:02}-{day:02}")))
+    }
+
+    fn builtin_asyncio_run(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("run() expects one awaitable argument"));
+        }
+        let awaitable = args.remove(0);
+        self.run_awaitable(awaitable)
+    }
+
+    fn builtin_asyncio_sleep(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("sleep() expects delay and optional result"));
+        }
+        let seconds = value_to_f64(args.remove(0))?;
+        if seconds < 0.0 {
+            return Err(RuntimeError::new("sleep length must be non-negative"));
+        }
+        let result = if args.is_empty() {
+            Value::None
+        } else {
+            args.remove(0)
+        };
+        Ok(self.make_immediate_coroutine(result))
+    }
+
+    fn builtin_asyncio_create_task(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("create_task() expects one awaitable argument"));
+        }
+        self.awaitable_from_value(args.remove(0))
+    }
+
+    fn builtin_asyncio_gather(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "gather() keyword arguments are not supported",
+            ));
+        }
+        let mut results = Vec::with_capacity(args.len());
+        for awaitable in args {
+            results.push(self.run_awaitable(awaitable)?);
+        }
+        Ok(self.make_immediate_coroutine(self.heap.alloc_list(results)))
+    }
+
+    fn builtin_threading_get_ident(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("get_ident() expects no arguments"));
+        }
+        let mut hasher = DefaultHasher::new();
+        std::thread::current().id().hash(&mut hasher);
+        Ok(Value::Int((hasher.finish() & i64::MAX as u64) as i64))
+    }
+
+    fn builtin_threading_current_thread(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("current_thread() expects no arguments"));
+        }
+        self.thread_info_dict("MainThread")
+    }
+
+    fn builtin_threading_main_thread(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("main_thread() expects no arguments"));
+        }
+        self.thread_info_dict("MainThread")
+    }
+
+    fn builtin_threading_active_count(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("active_count() expects no arguments"));
+        }
+        Ok(Value::Int(1))
+    }
+
+    fn builtin_signal_signal(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("signal() expects signum and handler"));
+        }
+        let signum = value_to_int(args.remove(0))?;
+        let handler = args.remove(0);
+        let previous = self
+            .signal_handlers
+            .insert(signum, handler)
+            .unwrap_or(Value::Int(SIGNAL_DEFAULT));
+        Ok(previous)
+    }
+
+    fn builtin_signal_getsignal(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("getsignal() expects one signum argument"));
+        }
+        let signum = value_to_int(args.remove(0))?;
+        Ok(self
+            .signal_handlers
+            .get(&signum)
+            .cloned()
+            .unwrap_or(Value::Int(SIGNAL_DEFAULT)))
+    }
+
+    fn builtin_signal_raise_signal(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("raise_signal() expects one signum argument"));
+        }
+        let signum = value_to_int(args.remove(0))?;
+        let handler = self
+            .signal_handlers
+            .get(&signum)
+            .cloned()
+            .unwrap_or(Value::Int(SIGNAL_DEFAULT));
+        match handler {
+            Value::Int(code) if code == SIGNAL_IGNORE => Ok(Value::None),
+            Value::Int(code) if code == SIGNAL_DEFAULT => {
+                if signum == SIGNAL_SIGINT {
+                    Err(RuntimeError::new("KeyboardInterrupt"))
+                } else {
+                    Ok(Value::None)
+                }
+            }
+            callable => {
+                match self.call_internal(
+                    callable,
+                    vec![Value::Int(signum), Value::None],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(_) => Ok(Value::None),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(RuntimeError::new("signal handler raised"))
+                    }
+                }
+            }
+        }
+    }
+
+    fn thread_info_dict(&mut self, name: &str) -> Result<Value, RuntimeError> {
+        let ident = self.builtin_threading_get_ident(Vec::new(), HashMap::new())?;
+        Ok(self.heap.alloc_dict(vec![
+            (Value::Str("name".to_string()), Value::Str(name.to_string())),
+            (Value::Str("ident".to_string()), ident),
+            (Value::Str("daemon".to_string()), Value::Bool(false)),
+        ]))
     }
 
     fn getitem_value(&mut self, value: Value, index: Value) -> Result<Value, RuntimeError> {
@@ -7888,6 +8500,10 @@ impl Vm {
         self.builtins
             .insert("next".to_string(), Value::Builtin(BuiltinFunction::Next));
         self.builtins
+            .insert("aiter".to_string(), Value::Builtin(BuiltinFunction::AIter));
+        self.builtins
+            .insert("anext".to_string(), Value::Builtin(BuiltinFunction::ANext));
+        self.builtins
             .insert("type".to_string(), Value::Builtin(BuiltinFunction::Type));
         self.builtins.insert(
             "locals".to_string(),
@@ -7966,6 +8582,18 @@ impl Vm {
         self.builtins.insert(
             "StopIteration".to_string(),
             Value::ExceptionType("StopIteration".to_string()),
+        );
+        self.builtins.insert(
+            "StopAsyncIteration".to_string(),
+            Value::ExceptionType("StopAsyncIteration".to_string()),
+        );
+        self.builtins.insert(
+            "SystemExit".to_string(),
+            Value::ExceptionType("SystemExit".to_string()),
+        );
+        self.builtins.insert(
+            "KeyboardInterrupt".to_string(),
+            Value::ExceptionType("KeyboardInterrupt".to_string()),
         );
         self.builtins.insert(
             "GeneratorExit".to_string(),
@@ -8916,6 +9544,7 @@ fn exception_parent(name: &str) -> Option<&'static str> {
         "SystemExit" => Some("BaseException"),
         "KeyboardInterrupt" => Some("BaseException"),
         "StopIteration" => Some("Exception"),
+        "StopAsyncIteration" => Some("Exception"),
         "AssertionError" => Some("Exception"),
         "AttributeError" => Some("Exception"),
         "IndexError" => Some("Exception"),
@@ -9422,6 +10051,12 @@ fn class_name_for_instance(instance: &ObjRef) -> Option<String> {
 fn classify_runtime_error(message: &str) -> &'static str {
     if message.trim() == "StopIteration" {
         return "StopIteration";
+    }
+    if message.trim() == "StopAsyncIteration" {
+        return "StopAsyncIteration";
+    }
+    if message.trim() == "KeyboardInterrupt" {
+        return "KeyboardInterrupt";
     }
     if message.contains("index out of range") {
         return "IndexError";

@@ -132,6 +132,8 @@ impl<'a> Translator<'a> {
         result.cellvars = self.cellvars.clone();
         result.freevars = self.freevars.clone();
         result.is_generator = (self.code.flags & 0x20) != 0;
+        result.is_coroutine = (self.code.flags & 0x80) != 0 || (self.code.flags & 0x100) != 0;
+        result.is_async_generator = (self.code.flags & 0x200) != 0;
         self.populate_params(&mut result)?;
 
         let instructions = self.translate_instructions()?;
@@ -331,6 +333,7 @@ impl<'a> Translator<'a> {
                 }
                 "LOAD_BUILD_CLASS" => Instruction::new(Opcode::LoadBuildClass, None),
                 "PUSH_NULL" => Instruction::new(Opcode::PushNull, None),
+                "GET_AWAITABLE" => Instruction::new(Opcode::GetAwaitable, None),
                 "MAKE_FUNCTION" => Instruction::new(Opcode::MakeFunctionStack, None),
                 "SET_FUNCTION_ATTRIBUTE" => {
                     Instruction::new(Opcode::SetFunctionAttribute, Some(arg))
@@ -959,6 +962,7 @@ fn translated_successors(
             vec![(target, stack_depth)]
         }
         Opcode::GetIter => vec![(next_ip, pop(1)? + 1)],
+        Opcode::GetAwaitable => vec![(next_ip, pop(1)? + 1)],
         Opcode::ForIter => {
             let target = arg.ok_or_else(|| CpythonError::new("missing for-iter target"))? as usize;
             vec![(next_ip, pop(1)? + 2), (target, pop(1)?)]

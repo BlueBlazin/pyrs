@@ -122,14 +122,18 @@ pub struct GeneratorObject {
     pub started: bool,
     pub running: bool,
     pub closed: bool,
+    pub is_coroutine: bool,
+    pub is_async_generator: bool,
 }
 
 impl GeneratorObject {
-    pub fn new() -> Self {
+    pub fn new(is_coroutine: bool, is_async_generator: bool) -> Self {
         Self {
             started: false,
             running: false,
             closed: false,
+            is_coroutine,
+            is_async_generator,
         }
     }
 }
@@ -137,6 +141,8 @@ impl GeneratorObject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NativeMethodKind {
     GeneratorIter,
+    GeneratorAwait,
+    GeneratorANext,
     GeneratorNext,
     GeneratorSend,
     GeneratorThrow,
@@ -845,6 +851,8 @@ pub enum BuiltinFunction {
     Enumerate,
     Iter,
     Next,
+    AIter,
+    ANext,
     Type,
     GetAttr,
     SetAttr,
@@ -901,12 +909,26 @@ pub enum BuiltinFunction {
     InspectIsClass,
     InspectIsModule,
     InspectIsGenerator,
+    InspectIsCoroutine,
+    InspectIsAwaitable,
+    InspectIsAsyncGen,
     TypesModuleType,
     IoOpen,
     IoReadText,
     IoWriteText,
     DateTimeNow,
     DateToday,
+    AsyncioRun,
+    AsyncioSleep,
+    AsyncioCreateTask,
+    AsyncioGather,
+    ThreadingGetIdent,
+    ThreadingCurrentThread,
+    ThreadingMainThread,
+    ThreadingActiveCount,
+    SignalSignal,
+    SignalGetSignal,
+    SignalRaiseSignal,
 }
 
 impl BuiltinFunction {
@@ -1496,6 +1518,8 @@ impl BuiltinFunction {
             | BuiltinFunction::HasAttr
             | BuiltinFunction::Iter
             | BuiltinFunction::Next
+            | BuiltinFunction::AIter
+            | BuiltinFunction::ANext
             | BuiltinFunction::Super
             | BuiltinFunction::Locals
             | BuiltinFunction::Globals
@@ -1542,12 +1566,26 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectIsClass
             | BuiltinFunction::InspectIsModule
             | BuiltinFunction::InspectIsGenerator
+            | BuiltinFunction::InspectIsCoroutine
+            | BuiltinFunction::InspectIsAwaitable
+            | BuiltinFunction::InspectIsAsyncGen
             | BuiltinFunction::TypesModuleType
             | BuiltinFunction::IoOpen
             | BuiltinFunction::IoReadText
             | BuiltinFunction::IoWriteText
             | BuiltinFunction::DateTimeNow
-            | BuiltinFunction::DateToday => {
+            | BuiltinFunction::DateToday
+            | BuiltinFunction::AsyncioRun
+            | BuiltinFunction::AsyncioSleep
+            | BuiltinFunction::AsyncioCreateTask
+            | BuiltinFunction::AsyncioGather
+            | BuiltinFunction::ThreadingGetIdent
+            | BuiltinFunction::ThreadingCurrentThread
+            | BuiltinFunction::ThreadingMainThread
+            | BuiltinFunction::ThreadingActiveCount
+            | BuiltinFunction::SignalSignal
+            | BuiltinFunction::SignalGetSignal
+            | BuiltinFunction::SignalRaiseSignal => {
                 Err(RuntimeError::new("builtin requires VM context"))
             }
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
@@ -1996,7 +2034,16 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::ByteArray(_) => Value::Builtin(BuiltinFunction::ByteArray),
         Value::MemoryView(_) => Value::Builtin(BuiltinFunction::MemoryView),
         Value::Iterator(_) => Value::Str("iterator".to_string()),
-        Value::Generator(_) => Value::Str("generator".to_string()),
+        Value::Generator(obj) => match &*obj.kind() {
+            Object::Generator(generator) if generator.is_async_generator => {
+                Value::Str("async_generator".to_string())
+            }
+            Object::Generator(generator) if generator.is_coroutine => {
+                Value::Str("coroutine".to_string())
+            }
+            Object::Generator(_) => Value::Str("generator".to_string()),
+            _ => Value::Str("generator".to_string()),
+        },
         Value::Module(_) => Value::Str("module".to_string()),
         Value::Class(class) => Value::Class(class.clone()),
         Value::Instance(instance) => match &*instance.kind() {
@@ -2149,7 +2196,14 @@ pub fn format_value(value: &Value) -> String {
             _ => "<memoryview>".to_string(),
         },
         Value::Iterator(_) => "<iterator>".to_string(),
-        Value::Generator(_) => "<generator>".to_string(),
+        Value::Generator(obj) => match &*obj.kind() {
+            Object::Generator(generator) if generator.is_async_generator => {
+                "<async_generator>".to_string()
+            }
+            Object::Generator(generator) if generator.is_coroutine => "<coroutine>".to_string(),
+            Object::Generator(_) => "<generator>".to_string(),
+            _ => "<generator>".to_string(),
+        },
         Value::Module(obj) => match &*obj.kind() {
             Object::Module(module) => format!("<module {}>", module.name),
             _ => "<module ?>".to_string(),
@@ -2171,6 +2225,8 @@ pub fn format_value(value: &Value) -> String {
                 Object::Function(func) => format!("<bound method {}>", func.code.name),
                 Object::NativeMethod(native) => match native.kind {
                     NativeMethodKind::GeneratorIter => "<bound method __iter__>".to_string(),
+                    NativeMethodKind::GeneratorAwait => "<bound method __await__>".to_string(),
+                    NativeMethodKind::GeneratorANext => "<bound method __anext__>".to_string(),
                     NativeMethodKind::GeneratorNext => "<bound method __next__>".to_string(),
                     NativeMethodKind::GeneratorSend => "<bound method send>".to_string(),
                     NativeMethodKind::GeneratorThrow => "<bound method throw>".to_string(),
