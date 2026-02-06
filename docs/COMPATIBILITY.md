@@ -5,12 +5,14 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 
 ## Parser & Grammar
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
-- [x] Indentation + basic tokenization (names, ints, strings, operators, keywords for implemented subset)
+- [x] Indentation + baseline tokenization (names, ints with underscores/base prefixes, strings with prefixes, operators, keywords for implemented subset)
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
-- [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise, assert, try/except/else, with, class (bases supported, no keywords)
-- [x] Expressions subset: arithmetic (incl `**`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda, `yield`, `yield from`
+- [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise, assert, try/except/else, with, class (bases supported), decorators, `match`/`case` (core subset), `except*` parsing, and async statement syntax (`async def`/`async for`/`async with` with lowering semantics)
+- [x] Expressions subset: arithmetic (incl `**`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await syntax lowering, list/dict comprehensions, generator expressions, and f-string lowering
 - [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
-- [ ] Comprehensions, pattern matching, async/await, etc.
+- [x] Type parameter syntax on `def`/`class` headers (`def f[T](...)`, `class C[T]: ...`)
+- [x] `__future__` import placement + unknown-feature compile-time validation
+- [~] Advanced grammar parity gaps remain (`type` statements, full pattern variants, full exception-group semantics, full f-string/PEP 701 coverage)
 
 ## Bytecode
 - [x] Opcode source files synced (`opcode.py`, `bytecodes.c`, `opcode.h`)
@@ -79,9 +81,9 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, parity-regression blocking CI.
 
 ### P1 (Major Ecosystem Enablers)
-- [ ] Async/await + async generators.
-- [ ] Comprehensions with correct scoping.
-- [ ] Pattern matching (`match`/`case`).
+- [~] Async/await + async generators (syntax lowering implemented; full coroutine semantics pending).
+- [x] Comprehensions with correct scoping.
+- [~] Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full pattern families pending.
 - [ ] Exception chaining (`__cause__`, `__context__`, suppression).
 - [ ] Descriptor protocol + attribute lookup parity.
 - [ ] Core stdlib: `sys`, `types`, `inspect`, `io`.

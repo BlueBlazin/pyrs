@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ast::{
-    AssignTarget, CallArg, Constant, ExceptHandler, Expr, ExprKind, Module, Parameter, Span, Stmt,
-    StmtKind,
+    AssignTarget, CallArg, ComprehensionClause, Constant, ExceptHandler, Expr, ExprKind,
+    MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
 };
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
@@ -341,6 +341,14 @@ fn collect_locals_stmt(
                 }
             }
         }
+        StmtKind::Match { cases, .. } => {
+            for case in cases {
+                collect_pattern_locals(&case.pattern, locals);
+            }
+        }
+        StmtKind::Decorated { stmt, .. } => {
+            collect_locals_stmt(stmt, locals, globals, nonlocals);
+        }
         StmtKind::Global { names } => {
             for name in names {
                 globals.insert(name.clone());
@@ -352,6 +360,12 @@ fn collect_locals_stmt(
             }
         }
         _ => {}
+    }
+}
+
+fn collect_pattern_locals(pattern: &Pattern, locals: &mut HashSet<String>) {
+    if let Pattern::Capture(name) = pattern {
+        locals.insert(name.clone());
     }
 }
 
@@ -419,6 +433,7 @@ fn collect_uses_stmt(
             iter,
             body,
             orelse,
+            ..
         } => {
             collect_target_uses(target, uses, child_free, enclosing)?;
             collect_uses_expr(iter, uses, child_free, enclosing)?;
@@ -433,6 +448,7 @@ fn collect_uses_stmt(
             context,
             target,
             body,
+            ..
         } => {
             collect_uses_expr(context, uses, child_free, enclosing)?;
             if let Some(target) = target {
@@ -532,6 +548,23 @@ fn collect_uses_stmt(
                 analyze_scope(ScopeType::Class, &[], &[], &[], None, None, body, enclosing)?;
             child_free.extend(scope.freevars.into_iter());
         }
+        StmtKind::Decorated { decorators, stmt } => {
+            for decorator in decorators {
+                collect_uses_expr(decorator, uses, child_free, enclosing)?;
+            }
+            collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+        }
+        StmtKind::Match { subject, cases } => {
+            collect_uses_expr(subject, uses, child_free, enclosing)?;
+            for case in cases {
+                if let Some(guard) = &case.guard {
+                    collect_uses_expr(guard, uses, child_free, enclosing)?;
+                }
+                for stmt in &case.body {
+                    collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                }
+            }
+        }
         StmtKind::Import { .. }
         | StmtKind::ImportFrom { .. }
         | StmtKind::Global { .. }
@@ -625,6 +658,9 @@ fn collect_uses_expr(
             collect_uses_expr(body, uses, child_free, enclosing)?;
             collect_uses_expr(orelse, uses, child_free, enclosing)?;
         }
+        ExprKind::NamedExpr { value, .. } => {
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
         ExprKind::Lambda {
             posonly_params,
             params,
@@ -661,6 +697,32 @@ fn collect_uses_expr(
         }
         ExprKind::YieldFrom { value } => {
             collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
+        ExprKind::Await { value } => {
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
+        ExprKind::ListComp { elt, clauses } | ExprKind::GeneratorExp { elt, clauses } => {
+            collect_uses_expr(elt, uses, child_free, enclosing)?;
+            for clause in clauses {
+                collect_uses_expr(&clause.iter, uses, child_free, enclosing)?;
+                for cond in &clause.ifs {
+                    collect_uses_expr(cond, uses, child_free, enclosing)?;
+                }
+            }
+        }
+        ExprKind::DictComp {
+            key,
+            value,
+            clauses,
+        } => {
+            collect_uses_expr(key, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+            for clause in clauses {
+                collect_uses_expr(&clause.iter, uses, child_free, enclosing)?;
+                for cond in &clause.ifs {
+                    collect_uses_expr(cond, uses, child_free, enclosing)?;
+                }
+            }
         }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(expr) = lower.as_ref() {
@@ -717,6 +779,18 @@ fn body_has_ann_assign(body: &[Stmt]) -> bool {
             StmtKind::With { body, .. } => {
                 if body_has_ann_assign(body) {
                     return true;
+                }
+            }
+            StmtKind::Decorated { stmt, .. } => {
+                if body_has_ann_assign(std::slice::from_ref(stmt)) {
+                    return true;
+                }
+            }
+            StmtKind::Match { cases, .. } => {
+                for case in cases {
+                    if body_has_ann_assign(&case.body) {
+                        return true;
+                    }
                 }
             }
             StmtKind::FunctionDef { .. } | StmtKind::ClassDef { .. } => {}
@@ -805,6 +879,23 @@ fn body_has_yield(body: &[Stmt]) -> bool {
                     return true;
                 }
             }
+            StmtKind::Decorated { stmt, .. } => {
+                if body_has_yield(std::slice::from_ref(stmt)) {
+                    return true;
+                }
+            }
+            StmtKind::Match { subject, cases } => {
+                if expr_has_yield(subject) {
+                    return true;
+                }
+                for case in cases {
+                    if case.guard.as_ref().map(expr_has_yield).unwrap_or(false)
+                        || body_has_yield(&case.body)
+                    {
+                        return true;
+                    }
+                }
+            }
             StmtKind::FunctionDef { .. }
             | StmtKind::ClassDef { .. }
             | StmtKind::Import { .. }
@@ -851,6 +942,27 @@ fn expr_has_yield(expr: &Expr) -> bool {
         ExprKind::Attribute { value, .. } => expr_has_yield(value),
         ExprKind::IfExpr { test, body, orelse } => {
             expr_has_yield(test) || expr_has_yield(body) || expr_has_yield(orelse)
+        }
+        ExprKind::NamedExpr { value, .. } | ExprKind::Await { value } => expr_has_yield(value),
+        ExprKind::ListComp { elt, clauses } | ExprKind::GeneratorExp { elt, clauses } => {
+            if expr_has_yield(elt) {
+                return true;
+            }
+            clauses
+                .iter()
+                .any(|clause| expr_has_yield(&clause.iter) || clause.ifs.iter().any(expr_has_yield))
+        }
+        ExprKind::DictComp {
+            key,
+            value,
+            clauses,
+        } => {
+            if expr_has_yield(key) || expr_has_yield(value) {
+                return true;
+            }
+            clauses
+                .iter()
+                .any(|clause| expr_has_yield(&clause.iter) || clause.ifs.iter().any(expr_has_yield))
         }
         ExprKind::Lambda { .. } | ExprKind::Name(_) | ExprKind::Constant(_) => false,
         ExprKind::Slice { lower, upper, step } => {
@@ -926,11 +1038,70 @@ impl Compiler {
     }
 
     fn compile_module(&mut self, module: &Module) -> Result<(), CompileError> {
+        self.validate_future_imports(&module.body)?;
         if body_has_ann_assign(&module.body) {
             self.init_annotations()?;
         }
         for stmt in &module.body {
             self.compile_stmt(stmt)?;
+        }
+        Ok(())
+    }
+
+    fn validate_future_imports(&self, body: &[Stmt]) -> Result<(), CompileError> {
+        let mut idx = 0usize;
+        if let Some(first) = body.first() {
+            if matches!(
+                first.node,
+                StmtKind::Expr(Expr {
+                    node: ExprKind::Constant(Constant::Str(_)),
+                    ..
+                })
+            ) {
+                idx = 1;
+            }
+        }
+
+        let mut seen_non_future = false;
+        for stmt in body.iter().skip(idx) {
+            match &stmt.node {
+                StmtKind::ImportFrom { module, names, level } if *level == 0 => {
+                    if module.as_deref() == Some("__future__") {
+                        if seen_non_future {
+                            return Err(CompileError::new(
+                                "from __future__ imports must occur at the beginning of the file",
+                            ));
+                        }
+                        for alias in names {
+                            let name = alias.name.as_str();
+                            let known = matches!(
+                                name,
+                                "annotations"
+                                    | "nested_scopes"
+                                    | "generators"
+                                    | "division"
+                                    | "absolute_import"
+                                    | "with_statement"
+                                    | "print_function"
+                                    | "unicode_literals"
+                                    | "generator_stop"
+                                    | "barry_as_FLUFL"
+                            );
+                            if !known {
+                                return Err(CompileError::new(format!(
+                                    "future feature '{}' is not defined",
+                                    alias.name
+                                )));
+                            }
+                        }
+                        continue;
+                    }
+                    seen_non_future = true;
+                }
+                _ => {
+                    seen_non_future = true;
+                }
+            }
         }
         Ok(())
     }
@@ -960,6 +1131,8 @@ impl Compiler {
             StmtKind::While { test, body, orelse } => compiler.compile_while(test, body, orelse),
             StmtKind::FunctionDef {
                 name,
+                type_params,
+                is_async,
                 posonly_params,
                 params,
                 vararg,
@@ -968,6 +1141,7 @@ impl Compiler {
                 returns,
                 body,
             } => {
+                let _ = (type_params, is_async);
                 let func_code = compiler.compile_function(
                     name,
                     posonly_params,
@@ -989,8 +1163,17 @@ impl Compiler {
                 compiler.emit_store_name_scoped(name)?;
                 Ok(())
             }
-            StmtKind::ClassDef { name, bases, body } => {
+            StmtKind::ClassDef {
+                name,
+                type_params,
+                bases,
+                body,
+            } => {
+                let _ = type_params;
                 compiler.compile_class_def(name, bases, body)
+            }
+            StmtKind::Decorated { decorators, stmt } => {
+                compiler.compile_decorated_stmt(decorators, stmt)
             }
             StmtKind::Return { value } => {
                 if let Some(expr) = value {
@@ -1010,11 +1193,15 @@ impl Compiler {
                 finalbody,
             } => compiler.compile_try(body, handlers, orelse, finalbody),
             StmtKind::For {
+                is_async,
                 target,
                 iter,
                 body,
                 orelse,
-            } => compiler.compile_for(target, iter, body, orelse),
+            } => {
+                let _ = is_async;
+                compiler.compile_for(target, iter, body, orelse)
+            }
             StmtKind::Import { names } => {
                 for alias in names {
                     let const_idx = compiler.code.add_const(Value::Str(alias.name.clone()));
@@ -1058,10 +1245,15 @@ impl Compiler {
             StmtKind::Global { .. } => Ok(()),
             StmtKind::Nonlocal { .. } => Ok(()),
             StmtKind::With {
+                is_async,
                 context,
                 target,
                 body,
-            } => compiler.compile_with(context, target.as_ref(), body),
+            } => {
+                let _ = is_async;
+                compiler.compile_with(context, target.as_ref(), body)
+            }
+            StmtKind::Match { subject, cases } => compiler.compile_match(subject, cases),
             StmtKind::Break => compiler.compile_break(),
             StmtKind::Continue => compiler.compile_continue(),
         })
@@ -1122,6 +1314,12 @@ impl Compiler {
             }
             ExprKind::BoolOp { op, left, right } => compiler.compile_bool_op(op, left, right),
             ExprKind::IfExpr { test, body, orelse } => compiler.compile_if_expr(test, body, orelse),
+            ExprKind::NamedExpr { target, value } => {
+                compiler.compile_expr(value)?;
+                compiler.emit(Opcode::DupTop, None);
+                compiler.emit_store_name_scoped(target)?;
+                Ok(())
+            }
             ExprKind::Lambda {
                 posonly_params,
                 params,
@@ -1169,6 +1367,16 @@ impl Compiler {
                 compiler.compile_expr(value)?;
                 compiler.emit(Opcode::YieldFrom, None);
                 Ok(())
+            }
+            ExprKind::Await { value } => compiler.compile_expr(value),
+            ExprKind::ListComp { elt, clauses } => compiler.compile_list_comp(elt, clauses),
+            ExprKind::DictComp {
+                key,
+                value,
+                clauses,
+            } => compiler.compile_dict_comp(key, value, clauses),
+            ExprKind::GeneratorExp { elt, clauses } => {
+                compiler.compile_generator_expr(elt, clauses)
             }
             ExprKind::Call { func, args } => {
                 compiler.compile_expr(func)?;
@@ -1691,6 +1899,235 @@ impl Compiler {
         Ok(compiler.finish())
     }
 
+    fn compile_decorated_stmt(
+        &mut self,
+        decorators: &[Expr],
+        stmt: &Stmt,
+    ) -> Result<(), CompileError> {
+        self.compile_stmt(stmt)?;
+        let target_name = match &stmt.node {
+            StmtKind::FunctionDef { name, .. } | StmtKind::ClassDef { name, .. } => name.clone(),
+            _ => {
+                return Err(CompileError::new(
+                    "decorators can only target function or class definitions",
+                ));
+            }
+        };
+
+        let mut temp_names = Vec::new();
+        for decorator in decorators {
+            let temp = self.fresh_temp("decorator");
+            self.compile_expr(decorator)?;
+            self.emit_store_name(&temp);
+            temp_names.push(temp);
+        }
+
+        for temp in temp_names.iter().rev() {
+            self.emit_load_name(temp)?;
+            self.emit_load_name(&target_name)?;
+            self.emit(Opcode::CallFunction, Some(1));
+            self.emit_store_name_scoped(&target_name)?;
+        }
+
+        Ok(())
+    }
+
+    fn compile_match(&mut self, subject: &Expr, cases: &[MatchCase]) -> Result<(), CompileError> {
+        let subject_temp = self.fresh_temp("match_subject");
+        self.compile_expr(subject)?;
+        self.emit_store_name(&subject_temp);
+
+        let mut end_jumps = Vec::new();
+        for case in cases {
+            self.compile_pattern_test(&case.pattern, &subject_temp)?;
+            let next_case = self.emit_jump(Opcode::JumpIfFalse);
+
+            self.compile_pattern_bindings(&case.pattern, &subject_temp)?;
+            let guard_jump = if let Some(guard) = &case.guard {
+                self.compile_expr(guard)?;
+                Some(self.emit_jump(Opcode::JumpIfFalse))
+            } else {
+                None
+            };
+
+            for stmt in &case.body {
+                self.compile_stmt(stmt)?;
+            }
+            end_jumps.push(self.emit_jump(Opcode::Jump));
+
+            let next_ip = self.current_ip();
+            self.patch_jump(next_case, next_ip)?;
+            if let Some(jump) = guard_jump {
+                self.patch_jump(jump, next_ip)?;
+            }
+        }
+
+        let end_ip = self.current_ip();
+        for jump in end_jumps {
+            self.patch_jump(jump, end_ip)?;
+        }
+        Ok(())
+    }
+
+    fn compile_pattern_test(
+        &mut self,
+        pattern: &Pattern,
+        subject_temp: &str,
+    ) -> Result<(), CompileError> {
+        match pattern {
+            Pattern::Wildcard | Pattern::Capture(_) => {
+                self.emit_const(Value::Bool(true));
+                Ok(())
+            }
+            Pattern::Constant(value) => {
+                self.emit_load_name(subject_temp)?;
+                self.emit_const(constant_to_value(value));
+                self.emit(Opcode::CompareEq, None);
+                Ok(())
+            }
+        }
+    }
+
+    fn compile_pattern_bindings(
+        &mut self,
+        pattern: &Pattern,
+        subject_temp: &str,
+    ) -> Result<(), CompileError> {
+        if let Pattern::Capture(name) = pattern {
+            self.emit_load_name(subject_temp)?;
+            self.emit_store_name_scoped(name)?;
+        }
+        Ok(())
+    }
+
+    fn compile_list_comp(
+        &mut self,
+        elt: &Expr,
+        clauses: &[ComprehensionClause],
+    ) -> Result<(), CompileError> {
+        let result_name = "__pyrs_comp_result".to_string();
+        let append_stmt = Stmt {
+            span: elt.span,
+            node: StmtKind::AugAssign {
+                target: AssignTarget::Name(result_name.clone()),
+                op: crate::ast::AugOp::Add,
+                value: Expr {
+                    span: elt.span,
+                    node: ExprKind::List(vec![elt.clone()]),
+                },
+            },
+        };
+        let mut body = vec![Stmt {
+            span: elt.span,
+            node: StmtKind::Assign {
+                target: AssignTarget::Name(result_name.clone()),
+                value: Expr {
+                    span: elt.span,
+                    node: ExprKind::List(Vec::new()),
+                },
+            },
+        }];
+        body.extend(build_comp_stmt_chain(clauses, vec![append_stmt], elt.span));
+        body.push(Stmt {
+            span: elt.span,
+            node: StmtKind::Return {
+                value: Some(Expr {
+                    span: elt.span,
+                    node: ExprKind::Name(result_name),
+                }),
+            },
+        });
+        self.emit_comp_function("<listcomp>", body)
+    }
+
+    fn compile_dict_comp(
+        &mut self,
+        key: &Expr,
+        value: &Expr,
+        clauses: &[ComprehensionClause],
+    ) -> Result<(), CompileError> {
+        let result_name = "__pyrs_comp_result".to_string();
+        let assign_stmt = Stmt {
+            span: key.span,
+            node: StmtKind::Assign {
+                target: AssignTarget::Subscript {
+                    value: Box::new(Expr {
+                        span: key.span,
+                        node: ExprKind::Name(result_name.clone()),
+                    }),
+                    index: Box::new(key.clone()),
+                },
+                value: value.clone(),
+            },
+        };
+
+        let mut body = vec![Stmt {
+            span: key.span,
+            node: StmtKind::Assign {
+                target: AssignTarget::Name(result_name.clone()),
+                value: Expr {
+                    span: key.span,
+                    node: ExprKind::Dict(Vec::new()),
+                },
+            },
+        }];
+        body.extend(build_comp_stmt_chain(clauses, vec![assign_stmt], key.span));
+        body.push(Stmt {
+            span: key.span,
+            node: StmtKind::Return {
+                value: Some(Expr {
+                    span: key.span,
+                    node: ExprKind::Name(result_name),
+                }),
+            },
+        });
+        self.emit_comp_function("<dictcomp>", body)
+    }
+
+    fn compile_generator_expr(
+        &mut self,
+        elt: &Expr,
+        clauses: &[ComprehensionClause],
+    ) -> Result<(), CompileError> {
+        let yield_stmt = Stmt {
+            span: elt.span,
+            node: StmtKind::Expr(Expr {
+                span: elt.span,
+                node: ExprKind::Yield {
+                    value: Some(Box::new(elt.clone())),
+                },
+            }),
+        };
+        let body = build_comp_stmt_chain(clauses, vec![yield_stmt], elt.span);
+        self.emit_comp_function("<genexpr>", body)
+    }
+
+    fn emit_comp_function(&mut self, name: &str, body: Vec<Stmt>) -> Result<(), CompileError> {
+        let empty_params: Vec<Parameter> = Vec::new();
+        let vararg: Option<Parameter> = None;
+        let kwarg: Option<Parameter> = None;
+        let func_code = self.compile_function(
+            name,
+            &empty_params,
+            &empty_params,
+            &empty_params,
+            &vararg,
+            &kwarg,
+            &body,
+        )?;
+        self.emit_function_with_defaults(
+            &empty_params,
+            &empty_params,
+            &empty_params,
+            &vararg,
+            &kwarg,
+            None,
+            func_code,
+        )?;
+        self.emit(Opcode::CallFunction, Some(0));
+        Ok(())
+    }
+
     fn compile_assign_target(
         &mut self,
         target: &AssignTarget,
@@ -2198,6 +2635,38 @@ impl Compiler {
         }
         Ok(())
     }
+}
+
+fn build_comp_stmt_chain(
+    clauses: &[ComprehensionClause],
+    leaf: Vec<Stmt>,
+    span: Span,
+) -> Vec<Stmt> {
+    if clauses.is_empty() {
+        return leaf;
+    }
+    let first = &clauses[0];
+    let mut nested = build_comp_stmt_chain(&clauses[1..], leaf, span);
+    for cond in first.ifs.iter().rev() {
+        nested = vec![Stmt {
+            span,
+            node: StmtKind::If {
+                test: cond.clone(),
+                body: nested,
+                orelse: Vec::new(),
+            },
+        }];
+    }
+    vec![Stmt {
+        span,
+        node: StmtKind::For {
+            is_async: first.is_async,
+            target: first.target.clone(),
+            iter: first.iter.clone(),
+            body: nested,
+            orelse: Vec::new(),
+        },
+    }]
 }
 
 fn pack_call_counts(positional: u32, keywords: u32) -> Result<u32, CompileError> {

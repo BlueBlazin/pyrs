@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    AssignTarget, BinaryOp, BoolOp, CallArg, Constant, ExceptHandler, Expr, ExprKind, ImportAlias,
-    Module, Parameter, Span, Stmt, StmtKind, UnaryOp,
+    AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, ExceptHandler, Expr,
+    ExprKind, ImportAlias, MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -143,6 +143,9 @@ impl Parser {
 
     fn parse_stmt_uncached(&mut self, pos: usize) -> ParseResult<Stmt> {
         let start = pos;
+        if matches!(self.token_at(pos).kind, TokenKind::At) {
+            return self.parse_decorated_stmt(pos);
+        }
         if let Some((target_expr, next_pos)) = self.parse_assignment_target_list(pos) {
             let kind = self.token_at(next_pos).kind.clone();
             if kind == TokenKind::Colon {
@@ -207,9 +210,27 @@ impl Parser {
                 ));
             }
         }
+        if self.match_soft_keyword(pos, Keyword::Match, "match")
+            && !matches!(
+                self.token_at(pos + 1).kind,
+                TokenKind::Equal
+                    | TokenKind::PlusEqual
+                    | TokenKind::MinusEqual
+                    | TokenKind::StarEqual
+                    | TokenKind::DoubleStarEqual
+                    | TokenKind::DoubleSlashEqual
+                    | TokenKind::PercentEqual
+                    | TokenKind::ColonEqual
+            )
+        {
+            if let Ok(parsed) = self.parse_match_stmt(pos) {
+                return Ok(parsed);
+            }
+        }
         let token = self.token_at(pos);
         match token.kind {
             TokenKind::Keyword(Keyword::Def) => self.parse_function_def(pos),
+            TokenKind::Keyword(Keyword::Async) => self.parse_async_stmt(pos),
             TokenKind::Keyword(Keyword::Return) => self.parse_return_stmt(pos),
             TokenKind::Keyword(Keyword::If) => self.parse_if_stmt(pos),
             TokenKind::Keyword(Keyword::While) => self.parse_while_stmt(pos),
@@ -239,6 +260,127 @@ impl Parser {
         }
     }
 
+    fn parse_decorated_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
+        let mut pos = pos;
+        let mut decorators = Vec::new();
+        while matches!(self.token_at(pos).kind, TokenKind::At) {
+            pos += 1;
+            let (expr, next) = self.parse_expr_at(pos)?;
+            decorators.push(expr);
+            pos = self.consume_terminators(next)?;
+            pos = self.consume_separators(pos);
+        }
+        let (stmt, pos) = self.parse_stmt_at(pos)?;
+        let valid_target = matches!(
+            stmt.node,
+            StmtKind::FunctionDef { .. } | StmtKind::ClassDef { .. }
+        );
+        if !valid_target {
+            return Err(self.error_at(start, "decorator must target function or class definition"));
+        }
+        Ok((
+            self.make_stmt(
+                start,
+                StmtKind::Decorated {
+                    decorators,
+                    stmt: Box::new(stmt),
+                },
+            ),
+            pos,
+        ))
+    }
+
+    fn parse_async_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let next = pos + 1;
+        match self.token_at(next).kind {
+            TokenKind::Keyword(Keyword::Def) => self.parse_function_def_internal(pos, next, true),
+            TokenKind::Keyword(Keyword::For) => self.parse_for_stmt_internal(pos, next, true),
+            TokenKind::Keyword(Keyword::With) => self.parse_with_stmt_internal(pos, next, true),
+            _ => Err(self.error_at(pos, "expected 'def', 'for', or 'with' after 'async'")),
+        }
+    }
+
+    fn parse_match_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        let start = pos;
+        let mut pos = pos + 1;
+        let (subject, next) = self.parse_expr_at(pos)?;
+        pos = next;
+        pos = self.expect_kind(pos, TokenKind::Colon)?;
+        pos = self.expect_kind(pos, TokenKind::Newline)?;
+        pos = self.expect_kind(pos, TokenKind::Indent)?;
+
+        let mut cases = Vec::new();
+        pos = self.consume_separators(pos);
+        while !matches!(
+            self.token_at(pos).kind,
+            TokenKind::Dedent | TokenKind::EndMarker
+        ) {
+            if !self.match_soft_keyword(pos, Keyword::Case, "case") {
+                return Err(self.error_at(pos, "expected case clause"));
+            }
+            pos += 1;
+            let (pattern, next) = self.parse_match_pattern(pos)?;
+            pos = next;
+            let mut guard = None;
+            if self.match_keyword(pos, Keyword::If) {
+                let (expr, next) = self.parse_expr_at(pos + 1)?;
+                guard = Some(expr);
+                pos = next;
+            }
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (body, next) = self.parse_suite(pos)?;
+            pos = next;
+            cases.push(MatchCase {
+                pattern,
+                guard,
+                body,
+            });
+            pos = self.consume_separators(pos);
+        }
+        pos = self.expect_kind(pos, TokenKind::Dedent)?;
+        Ok((self.make_stmt(start, StmtKind::Match { subject, cases }), pos))
+    }
+
+    fn parse_match_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
+        let token = self.token_at(pos);
+        match &token.kind {
+            TokenKind::Name => {
+                if token.lexeme == "_" {
+                    Ok((Pattern::Wildcard, pos + 1))
+                } else {
+                    Ok((Pattern::Capture(token.lexeme.clone()), pos + 1))
+                }
+            }
+            TokenKind::Number => {
+                let value = self.parse_int_literal(&token.lexeme, pos)?;
+                Ok((Pattern::Constant(Constant::Int(value)), pos + 1))
+            }
+            TokenKind::String => Ok((
+                Pattern::Constant(Constant::Str(token.lexeme.clone())),
+                pos + 1,
+            )),
+            TokenKind::Keyword(Keyword::TrueLiteral) => {
+                Ok((Pattern::Constant(Constant::Bool(true)), pos + 1))
+            }
+            TokenKind::Keyword(Keyword::FalseLiteral) => {
+                Ok((Pattern::Constant(Constant::Bool(false)), pos + 1))
+            }
+            TokenKind::Keyword(Keyword::NoneLiteral) => {
+                Ok((Pattern::Constant(Constant::None), pos + 1))
+            }
+            TokenKind::Minus => {
+                let next = self.token_at(pos + 1);
+                if next.kind != TokenKind::Number {
+                    return Err(self.error_at(pos, "expected numeric pattern"));
+                }
+                let value = self.parse_int_literal(&next.lexeme, pos + 1)?;
+                Ok((Pattern::Constant(Constant::Int(-value)), pos + 2))
+            }
+            _ => Err(self.error_at(pos, "unsupported pattern")),
+        }
+    }
+
     fn parse_expr_at(&mut self, pos: usize) -> ParseResult<Expr> {
         if let Some(entry) = self.expr_memo.get(&pos) {
             return entry.result.clone();
@@ -260,8 +402,30 @@ impl Parser {
         } else if self.match_keyword(pos, Keyword::Lambda) {
             self.parse_lambda(pos)
         } else {
-            self.parse_if_expr(pos)
+            self.parse_named_expr(pos)
         }
+    }
+
+    fn parse_named_expr(&mut self, pos: usize) -> ParseResult<Expr> {
+        let (left, pos) = self.parse_if_expr(pos)?;
+        if self.token_at(pos).kind != TokenKind::ColonEqual {
+            return Ok((left, pos));
+        }
+        let target = match &left.node {
+            ExprKind::Name(name) => name.clone(),
+            _ => return Err(self.error_at(pos, "assignment expression target must be a name")),
+        };
+        let (value, next) = self.parse_expr_at(pos + 1)?;
+        Ok((
+            Expr {
+                node: ExprKind::NamedExpr {
+                    target,
+                    value: Box::new(value),
+                },
+                span: left.span,
+            },
+            next,
+        ))
     }
 
     fn parse_yield_expr(&mut self, pos: usize) -> ParseResult<Expr> {
@@ -535,6 +699,19 @@ impl Parser {
     }
 
     fn parse_unary(&mut self, pos: usize) -> ParseResult<Expr> {
+        if self.match_keyword(pos, Keyword::Await) {
+            let start = pos;
+            let (expr, next) = self.parse_unary(pos + 1)?;
+            return Ok((
+                self.make_expr(
+                    start,
+                    ExprKind::Await {
+                        value: Box::new(expr),
+                    },
+                ),
+                next,
+            ));
+        }
         if matches!(self.token_at(pos).kind, TokenKind::Minus) {
             let start = pos;
             let (expr, next) = self.parse_unary(pos + 1)?;
@@ -567,17 +744,14 @@ impl Parser {
     }
 
     fn parse_atom(&mut self, pos: usize) -> ParseResult<Expr> {
-        let token = self.token_at(pos);
+        let token = self.token_at(pos).clone();
         let (mut expr, mut pos) = match &token.kind {
             TokenKind::Name => (
                 self.make_expr(pos, ExprKind::Name(token.lexeme.clone())),
                 pos + 1,
             ),
             TokenKind::Number => {
-                let value = token
-                    .lexeme
-                    .parse::<i64>()
-                    .map_err(|_| self.error_at(pos, "invalid integer literal"))?;
+                let value = self.parse_int_literal(&token.lexeme, pos)?;
                 (
                     self.make_expr(pos, ExprKind::Constant(Constant::Int(value))),
                     pos + 1,
@@ -587,6 +761,7 @@ impl Parser {
                 self.make_expr(pos, ExprKind::Constant(Constant::Str(token.lexeme.clone()))),
                 pos + 1,
             ),
+            TokenKind::FString => (self.parse_fstring_literal(pos, &token.lexeme)?, pos + 1),
             TokenKind::Keyword(Keyword::TrueLiteral) => (
                 self.make_expr(pos, ExprKind::Constant(Constant::Bool(true))),
                 pos + 1,
@@ -604,12 +779,12 @@ impl Parser {
                 (expr, next)
             }
             TokenKind::LBracket => {
-                let (elements, next) = self.parse_list_elements(pos + 1)?;
-                (self.make_expr(pos, ExprKind::List(elements)), next)
+                let (expr, next) = self.parse_list_or_comp(pos + 1)?;
+                (expr, next)
             }
             TokenKind::LBrace => {
-                let (entries, next) = self.parse_dict_entries(pos + 1)?;
-                (self.make_expr(pos, ExprKind::Dict(entries)), next)
+                let (expr, next) = self.parse_dict_or_comp(pos + 1)?;
+                (expr, next)
             }
             _ => return Err(self.error_at(pos, "expected expression")),
         };
@@ -721,8 +896,20 @@ impl Parser {
     }
 
     fn parse_for_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
-        let start = pos;
-        let mut pos = pos + 1;
+        self.parse_for_stmt_internal(pos, pos, false)
+    }
+
+    fn parse_with_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
+        self.parse_with_stmt_internal(pos, pos, false)
+    }
+
+    fn parse_for_stmt_internal(
+        &mut self,
+        start: usize,
+        for_pos: usize,
+        is_async: bool,
+    ) -> ParseResult<Stmt> {
+        let mut pos = for_pos + 1;
         let (target, next) = self
             .parse_assignment_target_list(pos)
             .ok_or_else(|| self.error_at(pos, "expected loop target"))?;
@@ -751,6 +938,7 @@ impl Parser {
             self.make_stmt(
                 start,
                 StmtKind::For {
+                    is_async,
                     target,
                     iter,
                     body,
@@ -761,9 +949,13 @@ impl Parser {
         ))
     }
 
-    fn parse_with_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
-        let start = pos;
-        let mut pos = pos + 1;
+    fn parse_with_stmt_internal(
+        &mut self,
+        start: usize,
+        with_pos: usize,
+        is_async: bool,
+    ) -> ParseResult<Stmt> {
+        let mut pos = with_pos + 1;
         let (context, next) = self.parse_expr_at(pos)?;
         pos = next;
 
@@ -784,6 +976,7 @@ impl Parser {
             self.make_stmt(
                 start,
                 StmtKind::With {
+                    is_async,
                     context,
                     target,
                     body,
@@ -810,6 +1003,11 @@ impl Parser {
                 break;
             }
             pos = except_pos + 1;
+            let mut is_star = false;
+            if matches!(self.token_at(pos).kind, TokenKind::Star) {
+                is_star = true;
+                pos += 1;
+            }
 
             let mut type_expr = None;
             let mut name = None;
@@ -834,6 +1032,7 @@ impl Parser {
             handlers.push(ExceptHandler {
                 type_expr,
                 name,
+                is_star,
                 body: suite,
             });
         }
@@ -1210,14 +1409,24 @@ impl Parser {
     }
 
     fn parse_function_def(&mut self, pos: usize) -> ParseResult<Stmt> {
-        let start = pos;
-        let mut pos = pos + 1;
+        self.parse_function_def_internal(pos, pos, false)
+    }
+
+    fn parse_function_def_internal(
+        &mut self,
+        start: usize,
+        def_pos: usize,
+        is_async: bool,
+    ) -> ParseResult<Stmt> {
+        let mut pos = def_pos + 1;
         let name_token = self.token_at(pos);
         if name_token.kind != TokenKind::Name {
             return Err(self.error_at(pos, "expected function name"));
         }
         let name = name_token.lexeme.clone();
         pos += 1;
+        let (type_params, next) = self.parse_type_params(pos)?;
+        pos = next;
         pos = self.expect_kind(pos, TokenKind::LParen)?;
         let (posonly_params, params, kwonly_params, vararg, kwarg, next) =
             self.parse_parameters(pos)?;
@@ -1236,6 +1445,8 @@ impl Parser {
                 start,
                 StmtKind::FunctionDef {
                     name,
+                    type_params,
+                    is_async,
                     posonly_params,
                     params,
                     vararg,
@@ -1258,6 +1469,8 @@ impl Parser {
         }
         let name = name_token.lexeme.clone();
         pos += 1;
+        let (type_params, next) = self.parse_type_params(pos)?;
+        pos = next;
 
         let mut bases = Vec::new();
         if matches!(self.token_at(pos).kind, TokenKind::LParen) {
@@ -1277,9 +1490,43 @@ impl Parser {
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
         Ok((
-            self.make_stmt(start, StmtKind::ClassDef { name, bases, body }),
+            self.make_stmt(
+                start,
+                StmtKind::ClassDef {
+                    name,
+                    type_params,
+                    bases,
+                    body,
+                },
+            ),
             pos,
         ))
+    }
+
+    fn parse_type_params(&mut self, pos: usize) -> Result<(Vec<String>, usize), ParseError> {
+        if !matches!(self.token_at(pos).kind, TokenKind::LBracket) {
+            return Ok((Vec::new(), pos));
+        }
+        let mut pos = pos + 1;
+        let mut params = Vec::new();
+        if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+            return Err(self.error_at(pos, "type parameter list cannot be empty"));
+        }
+        loop {
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected type parameter name"));
+            }
+            params.push(token.lexeme.clone());
+            pos += 1;
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+        pos = self.expect_kind(pos, TokenKind::RBracket)?;
+        Ok((params, pos))
     }
 
     fn parse_return_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -1354,6 +1601,280 @@ impl Parser {
         Ok((args, pos))
     }
 
+    fn parse_int_literal(&self, lexeme: &str, pos: usize) -> Result<i64, ParseError> {
+        let normalized = lexeme.replace('_', "");
+        if let Some(rest) = normalized
+            .strip_prefix("0x")
+            .or_else(|| normalized.strip_prefix("0X"))
+        {
+            return i64::from_str_radix(rest, 16)
+                .map_err(|_| self.error_at(pos, "invalid integer literal"));
+        }
+        if let Some(rest) = normalized
+            .strip_prefix("0o")
+            .or_else(|| normalized.strip_prefix("0O"))
+        {
+            return i64::from_str_radix(rest, 8)
+                .map_err(|_| self.error_at(pos, "invalid integer literal"));
+        }
+        if let Some(rest) = normalized
+            .strip_prefix("0b")
+            .or_else(|| normalized.strip_prefix("0B"))
+        {
+            return i64::from_str_radix(rest, 2)
+                .map_err(|_| self.error_at(pos, "invalid integer literal"));
+        }
+        normalized
+            .parse::<i64>()
+            .map_err(|_| self.error_at(pos, "invalid integer literal"))
+    }
+
+    fn parse_fstring_literal(&mut self, pos: usize, content: &str) -> Result<Expr, ParseError> {
+        let span = self.span_at(pos);
+        let mut pieces: Vec<Expr> = Vec::new();
+        let mut literal = String::new();
+        let mut chars = content.char_indices().peekable();
+
+        while let Some((idx, ch)) = chars.next() {
+            if ch == '{' {
+                if matches!(chars.peek(), Some((_, '{'))) {
+                    chars.next();
+                    literal.push('{');
+                    continue;
+                }
+                if !literal.is_empty() {
+                    pieces.push(Expr {
+                        node: ExprKind::Constant(Constant::Str(std::mem::take(&mut literal))),
+                        span,
+                    });
+                }
+
+                let expr_start = idx + ch.len_utf8();
+                let mut depth = 1usize;
+                let mut expr_end = None;
+                for (inner_idx, inner_ch) in chars.by_ref() {
+                    if inner_ch == '{' {
+                        depth += 1;
+                    } else if inner_ch == '}' {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            expr_end = Some(inner_idx);
+                            break;
+                        }
+                    }
+                }
+
+                let end = expr_end.ok_or_else(|| self.error_at(pos, "unterminated f-string"))?;
+                let expr_text = content[expr_start..end].trim();
+                if expr_text.is_empty() {
+                    return Err(self.error_at(pos, "empty f-string expression"));
+                }
+                let embedded = self.parse_embedded_expr(expr_text).map_err(|err| {
+                    self.error_at(
+                        pos,
+                        format!("invalid f-string expression: {}", err.message),
+                    )
+                })?;
+                let str_name = Expr {
+                    node: ExprKind::Name("str".to_string()),
+                    span,
+                };
+                pieces.push(Expr {
+                    node: ExprKind::Call {
+                        func: Box::new(str_name),
+                        args: vec![CallArg::Positional(embedded)],
+                    },
+                    span,
+                });
+                continue;
+            }
+
+            if ch == '}' {
+                if matches!(chars.peek(), Some((_, '}'))) {
+                    chars.next();
+                    literal.push('}');
+                    continue;
+                }
+                return Err(self.error_at(pos, "single '}' is not allowed in f-string"));
+            }
+
+            literal.push(ch);
+        }
+
+        if !literal.is_empty() {
+            pieces.push(Expr {
+                node: ExprKind::Constant(Constant::Str(literal)),
+                span,
+            });
+        }
+
+        if pieces.is_empty() {
+            return Ok(Expr {
+                node: ExprKind::Constant(Constant::Str(String::new())),
+                span,
+            });
+        }
+
+        let mut iter = pieces.into_iter();
+        let mut expr = iter.next().expect("non-empty");
+        for piece in iter {
+            expr = Expr {
+                span,
+                node: ExprKind::Binary {
+                    left: Box::new(expr),
+                    op: BinaryOp::Add,
+                    right: Box::new(piece),
+                },
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_embedded_expr(&self, source: &str) -> Result<Expr, ParseError> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().map_err(ParseError::from)?;
+        let mut parser = Parser::new(tokens);
+        let (expr, pos) = parser.parse_expr_at(0)?;
+        parser.expect_end(pos)?;
+        Ok(expr)
+    }
+
+    fn is_comprehension_start(&self, pos: usize) -> bool {
+        self.match_keyword(pos, Keyword::For)
+            || (self.match_keyword(pos, Keyword::Async) && self.match_keyword(pos + 1, Keyword::For))
+    }
+
+    fn parse_comp_clauses(
+        &mut self,
+        mut pos: usize,
+    ) -> Result<(Vec<ComprehensionClause>, usize), ParseError> {
+        let mut clauses = Vec::new();
+        loop {
+            let mut is_async = false;
+            if self.match_keyword(pos, Keyword::Async) {
+                is_async = true;
+                pos += 1;
+            }
+            if !self.match_keyword(pos, Keyword::For) {
+                if clauses.is_empty() {
+                    return Err(self.error_at(pos, "expected comprehension for-clause"));
+                }
+                break;
+            }
+            pos += 1;
+            let (target, next) = self
+                .parse_assignment_target_list(pos)
+                .ok_or_else(|| self.error_at(pos, "expected comprehension target"))?;
+            pos = next;
+            if !self.match_keyword(pos, Keyword::In) {
+                return Err(self.error_at(pos, "expected 'in' in comprehension"));
+            }
+            pos += 1;
+            let (iter, next) = self.parse_or(pos)?;
+            pos = next;
+
+            let mut ifs = Vec::new();
+            while self.match_keyword(pos, Keyword::If) {
+                let (cond, next) = self.parse_or(pos + 1)?;
+                ifs.push(cond);
+                pos = next;
+            }
+            clauses.push(ComprehensionClause {
+                is_async,
+                target,
+                iter,
+                ifs,
+            });
+
+            if !self.is_comprehension_start(pos) {
+                break;
+            }
+        }
+        Ok((clauses, pos))
+    }
+
+    fn parse_list_or_comp(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        let start = pos.saturating_sub(1);
+        if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+            return Ok((self.make_expr(start, ExprKind::List(Vec::new())), pos + 1));
+        }
+        let (first, mut pos) = self.parse_expr_at(pos)?;
+        if self.is_comprehension_start(pos) {
+            let (clauses, next) = self.parse_comp_clauses(pos)?;
+            let pos = self.expect_kind(next, TokenKind::RBracket)?;
+            return Ok((
+                self.make_expr(
+                    start,
+                    ExprKind::ListComp {
+                        elt: Box::new(first),
+                        clauses,
+                    },
+                ),
+                pos,
+            ));
+        }
+
+        let mut elements = vec![first];
+        while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            pos += 1;
+            if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
+                break;
+            }
+            let (expr, next) = self.parse_expr_at(pos)?;
+            elements.push(expr);
+            pos = next;
+        }
+        pos = self.expect_kind(pos, TokenKind::RBracket)?;
+        Ok((self.make_expr(start, ExprKind::List(elements)), pos))
+    }
+
+    fn parse_dict_or_comp(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        let start = pos.saturating_sub(1);
+        if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
+            return Ok((self.make_expr(start, ExprKind::Dict(Vec::new())), pos + 1));
+        }
+
+        let (first_key, mut pos) = self.parse_expr_at(pos)?;
+        if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
+            return Err(self.error_at(pos, "set literals are not supported"));
+        }
+        pos += 1;
+        let (first_value, mut pos) = self.parse_expr_at(pos)?;
+
+        if self.is_comprehension_start(pos) {
+            let (clauses, next) = self.parse_comp_clauses(pos)?;
+            let pos = self.expect_kind(next, TokenKind::RBrace)?;
+            return Ok((
+                self.make_expr(
+                    start,
+                    ExprKind::DictComp {
+                        key: Box::new(first_key),
+                        value: Box::new(first_value),
+                        clauses,
+                    },
+                ),
+                pos,
+            ));
+        }
+
+        let mut entries = vec![(first_key, first_value)];
+        while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            pos += 1;
+            if matches!(self.token_at(pos).kind, TokenKind::RBrace) {
+                break;
+            }
+            let (key, next) = self.parse_expr_at(pos)?;
+            pos = next;
+            pos = self.expect_kind(pos, TokenKind::Colon)?;
+            let (value, next) = self.parse_expr_at(pos)?;
+            entries.push((key, value));
+            pos = next;
+        }
+
+        pos = self.expect_kind(pos, TokenKind::RBrace)?;
+        Ok((self.make_expr(start, ExprKind::Dict(entries)), pos))
+    }
+
     fn parse_list_elements(&mut self, pos: usize) -> Result<(Vec<Expr>, usize), ParseError> {
         let mut pos = pos;
         let mut elements = Vec::new();
@@ -1382,14 +1903,29 @@ impl Parser {
     }
 
     fn parse_paren_expr(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        let start = pos.saturating_sub(1);
         if matches!(self.token_at(pos).kind, TokenKind::RParen) {
             return Ok((
-                self.make_expr(pos.saturating_sub(1), ExprKind::Tuple(Vec::new())),
+                self.make_expr(start, ExprKind::Tuple(Vec::new())),
                 pos + 1,
             ));
         }
 
         let (first, mut pos) = self.parse_expr_at(pos)?;
+        if self.is_comprehension_start(pos) {
+            let (clauses, next) = self.parse_comp_clauses(pos)?;
+            let pos = self.expect_kind(next, TokenKind::RParen)?;
+            return Ok((
+                self.make_expr(
+                    start,
+                    ExprKind::GeneratorExp {
+                        elt: Box::new(first),
+                        clauses,
+                    },
+                ),
+                pos,
+            ));
+        }
         if !matches!(self.token_at(pos).kind, TokenKind::Comma) {
             let pos = self.expect_kind(pos, TokenKind::RParen)?;
             return Ok((first, pos));
@@ -1950,6 +2486,12 @@ impl Parser {
         matches!(self.token_at(pos).kind, TokenKind::Keyword(k) if k == keyword)
     }
 
+    fn match_soft_keyword(&self, pos: usize, keyword: Keyword, lexeme: &str) -> bool {
+        self.match_keyword(pos, keyword)
+            || matches!(self.token_at(pos).kind, TokenKind::Name)
+                && self.token_at(pos).lexeme == lexeme
+    }
+
     fn expect_end(&self, pos: usize) -> Result<(), ParseError> {
         if self.is_end(pos) {
             Ok(())
@@ -1984,5 +2526,7 @@ fn stmt_allows_missing_terminator(stmt: &Stmt) -> bool {
             | StmtKind::ClassDef { .. }
             | StmtKind::Try { .. }
             | StmtKind::With { .. }
+            | StmtKind::Match { .. }
+            | StmtKind::Decorated { .. }
     )
 }

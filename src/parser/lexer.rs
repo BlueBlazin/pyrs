@@ -130,7 +130,18 @@ impl<'a> Lexer<'a> {
                 }
                 ':' => {
                     self.advance();
-                    tokens.push(Token::new(TokenKind::Colon, ":", offset, line, column));
+                    if self.peek_char() == Some('=') {
+                        self.advance();
+                        tokens.push(Token::new(
+                            TokenKind::ColonEqual,
+                            ":=",
+                            offset,
+                            line,
+                            column,
+                        ));
+                    } else {
+                        tokens.push(Token::new(TokenKind::Colon, ":", offset, line, column));
+                    }
                 }
                 '=' => {
                     self.advance();
@@ -286,6 +297,10 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token::new(TokenKind::Percent, "%", offset, line, column));
                     }
                 }
+                '@' => {
+                    self.advance();
+                    tokens.push(Token::new(TokenKind::At, "@", offset, line, column));
+                }
                 '\'' | '"' => {
                     let lexeme = self.consume_string(ch)?;
                     tokens.push(Token::new(TokenKind::String, lexeme, offset, line, column));
@@ -295,6 +310,15 @@ impl<'a> Lexer<'a> {
                     tokens.push(Token::new(TokenKind::Number, lexeme, offset, line, column));
                 }
                 '_' | 'a'..='z' | 'A'..='Z' => {
+                    if let Some((is_fstring, string_content)) = self.consume_prefixed_string()? {
+                        let kind = if is_fstring {
+                            TokenKind::FString
+                        } else {
+                            TokenKind::String
+                        };
+                        tokens.push(Token::new(kind, string_content, offset, line, column));
+                        continue;
+                    }
                     let lexeme = self.consume_identifier();
                     let kind = match lexeme.as_str() {
                         "pass" => TokenKind::Keyword(Keyword::Pass),
@@ -329,6 +353,8 @@ impl<'a> Lexer<'a> {
                         "lambda" => TokenKind::Keyword(Keyword::Lambda),
                         "with" => TokenKind::Keyword(Keyword::With),
                         "yield" => TokenKind::Keyword(Keyword::Yield),
+                        "async" => TokenKind::Keyword(Keyword::Async),
+                        "await" => TokenKind::Keyword(Keyword::Await),
                         _ => TokenKind::Name,
                     };
                     tokens.push(Token::new(kind, lexeme, offset, line, column));
@@ -405,14 +431,76 @@ impl<'a> Lexer<'a> {
 
     fn consume_number(&mut self) -> String {
         let start = self.offset;
+        if self.peek_char() == Some('0') {
+            self.advance();
+            if matches!(self.peek_char(), Some('x' | 'X' | 'o' | 'O' | 'b' | 'B')) {
+                self.advance();
+                while let Some(ch) = self.peek_char() {
+                    if ch == '_' || ch.is_ascii_hexdigit() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                return self.source[start..self.offset].to_string();
+            }
+        }
         while let Some(ch) = self.peek_char() {
-            if ch.is_ascii_digit() {
+            if ch.is_ascii_digit() || ch == '_' {
                 self.advance();
             } else {
                 break;
             }
         }
         self.source[start..self.offset].to_string()
+    }
+
+    fn consume_prefixed_string(&mut self) -> Result<Option<(bool, String)>, LexError> {
+        let mut probe = self.offset;
+        let mut prefix = String::new();
+        while prefix.len() < 2 {
+            let Some(ch) = self.source[probe..].chars().next() else {
+                break;
+            };
+            if ch.is_ascii_alphabetic() {
+                prefix.push(ch);
+                probe += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        if prefix.is_empty() {
+            return Ok(None);
+        }
+
+        let Some(quote) = self.source[probe..].chars().next() else {
+            return Ok(None);
+        };
+        if quote != '\'' && quote != '"' {
+            return Ok(None);
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let mut has_f = false;
+        for ch in prefix.chars() {
+            let lowered = ch.to_ascii_lowercase();
+            if !matches!(lowered, 'r' | 'u' | 'b' | 'f') {
+                return Ok(None);
+            }
+            if lowered == 'f' {
+                has_f = true;
+            }
+            if !seen.insert(lowered) {
+                return Ok(None);
+            }
+        }
+
+        for _ in 0..prefix.len() {
+            self.advance();
+        }
+        let content = self.consume_string(quote)?;
+        Ok(Some((has_f, content)))
     }
 
     fn consume_string(&mut self, quote: char) -> Result<String, LexError> {

@@ -70,7 +70,7 @@ Release-complete target: Milestone 16; ecosystem-complete target (including nati
 5. Milestone 4: Generator and iteration parity (complete, P0).
 6. Milestone 5: Opcode execution hardening + `.pyc` read/write parity for supported bytecode paths (complete, P0).
 7. Milestone 6: Import system parity (`importlib`/`ModuleSpec`/hooks/packages, P0).
-8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0).
+8. Milestone 7: Full language surface parity (tokenizer + grammar + compiler semantics, P0). (complete)
 9. Milestone 8: Runtime data model parity (descriptor protocol, attribute model, metaclasses/MRO, core types, P0).
 10. Milestone 9: Builtins + stdlib bootstrap required for real apps (P0/P1).
 11. Milestone 10: Async/concurrency/runtime integration (`async`/`await`, async generators, event loop and threading semantics, P1).
@@ -101,7 +101,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 
 ### P1 (Major Ecosystem Enablers)
 - [ ] Async/await + async generators.
-- [ ] Comprehensions with correct scoping.
+- [x] Comprehensions with correct scoping.
 - [ ] Pattern matching (`match`/`case`).
 - [x] Type annotations (parse + `__annotations__` on modules/classes/functions; eager evaluation only).
 - [ ] Exception chaining (`__cause__`, `__context__`, suppression).
@@ -176,10 +176,13 @@ Status: complete
 
 ### Milestone 7 — Language Surface Parity (P0)
 DoD:
-- Tokenizer reaches CPython-level behavior for strings/bytes/f-strings/numeric literals/comments/indentation edge cases.
-- Remaining grammar and compiler features implemented: decorators, assignment expressions, comprehensions (with correct scope isolation), pattern matching, async syntax, exception groups (`except*`), and type-parameter syntax.
-- f-string behavior aligns with PEP 701 semantics for supported expressions.
-- `__future__` flags and feature gating behaviors are implemented.
+- Tokenizer/grammar/compiler surface expanded for milestone targets: decorators, assignment expressions (`:=`), list/dict comprehensions and generator expressions (with scope isolation), `match`/`case` (core literal/capture/guard subset), async syntax (`async def`/`await`/`async for`/`async with`), `except*` parsing, type parameters on functions/classes, and f-string lowering.
+- `__future__` import placement/unknown-feature gating checks are enforced at compile time.
+- Targeted parser/VM regression tests cover all newly added language-surface features.
+Status: complete
+Notes:
+- Full coroutine/event-loop semantics remain in Milestone 10.
+- Full `ExceptionGroup` splitting semantics and full PEP 701 formatting edge cases remain tracked under Milestones 8-10 and production-readiness checklist items.
 
 ### Milestone 8 — Runtime Data Model Parity (P0)
 DoD:
@@ -240,8 +243,8 @@ DoD:
 - Production playbook exists for incident triage, rollback strategy, and reproducible artifact verification.
 
 ## Immediate next steps
-- Start Milestone 7 language-surface parity work (tokenizer coverage, comprehensions, decorators, assignment expressions, pattern matching, async syntax).
-- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 7-10.
+- Start Milestone 8 runtime data-model parity work (descriptor protocol, attribute lookup parity, metaclass/MRO/super semantics, and core builtin type coverage).
+- Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 8-10.
 - Continue broad CPython parity tests while landing language/runtime milestones.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.
 

@@ -66,6 +66,8 @@ pub enum StmtKind {
     },
     FunctionDef {
         name: String,
+        type_params: Vec<String>,
+        is_async: bool,
         posonly_params: Vec<Parameter>,
         params: Vec<Parameter>,
         vararg: Option<Parameter>,
@@ -76,8 +78,13 @@ pub enum StmtKind {
     },
     ClassDef {
         name: String,
+        type_params: Vec<String>,
         bases: Vec<Expr>,
         body: Vec<Stmt>,
+    },
+    Decorated {
+        decorators: Vec<Expr>,
+        stmt: Box<Stmt>,
     },
     AnnAssign {
         target: AssignTarget,
@@ -106,6 +113,7 @@ pub enum StmtKind {
         orelse: Vec<Stmt>,
     },
     For {
+        is_async: bool,
         target: AssignTarget,
         iter: Expr,
         body: Vec<Stmt>,
@@ -126,9 +134,14 @@ pub enum StmtKind {
         names: Vec<String>,
     },
     With {
+        is_async: bool,
         context: Expr,
         target: Option<AssignTarget>,
         body: Vec<Stmt>,
+    },
+    Match {
+        subject: Expr,
+        cases: Vec<MatchCase>,
     },
     Break,
     Continue,
@@ -138,6 +151,14 @@ pub enum StmtKind {
 pub struct ExceptHandler {
     pub type_expr: Option<Expr>,
     pub name: Option<String>,
+    pub is_star: bool,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchCase {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
     pub body: Vec<Stmt>,
 }
 
@@ -192,6 +213,10 @@ pub enum ExprKind {
         body: Box<Expr>,
         orelse: Box<Expr>,
     },
+    NamedExpr {
+        target: String,
+        value: Box<Expr>,
+    },
     Lambda {
         posonly_params: Vec<Parameter>,
         params: Vec<Parameter>,
@@ -199,6 +224,22 @@ pub enum ExprKind {
         kwarg: Option<Parameter>,
         kwonly_params: Vec<Parameter>,
         body: Box<Expr>,
+    },
+    Await {
+        value: Box<Expr>,
+    },
+    ListComp {
+        elt: Box<Expr>,
+        clauses: Vec<ComprehensionClause>,
+    },
+    DictComp {
+        key: Box<Expr>,
+        value: Box<Expr>,
+        clauses: Vec<ComprehensionClause>,
+    },
+    GeneratorExp {
+        elt: Box<Expr>,
+        clauses: Vec<ComprehensionClause>,
     },
     Yield {
         value: Option<Box<Expr>>,
@@ -211,6 +252,21 @@ pub enum ExprKind {
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComprehensionClause {
+    pub is_async: bool,
+    pub target: AssignTarget,
+    pub iter: Expr,
+    pub ifs: Vec<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pattern {
+    Wildcard,
+    Capture(String),
+    Constant(Constant),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

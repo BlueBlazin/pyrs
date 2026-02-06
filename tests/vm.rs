@@ -2374,3 +2374,138 @@ fn executes_for_else_clause() {
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("y"), Some(Value::Int(3)));
 }
+
+#[test]
+fn executes_decorated_function_definition() {
+    let source = "def deco(fn):\n    def wrap(x):\n        return fn(x) + 1\n    return wrap\n@deco\ndef ident(x):\n    return x\ny = ident(4)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("y"), Some(Value::Int(5)));
+}
+
+#[test]
+fn executes_assignment_expression() {
+    let source = "x = 0\nif (x := 3):\n    y = x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_list_comprehension_with_scope_isolation() {
+    let source = "x = 10\nvals = [x * 2 for x in [1, 2, 3] if x > 1]\nout = x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        list_values(vm.get_global("vals")),
+        Some(vec![Value::Int(4), Value::Int(6)])
+    );
+    assert_eq!(vm.get_global("out"), Some(Value::Int(10)));
+}
+
+#[test]
+fn executes_dict_comprehension() {
+    let source = "d = {x: x + 1 for x in [1, 2, 3]}\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        dict_entries(vm.get_global("d")),
+        Some(vec![
+            (Value::Int(1), Value::Int(2)),
+            (Value::Int(2), Value::Int(3)),
+            (Value::Int(3), Value::Int(4)),
+        ])
+    );
+}
+
+#[test]
+fn executes_generator_expression() {
+    let source = "g = (x * 3 for x in [1, 2, 3])\nvals = []\nfor item in g:\n    vals += [item]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        list_values(vm.get_global("vals")),
+        Some(vec![Value::Int(3), Value::Int(6), Value::Int(9)])
+    );
+}
+
+#[test]
+fn executes_match_case_statement() {
+    let source = "value = 2\nmatch value:\n    case 1:\n        out = 'one'\n    case x if x > 1:\n        out = 'many'\n    case _:\n        out = 'other'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("out"), Some(Value::Str("many".to_string())));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+}
+
+#[test]
+fn executes_async_syntax_lowering() {
+    let source = "class Ctx:\n    def __enter__(self):\n        return 0\n    def __exit__(self, a, b, c):\n        return False\nasync def f(x):\n    return await x\nasync for item in [1, 2]:\n    seen = item\nasync with Ctx():\n    pass\nresult = f(7)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("result"), Some(Value::Int(7)));
+    assert_eq!(vm.get_global("seen"), Some(Value::Int(2)));
+}
+
+#[test]
+fn executes_except_star_as_except() {
+    let source = "caught = False\ntry:\n    raise ValueError\nexcept* ValueError:\n    caught = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("caught"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_fstring_lowering() {
+    let source = "name = 'Ada'\nout = f\"hello {name} {1 + 2}\"\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("out"),
+        Some(Value::Str("hello Ada 3".to_string()))
+    );
+}
+
+#[test]
+fn rejects_misplaced_future_import() {
+    let source = "x = 1\nfrom __future__ import annotations\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("from __future__ imports must occur at the beginning"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn rejects_unknown_future_feature() {
+    let source = "from __future__ import totally_not_real\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("future feature"),
+        "unexpected message: {}",
+        err.message
+    );
+}

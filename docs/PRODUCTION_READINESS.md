@@ -26,23 +26,23 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 **Language & Grammar**
 - [~] P0: Full 3.14 tokenizer parity (strings, bytes, numeric literals, f‑strings, comments, indents).
 - [~] P0: Full 3.14 grammar coverage (all statements/expressions).
-- [ ] P0: Decorators on functions/classes.
-- [ ] P0: Assignment expressions (`:=`).
+- [x] P0: Decorators on functions/classes.
+- [x] P0: Assignment expressions (`:=`).
 - [x] P0: `yield`, `yield from` (lazy suspension/resume with delegation semantics).
-- [ ] P0: `async`/`await`, async comprehensions, async generators.
-- [ ] P0: `try/except*` (exception groups) and `ExceptionGroup` semantics.
-- [ ] P0: Pattern matching (`match`/`case`).
-- [ ] P0: Comprehensions + generator expressions with correct scoping.
-- [ ] P0: f‑strings + format spec mini‑language (PEP 701 compatible).
+- [~] P0: `async`/`await`, async comprehensions, async generators (syntax/lowering in place; full coroutine semantics pending).
+- [~] P0: `try/except*` (exception groups) and `ExceptionGroup` semantics (syntax/lowering in place; group-splitting semantics pending).
+- [~] P0: Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full pattern families pending.
+- [x] P0: Comprehensions + generator expressions with correct scoping.
+- [~] P0: f‑strings + format spec mini‑language (PEP 701 compatible) (baseline interpolation lowering implemented; full spec pending).
 - [x] P1: Type annotations (`x: T`, `def f(x: T) -> U`, class/instance annotations).
 - [ ] P1: Annotation evaluation semantics matching 3.14 (deferred vs eager).
-- [ ] P1: Type parameter syntax / `type` statements (PEP 695 family).
+- [~] P1: Type parameter syntax / `type` statements (PEP 695 family) (`def`/`class` header type params parsed; `type` statement pending).
 
 **Semantic Analysis & Compilation**
 - [~] P0: Scope analysis (locals/globals/nonlocals/freevars/cellvars).
-- [ ] P0: Correct comprehension scope isolation.
+- [x] P0: Correct comprehension scope isolation.
 - [ ] P0: `exec`/`eval` semantics and dynamic scope effects.
-- [ ] P0: `__future__` flags and compiler feature gating.
+- [~] P0: `__future__` flags and compiler feature gating (placement + unknown-feature validation implemented; full flag semantics pending).
 - [x] P1: Annotation capture into `__annotations__` (module/class/function, eager evaluation path currently implemented).
 - [ ] P1: Constant folding and peephole optimizations (no semantic changes).
 - [~] P2: Bytecode verification pass (jump-target + stack-shape checks implemented for supported translation paths; full verifier coverage pending).

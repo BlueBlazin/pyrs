@@ -1,4 +1,7 @@
-use pyrs::ast::{AssignTarget, Constant, Expr, ExprKind, Module, Parameter, Span, Stmt, StmtKind};
+use pyrs::ast::{
+    AssignTarget, ComprehensionClause, Constant, Expr, ExprKind, MatchCase, Module, Parameter,
+    Pattern, Span, Stmt, StmtKind,
+};
 use pyrs::parser;
 
 fn spanned_expr(node: ExprKind) -> Expr {
@@ -39,6 +42,8 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
         },
         StmtKind::FunctionDef {
             name,
+            type_params,
+            is_async,
             posonly_params,
             params,
             vararg,
@@ -48,6 +53,8 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             body,
         } => StmtKind::FunctionDef {
             name: name.clone(),
+            type_params: type_params.clone(),
+            is_async: *is_async,
             posonly_params: posonly_params.iter().map(strip_param).collect(),
             params: params.iter().map(strip_param).collect(),
             vararg: vararg.clone(),
@@ -56,10 +63,20 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             returns: returns.as_ref().map(strip_expr),
             body: body.iter().map(strip_stmt).collect(),
         },
-        StmtKind::ClassDef { name, bases, body } => StmtKind::ClassDef {
+        StmtKind::ClassDef {
+            name,
+            type_params,
+            bases,
+            body,
+        } => StmtKind::ClassDef {
             name: name.clone(),
+            type_params: type_params.clone(),
             bases: bases.iter().map(strip_expr).collect(),
             body: body.iter().map(strip_stmt).collect(),
+        },
+        StmtKind::Decorated { decorators, stmt } => StmtKind::Decorated {
+            decorators: decorators.iter().map(strip_expr).collect(),
+            stmt: Box::new(strip_stmt(stmt)),
         },
         StmtKind::Return { value } => StmtKind::Return {
             value: value.as_ref().map(strip_expr),
@@ -88,11 +105,13 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             orelse: orelse.iter().map(strip_stmt).collect(),
         },
         StmtKind::For {
+            is_async,
             target,
             iter,
             body,
             orelse,
         } => StmtKind::For {
+            is_async: *is_async,
             target: strip_target(target),
             iter: strip_expr(iter),
             body: body.iter().map(strip_stmt).collect(),
@@ -126,13 +145,19 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             value: value.as_ref().map(strip_expr),
         },
         StmtKind::With {
+            is_async,
             context,
             target,
             body,
         } => StmtKind::With {
+            is_async: *is_async,
             context: strip_expr(context),
             target: target.as_ref().map(strip_target),
             body: body.iter().map(strip_stmt).collect(),
+        },
+        StmtKind::Match { subject, cases } => StmtKind::Match {
+            subject: strip_expr(subject),
+            cases: cases.iter().map(strip_case).collect(),
         },
         StmtKind::Break => StmtKind::Break,
         StmtKind::Continue => StmtKind::Continue,
@@ -198,6 +223,10 @@ fn strip_expr(expr: &Expr) -> Expr {
             body: Box::new(strip_expr(body)),
             orelse: Box::new(strip_expr(orelse)),
         },
+        ExprKind::NamedExpr { target, value } => ExprKind::NamedExpr {
+            target: target.clone(),
+            value: Box::new(strip_expr(value)),
+        },
         ExprKind::Lambda {
             posonly_params,
             params,
@@ -212,6 +241,26 @@ fn strip_expr(expr: &Expr) -> Expr {
             kwarg: kwarg.clone(),
             kwonly_params: kwonly_params.iter().map(strip_param).collect(),
             body: Box::new(strip_expr(body)),
+        },
+        ExprKind::Await { value } => ExprKind::Await {
+            value: Box::new(strip_expr(value)),
+        },
+        ExprKind::ListComp { elt, clauses } => ExprKind::ListComp {
+            elt: Box::new(strip_expr(elt)),
+            clauses: clauses.iter().map(strip_comp_clause).collect(),
+        },
+        ExprKind::DictComp {
+            key,
+            value,
+            clauses,
+        } => ExprKind::DictComp {
+            key: Box::new(strip_expr(key)),
+            value: Box::new(strip_expr(value)),
+            clauses: clauses.iter().map(strip_comp_clause).collect(),
+        },
+        ExprKind::GeneratorExp { elt, clauses } => ExprKind::GeneratorExp {
+            elt: Box::new(strip_expr(elt)),
+            clauses: clauses.iter().map(strip_comp_clause).collect(),
         },
         ExprKind::Yield { value } => ExprKind::Yield {
             value: value.as_ref().map(|expr| Box::new(strip_expr(expr))),
@@ -246,7 +295,33 @@ fn strip_handler(handler: &pyrs::ast::ExceptHandler) -> pyrs::ast::ExceptHandler
     pyrs::ast::ExceptHandler {
         type_expr: handler.type_expr.as_ref().map(strip_expr),
         name: handler.name.clone(),
+        is_star: handler.is_star,
         body: handler.body.iter().map(strip_stmt).collect(),
+    }
+}
+
+fn strip_case(case: &MatchCase) -> MatchCase {
+    MatchCase {
+        pattern: strip_pattern(&case.pattern),
+        guard: case.guard.as_ref().map(strip_expr),
+        body: case.body.iter().map(strip_stmt).collect(),
+    }
+}
+
+fn strip_pattern(pattern: &Pattern) -> Pattern {
+    match pattern {
+        Pattern::Wildcard => Pattern::Wildcard,
+        Pattern::Capture(name) => Pattern::Capture(name.clone()),
+        Pattern::Constant(value) => Pattern::Constant(value.clone()),
+    }
+}
+
+fn strip_comp_clause(clause: &ComprehensionClause) -> ComprehensionClause {
+    ComprehensionClause {
+        is_async: clause.is_async,
+        target: strip_target(&clause.target),
+        iter: strip_expr(&clause.iter),
+        ifs: clause.ifs.iter().map(strip_expr).collect(),
     }
 }
 
@@ -684,7 +759,9 @@ fn parses_class_definition() {
     let source = "class Foo:\n  pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::ClassDef { name, bases, body } => {
+        StmtKind::ClassDef {
+            name, bases, body, ..
+        } => {
             assert_eq!(name, "Foo");
             assert!(bases.is_empty());
             assert_eq!(body, &vec![spanned_stmt(StmtKind::Pass)]);
@@ -698,7 +775,9 @@ fn parses_class_definition_with_base() {
     let source = "class Child(Base):\n  pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::ClassDef { name, bases, body } => {
+        StmtKind::ClassDef {
+            name, bases, body, ..
+        } => {
             assert_eq!(name, "Child");
             assert_eq!(bases.len(), 1);
             match &bases[0].node {
@@ -1451,6 +1530,7 @@ fn parses_for_loop() {
             iter,
             body,
             orelse,
+            ..
         } => {
             assert_eq!(target, &AssignTarget::Name("i".to_string()));
             assert_eq!(
@@ -1568,7 +1648,7 @@ fn parses_string_literal() {
 #[test]
 fn rejects_unknown_token() {
     let err = parser::parse_module("@").expect_err("parse should fail");
-    assert_eq!(err.offset, 0);
+    assert_eq!(err.offset, 1);
 }
 
 #[test]
@@ -1605,6 +1685,162 @@ fn parses_if_elif_else_statement() {
     match &strip_module(&module)[0].node {
         StmtKind::If { orelse, .. } => {
             assert_eq!(orelse.len(), 1);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_decorated_function_definition() {
+    let source = "@d1\n@d2\ndef f(x):\n    return x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Decorated { decorators, stmt } => {
+            assert_eq!(decorators.len(), 2);
+            assert_eq!(decorators[0].node, ExprKind::Name("d1".to_string()));
+            assert_eq!(decorators[1].node, ExprKind::Name("d2".to_string()));
+            match &stmt.node {
+                StmtKind::FunctionDef { name, .. } => assert_eq!(name, "f"),
+                other => panic!("unexpected decorated stmt: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_named_expression() {
+    let module = parser::parse_module("(x := 3)").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Expr(expr) => match &expr.node {
+            ExprKind::NamedExpr { target, value } => {
+                assert_eq!(target, "x");
+                assert_eq!(value.node, ExprKind::Constant(Constant::Int(3)));
+            }
+            other => panic!("unexpected expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_comprehensions_and_generator_expression() {
+    let source = "a = [x * 2 for x in [1, 2, 3] if x > 1]\n\
+b = {x: x + 1 for x in [1, 2]}\n\
+c = (x for x in [1, 2])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let stripped = strip_module(&module);
+
+    match &stripped[0].node {
+        StmtKind::Assign { value, .. } => match &value.node {
+            ExprKind::ListComp { clauses, .. } => {
+                assert_eq!(clauses.len(), 1);
+                assert_eq!(clauses[0].ifs.len(), 1);
+            }
+            other => panic!("unexpected list comp expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+
+    match &stripped[1].node {
+        StmtKind::Assign { value, .. } => match &value.node {
+            ExprKind::DictComp { clauses, .. } => assert_eq!(clauses.len(), 1),
+            other => panic!("unexpected dict comp expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+
+    match &stripped[2].node {
+        StmtKind::Assign { value, .. } => match &value.node {
+            ExprKind::GeneratorExp { clauses, .. } => assert_eq!(clauses.len(), 1),
+            other => panic!("unexpected generator expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_match_case_statement() {
+    let source = "match value:\n    case 1:\n        out = 'one'\n    case x if x > 1:\n        out = 'many'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Match { subject, cases } => {
+            assert_eq!(subject.node, ExprKind::Name("value".to_string()));
+            assert_eq!(cases.len(), 2);
+            assert!(matches!(cases[0].pattern, Pattern::Constant(Constant::Int(1))));
+            assert!(matches!(cases[1].pattern, Pattern::Capture(_)));
+            assert!(cases[1].guard.is_some());
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_async_statements_and_await() {
+    let source = "async def f(x):\n    return await x\nasync for i in [1]:\n    pass\nasync with ctx:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let stripped = strip_module(&module);
+    match &stripped[0].node {
+        StmtKind::FunctionDef {
+            is_async, body, ..
+        } => {
+            assert!(*is_async);
+            match &body[0].node {
+                StmtKind::Return { value } => {
+                    let value = value.as_ref().expect("await return value");
+                    assert!(matches!(value.node, ExprKind::Await { .. }));
+                }
+                other => panic!("unexpected async function body stmt: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+    assert!(matches!(stripped[1].node, StmtKind::For { is_async: true, .. }));
+    assert!(matches!(
+        stripped[2].node,
+        StmtKind::With { is_async: true, .. }
+    ));
+}
+
+#[test]
+fn parses_except_star_handler() {
+    let source = "try:\n    pass\nexcept* ValueError:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Try { handlers, .. } => {
+            assert_eq!(handlers.len(), 1);
+            assert!(handlers[0].is_star);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_fstring_literal_expression() {
+    let module = parser::parse_module("f\"hello {name} {1 + 2}\"").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Expr(expr) => {
+            // f-strings are lowered to concatenation + str(...) calls.
+            assert!(matches!(expr.node, ExprKind::Binary { .. }));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_type_parameters_on_defs_and_classes() {
+    let source = "def f[T](x):\n    return x\nclass Box[T]:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let stripped = strip_module(&module);
+    match &stripped[0].node {
+        StmtKind::FunctionDef { type_params, .. } => {
+            assert_eq!(type_params, &vec!["T".to_string()]);
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+    match &stripped[1].node {
+        StmtKind::ClassDef { type_params, .. } => {
+            assert_eq!(type_params, &vec!["T".to_string()]);
         }
         other => panic!("unexpected stmt: {other:?}"),
     }

@@ -32,6 +32,11 @@ pub enum Keyword {
     Lambda,
     With,
     Yield,
+    Async,
+    Await,
+    Match,
+    Case,
+    Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +55,7 @@ pub enum TokenKind {
     RBrace,
     Dot,
     Colon,
+    ColonEqual,
     Equal,
     DoubleEqual,
     Less,
@@ -72,7 +78,9 @@ pub enum TokenKind {
     DoubleSlashEqual,
     PercentEqual,
     Percent,
+    At,
     Semicolon,
+    FString,
     Keyword(Keyword),
     EndMarker,
 }
