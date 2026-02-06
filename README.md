@@ -78,6 +78,7 @@ The curated smoke/parity tests run subprocesses in a constrained mode (`env_clea
 ## Key Docs
 
 - Roadmap: `docs/ROADMAP.md`
+- Milestone 12 execution backlog: `docs/MILESTONE_12_BACKLOG.md`
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - Production readiness accounting: `docs/PRODUCTION_READINESS.md`
 - Project context for agent workflows: `AGENTS.md`

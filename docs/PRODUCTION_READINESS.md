@@ -7,6 +7,7 @@ Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (futu
 
 ## Milestone Coverage Map
 Every category below is mapped to the revised roadmap milestones in `docs/ROADMAP.md`, so the remaining plan has no known gaps.
+Milestone 12 execution sequencing is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 - Language & Grammar -> Milestones 7 and 12
 - Semantic Analysis & Compilation -> Milestones 7 and 12

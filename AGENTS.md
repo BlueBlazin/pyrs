@@ -64,6 +64,7 @@ Current milestone state summary:
 
 ## Project Artifacts
 - Roadmap: `docs/ROADMAP.md`
+- Milestone 12 execution backlog: `docs/MILESTONE_12_BACKLOG.md`
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - Production readiness accounting: `docs/PRODUCTION_READINESS.md`
 - CPython vendor sync script: `scripts/sync_cpython.py`

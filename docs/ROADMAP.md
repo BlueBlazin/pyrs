@@ -203,7 +203,7 @@ DoD:
 - Core runtime builtin type parity required by stdlib foundations (`set`, `frozenset`, `bytes`, `bytearray`, `memoryview`, `float`, `complex`, unicode/codecs behavior), plus remaining data-model gaps (`metaclass` path and `__slots__` core behavior).
 - Builtins required by stdlib and common apps are present with correct semantics.
 - Foundational stdlib modules are usable: `sys`, `types`, `inspect`, `io`, `os`, `pathlib`, `time`, `datetime`, `collections`, `math`, `re`, `json`, `codecs`, `functools`, `itertools`, `operator`, `random`.
-- Pure-Python package installation/execution works for representative no-C-extension packages.
+- Pure-Python package installation/execution works across curated package classes (CLI, web, and data-style workloads) for the non-C-extension scope.
 Status: complete
 Progress:
 - Float foundations landed end-to-end: parser/AST/compiler/VM/runtime support float literals, `/`, `//`, `%`, `**`, unary `+/-`, mixed int-bool-float comparisons, and `float()` builtin conversion paths.
@@ -246,6 +246,8 @@ DoD:
 - Runtime data-model closure for outstanding parity gaps (`__getattribute__`, metaclass precedence/selection, `__slots__` layout edges, and full codecs behavior).
 - CPython harness allowlist is reduced to explicit non-goals only, with owner and rationale for each retained entry.
 - Parity gate suites are integrated as merge-blocking CI checks for the default development profile.
+Execution plan:
+- Ordered work packages and ownership mapping are tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 ### Milestone 13 — Stdlib and Packaging Usability Closure (P0/P1)
 DoD:
@@ -257,15 +259,15 @@ DoD:
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:
 - Baseline benchmark suite (including pyperformance subset plus project workloads) is automated and tracked for regressions.
-- At least one production-relevant optimization tier lands (peephole/constant-folding/caches) with parity tests proving no semantic regressions.
+- Production optimization stack is implemented and validated (compiler-level simplifications, VM dispatch/lookup caches, and container/runtime hot-path improvements), with parity gates proving no semantic regressions.
 - Debug and profiling hooks (`sys.settrace`, `sys.setprofile`, runtime metrics, profiling workflow) are operational.
 - JIT/embedding hook points in IR/VM boundaries are explicitly documented and covered by non-regression tests.
 
 ### Milestone 15 — Native Extension Ecosystem Compatibility (P0/P1)
 DoD:
-- Limited C-API/abi3 extension loading works for representative extension modules (import, type/object creation, method dispatch, error propagation).
+- Limited C-API/abi3 extension loading works across the supported API surface (import, type/object creation, method dispatch, memory/error propagation) with compatibility tests per surface.
 - HPy execution path is available with explicit compatibility matrix and tests.
-- Ecosystem smoke tests include at least one extension-backed package class (numeric/crypto/parsing families) with documented pass/fail matrix.
+- Ecosystem smoke/regression tests cover multiple extension-backed package classes (numeric, crypto, parsing, and data-processing families) with documented pass/fail matrix and blockers.
 - Any unsupported extension surfaces fail with explicit diagnostics, not silent misbehavior.
 
 ### Milestone 16 — Release Hardening and Production Certification (P0/P1)
