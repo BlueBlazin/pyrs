@@ -832,8 +832,23 @@ impl Parser {
     fn parse_from_import_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
         let start = pos;
         let mut pos = pos + 1;
-        let (module, next) = self.parse_import_name(pos)?;
-        pos = next;
+        let mut level = 0usize;
+        while matches!(self.token_at(pos).kind, TokenKind::Dot) {
+            level += 1;
+            pos += 1;
+        }
+
+        let module = if self.token_at(pos).kind == TokenKind::Name {
+            let (module, next) = self.parse_import_name(pos)?;
+            pos = next;
+            Some(module)
+        } else {
+            None
+        };
+
+        if level == 0 && module.is_none() {
+            return Err(self.error_at(pos, "expected module name"));
+        }
 
         if !self.match_keyword(pos, Keyword::Import) {
             return Err(self.error_at(pos, "expected 'import'"));
@@ -853,7 +868,17 @@ impl Parser {
             break;
         }
 
-        Ok((self.make_stmt(start, StmtKind::ImportFrom { module, names }), pos))
+        Ok((
+            self.make_stmt(
+                start,
+                StmtKind::ImportFrom {
+                    module,
+                    names,
+                    level,
+                },
+            ),
+            pos,
+        ))
     }
 
     fn parse_global_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {

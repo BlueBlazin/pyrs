@@ -75,7 +75,7 @@ Every category below is mapped to the revised roadmap milestones in `docs/ROADMA
 - [ ] P1: `__import__` with importlib semantics.
 
 **Import System**
-- [~] P0: File‑based imports + module cache + basic packages.
+- [~] P0: File‑based imports + module cache + basic packages (including relative `from .` resolution and baseline module metadata fields).
 - [ ] P0: Full importlib machinery (`ModuleSpec`, `__loader__`, `__package__`, `__path__`).
 - [ ] P0: Namespace packages.
 - [ ] P0: Zip/bytecode imports.

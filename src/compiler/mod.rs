@@ -1037,14 +1037,22 @@ impl Compiler {
                 }
                 Ok(())
             }
-            StmtKind::ImportFrom { module, names } => {
-                let const_idx = compiler.code.add_const(Value::Str(module.clone()));
-                compiler.emit(Opcode::ImportName, Some(const_idx));
-                compiler.emit_import_attr_chain(module)?;
+            StmtKind::ImportFrom {
+                module,
+                names,
+                level,
+            } => {
+                let module_name = module.clone().unwrap_or_default();
+                let import_name_idx = compiler.code.add_name(module_name);
+                compiler.emit_const(Value::Int(*level as i64));
+                for alias in names.iter() {
+                    compiler.emit_const(Value::Str(alias.name.clone()));
+                }
+                compiler.emit(Opcode::BuildTuple, Some(names.len() as u32));
+                compiler.emit(Opcode::ImportNameCpython, Some(import_name_idx));
                 for alias in names {
-                    compiler.emit(Opcode::DupTop, None);
                     let attr_idx = compiler.code.add_name(alias.name.clone());
-                    compiler.emit(Opcode::LoadAttr, Some(attr_idx << 1));
+                    compiler.emit(Opcode::ImportFromCpython, Some(attr_idx));
                     let target = alias.asname.as_deref().unwrap_or(&alias.name);
                     compiler.emit_store_name_scoped(target)?;
                 }

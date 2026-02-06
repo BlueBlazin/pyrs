@@ -101,9 +101,14 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             orelse: orelse.iter().map(strip_stmt).collect(),
         },
         StmtKind::Import { names } => StmtKind::Import { names: names.clone() },
-        StmtKind::ImportFrom { module, names } => StmtKind::ImportFrom {
+        StmtKind::ImportFrom {
+            module,
+            names,
+            level,
+        } => StmtKind::ImportFrom {
             module: module.clone(),
             names: names.clone(),
+            level: *level,
         },
         StmtKind::Global { names } => StmtKind::Global { names: names.clone() },
         StmtKind::Nonlocal { names } => StmtKind::Nonlocal { names: names.clone() },
@@ -1210,8 +1215,13 @@ fn parses_yield_from_expression_statement() {
 fn parses_from_import_statement() {
     let module = parser::parse_module("from mod import a, b").expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::ImportFrom { module, names } => {
-            assert_eq!(module, "mod");
+        StmtKind::ImportFrom {
+            module,
+            names,
+            level,
+        } => {
+            assert_eq!(module.as_deref(), Some("mod"));
+            assert_eq!(*level, 0);
             assert_eq!(
                 names,
                 &vec![
@@ -1234,8 +1244,13 @@ fn parses_from_import_statement() {
 fn parses_from_dotted_import_statement() {
     let module = parser::parse_module("from pkg.sub import item").expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::ImportFrom { module, names } => {
-            assert_eq!(module, "pkg.sub");
+        StmtKind::ImportFrom {
+            module,
+            names,
+            level,
+        } => {
+            assert_eq!(module.as_deref(), Some("pkg.sub"));
+            assert_eq!(*level, 0);
             assert_eq!(
                 names,
                 &vec![pyrs::ast::ImportAlias {
@@ -1276,6 +1291,52 @@ fn parses_from_import_alias() {
                 &vec![pyrs::ast::ImportAlias {
                     name: "value".to_string(),
                     asname: Some("v".to_string())
+                }]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_relative_from_import_statement() {
+    let module = parser::parse_module("from .sub import value").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::ImportFrom {
+            module,
+            names,
+            level,
+        } => {
+            assert_eq!(*level, 1);
+            assert_eq!(module.as_deref(), Some("sub"));
+            assert_eq!(
+                names,
+                &vec![pyrs::ast::ImportAlias {
+                    name: "value".to_string(),
+                    asname: None
+                }]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_relative_parent_from_import_statement() {
+    let module = parser::parse_module("from .. import item").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::ImportFrom {
+            module,
+            names,
+            level,
+        } => {
+            assert_eq!(*level, 2);
+            assert!(module.is_none());
+            assert_eq!(
+                names,
+                &vec![pyrs::ast::ImportAlias {
+                    name: "item".to_string(),
+                    asname: None
                 }]
             );
         }

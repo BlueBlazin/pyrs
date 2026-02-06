@@ -115,8 +115,9 @@ pub enum StmtKind {
         names: Vec<ImportAlias>,
     },
     ImportFrom {
-        module: String,
+        module: Option<String>,
         names: Vec<ImportAlias>,
+        level: usize,
     },
     Global {
         names: Vec<String>,

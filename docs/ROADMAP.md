@@ -219,7 +219,8 @@ DoD:
 - Embedding API direction for Rust/C hosts is documented.
 
 ## Immediate next steps
-- Start Milestone 6 import-system parity (`importlib`, `ModuleSpec`, loader/finder contracts).
+- Continue Milestone 6 import-system parity (`importlib`, `ModuleSpec`, loader/finder contracts).
+  - Landed in this phase: relative `from .` source-import resolution and baseline module metadata population (`__package__`, `__spec__`, `__loader__`, `__path__`).
 - Expand opcode-family coverage for remaining 3.14 domains (async, exception-table-heavy paths, and pattern-matching families) under Milestones 7-10.
 - Continue broad CPython parity tests while landing import/language/runtime milestones.
 
