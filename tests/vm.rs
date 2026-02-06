@@ -293,6 +293,56 @@ fn executes_generator_send_next_and_close() {
 }
 
 #[test]
+fn executes_generator_lazily_on_iteration() {
+    let source = "state = 0\ndef gen():\n    global state\n    state = state + 1\n    yield state\ng = gen()\ncreated = state\nfirst = g.__next__()\nafter = state\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("created"), Some(Value::Int(0)));
+    assert_eq!(vm.get_global("first"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("after"), Some(Value::Int(1)));
+}
+
+#[test]
+fn executes_generator_send_value_into_yield_expression() {
+    let source = "def gen():\n    x = yield 1\n    yield x\ng = gen()\na = g.send(None)\nb = g.send(5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(5)));
+}
+
+#[test]
+fn executes_generator_throw_into_suspended_frame() {
+    let source = "def gen():\n    try:\n        yield 1\n    except ValueError:\n        yield 2\ng = gen()\na = g.__next__()\nb = g.throw(ValueError)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(2)));
+}
+
+#[test]
+fn executes_generator_close_runs_finally() {
+    let source = "closed = False\ndef gen():\n    global closed\n    try:\n        yield 1\n    finally:\n        closed = True\ng = gen()\na = g.__next__()\nb = g.close()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::None));
+    assert_eq!(vm.get_global("closed"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_generator_yield_from() {
     let source = "def gen():\n    yield from [1, 2, 3]\nvals = []\nfor x in gen():\n    vals += [x]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -304,6 +354,19 @@ fn executes_generator_yield_from() {
         list_values(vm.get_global("vals")),
         Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
     );
+}
+
+#[test]
+fn executes_generator_yield_from_lazily() {
+    let source = "state = 0\ndef inner():\n    global state\n    state = state + 1\n    yield state\ndef outer():\n    yield from inner()\ng = outer()\nbefore = state\nv = g.__next__()\nafter = state\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("before"), Some(Value::Int(0)));
+    assert_eq!(vm.get_global("v"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("after"), Some(Value::Int(1)));
 }
 
 #[test]

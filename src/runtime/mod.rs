@@ -98,18 +98,16 @@ impl BoundMethod {
 
 #[derive(Debug, Clone)]
 pub struct GeneratorObject {
-    pub values: Vec<Value>,
-    pub index: usize,
     pub started: bool,
+    pub running: bool,
     pub closed: bool,
 }
 
 impl GeneratorObject {
-    pub fn new(values: Vec<Value>) -> Self {
+    pub fn new() -> Self {
         Self {
-            values,
-            index: 0,
             started: false,
+            running: false,
             closed: false,
         }
     }
@@ -437,11 +435,7 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             }
             IteratorKind::Str(_) => {}
         },
-        Object::Generator(generator) => {
-            for value in &generator.values {
-                trace_value(value, stack, marked);
-            }
-        }
+        Object::Generator(_) => {}
         Object::Module(module) => {
             for value in module.globals.values() {
                 trace_value(value, stack, marked);
@@ -513,9 +507,8 @@ fn clear_object_refs(obj: &ObjRef) {
             }
         },
         Object::Generator(generator) => {
-            generator.values.clear();
-            generator.index = 0;
             generator.started = false;
+            generator.running = false;
             generator.closed = true;
         }
         Object::Module(module) => {

@@ -89,7 +89,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython opcode encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [x] Closures + `nonlocal` (cell/free vars).
-- [ ] Generators (`yield`, `yield from`) + protocol (full lazy CPython semantics pending; current impl is eager materialization).
+- [ ] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume implemented; remaining CPython edge semantics pending).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [ ] Import system parity (`importlib`, specs, hooks).
 
@@ -149,7 +149,7 @@ DoD:
 - `yield from` delegation semantics match CPython, including propagation of `StopIteration.value`.
 - Reentrancy and terminal-state errors match CPython (`generator already executing`, post-close behavior, etc.).
 - Targeted CPython generator tests pass (or are explicitly documented as blocked by out-of-scope work).
-Status: in progress (basic compatibility landed; full lazy semantics pending).
+Status: in progress (lazy frame suspension/resume and core protocol behavior landed; `yield from` send/throw delegation and exact `GeneratorExit` hierarchy semantics still open).
 
 ### Milestone 5 — Full CPython 3.14 Opcode & `.pyc` Parity (P0)
 DoD:
@@ -217,8 +217,8 @@ DoD:
 - Embedding API direction for Rust/C hosts is documented.
 
 ## Immediate next steps
-- Complete Milestone 4 with true lazy generator suspension/resume semantics.
-- Expand CPython parity tests around generators, exceptions, and frame unwinding.
+- Complete remaining Milestone 4 edge semantics (`yield from` delegation for `send`/`throw`, `StopIteration.value`, exact `GeneratorExit` behavior).
+- Expand CPython parity tests around generator edge cases and delegated exception flow.
 - Start Milestone 5 opcode closure by replacing remaining `Nop` fallbacks with real implementations.
 
 ## Testing Focus Note

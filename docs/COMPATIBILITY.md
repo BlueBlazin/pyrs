@@ -26,7 +26,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Core types subset (None, bool, int, str, tuple, list, dict)
 - [ ] bytes, set, frozenset, memoryview, complex, etc.
 - [x] Function + frame model (positional-only params, positional params, defaults, keyword args, keyword-only params, *args/**kwargs; closures + `nonlocal`)
-- [x] Generators (basic protocol: `__next__`, `send`, `throw`, `close`; eager materialization)
+- [x] Generators (lazy suspended-frame protocol: `__next__`, `send`, `throw`, `close`)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [x] Tracebacks with filename/line/col + frame names
 - [ ] Exception chaining
@@ -62,7 +62,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython opcode encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [x] Closures + `nonlocal` (cell/free vars).
-- [ ] Generators (`yield`, `yield from`) + protocol (full lazy semantics pending; current support is eager materialization).
+- [ ] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume landed; remaining edge parity on `yield from` delegation and exact `GeneratorExit` behavior).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [ ] Import system parity (`importlib`, specs, hooks).
 
