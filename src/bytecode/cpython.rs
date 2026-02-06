@@ -334,6 +334,8 @@ impl<'a> Translator<'a> {
                     let target = idx + 2 + arg as usize;
                     Instruction::new(Opcode::ForIter, Some(target as u32))
                 }
+                "YIELD_VALUE" => Instruction::new(Opcode::YieldValue, None),
+                "YIELD_FROM" => Instruction::new(Opcode::YieldFrom, None),
                 "END_FOR" => Instruction::new(Opcode::EndFor, None),
                 "BUILD_LIST" => Instruction::new(Opcode::BuildList, Some(arg)),
                 "BUILD_TUPLE" => Instruction::new(Opcode::BuildTuple, Some(arg)),

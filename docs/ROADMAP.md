@@ -77,7 +77,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython opcode encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [x] Closures + `nonlocal` (cell/free vars).
-- [ ] Generators (`yield`, `yield from`) + protocol.
+- [x] Generators (`yield`, `yield from`) + protocol (basic support; eager materialization).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [ ] Import system parity (`importlib`, specs, hooks).
 
@@ -134,7 +134,8 @@ Status: complete
 DoD:
 - `yield` and `yield from` match CPython for basic cases.
 - Generator `send`/`throw`/`close` behave correctly.
-- `for` loops iterate over generators and custom iterators.
+- `for` loops iterate over generators and built-in iterator objects.
+Status: complete (basic)
 
 ### Milestone 5 — Import System Parity (P0)
 DoD:

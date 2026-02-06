@@ -199,6 +199,12 @@ pub enum ExprKind {
         kwonly_params: Vec<Parameter>,
         body: Box<Expr>,
     },
+    Yield {
+        value: Option<Box<Expr>>,
+    },
+    YieldFrom {
+        value: Box<Expr>,
+    },
     Slice {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,

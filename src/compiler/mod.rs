@@ -637,6 +637,14 @@ fn collect_uses_expr(
             )?;
             child_free.extend(scope.freevars.into_iter());
         }
+        ExprKind::Yield { value } => {
+            if let Some(expr) = value.as_ref() {
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
+            }
+        }
+        ExprKind::YieldFrom { value } => {
+            collect_uses_expr(value, uses, child_free, enclosing)?;
+        }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(expr) = lower.as_ref() {
                 collect_uses_expr(expr, uses, child_free, enclosing)?;
@@ -699,6 +707,164 @@ fn body_has_ann_assign(body: &[Stmt]) -> bool {
         }
     }
     false
+}
+
+fn body_has_yield(body: &[Stmt]) -> bool {
+    for stmt in body {
+        match &stmt.node {
+            StmtKind::Expr(expr) => {
+                if expr_has_yield(expr) {
+                    return true;
+                }
+            }
+            StmtKind::Assign { value, .. } => {
+                if expr_has_yield(value) {
+                    return true;
+                }
+            }
+            StmtKind::AnnAssign {
+                annotation,
+                value,
+                ..
+            } => {
+                if expr_has_yield(annotation)
+                    || value
+                        .as_ref()
+                        .map(expr_has_yield)
+                        .unwrap_or(false)
+                {
+                    return true;
+                }
+            }
+            StmtKind::AugAssign { value, .. } => {
+                if expr_has_yield(value) {
+                    return true;
+                }
+            }
+            StmtKind::If { test, body, orelse } => {
+                if expr_has_yield(test) || body_has_yield(body) || body_has_yield(orelse) {
+                    return true;
+                }
+            }
+            StmtKind::While { test, body, orelse } => {
+                if expr_has_yield(test) || body_has_yield(body) || body_has_yield(orelse) {
+                    return true;
+                }
+            }
+            StmtKind::For {
+                iter,
+                body,
+                orelse,
+                ..
+            } => {
+                if expr_has_yield(iter) || body_has_yield(body) || body_has_yield(orelse) {
+                    return true;
+                }
+            }
+            StmtKind::With { context, body, .. } => {
+                if expr_has_yield(context) || body_has_yield(body) {
+                    return true;
+                }
+            }
+            StmtKind::Try {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+            } => {
+                if body_has_yield(body)
+                    || body_has_yield(orelse)
+                    || body_has_yield(finalbody)
+                {
+                    return true;
+                }
+                for handler in handlers {
+                    if handler
+                        .type_expr
+                        .as_ref()
+                        .map(expr_has_yield)
+                        .unwrap_or(false)
+                        || body_has_yield(&handler.body)
+                    {
+                        return true;
+                    }
+                }
+            }
+            StmtKind::Return { value } | StmtKind::Raise { value } => {
+                if value.as_ref().map(expr_has_yield).unwrap_or(false) {
+                    return true;
+                }
+            }
+            StmtKind::Assert { test, message } => {
+                if expr_has_yield(test)
+                    || message
+                        .as_ref()
+                        .map(expr_has_yield)
+                        .unwrap_or(false)
+                {
+                    return true;
+                }
+            }
+            StmtKind::FunctionDef { .. }
+            | StmtKind::ClassDef { .. }
+            | StmtKind::Import { .. }
+            | StmtKind::ImportFrom { .. }
+            | StmtKind::Global { .. }
+            | StmtKind::Nonlocal { .. }
+            | StmtKind::Pass
+            | StmtKind::Break
+            | StmtKind::Continue => {}
+        }
+    }
+    false
+}
+
+fn expr_has_yield(expr: &Expr) -> bool {
+    match &expr.node {
+        ExprKind::Yield { .. } | ExprKind::YieldFrom { .. } => true,
+        ExprKind::Binary { left, right, .. } | ExprKind::BoolOp { left, right, .. } => {
+            expr_has_yield(left) || expr_has_yield(right)
+        }
+        ExprKind::Unary { operand, .. } => expr_has_yield(operand),
+        ExprKind::Call { func, args } => {
+            if expr_has_yield(func) {
+                return true;
+            }
+            for arg in args {
+                let has = match arg {
+                    CallArg::Positional(expr)
+                    | CallArg::Keyword { value: expr, .. }
+                    | CallArg::Star(expr)
+                    | CallArg::DoubleStar(expr) => expr_has_yield(expr),
+                };
+                if has {
+                    return true;
+                }
+            }
+            false
+        }
+        ExprKind::List(values) | ExprKind::Tuple(values) => values.iter().any(expr_has_yield),
+        ExprKind::Dict(entries) => entries
+            .iter()
+            .any(|(key, value)| expr_has_yield(key) || expr_has_yield(value)),
+        ExprKind::Subscript { value, index } => expr_has_yield(value) || expr_has_yield(index),
+        ExprKind::Attribute { value, .. } => expr_has_yield(value),
+        ExprKind::IfExpr { test, body, orelse } => {
+            expr_has_yield(test) || expr_has_yield(body) || expr_has_yield(orelse)
+        }
+        ExprKind::Lambda { .. } | ExprKind::Name(_) | ExprKind::Constant(_) => false,
+        ExprKind::Slice { lower, upper, step } => {
+            lower.as_ref().map(|expr| expr_has_yield(expr)).unwrap_or(false)
+                || upper
+                    .as_ref()
+                    .map(|expr| expr_has_yield(expr))
+                    .unwrap_or(false)
+                || step
+                    .as_ref()
+                    .map(|expr| expr_has_yield(expr))
+                    .unwrap_or(false)
+        }
+    }
 }
 
 pub fn compile_module(module: &Module) -> Result<CodeObject, CompileError> {
@@ -986,6 +1152,20 @@ impl Compiler {
                     None,
                     func_code,
                 )?;
+                Ok(())
+            }
+            ExprKind::Yield { value } => {
+                if let Some(value) = value {
+                    compiler.compile_expr(value)?;
+                } else {
+                    compiler.emit(Opcode::LoadConst, Some(0));
+                }
+                compiler.emit(Opcode::YieldValue, None);
+                Ok(())
+            }
+            ExprKind::YieldFrom { value } => {
+                compiler.compile_expr(value)?;
+                compiler.emit(Opcode::YieldFrom, None);
                 Ok(())
             }
             ExprKind::Call { func, args } => {
@@ -1412,6 +1592,7 @@ impl Compiler {
             .collect();
         compiler.code.vararg = vararg.as_ref().map(|param| param.name.clone());
         compiler.code.kwarg = kwarg.as_ref().map(|param| param.name.clone());
+        compiler.code.is_generator = body_has_yield(body);
         if body_has_ann_assign(body) {
             compiler.init_annotations()?;
         }
@@ -1673,32 +1854,16 @@ impl Compiler {
         body: &[Stmt],
         orelse: &[Stmt],
     ) -> Result<(), CompileError> {
-        let iter_temp = self.fresh_temp("iter");
-        let index_temp = self.fresh_temp("idx");
-
         self.compile_expr(iter)?;
-        self.emit_store_name(&iter_temp);
-
-        self.emit_const(Value::Int(0));
-        self.emit_store_name(&index_temp);
+        self.emit(Opcode::GetIter, None);
 
         let loop_start = self.current_ip();
-
-        self.emit_load_name(&index_temp)?;
-        self.emit_load_name("len")?;
-        self.emit_load_name(&iter_temp)?;
-        self.emit(Opcode::CallFunction, Some(1));
-        self.emit(Opcode::CompareLt, None);
-        let jump_if_false = self.emit_jump(Opcode::JumpIfFalse);
-
-        self.emit_load_name(&iter_temp)?;
-        self.emit_load_name(&index_temp)?;
-        self.emit(Opcode::Subscript, None);
+        let jump_if_exhausted = self.emit_jump(Opcode::ForIter);
         self.compile_store_target_from_stack(target)?;
 
         self.loop_stack.push(LoopContext {
             start: loop_start,
-            continue_target: None,
+            continue_target: Some(loop_start),
             breaks: Vec::new(),
             continues: Vec::new(),
         });
@@ -1707,19 +1872,9 @@ impl Compiler {
             self.compile_stmt(stmt)?;
         }
 
-        let continue_target = self.current_ip();
-        if let Some(ctx) = self.loop_stack.last_mut() {
-            ctx.continue_target = Some(continue_target);
-        }
-
-        self.emit_load_name(&index_temp)?;
-        self.emit_const(Value::Int(1));
-        self.emit(Opcode::BinaryAdd, None);
-        self.emit_store_name(&index_temp);
-
         self.emit(Opcode::Jump, Some(loop_start as u32));
         let else_start = self.current_ip();
-        self.patch_jump(jump_if_false, else_start)?;
+        self.patch_jump(jump_if_exhausted, else_start)?;
 
         for stmt in orelse {
             self.compile_stmt(stmt)?;

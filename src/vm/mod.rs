@@ -11,8 +11,8 @@ use crate::compiler;
 use crate::parser;
 use crate::runtime::{
     format_value, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
-    Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject, Object, ObjRef,
-    RuntimeError, Value,
+    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
+    NativeMethodKind, NativeMethodObject, Object, ObjRef, RuntimeError, Value,
 };
 
 #[derive(Debug, Clone)]
@@ -47,6 +47,8 @@ struct Frame {
     blocks: Vec<Block>,
     active_exception: Option<Value>,
     expect_none_return: bool,
+    collect_yields: Option<ObjRef>,
+    return_generator: Option<ObjRef>,
 }
 
 impl Frame {
@@ -75,6 +77,8 @@ impl Frame {
             blocks: Vec::new(),
             active_exception: None,
             expect_none_return: false,
+            collect_yields: None,
+            return_generator: None,
         }
     }
 }
@@ -384,7 +388,9 @@ impl Vm {
 
             if should_return {
                 let frame = self.frames.pop().expect("frame exists");
-                let value = if frame.return_class {
+                let value = if let Some(generator) = frame.return_generator {
+                    Value::Generator(generator)
+                } else if frame.return_class {
                     self.class_value_from_module(&frame.module, frame.class_bases)
                 } else if let Some(instance) = frame.return_instance {
                     Value::Instance(instance)
@@ -747,6 +753,30 @@ impl Vm {
                                     attr_name
                                 )));
                             }
+                        }
+                        Value::Generator(generator) => {
+                            let kind = match attr_name.as_str() {
+                                "__iter__" => NativeMethodKind::GeneratorIter,
+                                "__next__" => NativeMethodKind::GeneratorNext,
+                                "send" => NativeMethodKind::GeneratorSend,
+                                "throw" => NativeMethodKind::GeneratorThrow,
+                                "close" => NativeMethodKind::GeneratorClose,
+                                _ => {
+                                    return Err(RuntimeError::new(format!(
+                                        "generator has no attribute '{}'",
+                                        attr_name
+                                    )))
+                                }
+                            };
+                            let native = self
+                                .heap
+                                .alloc_native_method(NativeMethodObject::new(kind));
+                            let bound = BoundMethod::new(native, generator);
+                            let bound_value = self.heap.alloc_bound_method(bound);
+                            if push_null {
+                                self.push_value(Value::None);
+                            }
+                            self.push_value(bound_value);
                         }
                         _ => {
                             return Err(RuntimeError::new(
@@ -1770,19 +1800,7 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let bindings =
-                                bind_arguments(&func_data, &self.heap, args, HashMap::new())?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            self.push_function_call(&func_data, args, HashMap::new())?;
                         }
                         Value::BoundMethod(method) => {
                             let method_data = match &*method.kind() {
@@ -1793,34 +1811,32 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let func_data = match &*method_data.function.kind() {
-                                Object::Function(data) => data.clone(),
+                            match &*method_data.function.kind() {
+                                Object::Function(data) => {
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call(
+                                        data,
+                                        bound_args,
+                                        HashMap::new(),
+                                    )?;
+                                }
+                                Object::NativeMethod(native) => {
+                                    let result = self.call_native_method(
+                                        native.kind,
+                                        method_data.receiver.clone(),
+                                        args,
+                                        HashMap::new(),
+                                    )?;
+                                    self.push_value(result);
+                                }
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "attempted to call non-function",
                                     ))
                                 }
-                            };
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(Value::Instance(method_data.receiver.clone()));
-                            bound_args.extend(args);
-                            let bindings = bind_arguments(
-                                &func_data,
-                                &self.heap,
-                                bound_args,
-                                HashMap::new(),
-                            )?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            }
                         }
                         Value::Class(class) => {
                             let instance = match self
@@ -1981,18 +1997,7 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            self.push_function_call(&func_data, args, kwargs)?;
                         }
                         Value::BoundMethod(method) => {
                             let method_data = match &*method.kind() {
@@ -2003,34 +2008,28 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let func_data = match &*method_data.function.kind() {
-                                Object::Function(data) => data.clone(),
+                            match &*method_data.function.kind() {
+                                Object::Function(data) => {
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call(data, bound_args, kwargs)?;
+                                }
+                                Object::NativeMethod(native) => {
+                                    let result = self.call_native_method(
+                                        native.kind,
+                                        method_data.receiver.clone(),
+                                        args,
+                                        kwargs,
+                                    )?;
+                                    self.push_value(result);
+                                }
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "attempted to call non-function",
                                     ))
                                 }
-                            };
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(Value::Instance(method_data.receiver.clone()));
-                            bound_args.extend(args);
-                            let bindings = bind_arguments(
-                                &func_data,
-                                &self.heap,
-                                bound_args,
-                                kwargs,
-                            )?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            }
                         }
                         Value::Class(class) => {
                             let instance = match self
@@ -2169,18 +2168,7 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            self.push_function_call(&func_data, args, kwargs)?;
                         }
                         Value::BoundMethod(method) => {
                             let method_data = match &*method.kind() {
@@ -2191,34 +2179,28 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let func_data = match &*method_data.function.kind() {
-                                Object::Function(data) => data.clone(),
+                            match &*method_data.function.kind() {
+                                Object::Function(data) => {
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call(data, bound_args, kwargs)?;
+                                }
+                                Object::NativeMethod(native) => {
+                                    let result = self.call_native_method(
+                                        native.kind,
+                                        method_data.receiver.clone(),
+                                        args,
+                                        kwargs,
+                                    )?;
+                                    self.push_value(result);
+                                }
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "attempted to call non-function",
                                     ))
                                 }
-                            };
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(Value::Instance(method_data.receiver.clone()));
-                            bound_args.extend(args);
-                            let bindings = bind_arguments(
-                                &func_data,
-                                &self.heap,
-                                bound_args,
-                                kwargs,
-                            )?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            }
                         }
                         Value::Class(class) => {
                             let instance = match self
@@ -2323,18 +2305,7 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            self.push_function_call(&func_data, args, kwargs)?;
                         }
                         Value::BoundMethod(method) => {
                             let method_data = match &*method.kind() {
@@ -2345,30 +2316,28 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let func_data = match &*method_data.function.kind() {
-                                Object::Function(data) => data.clone(),
+                            match &*method_data.function.kind() {
+                                Object::Function(data) => {
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call(data, bound_args, kwargs)?;
+                                }
+                                Object::NativeMethod(native) => {
+                                    let result = self.call_native_method(
+                                        native.kind,
+                                        method_data.receiver.clone(),
+                                        args,
+                                        kwargs,
+                                    )?;
+                                    self.push_value(result);
+                                }
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "attempted to call non-function",
                                     ))
                                 }
-                            };
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(Value::Instance(method_data.receiver.clone()));
-                            bound_args.extend(args);
-                            let bindings =
-                                bind_arguments(&func_data, &self.heap, bound_args, kwargs)?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            }
                         }
                         Value::Class(class) => {
                             let instance = match self
@@ -2487,18 +2456,7 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let bindings = bind_arguments(&func_data, &self.heap, args, kwargs)?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            self.push_function_call(&func_data, args, kwargs)?;
                         }
                         Value::BoundMethod(method) => {
                             let method_data = match &*method.kind() {
@@ -2509,30 +2467,28 @@ impl Vm {
                                     ))
                                 }
                             };
-                            let func_data = match &*method_data.function.kind() {
-                                Object::Function(data) => data.clone(),
+                            match &*method_data.function.kind() {
+                                Object::Function(data) => {
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call(data, bound_args, kwargs)?;
+                                }
+                                Object::NativeMethod(native) => {
+                                    let result = self.call_native_method(
+                                        native.kind,
+                                        method_data.receiver.clone(),
+                                        args,
+                                        kwargs,
+                                    )?;
+                                    self.push_value(result);
+                                }
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "attempted to call non-function",
                                     ))
                                 }
-                            };
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(Value::Instance(method_data.receiver.clone()));
-                            bound_args.extend(args);
-                            let bindings =
-                                bind_arguments(&func_data, &self.heap, bound_args, kwargs)?;
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                            );
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            self.frames.push(frame);
+                            }
                         }
                         Value::Class(class) => {
                             let instance = match self
@@ -2707,6 +2663,10 @@ impl Vm {
                             kind: IteratorKind::Dict(obj),
                             index: 0,
                         },
+                        Value::Generator(obj) => {
+                            self.push_value(Value::Generator(obj));
+                            return Ok(None);
+                        }
                         Value::Iterator(obj) => {
                             self.push_value(Value::Iterator(obj));
                             return Ok(None);
@@ -2722,71 +2682,101 @@ impl Vm {
                         .ok_or_else(|| RuntimeError::new("missing jump target"))?
                         as usize;
                     let iterator_value = self.pop_value()?;
-                    let iterator_ref = match iterator_value {
-                        Value::Iterator(obj) => obj,
-                        _ => return Err(RuntimeError::new("FOR_ITER expects iterator")),
-                    };
-                    let next_value = {
-                        let mut iter = iterator_ref.kind_mut();
-                        match &mut *iter {
-                            Object::Iterator(state) => match &mut state.kind {
-                                IteratorKind::List(list) => match &*list.kind() {
-                                    Object::List(values) => {
-                                        if state.index >= values.len() {
-                                            None
-                                        } else {
-                                            let value = values[state.index].clone();
-                                            state.index += 1;
-                                            Some(value)
-                                        }
-                                    }
-                                    _ => None,
-                                },
-                                IteratorKind::Tuple(list) => match &*list.kind() {
-                                    Object::Tuple(values) => {
-                                        if state.index >= values.len() {
-                                            None
-                                        } else {
-                                            let value = values[state.index].clone();
-                                            state.index += 1;
-                                            Some(value)
-                                        }
-                                    }
-                                    _ => None,
-                                },
-                                IteratorKind::Str(text) => {
-                                    let chars: Vec<char> = text.chars().collect();
-                                    if state.index >= chars.len() {
-                                        None
-                                    } else {
-                                        let ch = chars[state.index];
-                                        state.index += 1;
-                                        Some(Value::Str(ch.to_string()))
-                                    }
-                                }
-                                IteratorKind::Dict(dict) => match &*dict.kind() {
-                                    Object::Dict(entries) => {
-                                        if state.index >= entries.len() {
-                                            None
-                                        } else {
-                                            let value = entries[state.index].0.clone();
-                                            state.index += 1;
-                                            Some(value)
-                                        }
-                                    }
-                                    _ => None,
-                                },
-                            },
-                            _ => None,
+                    match iterator_value {
+                        Value::Generator(obj) => {
+                            if let Some(value) = self.generator_for_iter_next(&obj)? {
+                                self.push_value(Value::Generator(obj));
+                                self.push_value(value);
+                            } else {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                frame.ip = target;
+                            }
                         }
-                    };
-                    if let Some(value) = next_value {
-                        self.push_value(Value::Iterator(iterator_ref));
-                        self.push_value(value);
-                    } else {
-                        let frame = self.frames.last_mut().expect("frame exists");
-                        frame.ip = target;
+                        Value::Iterator(iterator_ref) => {
+                            let next_value = {
+                                let mut iter = iterator_ref.kind_mut();
+                                match &mut *iter {
+                                    Object::Iterator(state) => match &mut state.kind {
+                                        IteratorKind::List(list) => match &*list.kind() {
+                                            Object::List(values) => {
+                                                if state.index >= values.len() {
+                                                    None
+                                                } else {
+                                                    let value = values[state.index].clone();
+                                                    state.index += 1;
+                                                    Some(value)
+                                                }
+                                            }
+                                            _ => None,
+                                        },
+                                        IteratorKind::Tuple(list) => match &*list.kind() {
+                                            Object::Tuple(values) => {
+                                                if state.index >= values.len() {
+                                                    None
+                                                } else {
+                                                    let value = values[state.index].clone();
+                                                    state.index += 1;
+                                                    Some(value)
+                                                }
+                                            }
+                                            _ => None,
+                                        },
+                                        IteratorKind::Str(text) => {
+                                            let chars: Vec<char> = text.chars().collect();
+                                            if state.index >= chars.len() {
+                                                None
+                                            } else {
+                                                let ch = chars[state.index];
+                                                state.index += 1;
+                                                Some(Value::Str(ch.to_string()))
+                                            }
+                                        }
+                                        IteratorKind::Dict(dict) => match &*dict.kind() {
+                                            Object::Dict(entries) => {
+                                                if state.index >= entries.len() {
+                                                    None
+                                                } else {
+                                                    let value = entries[state.index].0.clone();
+                                                    state.index += 1;
+                                                    Some(value)
+                                                }
+                                            }
+                                            _ => None,
+                                        },
+                                    },
+                                    _ => None,
+                                }
+                            };
+                            if let Some(value) = next_value {
+                                self.push_value(Value::Iterator(iterator_ref));
+                                self.push_value(value);
+                            } else {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                frame.ip = target;
+                            }
+                        }
+                        _ => return Err(RuntimeError::new("FOR_ITER expects iterator")),
                     }
+                }
+                Opcode::YieldValue => {
+                    let yielded = self.pop_value()?;
+                    let target = self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.collect_yields.clone())
+                        .ok_or_else(|| RuntimeError::new("yield outside generator"))?;
+                    self.append_generator_yield(&target, yielded)?;
+                    self.push_value(Value::None);
+                }
+                Opcode::YieldFrom => {
+                    let source = self.pop_value()?;
+                    let target = self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.collect_yields.clone())
+                        .ok_or_else(|| RuntimeError::new("yield from outside generator"))?;
+                    self.collect_yield_from(&target, source)?;
+                    self.push_value(Value::None);
                 }
                 Opcode::SetupExcept => {
                     let handler = instr
@@ -2846,10 +2836,15 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("constant index out of range"))?
                     };
                     let frame = self.frames.pop().expect("frame exists");
-                    if frame.expect_none_return && value != Value::None {
+                    if frame.return_generator.is_none()
+                        && frame.expect_none_return
+                        && value != Value::None
+                    {
                         return Err(RuntimeError::new("__init__() should return None"));
                     }
-                    let value = if frame.return_class {
+                    let value = if let Some(generator) = frame.return_generator {
+                        Value::Generator(generator)
+                    } else if frame.return_class {
                         self.class_value_from_module(&frame.module, frame.class_bases)
                     } else if let Some(instance) = frame.return_instance {
                         Value::Instance(instance)
@@ -2867,12 +2862,17 @@ impl Vm {
                 Opcode::ReturnValue => {
                     let value = self.pop_value().unwrap_or(Value::None);
                     let frame = self.frames.pop().expect("frame exists");
-                    if frame.expect_none_return && value != Value::None {
+                    if frame.return_generator.is_none()
+                        && frame.expect_none_return
+                        && value != Value::None
+                    {
                         return Err(RuntimeError::new(
                             "__init__() should return None",
                         ));
                     }
-                    let value = if frame.return_class {
+                    let value = if let Some(generator) = frame.return_generator {
+                        Value::Generator(generator)
+                    } else if frame.return_class {
                         self.class_value_from_module(&frame.module, frame.class_bases)
                     } else if let Some(instance) = frame.return_instance {
                         Value::Instance(instance)
@@ -3077,6 +3077,270 @@ impl Vm {
         }
     }
 
+    fn push_function_call(
+        &mut self,
+        func_data: &FunctionObject,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<(), RuntimeError> {
+        let bindings = bind_arguments(func_data, &self.heap, args, kwargs)?;
+        let cells = self.build_cells(&func_data.code, func_data.closure.clone());
+        let mut frame = Frame::new(
+            func_data.code.clone(),
+            func_data.module.clone(),
+            false,
+            false,
+            cells,
+        );
+        apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+        if func_data.code.is_generator {
+            let generator = match self.heap.alloc_generator(GeneratorObject::new(Vec::new())) {
+                Value::Generator(obj) => obj,
+                _ => unreachable!(),
+            };
+            frame.collect_yields = Some(generator.clone());
+            frame.return_generator = Some(generator);
+        }
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    fn receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
+        match &*receiver.kind() {
+            Object::Instance(_) => Ok(Value::Instance(receiver.clone())),
+            Object::Generator(_) => Ok(Value::Generator(receiver.clone())),
+            _ => Err(RuntimeError::new("unsupported bound method receiver")),
+        }
+    }
+
+    fn call_native_method(
+        &mut self,
+        kind: NativeMethodKind,
+        receiver: ObjRef,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("native methods do not accept keywords"));
+        }
+        match kind {
+            NativeMethodKind::GeneratorIter => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__iter__() expects no arguments"));
+                }
+                Ok(Value::Generator(receiver))
+            }
+            NativeMethodKind::GeneratorNext => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__next__() expects no arguments"));
+                }
+                self.generator_next_value(&receiver, None)
+            }
+            NativeMethodKind::GeneratorSend => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("send() expects one argument"));
+                }
+                self.generator_next_value(&receiver, args.into_iter().next())
+            }
+            NativeMethodKind::GeneratorThrow => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("throw() expects 1-2 arguments"));
+                }
+                self.close_generator(&receiver)?;
+                let exc = args.into_iter().next().expect("checked len");
+                match exc {
+                    Value::Exception(exception) => Err(RuntimeError::new(format_value(
+                        &Value::Exception(exception),
+                    ))),
+                    Value::ExceptionType(name) => Err(RuntimeError::new(name)),
+                    _ => Err(RuntimeError::new("throw() expects an exception type/value")),
+                }
+            }
+            NativeMethodKind::GeneratorClose => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("close() expects no arguments"));
+                }
+                self.close_generator(&receiver)?;
+                Ok(Value::None)
+            }
+        }
+    }
+
+    fn append_generator_yield(
+        &mut self,
+        generator: &ObjRef,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        match &mut *generator.kind_mut() {
+            Object::Generator(generator) => {
+                generator.values.push(value);
+                Ok(())
+            }
+            _ => Err(RuntimeError::new("yield target is not a generator")),
+        }
+    }
+
+    fn close_generator(&mut self, generator: &ObjRef) -> Result<(), RuntimeError> {
+        match &mut *generator.kind_mut() {
+            Object::Generator(state) => {
+                state.closed = true;
+                state.index = state.values.len();
+                Ok(())
+            }
+            _ => Err(RuntimeError::new("object is not a generator")),
+        }
+    }
+
+    fn generator_next_value(
+        &mut self,
+        generator: &ObjRef,
+        sent: Option<Value>,
+    ) -> Result<Value, RuntimeError> {
+        match &mut *generator.kind_mut() {
+            Object::Generator(state) => {
+                if state.closed || state.index >= state.values.len() {
+                    return Err(RuntimeError::new("StopIteration"));
+                }
+                if !state.started {
+                    if let Some(value) = sent {
+                        if value != Value::None {
+                            return Err(RuntimeError::new(
+                                "can't send non-None value to a just-started generator",
+                            ));
+                        }
+                    }
+                }
+                state.started = true;
+                let value = state.values[state.index].clone();
+                state.index += 1;
+                Ok(value)
+            }
+            _ => Err(RuntimeError::new("object is not a generator")),
+        }
+    }
+
+    fn generator_for_iter_next(
+        &mut self,
+        generator: &ObjRef,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match &mut *generator.kind_mut() {
+            Object::Generator(state) => {
+                if state.closed || state.index >= state.values.len() {
+                    Ok(None)
+                } else {
+                    state.started = true;
+                    let value = state.values[state.index].clone();
+                    state.index += 1;
+                    Ok(Some(value))
+                }
+            }
+            _ => Err(RuntimeError::new("object is not a generator")),
+        }
+    }
+
+    fn collect_yield_from(
+        &mut self,
+        target: &ObjRef,
+        source: Value,
+    ) -> Result<(), RuntimeError> {
+        let values = match source {
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("yield from expects iterable")),
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("yield from expects iterable")),
+            },
+            Value::Str(value) => value
+                .chars()
+                .map(|ch| Value::Str(ch.to_string()))
+                .collect(),
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(entries) => entries.iter().map(|(key, _)| key.clone()).collect(),
+                _ => return Err(RuntimeError::new("yield from expects iterable")),
+            },
+            Value::Generator(obj) => {
+                let mut values = Vec::new();
+                while let Some(value) = self.generator_for_iter_next(&obj)? {
+                    values.push(value);
+                }
+                values
+            }
+            Value::Iterator(obj) => {
+                let mut values = Vec::new();
+                loop {
+                    let next = {
+                        let mut iter = obj.kind_mut();
+                        match &mut *iter {
+                            Object::Iterator(state) => match &mut state.kind {
+                                IteratorKind::List(list) => match &*list.kind() {
+                                    Object::List(values) => {
+                                        if state.index >= values.len() {
+                                            None
+                                        } else {
+                                            let value = values[state.index].clone();
+                                            state.index += 1;
+                                            Some(value)
+                                        }
+                                    }
+                                    _ => None,
+                                },
+                                IteratorKind::Tuple(list) => match &*list.kind() {
+                                    Object::Tuple(values) => {
+                                        if state.index >= values.len() {
+                                            None
+                                        } else {
+                                            let value = values[state.index].clone();
+                                            state.index += 1;
+                                            Some(value)
+                                        }
+                                    }
+                                    _ => None,
+                                },
+                                IteratorKind::Str(text) => {
+                                    let chars: Vec<char> = text.chars().collect();
+                                    if state.index >= chars.len() {
+                                        None
+                                    } else {
+                                        let value = Value::Str(chars[state.index].to_string());
+                                        state.index += 1;
+                                        Some(value)
+                                    }
+                                }
+                                IteratorKind::Dict(dict) => match &*dict.kind() {
+                                    Object::Dict(entries) => {
+                                        if state.index >= entries.len() {
+                                            None
+                                        } else {
+                                            let value = entries[state.index].0.clone();
+                                            state.index += 1;
+                                            Some(value)
+                                        }
+                                    }
+                                    _ => None,
+                                },
+                            },
+                            _ => None,
+                        }
+                    };
+                    if let Some(value) = next {
+                        values.push(value);
+                    } else {
+                        break;
+                    }
+                }
+                values
+            }
+            _ => return Err(RuntimeError::new("yield from expects iterable")),
+        };
+
+        for value in values {
+            self.append_generator_yield(target, value)?;
+        }
+        Ok(())
+    }
+
     fn call_builtin(
         &self,
         builtin: BuiltinFunction,
@@ -3234,6 +3498,10 @@ impl Vm {
         );
         self.builtins
             .insert("RuntimeError".to_string(), Value::ExceptionType("RuntimeError".to_string()));
+        self.builtins.insert(
+            "StopIteration".to_string(),
+            Value::ExceptionType("StopIteration".to_string()),
+        );
     }
 
     fn call_build_class(
@@ -3404,6 +3672,7 @@ fn is_truthy(value: &Value) -> bool {
             _ => true,
         },
         Value::Iterator(_) => true,
+        Value::Generator(_) => true,
         Value::Slice { .. } => true,
         Value::Module(_)
         | Value::Class(_)
@@ -3813,6 +4082,9 @@ fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
 }
 
 fn classify_runtime_error(message: &str) -> &'static str {
+    if message.trim() == "StopIteration" {
+        return "StopIteration";
+    }
     if message.contains("index out of range") {
         return "IndexError";
     }

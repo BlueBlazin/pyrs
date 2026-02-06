@@ -8,9 +8,9 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Indentation + basic tokenization (names, ints, strings, operators, keywords for implemented subset)
 - [ ] Full tokenizer parity (string prefixes, numeric literals, f-strings, comments, etc.)
 - [x] Statements subset: pass, expr, assign/augassign (incl tuple/list destructuring targets), if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise, assert, try/except/else, with, class (bases supported, no keywords)
-- [x] Expressions subset: arithmetic (incl `**`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda
+- [x] Expressions subset: arithmetic (incl `**`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls, literals, attribute/subscript/slice, lambda, `yield`, `yield from`
 - [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
-- [ ] Comprehensions, generators, pattern matching, async/await, etc.
+- [ ] Comprehensions, pattern matching, async/await, etc.
 
 ## Bytecode
 - [x] Opcode source files synced (`opcode.py`, `bytecodes.c`, `opcode.h`)
@@ -26,6 +26,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Core types subset (None, bool, int, str, tuple, list, dict)
 - [ ] bytes, set, frozenset, memoryview, complex, etc.
 - [x] Function + frame model (positional-only params, positional params, defaults, keyword args, keyword-only params, *args/**kwargs; closures + `nonlocal`)
+- [x] Generators (basic protocol: `__next__`, `send`, `throw`, `close`; eager materialization)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [x] Tracebacks with filename/line/col + frame names
 - [ ] Exception chaining
@@ -61,7 +62,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [ ] CPython opcode encoder (3.14).
 - [ ] `.pyc` load/serialize parity with CPython 3.14 (subset implemented).
 - [x] Closures + `nonlocal` (cell/free vars).
-- [ ] Generators (`yield`, `yield from`) + protocol.
+- [x] Generators (`yield`, `yield from`) + protocol (basic support; eager materialization).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [ ] Import system parity (`importlib`, specs, hooks).
 

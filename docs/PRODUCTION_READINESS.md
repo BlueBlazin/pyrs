@@ -10,7 +10,7 @@ Priority tags: `P0` (blocking), `P1` (major), `P2` (performance/QoL), `P3` (futu
 - [~] P0: Full 3.14 grammar coverage (all statements/expressions).
 - [ ] P0: Decorators on functions/classes.
 - [ ] P0: Assignment expressions (`:=`).
-- [ ] P0: `yield`, `yield from`.
+- [~] P0: `yield`, `yield from`.
 - [ ] P0: `async`/`await`, async comprehensions, async generators.
 - [ ] P0: `try/except*` (exception groups) and `ExceptionGroup` semantics.
 - [ ] P0: Pattern matching (`match`/`case`).

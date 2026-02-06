@@ -96,6 +96,45 @@ impl BoundMethod {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct GeneratorObject {
+    pub values: Vec<Value>,
+    pub index: usize,
+    pub started: bool,
+    pub closed: bool,
+}
+
+impl GeneratorObject {
+    pub fn new(values: Vec<Value>) -> Self {
+        Self {
+            values,
+            index: 0,
+            started: false,
+            closed: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NativeMethodKind {
+    GeneratorIter,
+    GeneratorNext,
+    GeneratorSend,
+    GeneratorThrow,
+    GeneratorClose,
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeMethodObject {
+    pub kind: NativeMethodKind,
+}
+
+impl NativeMethodObject {
+    pub fn new(kind: NativeMethodKind) -> Self {
+        Self { kind }
+    }
+}
+
 #[derive(Debug)]
 pub struct Obj {
     id: u64,
@@ -137,10 +176,12 @@ pub enum Object {
     Tuple(Vec<Value>),
     Dict(Vec<(Value, Value)>),
     Iterator(IteratorObject),
+    Generator(GeneratorObject),
     Module(ModuleObject),
     Class(ClassObject),
     Instance(InstanceObject),
     BoundMethod(BoundMethod),
+    NativeMethod(NativeMethodObject),
     Function(FunctionObject),
     Cell(CellObject),
 }
@@ -251,6 +292,14 @@ impl Heap {
         Value::Iterator(self.alloc(Object::Iterator(iterator)))
     }
 
+    pub fn alloc_generator(&self, generator: GeneratorObject) -> Value {
+        Value::Generator(self.alloc(Object::Generator(generator)))
+    }
+
+    pub fn alloc_native_method(&self, native: NativeMethodObject) -> ObjRef {
+        self.alloc(Object::NativeMethod(native))
+    }
+
     pub fn alloc_cell_obj(&self, value: Option<Value>) -> ObjRef {
         self.alloc(Object::Cell(CellObject::new(value)))
     }
@@ -269,6 +318,7 @@ impl Heap {
             | Value::Tuple(obj)
             | Value::Dict(obj)
             | Value::Iterator(obj)
+            | Value::Generator(obj)
             | Value::Module(obj)
             | Value::Class(obj)
             | Value::Instance(obj)
@@ -348,6 +398,7 @@ fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         | Value::Tuple(obj)
         | Value::Dict(obj)
         | Value::Iterator(obj)
+        | Value::Generator(obj)
         | Value::Module(obj)
         | Value::Class(obj)
         | Value::Instance(obj)
@@ -386,6 +437,11 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             }
             IteratorKind::Str(_) => {}
         },
+        Object::Generator(generator) => {
+            for value in &generator.values {
+                trace_value(value, stack, marked);
+            }
+        }
         Object::Module(module) => {
             for value in module.globals.values() {
                 trace_value(value, stack, marked);
@@ -427,6 +483,7 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             stack.push(method.function.clone());
             stack.push(method.receiver.clone());
         }
+        Object::NativeMethod(_) => {}
         Object::Cell(cell) => {
             if let Some(value) = &cell.value {
                 trace_value(value, stack, marked);
@@ -455,6 +512,12 @@ fn clear_object_refs(obj: &ObjRef) {
                 iterator.index = 0;
             }
         },
+        Object::Generator(generator) => {
+            generator.values.clear();
+            generator.index = 0;
+            generator.started = false;
+            generator.closed = true;
+        }
         Object::Module(module) => {
             module.globals.clear();
         }
@@ -472,6 +535,7 @@ fn clear_object_refs(obj: &ObjRef) {
             func.annotations = None;
         }
         Object::BoundMethod(_) => {}
+        Object::NativeMethod(_) => {}
         Object::Cell(cell) => {
             cell.value = None;
         }
@@ -488,6 +552,7 @@ pub enum Value {
     Tuple(ObjRef),
     Dict(ObjRef),
     Iterator(ObjRef),
+    Generator(ObjRef),
     Module(ObjRef),
     Class(ObjRef),
     Instance(ObjRef),
@@ -565,6 +630,7 @@ impl PartialEq for Value {
                 _ => false,
             },
             (Value::Iterator(a), Value::Iterator(b)) => a.id() == b.id(),
+            (Value::Generator(a), Value::Generator(b)) => a.id() == b.id(),
             (Value::Module(a), Value::Module(b))
             | (Value::Class(a), Value::Class(b))
             | (Value::Instance(a), Value::Instance(b))
@@ -1150,6 +1216,7 @@ pub fn format_value(value: &Value) -> String {
             _ => "<dict>".to_string(),
         },
         Value::Iterator(_) => "<iterator>".to_string(),
+        Value::Generator(_) => "<generator>".to_string(),
         Value::Module(obj) => match &*obj.kind() {
             Object::Module(module) => format!("<module {}>", module.name),
             _ => "<module ?>".to_string(),
@@ -1168,6 +1235,13 @@ pub fn format_value(value: &Value) -> String {
         Value::BoundMethod(obj) => match &*obj.kind() {
             Object::BoundMethod(method) => match &*method.function.kind() {
                 Object::Function(func) => format!("<bound method {}>", func.code.name),
+                Object::NativeMethod(native) => match native.kind {
+                    NativeMethodKind::GeneratorIter => "<bound method __iter__>".to_string(),
+                    NativeMethodKind::GeneratorNext => "<bound method __next__>".to_string(),
+                    NativeMethodKind::GeneratorSend => "<bound method send>".to_string(),
+                    NativeMethodKind::GeneratorThrow => "<bound method throw>".to_string(),
+                    NativeMethodKind::GeneratorClose => "<bound method close>".to_string(),
+                },
                 _ => "<bound method ?>".to_string(),
             },
             _ => "<bound method ?>".to_string(),
@@ -1210,6 +1284,7 @@ fn is_truthy_value(value: &Value) -> bool {
             _ => true,
         },
         Value::Iterator(_) => true,
+        Value::Generator(_) => true,
         Value::Slice { .. } => true,
         Value::Module(_)
         | Value::Class(_)

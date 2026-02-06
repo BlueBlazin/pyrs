@@ -31,6 +31,7 @@ pub enum Keyword {
     As,
     Lambda,
     With,
+    Yield,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

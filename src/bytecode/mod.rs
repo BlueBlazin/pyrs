@@ -76,6 +76,8 @@ pub enum Opcode {
     EndFor,
     GetIter,
     ForIter,
+    YieldValue,
+    YieldFrom,
     CallCpython,
     CallCpythonKwStack,
     MakeFunctionStack,
@@ -127,6 +129,7 @@ pub struct CodeObject {
     pub vararg: Option<String>,
     pub kwarg: Option<String>,
     pub kwonly_params: Vec<String>,
+    pub is_generator: bool,
 }
 
 impl CodeObject {
@@ -145,6 +148,7 @@ impl CodeObject {
             vararg: None,
             kwarg: None,
             kwonly_params: Vec::new(),
+            is_generator: false,
         }
     }
 

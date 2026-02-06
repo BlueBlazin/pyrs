@@ -212,6 +212,12 @@ fn strip_expr(expr: &Expr) -> Expr {
             kwonly_params: kwonly_params.iter().map(strip_param).collect(),
             body: Box::new(strip_expr(body)),
         },
+        ExprKind::Yield { value } => ExprKind::Yield {
+            value: value.as_ref().map(|expr| Box::new(strip_expr(expr))),
+        },
+        ExprKind::YieldFrom { value } => ExprKind::YieldFrom {
+            value: Box::new(strip_expr(value)),
+        },
         ExprKind::Slice { lower, upper, step } => ExprKind::Slice {
             lower: lower.as_ref().map(|expr| Box::new(strip_expr(expr))),
             upper: upper.as_ref().map(|expr| Box::new(strip_expr(expr))),
@@ -1167,6 +1173,35 @@ fn parses_function_annotations() {
                 None => panic!("missing return annotation"),
             }
         }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_yield_expression_statement() {
+    let module = parser::parse_module("yield 1").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Expr(expr) => match &expr.node {
+            ExprKind::Yield { value } => {
+                assert!(value.is_some());
+            }
+            other => panic!("unexpected expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_yield_from_expression_statement() {
+    let module = parser::parse_module("yield from items").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Expr(expr) => match &expr.node {
+            ExprKind::YieldFrom { value } => match &value.node {
+                ExprKind::Name(name) => assert_eq!(name, "items"),
+                other => panic!("unexpected yield from source: {other:?}"),
+            },
+            other => panic!("unexpected expr: {other:?}"),
+        },
         other => panic!("unexpected stmt: {other:?}"),
     }
 }

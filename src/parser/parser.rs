@@ -226,11 +226,58 @@ impl Parser {
     }
 
     fn parse_expr_uncached(&mut self, pos: usize) -> ParseResult<Expr> {
-        if self.match_keyword(pos, Keyword::Lambda) {
+        if self.match_keyword(pos, Keyword::Yield) {
+            self.parse_yield_expr(pos)
+        } else if self.match_keyword(pos, Keyword::Lambda) {
             self.parse_lambda(pos)
         } else {
             self.parse_if_expr(pos)
         }
+    }
+
+    fn parse_yield_expr(&mut self, pos: usize) -> ParseResult<Expr> {
+        let start = pos;
+        let pos = pos + 1;
+        if self.match_keyword(pos, Keyword::From) {
+            let (value, next) = self.parse_expr_at(pos + 1)?;
+            return Ok((
+                self.make_expr(
+                    start,
+                    ExprKind::YieldFrom {
+                        value: Box::new(value),
+                    },
+                ),
+                next,
+            ));
+        }
+        if matches!(
+            self.token_at(pos).kind,
+            TokenKind::Newline
+                | TokenKind::Semicolon
+                | TokenKind::Dedent
+                | TokenKind::EndMarker
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::RBrace
+                | TokenKind::Comma
+                | TokenKind::Colon
+        ) {
+            return Ok((
+                self.make_expr(start, ExprKind::Yield { value: None }),
+                pos,
+            ));
+        }
+
+        let (value, next) = self.parse_if_expr(pos)?;
+        Ok((
+            self.make_expr(
+                start,
+                ExprKind::Yield {
+                    value: Some(Box::new(value)),
+                },
+            ),
+            next,
+        ))
     }
 
     fn parse_lambda(&mut self, pos: usize) -> ParseResult<Expr> {

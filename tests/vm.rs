@@ -266,6 +266,60 @@ fn executes_function_annotations() {
 }
 
 #[test]
+fn executes_generator_for_loop() {
+    let source = "def gen():\n    yield 1\n    yield 2\nvals = []\nfor x in gen():\n    vals += [x]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        list_values(vm.get_global("vals")),
+        Some(vec![Value::Int(1), Value::Int(2)])
+    );
+}
+
+#[test]
+fn executes_generator_send_next_and_close() {
+    let source = "def gen():\n    yield 1\n    yield 2\ng = gen()\na = g.send(None)\nb = g.__next__()\nc = g.close()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("c"), Some(Value::None));
+}
+
+#[test]
+fn executes_generator_yield_from() {
+    let source = "def gen():\n    yield from [1, 2, 3]\nvals = []\nfor x in gen():\n    vals += [x]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(
+        list_values(vm.get_global("vals")),
+        Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+    );
+}
+
+#[test]
+fn executes_generator_throw_and_stop_iteration() {
+    let source = "def gen():\n    yield 1\ng = gen()\nfirst = g.send(None)\nhandled = False\ntry:\n    g.throw(RuntimeError)\nexcept RuntimeError:\n    handled = True\nstopped = False\ntry:\n    g.send(None)\nexcept StopIteration:\n    stopped = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("first"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("handled"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("stopped"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_star_args() {
     let source = "def add(a, b):\n    return a + b\nargs = [1, 2]\nx = add(*args)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
