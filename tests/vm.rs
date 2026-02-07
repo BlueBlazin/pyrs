@@ -3685,6 +3685,83 @@ fn executes_os_fsencode_fsdecode_and_unicodeerror() {
 }
 
 #[test]
+fn executes_os_fd_stat_and_wait_status_helpers() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let file = temp_dir.join("sample.txt");
+    std::fs::write(&file, b"hello").expect("write sample file");
+
+    let source = format!(
+        "import os\nimport posix\n\
+path = '{path}'\n\
+root = '{root}'\n\
+fd = os.open(path, os.O_RDONLY)\n\
+is_tty = os.isatty(fd)\n\
+os.close(fd)\n\
+st = os.stat(path)\n\
+lst = os.lstat(path)\n\
+pst = posix.stat(path)\n\
+items = os.scandir(root)\n\
+name_ok = any(item[0] == 'sample.txt' for item in items)\n\
+wait_ok = os.WIFEXITED(5 << 8) and os.WEXITSTATUS(5 << 8) == 5 and not os.WIFSIGNALED(5 << 8)\n\
+ok = (not is_tty) and st.st_size == 5 and lst.st_size == 5 and pst.st_size == 5 and name_ok and wait_ok\n",
+        path = file.to_string_lossy().replace('\\', "\\\\"),
+        root = temp_dir.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
+fn executes_os_utime_rmdir_and_bad_fd_error_type() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_mut_{unique}"));
+    let empty_dir = temp_dir.join("empty");
+    std::fs::create_dir_all(&empty_dir).expect("create temp dir");
+    let file = temp_dir.join("touch.txt");
+    std::fs::write(&file, b"x").expect("write sample file");
+
+    let source = format!(
+        r#"import os
+path = '{path}'
+empty = '{empty}'
+os.utime(path, (1, 2))
+st = os.stat(path)
+os.rmdir(empty)
+caught = False
+try:
+    os.close(999999)
+except OSError:
+    caught = True
+ok = st.st_mtime >= 2 and caught
+"#,
+        path = file.to_string_lossy().replace('\\', "\\\\"),
+        empty = empty_dir.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
 fn handles_except_tuple_types() {
     let source = "caught = False\ntry:\n    raise AttributeError\nexcept (ImportError, AttributeError):\n    caught = True\nok = caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");

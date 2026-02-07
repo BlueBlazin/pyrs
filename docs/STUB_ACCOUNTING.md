@@ -17,7 +17,7 @@ These are implemented paths that are intentionally incomplete versus CPython and
 | `json` | Custom parser/serializer core paths, not full encoder/decoder semantics | Full CPython `json` semantics for encoder options/edge cases and error text contracts | Milestone 13 |
 | `math` | Core numeric functions plus many `NoOp` stubs | All CPython `math` public API implemented with parity tests | Milestone 13 |
 | `decimal` / `_pylong` | Bootstrap-level stubs for import compatibility | Replace stubs with real semantics needed by stdlib/users | Milestone 13 |
-| `os` / `posix` / `pathlib` | Core filesystem/process paths only; several APIs stubbed | Full pure-Python-usable path/process API surface for CPython test coverage in scope | Milestone 13 |
+| `os` / `posix` / `pathlib` | Core filesystem/process paths plus non-`NoOp` `open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` and wait-status helpers; broader API surface still incomplete | Full pure-Python-usable path/process API surface for CPython test coverage in scope | Milestone 13 |
 | `inspect` / `types` | Foundational predicates/types only | Full behavior required by stdlib + mainstream pure-Python packages | Milestone 13 |
 | `codecs` / `unicodedata` | Core codecs and minimal unicode normalization only | Full codecs registry/error-handler and unicode behavior parity | Milestone 13 |
 | `asyncio` / `threading` / `signal` | Foundational runtime paths, not full contract parity | CPython-compatible behavior for supported event loop and thread/signal APIs | Milestone 13/16 |

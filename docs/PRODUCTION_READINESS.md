@@ -89,7 +89,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [~] P0: `random` module foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`).
 - [~] P0: `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`).
 - [~] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
-- [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core).
+- [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core; `os`/`posix` now include non-`NoOp` `open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` + wait-status helpers).
 - [~] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator`.
 - [~] P1: `threading`, `multiprocessing`, `asyncio`, `concurrent.futures` (`asyncio`/`threading` foundations implemented; broader module parity pending).
 - [ ] P1: `subprocess`, `socket`, `ssl`, `http`, `urllib`.

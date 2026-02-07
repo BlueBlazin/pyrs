@@ -1000,6 +1000,20 @@ pub enum BuiltinFunction {
     TimeSleep,
     OsGetPid,
     OsGetCwd,
+    OsOpen,
+    OsClose,
+    OsIsATty,
+    OsStat,
+    OsLStat,
+    OsRmdir,
+    OsUTime,
+    OsScandir,
+    OsWIfStopped,
+    OsWStopSig,
+    OsWIfSignaled,
+    OsWTermSig,
+    OsWIfExited,
+    OsWExitStatus,
     OsListDir,
     OsFsEncode,
     OsFsDecode,
@@ -2551,6 +2565,20 @@ impl BuiltinFunction {
             | BuiltinFunction::TimeSleep
             | BuiltinFunction::OsGetPid
             | BuiltinFunction::OsGetCwd
+            | BuiltinFunction::OsOpen
+            | BuiltinFunction::OsClose
+            | BuiltinFunction::OsIsATty
+            | BuiltinFunction::OsStat
+            | BuiltinFunction::OsLStat
+            | BuiltinFunction::OsRmdir
+            | BuiltinFunction::OsUTime
+            | BuiltinFunction::OsScandir
+            | BuiltinFunction::OsWIfStopped
+            | BuiltinFunction::OsWStopSig
+            | BuiltinFunction::OsWIfSignaled
+            | BuiltinFunction::OsWTermSig
+            | BuiltinFunction::OsWIfExited
+            | BuiltinFunction::OsWExitStatus
             | BuiltinFunction::OsListDir
             | BuiltinFunction::OsFsEncode
             | BuiltinFunction::OsFsDecode

@@ -5,6 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -255,6 +256,8 @@ pub struct Vm {
     generator_resume_outcome: Option<GeneratorResumeOutcome>,
     run_stop_depth: Option<usize>,
     signal_handlers: HashMap<i64, Value>,
+    open_files: HashMap<i64, fs::File>,
+    next_fd: i64,
     defaultdict_factories: HashMap<u64, Value>,
     exception_parents: HashMap<String, String>,
 }
@@ -288,6 +291,8 @@ impl Vm {
             generator_resume_outcome: None,
             run_stop_depth: None,
             signal_handlers: HashMap::new(),
+            open_files: HashMap::new(),
+            next_fd: 3,
             defaultdict_factories: HashMap::new(),
             exception_parents: HashMap::new(),
         };
@@ -1354,6 +1359,14 @@ impl Vm {
             &[
                 ("getpid", BuiltinFunction::OsGetPid),
                 ("getcwd", BuiltinFunction::OsGetCwd),
+                ("open", BuiltinFunction::OsOpen),
+                ("close", BuiltinFunction::OsClose),
+                ("isatty", BuiltinFunction::OsIsATty),
+                ("stat", BuiltinFunction::OsStat),
+                ("lstat", BuiltinFunction::OsLStat),
+                ("rmdir", BuiltinFunction::OsRmdir),
+                ("utime", BuiltinFunction::OsUTime),
+                ("scandir", BuiltinFunction::OsScandir),
                 ("listdir", BuiltinFunction::OsListDir),
                 ("fsencode", BuiltinFunction::OsFsEncode),
                 ("fsdecode", BuiltinFunction::OsFsDecode),
@@ -1366,16 +1379,8 @@ impl Vm {
                 ("path_join", BuiltinFunction::OsPathJoin),
                 ("_get_exports_list", BuiltinFunction::Dir),
                 ("fspath", BuiltinFunction::TypingIdFunc),
-                ("open", BuiltinFunction::NoOp),
-                ("close", BuiltinFunction::NoOp),
-                ("isatty", BuiltinFunction::NoOp),
-                ("stat", BuiltinFunction::NoOp),
-                ("lstat", BuiltinFunction::NoOp),
                 ("unlink", BuiltinFunction::OsRemove),
                 ("remove", BuiltinFunction::OsRemove),
-                ("rmdir", BuiltinFunction::NoOp),
-                ("utime", BuiltinFunction::NoOp),
-                ("scandir", BuiltinFunction::NoOp),
             ],
             vec![
                 ("sep", Value::Str(std::path::MAIN_SEPARATOR.to_string())),
@@ -1442,12 +1447,12 @@ impl Vm {
                 ("supports_fd", self.heap.alloc_set(Vec::new())),
                 ("supports_follow_symlinks", self.heap.alloc_set(Vec::new())),
                 ("WNOHANG", Value::Int(1)),
-                ("WIFSTOPPED", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WSTOPSIG", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WIFSIGNALED", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WTERMSIG", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WIFEXITED", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WEXITSTATUS", Value::Builtin(BuiltinFunction::NoOp)),
+                ("WIFSTOPPED", Value::Builtin(BuiltinFunction::OsWIfStopped)),
+                ("WSTOPSIG", Value::Builtin(BuiltinFunction::OsWStopSig)),
+                ("WIFSIGNALED", Value::Builtin(BuiltinFunction::OsWIfSignaled)),
+                ("WTERMSIG", Value::Builtin(BuiltinFunction::OsWTermSig)),
+                ("WIFEXITED", Value::Builtin(BuiltinFunction::OsWIfExited)),
+                ("WEXITSTATUS", Value::Builtin(BuiltinFunction::OsWExitStatus)),
             ],
         );
         self.install_builtin_module(
@@ -1455,14 +1460,20 @@ impl Vm {
             &[
                 ("getpid", BuiltinFunction::OsGetPid),
                 ("getcwd", BuiltinFunction::OsGetCwd),
+                ("open", BuiltinFunction::OsOpen),
+                ("close", BuiltinFunction::OsClose),
+                ("isatty", BuiltinFunction::OsIsATty),
                 ("listdir", BuiltinFunction::OsListDir),
                 (
                     "waitstatus_to_exitcode",
                     BuiltinFunction::OsWaitStatusToExitCode,
                 ),
                 ("waitpid", BuiltinFunction::OsWaitPid),
-                ("stat", BuiltinFunction::NoOp),
-                ("lstat", BuiltinFunction::NoOp),
+                ("stat", BuiltinFunction::OsStat),
+                ("lstat", BuiltinFunction::OsLStat),
+                ("rmdir", BuiltinFunction::OsRmdir),
+                ("utime", BuiltinFunction::OsUTime),
+                ("scandir", BuiltinFunction::OsScandir),
                 ("_path_normpath", BuiltinFunction::OsPathNormPath),
                 ("_path_splitroot_ex", BuiltinFunction::OsPathSplitRootEx),
             ],
@@ -1472,12 +1483,12 @@ impl Vm {
                 ("altsep", Value::None),
                 ("environ", self.heap.alloc_dict(Vec::new())),
                 ("WNOHANG", Value::Int(1)),
-                ("WIFSTOPPED", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WSTOPSIG", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WIFSIGNALED", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WTERMSIG", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WIFEXITED", Value::Builtin(BuiltinFunction::NoOp)),
-                ("WEXITSTATUS", Value::Builtin(BuiltinFunction::NoOp)),
+                ("WIFSTOPPED", Value::Builtin(BuiltinFunction::OsWIfStopped)),
+                ("WSTOPSIG", Value::Builtin(BuiltinFunction::OsWStopSig)),
+                ("WIFSIGNALED", Value::Builtin(BuiltinFunction::OsWIfSignaled)),
+                ("WTERMSIG", Value::Builtin(BuiltinFunction::OsWTermSig)),
+                ("WIFEXITED", Value::Builtin(BuiltinFunction::OsWIfExited)),
+                ("WEXITSTATUS", Value::Builtin(BuiltinFunction::OsWExitStatus)),
                 (
                     "stat_result",
                     self.heap
@@ -11322,6 +11333,20 @@ impl Vm {
             BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),
             BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),
+            BuiltinFunction::OsOpen => self.builtin_os_open(args, kwargs),
+            BuiltinFunction::OsClose => self.builtin_os_close(args, kwargs),
+            BuiltinFunction::OsIsATty => self.builtin_os_isatty(args, kwargs),
+            BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
+            BuiltinFunction::OsLStat => self.builtin_os_lstat(args, kwargs),
+            BuiltinFunction::OsRmdir => self.builtin_os_rmdir(args, kwargs),
+            BuiltinFunction::OsUTime => self.builtin_os_utime(args, kwargs),
+            BuiltinFunction::OsScandir => self.builtin_os_scandir(args, kwargs),
+            BuiltinFunction::OsWIfStopped => self.builtin_os_wifstopped(args, kwargs),
+            BuiltinFunction::OsWStopSig => self.builtin_os_wstopsig(args, kwargs),
+            BuiltinFunction::OsWIfSignaled => self.builtin_os_wifsignaled(args, kwargs),
+            BuiltinFunction::OsWTermSig => self.builtin_os_wtermsig(args, kwargs),
+            BuiltinFunction::OsWIfExited => self.builtin_os_wifexited(args, kwargs),
+            BuiltinFunction::OsWExitStatus => self.builtin_os_wexitstatus(args, kwargs),
             BuiltinFunction::OsListDir => self.builtin_os_listdir(args, kwargs),
             BuiltinFunction::OsFsEncode => self.builtin_os_fsencode(args, kwargs),
             BuiltinFunction::OsFsDecode => self.builtin_os_fsdecode(args, kwargs),
@@ -13968,6 +13993,243 @@ impl Vm {
         Ok(Value::Int(std::process::id() as i64))
     }
 
+    fn builtin_os_open(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "open() expects path, flags, and optional mode",
+            ));
+        }
+        let path = value_to_path(&args[0])?;
+        let flags = value_to_int(args.remove(1))?;
+        let _mode = if args.len() == 2 {
+            value_to_int(args.remove(1))?
+        } else if let Some(mode) = kwargs.remove("mode") {
+            value_to_int(mode)?
+        } else {
+            0o777
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "open() got an unexpected keyword argument",
+            ));
+        }
+
+        let access_mode = flags & 0x3;
+        let mut options = fs::OpenOptions::new();
+        match access_mode {
+            0 => {
+                options.read(true);
+            }
+            1 => {
+                options.write(true);
+            }
+            2 => {
+                options.read(true).write(true);
+            }
+            _ => {
+                return Err(RuntimeError::new("invalid open flags"));
+            }
+        }
+        let create = (flags & 64) != 0;
+        let excl = (flags & 128) != 0;
+        let trunc = (flags & 512) != 0;
+        let append = (flags & 1024) != 0;
+        if create {
+            options.create(true);
+        }
+        if create && excl {
+            options.create_new(true);
+        }
+        if trunc {
+            options.truncate(true);
+        }
+        if append {
+            options.append(true);
+        }
+
+        let file = options
+            .open(path)
+            .map_err(|err| RuntimeError::new(format!("open failed: {err}")))?;
+        let fd = self.next_fd;
+        self.next_fd += 1;
+        self.open_files.insert(fd, file);
+        Ok(Value::Int(fd))
+    }
+
+    fn builtin_os_close(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("close() expects one argument"));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        if (0..=2).contains(&fd) {
+            return Ok(Value::None);
+        }
+        if self.open_files.remove(&fd).is_some() {
+            Ok(Value::None)
+        } else {
+            Err(RuntimeError::new("bad file descriptor"))
+        }
+    }
+
+    fn builtin_os_isatty(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("isatty() expects one argument"));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        let isatty = match fd {
+            0 => std::io::stdin().is_terminal(),
+            1 => std::io::stdout().is_terminal(),
+            2 => std::io::stderr().is_terminal(),
+            _ => false,
+        };
+        Ok(Value::Bool(isatty))
+    }
+
+    fn builtin_os_stat(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("stat() expects one argument"));
+        }
+        let path = value_to_path(&args[0])?;
+        let metadata =
+            fs::metadata(path).map_err(|err| RuntimeError::new(format!("stat failed: {err}")))?;
+        self.build_stat_result(metadata, false)
+    }
+
+    fn builtin_os_lstat(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("lstat() expects one argument"));
+        }
+        let path = value_to_path(&args[0])?;
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|err| RuntimeError::new(format!("lstat failed: {err}")))?;
+        self.build_stat_result(metadata, true)
+    }
+
+    fn builtin_os_rmdir(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("rmdir() expects one argument"));
+        }
+        let path = value_to_path(&args[0])?;
+        fs::remove_dir(path).map_err(|err| RuntimeError::new(format!("rmdir failed: {err}")))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_os_utime(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "utime() expects path and optional times tuple",
+            ));
+        }
+        let path = value_to_path(&args.remove(0))?;
+        let mut times = args.pop();
+        if let Some(value) = kwargs.remove("times") {
+            if times.is_some() {
+                return Err(RuntimeError::new("utime() got multiple values for times"));
+            }
+            times = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "utime() got an unexpected keyword argument",
+            ));
+        }
+
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .map_err(|err| RuntimeError::new(format!("utime failed: {err}")))?;
+        let (atime, mtime) = if let Some(spec) = times {
+            match spec {
+                Value::Tuple(obj) => match &*obj.kind() {
+                    Object::Tuple(values) if values.len() == 2 => {
+                        (value_to_f64(values[0].clone())?, value_to_f64(values[1].clone())?)
+                    }
+                    _ => return Err(RuntimeError::new("utime() times must be a 2-tuple")),
+                },
+                Value::List(obj) => match &*obj.kind() {
+                    Object::List(values) if values.len() == 2 => {
+                        (value_to_f64(values[0].clone())?, value_to_f64(values[1].clone())?)
+                    }
+                    _ => return Err(RuntimeError::new("utime() times must be a 2-sequence")),
+                },
+                _ => return Err(RuntimeError::new("utime() times must be a 2-sequence")),
+            }
+        } else {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| RuntimeError::new("system time before epoch"))?
+                .as_secs_f64();
+            (now, now)
+        };
+
+        let atime = seconds_to_system_time(atime)?;
+        let mtime = seconds_to_system_time(mtime)?;
+        let times = fs::FileTimes::new().set_accessed(atime).set_modified(mtime);
+        file.set_times(times)
+            .map_err(|err| RuntimeError::new(format!("utime failed: {err}")))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_os_scandir(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new("scandir() expects at most one argument"));
+        }
+        let path = if args.is_empty() {
+            ".".to_string()
+        } else {
+            value_to_path(&args[0])?
+        };
+        let mut rows = Vec::new();
+        let entries =
+            fs::read_dir(&path).map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let file_type = entry
+                .file_type()
+                .map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+            rows.push(self.heap.alloc_tuple(vec![
+                Value::Str(name),
+                Value::Bool(file_type.is_dir()),
+                Value::Bool(file_type.is_file()),
+                Value::Bool(file_type.is_symlink()),
+            ]));
+        }
+        Ok(self.heap.alloc_list(rows))
+    }
+
     fn builtin_os_listdir(
         &mut self,
         args: Vec<Value>,
@@ -14085,6 +14347,185 @@ impl Vm {
         let pid = value_to_int(args[0].clone())?;
         let _options = value_to_int(args[1].clone())?;
         Ok(self.heap.alloc_tuple(vec![Value::Int(pid), Value::Int(0)]))
+    }
+
+    fn builtin_os_wifstopped(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let status = self.parse_wait_status_arg(args, kwargs)?;
+        Ok(Value::Bool((status & 0xff) == 0x7f))
+    }
+
+    fn builtin_os_wstopsig(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let status = self.parse_wait_status_arg(args, kwargs)?;
+        Ok(Value::Int((status >> 8) & 0xff))
+    }
+
+    fn builtin_os_wifsignaled(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let status = self.parse_wait_status_arg(args, kwargs)?;
+        let signal = status & 0x7f;
+        Ok(Value::Bool(signal != 0 && signal != 0x7f))
+    }
+
+    fn builtin_os_wtermsig(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let status = self.parse_wait_status_arg(args, kwargs)?;
+        Ok(Value::Int(status & 0x7f))
+    }
+
+    fn builtin_os_wifexited(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let status = self.parse_wait_status_arg(args, kwargs)?;
+        Ok(Value::Bool((status & 0x7f) == 0))
+    }
+
+    fn builtin_os_wexitstatus(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let status = self.parse_wait_status_arg(args, kwargs)?;
+        Ok(Value::Int((status >> 8) & 0xff))
+    }
+
+    fn parse_wait_status_arg(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<i64, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("status helper expects one argument"));
+        }
+        value_to_int(args[0].clone())
+    }
+
+    fn build_stat_result(
+        &self,
+        metadata: fs::Metadata,
+        use_symlink_mode: bool,
+    ) -> Result<Value, RuntimeError> {
+        let stat_result_class = self
+            .modules
+            .get("os")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("stat_result").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or_else(|| RuntimeError::new("os.stat_result missing"))?;
+
+        let instance = match self.heap.alloc_instance(InstanceObject::new(stat_result_class)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+
+        let file_type = metadata.file_type();
+        let mut st_mode = if file_type.is_dir() {
+            0o040000
+        } else if file_type.is_symlink() || use_symlink_mode {
+            0o120000
+        } else {
+            0o100000
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            st_mode |= i64::from(metadata.permissions().mode() & 0o7777);
+        }
+
+        let st_size = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+        let st_atime = metadata
+            .accessed()
+            .ok()
+            .and_then(system_time_to_secs_f64)
+            .unwrap_or(0.0);
+        let st_mtime = metadata
+            .modified()
+            .ok()
+            .and_then(system_time_to_secs_f64)
+            .unwrap_or(0.0);
+        let st_ctime = metadata
+            .created()
+            .ok()
+            .and_then(system_time_to_secs_f64)
+            .unwrap_or(st_mtime);
+
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("st_mode".to_string(), Value::Int(st_mode));
+            instance_data
+                .attrs
+                .insert("st_size".to_string(), Value::Int(st_size));
+            instance_data
+                .attrs
+                .insert("st_atime".to_string(), Value::Float(st_atime));
+            instance_data
+                .attrs
+                .insert("st_mtime".to_string(), Value::Float(st_mtime));
+            instance_data
+                .attrs
+                .insert("st_ctime".to_string(), Value::Float(st_ctime));
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                instance_data
+                    .attrs
+                    .insert("st_dev".to_string(), Value::Int(metadata.dev() as i64));
+                instance_data
+                    .attrs
+                    .insert("st_ino".to_string(), Value::Int(metadata.ino() as i64));
+                instance_data
+                    .attrs
+                    .insert("st_nlink".to_string(), Value::Int(metadata.nlink() as i64));
+                instance_data
+                    .attrs
+                    .insert("st_uid".to_string(), Value::Int(metadata.uid() as i64));
+                instance_data
+                    .attrs
+                    .insert("st_gid".to_string(), Value::Int(metadata.gid() as i64));
+            }
+            #[cfg(not(unix))]
+            {
+                instance_data
+                    .attrs
+                    .insert("st_dev".to_string(), Value::Int(0));
+                instance_data
+                    .attrs
+                    .insert("st_ino".to_string(), Value::Int(0));
+                instance_data
+                    .attrs
+                    .insert("st_nlink".to_string(), Value::Int(0));
+                instance_data
+                    .attrs
+                    .insert("st_uid".to_string(), Value::Int(0));
+                instance_data
+                    .attrs
+                    .insert("st_gid".to_string(), Value::Int(0));
+            }
+        }
+
+        Ok(Value::Instance(instance))
     }
 
     fn builtin_os_path_exists(
@@ -17304,6 +17745,20 @@ fn value_to_path(value: &Value) -> Result<String, RuntimeError> {
     }
 }
 
+fn system_time_to_secs_f64(value: SystemTime) -> Option<f64> {
+    value
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs_f64())
+}
+
+fn seconds_to_system_time(value: f64) -> Result<SystemTime, RuntimeError> {
+    if !value.is_finite() || value.is_sign_negative() {
+        return Err(RuntimeError::new("timestamp must be a non-negative finite number"));
+    }
+    Ok(UNIX_EPOCH + Duration::from_secs_f64(value))
+}
+
 fn source_path_from_cache_path(path: &str) -> String {
     if !path.ends_with(".pyc") {
         return path.to_string();
@@ -19316,6 +19771,17 @@ fn classify_runtime_error(message: &str) -> &'static str {
     }
     if message.contains("metaclass conflict") {
         return "TypeError";
+    }
+    if message.contains("bad file descriptor")
+        || message.contains("open failed:")
+        || message.contains("close failed:")
+        || message.contains("stat failed:")
+        || message.contains("lstat failed:")
+        || message.contains("rmdir failed:")
+        || message.contains("utime failed:")
+        || message.contains("scandir failed:")
+    {
+        return "OSError";
     }
     if message.contains("unsupported operand type") || message.contains("expects") {
         return "TypeError";

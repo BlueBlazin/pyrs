@@ -48,7 +48,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
 - [x] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`)
 - [~] `types`, `inspect`
-- [~] `os`, `pathlib`, `io`
+- [~] `os`, `pathlib`, `io` (`open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` and wait-status helpers now execute non-`NoOp` paths; broader module parity still pending)
 - [~] `random` foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`)
 - [~] `math`, `itertools`
 - [~] `json`, `re`, `datetime`

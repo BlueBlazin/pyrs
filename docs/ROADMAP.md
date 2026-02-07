@@ -270,6 +270,7 @@ Progress:
 - Class-instance data-model parity batch landed for slot edges: empty `__slots__` classes block dynamic attributes, and `__slots__ = ('__dict__',)` enables dynamic attribute assignment.
 - Codec parity batch expanded foundations to include `utf-32`, `utf-32-le`, and `utf-32-be` encode/decode paths with existing error-mode handling.
 - Exception-parity batch landed for `except` handlers over user-defined classes: tuple handlers and subclass matching now work with runtime exception-parent tracking.
+- `os`/`posix` parity batch landed for core filesystem/process helpers: `open`, `close`, `isatty`, `stat`, `lstat`, `rmdir`, `utime`, `scandir`, and wait-status helper functions (`WIF*`/`W*SIG`/`WEXITSTATUS`) now execute real logic instead of `NoOp`.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
