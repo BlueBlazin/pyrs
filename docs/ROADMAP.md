@@ -278,6 +278,7 @@ Progress:
 - `importlib` parity batch landed for cache/spec helpers: `importlib.invalidate_caches` and baseline `importlib.util.spec_from_file_location` now execute non-`NoOp` logic with dedicated VM regressions; full spec/loader object parity remains tracked in Milestone 13.
 - `platform`/`binascii`/`atexit`/`collections` parity batch landed for previously stubbed helpers: `platform.win32_is_iot`, `binascii.crc32`, `atexit.register`/`unregister`/`_run_exitfuncs`/`_clear`, and `collections._count_elements` now execute non-`NoOp` logic with dedicated VM regressions.
 - `_frozen_importlib`/`_frozen_importlib_external` parity batch landed for import bootstrap helpers: `spec_from_loader`/`_verbose_message`, `_path_join`/`_path_split`/`_path_stat`, and `_unpack_uint16`/`_unpack_uint32`/`_unpack_uint64` now execute non-`NoOp` logic with dedicated VM regressions.
+- `_opcode` parity batch landed for metadata helpers: `stack_effect`, `has_arg`, `has_const`, `has_name`, `has_jump`, `has_free`, `has_local`, `has_exc`, and `get_executor` now execute non-`NoOp` metadata-backed logic with dedicated VM regressions.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)

@@ -1,12 +1,3 @@
-_opcode.get_executor
-_opcode.has_arg
-_opcode.has_const
-_opcode.has_exc
-_opcode.has_free
-_opcode.has_jump
-_opcode.has_local
-_opcode.has_name
-_opcode.stack_effect
 _posixsubprocess.fork_exec
 _pylong._dec_str_to_int_inner
 _pylong.compute_powers

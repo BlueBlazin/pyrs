@@ -4215,6 +4215,16 @@ fn executes_frozen_importlib_spec_from_loader_helper() {
 }
 
 #[test]
+fn executes_opcode_metadata_helpers() {
+    let source = "import _opcode\nse = _opcode.stack_effect(82)\nok = (_opcode.has_arg(82) and _opcode.has_const(82) and _opcode.has_name(92) and _opcode.has_jump(70) and _opcode.has_free(97) and _opcode.has_local(84) and _opcode.has_exc(6) and (not _opcode.has_arg(27)) and isinstance(se, int) and _opcode.get_executor(None, 0) is None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_str_isspace_method() {
     let source = "ok = ' \\t\\n'.isspace() and not ''.isspace() and not 'a'.isspace()\n";
     let module = parser::parse_module(source).expect("parse should succeed");

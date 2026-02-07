@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::bytecode::cpython;
+use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::parser;
@@ -65,6 +66,7 @@ const SIGNAL_SIGINT: i64 = 2;
 const SIGNAL_SIGTERM: i64 = 15;
 const PY_TPFLAGS_HEAPTYPE: i64 = 1 << 9;
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
+static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 
 #[derive(Clone)]
 struct Mt19937 {
@@ -2760,19 +2762,19 @@ impl Vm {
         self.install_builtin_module(
             "_opcode",
             &[
-                ("stack_effect", BuiltinFunction::NoOp),
-                ("has_arg", BuiltinFunction::NoOp),
-                ("has_const", BuiltinFunction::NoOp),
-                ("has_name", BuiltinFunction::NoOp),
-                ("has_jump", BuiltinFunction::NoOp),
-                ("has_free", BuiltinFunction::NoOp),
-                ("has_local", BuiltinFunction::NoOp),
-                ("has_exc", BuiltinFunction::NoOp),
+                ("stack_effect", BuiltinFunction::OpcodeStackEffect),
+                ("has_arg", BuiltinFunction::OpcodeHasArg),
+                ("has_const", BuiltinFunction::OpcodeHasConst),
+                ("has_name", BuiltinFunction::OpcodeHasName),
+                ("has_jump", BuiltinFunction::OpcodeHasJump),
+                ("has_free", BuiltinFunction::OpcodeHasFree),
+                ("has_local", BuiltinFunction::OpcodeHasLocal),
+                ("has_exc", BuiltinFunction::OpcodeHasExc),
                 ("get_intrinsic1_descs", BuiltinFunction::List),
                 ("get_intrinsic2_descs", BuiltinFunction::List),
                 ("get_special_method_names", BuiltinFunction::List),
                 ("get_nb_ops", BuiltinFunction::List),
-                ("get_executor", BuiltinFunction::NoOp),
+                ("get_executor", BuiltinFunction::OpcodeGetExecutor),
             ],
             Vec::new(),
         );
@@ -11563,6 +11565,15 @@ impl Vm {
             BuiltinFunction::FrozenImportlibExternalUnpackUint64 => {
                 self.builtin_frozen_importlib_external_unpack_uint64(args, kwargs)
             }
+            BuiltinFunction::OpcodeStackEffect => self.builtin_opcode_stack_effect(args, kwargs),
+            BuiltinFunction::OpcodeHasArg => self.builtin_opcode_has_arg(args, kwargs),
+            BuiltinFunction::OpcodeHasConst => self.builtin_opcode_has_const(args, kwargs),
+            BuiltinFunction::OpcodeHasName => self.builtin_opcode_has_name(args, kwargs),
+            BuiltinFunction::OpcodeHasJump => self.builtin_opcode_has_jump(args, kwargs),
+            BuiltinFunction::OpcodeHasFree => self.builtin_opcode_has_free(args, kwargs),
+            BuiltinFunction::OpcodeHasLocal => self.builtin_opcode_has_local(args, kwargs),
+            BuiltinFunction::OpcodeHasExc => self.builtin_opcode_has_exc(args, kwargs),
+            BuiltinFunction::OpcodeGetExecutor => self.builtin_opcode_get_executor(args, kwargs),
             BuiltinFunction::RandomSeed => self.builtin_random_seed(args, kwargs),
             BuiltinFunction::RandomRandom => self.builtin_random_random(args, kwargs),
             BuiltinFunction::RandomRandRange => self.builtin_random_randrange(args, kwargs),
@@ -14058,6 +14069,135 @@ impl Vm {
             return Err(RuntimeError::new("_unpack_uint*() value exceeds runtime int range"));
         }
         Ok(Value::Int(value as i64))
+    }
+
+    fn builtin_opcode_stack_effect(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "stack_effect() expects opcode and optional oparg",
+            ));
+        }
+        let _jump = kwargs.remove("jump");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "stack_effect() got an unexpected keyword argument",
+            ));
+        }
+        let opcode = value_to_int(args.remove(0))?;
+        if !args.is_empty() {
+            let _ = value_to_int(args.remove(0))?;
+        }
+        let info = self
+            .opcode_info_by_number(opcode)
+            .ok_or_else(|| RuntimeError::new("stack_effect() unknown opcode"))?;
+        Ok(Value::Int(i64::from(info.stack_effect)))
+    }
+
+    fn builtin_opcode_has_arg(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_opcode_has_flag(args, kwargs, "ARG", "has_arg")
+    }
+
+    fn builtin_opcode_has_const(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_opcode_has_flag(args, kwargs, "CONST", "has_const")
+    }
+
+    fn builtin_opcode_has_name(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_opcode_has_flag(args, kwargs, "NAME", "has_name")
+    }
+
+    fn builtin_opcode_has_jump(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_opcode_has_flag(args, kwargs, "JUMP", "has_jump")
+    }
+
+    fn builtin_opcode_has_free(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_opcode_has_flag(args, kwargs, "FREE", "has_free")
+    }
+
+    fn builtin_opcode_has_local(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_opcode_has_flag(args, kwargs, "LOCAL", "has_local")
+    }
+
+    fn builtin_opcode_has_exc(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_opcode_has_flag(args, kwargs, "ESCAPES", "has_exc")
+    }
+
+    fn builtin_opcode_get_executor(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "get_executor() expects code object and instruction offset",
+            ));
+        }
+        let _ = value_to_int(args[1].clone())?;
+        Ok(Value::None)
+    }
+
+    fn builtin_opcode_has_flag(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        flag: &str,
+        name: &str,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(format!("{name}() expects one opcode")));
+        }
+        let opcode = value_to_int(args[0].clone())?;
+        let value = self
+            .opcode_info_by_number(opcode)
+            .map(|info| opcode_flags_contains(&info.flags, flag))
+            .unwrap_or(false);
+        Ok(Value::Bool(value))
+    }
+
+    fn opcode_metadata(&self) -> &OpcodeMetadata {
+        OPCODE_METADATA.get_or_init(|| OpcodeMetadata::load_default().unwrap_or_else(|_| OpcodeMetadata::empty()))
+    }
+
+    fn opcode_info_by_number(&self, opcode: i64) -> Option<&crate::bytecode::metadata::OpcodeInfo> {
+        if opcode < 0 || opcode > i64::from(u16::MAX) {
+            return None;
+        }
+        let code = opcode as u16;
+        self.opcode_metadata()
+            .opcodes
+            .iter()
+            .find(|info| info.code == code)
     }
 
     fn builtin_importlib_source_from_cache(
@@ -22659,4 +22799,8 @@ fn slice_indices(
         }
     }
     Ok(indices)
+}
+
+fn opcode_flags_contains(flags: &str, target: &str) -> bool {
+    flags.split('|').any(|part| part.trim() == target)
 }

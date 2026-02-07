@@ -986,6 +986,15 @@ pub enum BuiltinFunction {
     FrozenImportlibExternalUnpackUint16,
     FrozenImportlibExternalUnpackUint32,
     FrozenImportlibExternalUnpackUint64,
+    OpcodeStackEffect,
+    OpcodeHasArg,
+    OpcodeHasConst,
+    OpcodeHasName,
+    OpcodeHasJump,
+    OpcodeHasFree,
+    OpcodeHasLocal,
+    OpcodeHasExc,
+    OpcodeGetExecutor,
     RandomSeed,
     RandomRandom,
     RandomRandRange,
@@ -2668,6 +2677,15 @@ impl BuiltinFunction {
             | BuiltinFunction::FrozenImportlibExternalUnpackUint16
             | BuiltinFunction::FrozenImportlibExternalUnpackUint32
             | BuiltinFunction::FrozenImportlibExternalUnpackUint64
+            | BuiltinFunction::OpcodeStackEffect
+            | BuiltinFunction::OpcodeHasArg
+            | BuiltinFunction::OpcodeHasConst
+            | BuiltinFunction::OpcodeHasName
+            | BuiltinFunction::OpcodeHasJump
+            | BuiltinFunction::OpcodeHasFree
+            | BuiltinFunction::OpcodeHasLocal
+            | BuiltinFunction::OpcodeHasExc
+            | BuiltinFunction::OpcodeGetExecutor
             | BuiltinFunction::RandomSeed
             | BuiltinFunction::RandomRandom
             | BuiltinFunction::RandomRandRange
