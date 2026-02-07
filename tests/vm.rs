@@ -5601,3 +5601,76 @@ ok = (n == 1 and f is None and t is False)\n";
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn module_getattr_fallback_returns_dynamic_attribute() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "pyrs_module_getattr_{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should work")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("create temp module dir");
+    std::fs::write(
+        temp_dir.join("modgetattr.py"),
+        "def __getattr__(name):\n    if name == 'binary':\n        return 42\n    raise AttributeError(name)\n",
+    )
+    .expect("write module file");
+
+    let source = "import modgetattr\nok = (modgetattr.binary == 42)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn dict_copy_returns_independent_shallow_copy() {
+    let source = "d = {'x': 1}\ncopy = d.copy()\nd['x'] = 2\nok = (copy['x'] == 1 and d['x'] == 2 and copy is not d)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dict_pop_heavy_mutation_keeps_hash_index_consistent() {
+    let source = "d = {}\nfor i in range(300):\n    d[i] = i\nfor i in range(100):\n    d.pop(i)\nfor i in range(100, 200):\n    d[i] = i * 2\nok = (len(d) == 200 and d[150] == 300 and d[250] == 250 and (0 in d) is False and (299 in d) is True)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_module_baseline_reader_writer_and_registry_work() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+class Sink:
+    def __init__(self):
+        self.parts = []
+    def write(self, text):
+        self.parts.append(text)
+        return len(text)
+sink = Sink()
+w = csv.writer(sink)
+n = w.writerow(['a', 'b,c'])
+rows = list(csv.reader(['a,b', 'c,d']))
+ok = (n == 9 and ''.join(sink.parts) == 'a,"b,c"\r\n' and rows == [['a', 'b'], ['c', 'd']] and 'excel' in csv.list_dialects() and csv.get_dialect('excel') is not None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

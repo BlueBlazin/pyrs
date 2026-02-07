@@ -43,8 +43,10 @@ test/test_functools.py
 test/test_itertools.py
 test/test_operator.py
 test/test_base64.py
+test/test_binascii.py
 test/test_bisect.py
 test/test_copy.py
+test/test_csv.py
 test/test_fnmatch.py
 test/test_genericalias.py
 test/test_heapq.py

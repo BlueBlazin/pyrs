@@ -286,6 +286,8 @@ pub struct Vm {
     socket_default_timeout: Option<f64>,
     open_files: HashMap<i64, fs::File>,
     next_fd: i64,
+    csv_dialects: HashMap<String, Value>,
+    csv_field_size_limit: i64,
     defaultdict_factories: HashMap<u64, Value>,
     exception_parents: HashMap<String, String>,
     atexit_handlers: Vec<AtexitHandler>,
@@ -323,6 +325,8 @@ impl Vm {
             socket_default_timeout: None,
             open_files: HashMap::new(),
             next_fd: 3,
+            csv_dialects: HashMap::new(),
+            csv_field_size_limit: 131_072,
             defaultdict_factories: HashMap::new(),
             exception_parents: HashMap::new(),
             atexit_handlers: Vec::new(),
@@ -1822,6 +1826,28 @@ impl Vm {
             vec![
                 ("Error", Value::ExceptionType("Exception".to_string())),
                 ("Incomplete", Value::ExceptionType("Exception".to_string())),
+            ],
+        );
+        self.install_builtin_module(
+            "_csv",
+            &[
+                ("reader", BuiltinFunction::CsvReader),
+                ("writer", BuiltinFunction::CsvWriter),
+                ("register_dialect", BuiltinFunction::CsvRegisterDialect),
+                ("unregister_dialect", BuiltinFunction::CsvUnregisterDialect),
+                ("get_dialect", BuiltinFunction::CsvGetDialect),
+                ("list_dialects", BuiltinFunction::CsvListDialects),
+                ("field_size_limit", BuiltinFunction::CsvFieldSizeLimit),
+                ("Dialect", BuiltinFunction::CsvDialectValidate),
+            ],
+            vec![
+                ("Error", Value::ExceptionType("Exception".to_string())),
+                ("QUOTE_MINIMAL", Value::Int(0)),
+                ("QUOTE_ALL", Value::Int(1)),
+                ("QUOTE_NONNUMERIC", Value::Int(2)),
+                ("QUOTE_NONE", Value::Int(3)),
+                ("QUOTE_STRINGS", Value::Int(4)),
+                ("QUOTE_NOTNULL", Value::Int(5)),
             ],
         );
         self.install_builtin_module(
@@ -8554,13 +8580,17 @@ impl Vm {
             Object::Instance(_) => Ok(Value::Instance(receiver.clone())),
             Object::Class(_) => Ok(Value::Class(receiver.clone())),
             Object::Generator(_) => Ok(Value::Generator(receiver.clone())),
+            Object::Module(_) => Ok(Value::Module(receiver.clone())),
             _ => Err(RuntimeError::new("unsupported bound method receiver")),
         }
     }
 
     fn receiver_from_value(&self, value: &Value) -> Result<ObjRef, RuntimeError> {
         match value {
-            Value::Instance(obj) | Value::Class(obj) | Value::Generator(obj) => Ok(obj.clone()),
+            Value::Instance(obj)
+            | Value::Class(obj)
+            | Value::Generator(obj)
+            | Value::Module(obj) => Ok(obj.clone()),
             _ => Err(RuntimeError::new("unsupported bound-method receiver value")),
         }
     }
@@ -9031,6 +9061,7 @@ impl Vm {
             "keys" => NativeMethodKind::DictKeys,
             "values" => NativeMethodKind::DictValues,
             "items" => NativeMethodKind::DictItems,
+            "copy" => NativeMethodKind::DictCopy,
             "update" => NativeMethodKind::DictUpdateMethod,
             "setdefault" => NativeMethodKind::DictSetDefault,
             "get" => NativeMethodKind::DictGet,
@@ -9861,6 +9892,10 @@ impl Vm {
             _ => return Err(RuntimeError::new("attribute access unsupported type")),
         };
 
+        if attr_name == "__class__" {
+            return Ok(AttrAccessOutcome::Value(Value::Class(class_ref)));
+        }
+
         if let Some(attr) = self.load_attr_property_instance(instance, attr_name) {
             return Ok(AttrAccessOutcome::Value(attr));
         }
@@ -10040,16 +10075,17 @@ impl Vm {
         module: &ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
-        let (module_name, attr, globals_snapshot) = match &*module.kind() {
+        let (module_name, attr, module_getattr, globals_snapshot) = match &*module.kind() {
             Object::Module(module_data) => {
                 let attr = module_data.globals.get(attr_name).cloned();
+                let module_getattr = module_data.globals.get("__getattr__").cloned();
                 let module_name = module_data.name.clone();
                 let globals_snapshot = module_data
                     .globals
                     .iter()
                     .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
                     .collect::<Vec<_>>();
-                (module_name, attr, globals_snapshot)
+                (module_name, attr, module_getattr, globals_snapshot)
             }
             _ => {
                 return Err(RuntimeError::new("attribute access unsupported type"));
@@ -10098,6 +10134,20 @@ impl Vm {
         }
         if let Some(submodule) = self.load_submodule(module, attr_name) {
             return Ok(Value::Module(submodule));
+        }
+        if attr_name != "__getattr__" {
+            if let Some(module_getattr) = module_getattr {
+                return match self.call_internal(
+                    module_getattr,
+                    vec![Value::Str(attr_name.to_string())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => Ok(value),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(RuntimeError::new("module __getattr__ failed"))
+                    }
+                };
+            }
         }
         Err(RuntimeError::new(format!(
             "module '{}' has no attribute '{}'",
@@ -10451,6 +10501,15 @@ impl Vm {
                     .map(|(key, value)| self.heap.alloc_tuple(vec![key.clone(), value.clone()]))
                     .collect();
                 Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
+            }
+            NativeMethodKind::DictCopy => {
+                if !args.is_empty() || !kwargs.is_empty() {
+                    return Err(RuntimeError::new("dict.copy() expects no arguments"));
+                }
+                let Object::Dict(entries) = &*receiver.kind() else {
+                    return Err(RuntimeError::new("dict.copy() receiver must be dict"));
+                };
+                Ok(NativeCallResult::Value(self.heap.alloc_dict(entries.to_vec())))
             }
             NativeMethodKind::DictUpdateMethod => {
                 if args.len() > 1 {
@@ -13165,6 +13224,18 @@ impl Vm {
             BuiltinFunction::Uuid7 => self.builtin_uuid7(args, kwargs),
             BuiltinFunction::Uuid8 => self.builtin_uuid8(args, kwargs),
             BuiltinFunction::BinasciiCrc32 => self.builtin_binascii_crc32(args, kwargs),
+            BuiltinFunction::CsvReader => self.builtin_csv_reader(args, kwargs),
+            BuiltinFunction::CsvWriter => self.builtin_csv_writer(args, kwargs),
+            BuiltinFunction::CsvWriterRow => self.builtin_csv_writerow(args, kwargs),
+            BuiltinFunction::CsvWriterRows => self.builtin_csv_writerows(args, kwargs),
+            BuiltinFunction::CsvRegisterDialect => self.builtin_csv_register_dialect(args, kwargs),
+            BuiltinFunction::CsvUnregisterDialect => {
+                self.builtin_csv_unregister_dialect(args, kwargs)
+            }
+            BuiltinFunction::CsvGetDialect => self.builtin_csv_get_dialect(args, kwargs),
+            BuiltinFunction::CsvListDialects => self.builtin_csv_list_dialects(args, kwargs),
+            BuiltinFunction::CsvFieldSizeLimit => self.builtin_csv_field_size_limit(args, kwargs),
+            BuiltinFunction::CsvDialectValidate => self.builtin_csv_dialect_validate(args, kwargs),
             BuiltinFunction::AtexitRegister => self.builtin_atexit_register(args, kwargs),
             BuiltinFunction::AtexitUnregister => self.builtin_atexit_unregister(args, kwargs),
             BuiltinFunction::AtexitRunExitFuncs => self.builtin_atexit_run_exitfuncs(args, kwargs),
@@ -16190,17 +16261,56 @@ impl Vm {
                 "super() got an unexpected keyword argument",
             ));
         }
-        if args.len() != 2 {
-            return Err(RuntimeError::new(
-                "super() currently requires explicit type and object arguments",
-            ));
-        }
+        let (start_class, object_value) = if args.is_empty() {
+            let frame = self
+                .frames
+                .last()
+                .ok_or_else(|| RuntimeError::new("super(): no active frame"))?;
 
-        let start_class = match args.remove(0) {
-            Value::Class(class) => class,
-            _ => return Err(RuntimeError::new("super() first argument must be a class")),
+            let object_value = frame
+                .code
+                .posonly_params
+                .iter()
+                .chain(frame.code.params.iter())
+                .find_map(|name| frame.locals.get(name).cloned())
+                .or_else(|| frame.locals.get("self").cloned())
+                .ok_or_else(|| {
+                    RuntimeError::new(
+                        "super(): unable to determine object for zero-argument super()",
+                    )
+                })?;
+
+            let class_from_locals = frame.locals.get("__class__").and_then(|value| match value {
+                Value::Class(class) => Some(class.clone()),
+                _ => None,
+            });
+            let class_from_cells = frame_cell_value(frame, "__class__").and_then(|value| match value
+            {
+                Value::Class(class) => Some(class),
+                _ => None,
+            });
+            let inferred = self.class_of_value(&object_value);
+            let start_class = class_from_locals
+                .or(class_from_cells)
+                .or(inferred)
+                .ok_or_else(|| {
+                    RuntimeError::new(
+                        "super(): unable to determine class for zero-argument super()",
+                    )
+                })?;
+            (start_class, object_value)
+        } else if args.len() == 2 {
+            let start_class = match args.remove(0) {
+                Value::Class(class) => class,
+                _ => return Err(RuntimeError::new("super() first argument must be a class")),
+            };
+            let object_value = args.remove(0);
+            (start_class, object_value)
+        } else {
+            return Err(RuntimeError::new(
+                "super() expects zero or two arguments",
+            ));
         };
-        let object_value = args.remove(0);
         let object_ref = self.receiver_from_value(&object_value)?;
         let object_type = self.class_of_value(&object_value).ok_or_else(|| {
             RuntimeError::new("super() second argument must be an instance or subclass")
@@ -19307,6 +19417,387 @@ impl Vm {
             crc = (crc >> 8) ^ value;
         }
         Ok(Value::Int((!crc) as i64))
+    }
+
+    fn builtin_csv_reader(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("reader() expects iterable argument"));
+        }
+        let source = args.remove(0);
+        let dialect_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("dialect")
+        };
+        let delimiter = self.extract_csv_delimiter(dialect_arg.clone(), &mut kwargs)?;
+        let quotechar = self.extract_csv_quotechar(dialect_arg, &mut kwargs)?;
+        let rows = self.collect_iterable_values(source)?;
+        let mut parsed_rows = Vec::with_capacity(rows.len());
+        for row in rows {
+            let text = self.coerce_csv_field_text(row)?;
+            let fields = parse_csv_row_simple(&text, delimiter, quotechar)
+                .into_iter()
+                .map(Value::Str)
+                .collect();
+            parsed_rows.push(self.heap.alloc_list(fields));
+        }
+        self.to_iterator_value(self.heap.alloc_list(parsed_rows))
+    }
+
+    fn builtin_csv_writer(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("writer() expects file-like argument"));
+        }
+        let target = args.remove(0);
+        let dialect_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("dialect")
+        };
+        let delimiter = self.extract_csv_delimiter(dialect_arg.clone(), &mut kwargs)?;
+        let quotechar = self.extract_csv_quotechar(dialect_arg, &mut kwargs)?;
+        let lineterminator = self.extract_csv_lineterminator(&mut kwargs)?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "writer() got unexpected keyword arguments",
+            ));
+        }
+
+        let writer = match self
+            .heap
+            .alloc_module(ModuleObject::new("__csv_writer__"))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(writer_data) = &mut *writer.kind_mut() {
+            writer_data
+                .globals
+                .insert("__csv_target__".to_string(), target.clone());
+            writer_data.globals.insert(
+                "__csv_delimiter__".to_string(),
+                Value::Str(delimiter.to_string()),
+            );
+            writer_data.globals.insert(
+                "__csv_quotechar__".to_string(),
+                Value::Str(quotechar.to_string()),
+            );
+            writer_data.globals.insert(
+                "__csv_lineterminator__".to_string(),
+                Value::Str(lineterminator.clone()),
+            );
+            writer_data.globals.insert(
+                "writerow".to_string(),
+                self.alloc_native_bound_method(
+                    NativeMethodKind::Builtin(BuiltinFunction::CsvWriterRow),
+                    writer.clone(),
+                ),
+            );
+            writer_data.globals.insert(
+                "writerows".to_string(),
+                self.alloc_native_bound_method(
+                    NativeMethodKind::Builtin(BuiltinFunction::CsvWriterRows),
+                    writer.clone(),
+                ),
+            );
+
+            let dialect = match self
+                .heap
+                .alloc_module(ModuleObject::new("__csv_dialect__"))
+            {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(dialect_data) = &mut *dialect.kind_mut() {
+                dialect_data.globals.insert(
+                    "delimiter".to_string(),
+                    Value::Str(delimiter.to_string()),
+                );
+                dialect_data.globals.insert(
+                    "quotechar".to_string(),
+                    Value::Str(quotechar.to_string()),
+                );
+                dialect_data
+                    .globals
+                    .insert("lineterminator".to_string(), Value::Str(lineterminator));
+            }
+            writer_data
+                .globals
+                .insert("dialect".to_string(), Value::Module(dialect));
+        }
+        Ok(Value::Module(writer))
+    }
+
+    fn builtin_csv_writerow(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("writerow() expects one row argument"));
+        }
+        let writer = match args.remove(0) {
+            Value::Module(module) => module,
+            _ => return Err(RuntimeError::new("writerow() receiver must be csv writer")),
+        };
+        let row = args.remove(0);
+        let (target, delimiter, quotechar, lineterminator) =
+            self.extract_csv_writer_state(&writer)?;
+        let values = self.collect_iterable_values(row)?;
+        let mut fields = Vec::with_capacity(values.len());
+        for value in values {
+            let text = self.coerce_csv_field_text(value)?;
+            fields.push(quote_csv_field(&text, delimiter, quotechar));
+        }
+        let mut line = fields.join(&delimiter.to_string());
+        line.push_str(&lineterminator);
+        let writer_callable =
+            self.builtin_getattr(vec![target, Value::Str("write".to_string())], HashMap::new())?;
+        match self.call_internal(writer_callable, vec![Value::Str(line.clone())], HashMap::new())? {
+            InternalCallOutcome::Value(_) => Ok(Value::Int(line.len() as i64)),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(RuntimeError::new("writerow() write failed"))
+            }
+        }
+    }
+
+    fn builtin_csv_writerows(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("writerows() expects iterable argument"));
+        }
+        let writer = args.remove(0);
+        let rows = args.remove(0);
+        let iterable = self.collect_iterable_values(rows)?;
+        for row in iterable {
+            self.builtin_csv_writerow(vec![writer.clone(), row], HashMap::new())?;
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_csv_register_dialect(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("register_dialect() expects name"));
+        }
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("register_dialect() name must be str")),
+        };
+        let dialect = if let Some(value) = args.first() {
+            value.clone()
+        } else if !kwargs.is_empty() {
+            let entries = kwargs
+                .into_iter()
+                .map(|(key, value)| (Value::Str(key), value))
+                .collect();
+            self.heap.alloc_dict(entries)
+        } else {
+            Value::None
+        };
+        self.csv_dialects.insert(name, dialect);
+        Ok(Value::None)
+    }
+
+    fn builtin_csv_unregister_dialect(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("unregister_dialect() expects one argument"));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("unregister_dialect() name must be str")),
+        };
+        if self.csv_dialects.remove(name).is_none() {
+            return Err(RuntimeError::new("unknown dialect"));
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_csv_get_dialect(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("get_dialect() expects one argument"));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("get_dialect() name must be str")),
+        };
+        self.csv_dialects
+            .get(name)
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("unknown dialect"))
+    }
+
+    fn builtin_csv_list_dialects(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("list_dialects() expects no arguments"));
+        }
+        let mut names: Vec<String> = self.csv_dialects.keys().cloned().collect();
+        names.sort();
+        Ok(self
+            .heap
+            .alloc_list(names.into_iter().map(Value::Str).collect()))
+    }
+
+    fn builtin_csv_field_size_limit(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new(
+                "field_size_limit() expects at most one argument",
+            ));
+        }
+        let previous = self.csv_field_size_limit;
+        if let Some(value) = args.into_iter().next() {
+            self.csv_field_size_limit = value_to_int(value)?;
+        }
+        Ok(Value::Int(previous))
+    }
+
+    fn builtin_csv_dialect_validate(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Dialect() expects one argument"));
+        }
+        Ok(args.into_iter().next().expect("checked len"))
+    }
+
+    fn resolve_csv_dialect(
+        &self,
+        dialect: Option<Value>,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match dialect {
+            Some(Value::Str(name)) => self
+                .csv_dialects
+                .get(&name)
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| RuntimeError::new("unknown dialect")),
+            other => Ok(other),
+        }
+    }
+
+    fn extract_csv_delimiter(
+        &mut self,
+        dialect: Option<Value>,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<char, RuntimeError> {
+        if let Some(value) = kwargs.remove("delimiter") {
+            return csv_char_from_value(value, "delimiter");
+        }
+        let resolved = self.resolve_csv_dialect(dialect)?;
+        if let Some(dialect) = resolved {
+            if let Ok(value) =
+                self.builtin_getattr(vec![dialect, Value::Str("delimiter".to_string())], HashMap::new())
+            {
+                return csv_char_from_value(value, "delimiter");
+            }
+        }
+        Ok(',')
+    }
+
+    fn extract_csv_quotechar(
+        &mut self,
+        dialect: Option<Value>,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<char, RuntimeError> {
+        if let Some(value) = kwargs.remove("quotechar") {
+            return csv_char_from_value(value, "quotechar");
+        }
+        let resolved = self.resolve_csv_dialect(dialect)?;
+        if let Some(dialect) = resolved {
+            if let Ok(value) =
+                self.builtin_getattr(vec![dialect, Value::Str("quotechar".to_string())], HashMap::new())
+            {
+                return csv_char_from_value(value, "quotechar");
+            }
+        }
+        Ok('"')
+    }
+
+    fn extract_csv_lineterminator(
+        &mut self,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<String, RuntimeError> {
+        if let Some(value) = kwargs.remove("lineterminator") {
+            return match value {
+                Value::Str(text) => Ok(text),
+                _ => Err(RuntimeError::new("lineterminator must be str")),
+            };
+        }
+        Ok("\r\n".to_string())
+    }
+
+    fn extract_csv_writer_state(
+        &self,
+        writer: &ObjRef,
+    ) -> Result<(Value, char, char, String), RuntimeError> {
+        let Object::Module(writer_data) = &*writer.kind() else {
+            return Err(RuntimeError::new("writer object is invalid"));
+        };
+        let target = writer_data
+            .globals
+            .get("__csv_target__")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("writer target is missing"))?;
+        let delimiter = writer_data
+            .globals
+            .get("__csv_delimiter__")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("writer delimiter is missing"))
+            .and_then(|value| csv_char_from_value(value, "delimiter"))?;
+        let quotechar = writer_data
+            .globals
+            .get("__csv_quotechar__")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("writer quotechar is missing"))
+            .and_then(|value| csv_char_from_value(value, "quotechar"))?;
+        let lineterminator = match writer_data.globals.get("__csv_lineterminator__") {
+            Some(Value::Str(value)) => value.clone(),
+            _ => return Err(RuntimeError::new("writer lineterminator is missing")),
+        };
+        Ok((target, delimiter, quotechar, lineterminator))
+    }
+
+    fn coerce_csv_field_text(&mut self, value: Value) -> Result<String, RuntimeError> {
+        match value {
+            Value::Str(text) => Ok(text),
+            Value::None => Ok(String::new()),
+            other => match self.call_builtin(BuiltinFunction::Str, vec![other], HashMap::new())? {
+                Value::Str(text) => Ok(text),
+                _ => Err(RuntimeError::new("csv conversion failed")),
+            },
+        }
     }
 
     fn builtin_atexit_register(
@@ -23800,6 +24291,8 @@ impl Vm {
         self.builtins
             .insert("ord".to_string(), Value::Builtin(BuiltinFunction::Ord));
         self.builtins
+            .insert("chr".to_string(), Value::Builtin(BuiltinFunction::Chr));
+        self.builtins
             .insert("abs".to_string(), Value::Builtin(BuiltinFunction::Abs));
         self.builtins
             .insert("sum".to_string(), Value::Builtin(BuiltinFunction::Sum));
@@ -24341,6 +24834,81 @@ impl Vm {
             _ => Err(RuntimeError::new("class base must be a class object")),
         }
     }
+}
+
+fn frame_cell_value(frame: &Frame, name: &str) -> Option<Value> {
+    let cellvar_len = frame.code.cellvars.len();
+    for (index, cell_name) in frame.code.cellvars.iter().enumerate() {
+        if cell_name == name {
+            if let Some(cell) = frame.cells.get(index) {
+                if let Object::Cell(cell_data) = &*cell.kind() {
+                    return cell_data.value.clone();
+                }
+            }
+            return None;
+        }
+    }
+    for (offset, free_name) in frame.code.freevars.iter().enumerate() {
+        if free_name == name {
+            if let Some(cell) = frame.cells.get(cellvar_len + offset) {
+                if let Object::Cell(cell_data) = &*cell.kind() {
+                    return cell_data.value.clone();
+                }
+            }
+            return None;
+        }
+    }
+    None
+}
+
+fn csv_char_from_value(value: Value, name: &str) -> Result<char, RuntimeError> {
+    match value {
+        Value::Str(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => Ok(ch),
+                _ => Err(RuntimeError::new(format!("{name} must be a one-character string"))),
+            }
+        }
+        _ => Err(RuntimeError::new(format!("{name} must be str"))),
+    }
+}
+
+fn parse_csv_row_simple(row: &str, delimiter: char, quotechar: char) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = row.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == quotechar {
+            if in_quotes && chars.peek().is_some_and(|next| *next == quotechar) {
+                current.push(quotechar);
+                chars.next();
+            } else {
+                in_quotes = !in_quotes;
+            }
+            continue;
+        }
+        if ch == delimiter && !in_quotes {
+            fields.push(std::mem::take(&mut current));
+            continue;
+        }
+        current.push(ch);
+    }
+    fields.push(current);
+    fields
+}
+
+fn quote_csv_field(field: &str, delimiter: char, quotechar: char) -> String {
+    let needs_quote = field.contains(delimiter)
+        || field.contains('\n')
+        || field.contains('\r')
+        || field.contains(quotechar);
+    if !needs_quote {
+        return field.to_string();
+    }
+    let escaped = field.replace(quotechar, &format!("{quotechar}{quotechar}"));
+    format!("{quotechar}{escaped}{quotechar}")
 }
 
 fn value_to_int(value: Value) -> Result<i64, RuntimeError> {

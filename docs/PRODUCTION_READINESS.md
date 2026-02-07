@@ -74,7 +74,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Builtins**
 - [x] P0: Stub accounting is enforced (`docs/STUB_ACCOUNTING.md`, generated `docs/NOOP_BUILTIN_INVENTORY.txt`, and CI gate `tests/noop_inventory.rs`).
-- [~] P0: Core builtin set (print, len, range, float/int coercions, numeric ops, `set`/`frozenset`, bytes-like constructors, `complex`, `iter`/`next`, `type`, and random module foundations; `range` now supports lazy bigint-backed large-stop iteration to avoid eager huge-list materialization).
+- [~] P0: Core builtin set (print, len, range, float/int coercions, numeric ops, `set`/`frozenset`, bytes-like constructors, `complex`, `iter`/`next`, `type`, `ord`/`chr`, and random module foundations; `range` now supports lazy bigint-backed large-stop iteration to avoid eager huge-list materialization).
 - [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, dir, help, input, etc.; `getattr`/`setattr`/`delattr`/`hasattr` and explicit-args `super` implemented).
 - [x] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to loader path).
 
@@ -106,7 +106,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Testing & QA**
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
-- [~] P0: Current curated CPython language/import harness suites are near zero-allowlist and now include `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, `test/test_configparser.py`, `test/test_base64.py`, `test/test_bisect.py`, `test/test_copy.py`, `test/test_fnmatch.py`, `test/test_genericalias.py`, `test/test_heapq.py`, `test/test_pprint.py`, `test/test_reprlib.py`, `test/test_sched.py`, `test/test_statistics.py`, `test/test_textwrap.py`, `test/test_tokenize.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`; `tests/cpython_allowlist.txt` remains empty.
+- [~] P0: Current curated CPython language/import harness suites are near zero-allowlist and now include `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, `test/test_configparser.py`, `test/test_base64.py`, `test/test_binascii.py`, `test/test_bisect.py`, `test/test_copy.py`, `test/test_csv.py`, `test/test_fnmatch.py`, `test/test_genericalias.py`, `test/test_heapq.py`, `test/test_pprint.py`, `test/test_reprlib.py`, `test/test_sched.py`, `test/test_statistics.py`, `test/test_textwrap.py`, `test/test_tokenize.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`; `tests/cpython_allowlist.txt` remains empty.
 - [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).

@@ -165,6 +165,7 @@ pub enum NativeMethodKind {
     DictSetDefault,
     DictGet,
     DictPop,
+    DictCopy,
     ListAppend,
     ListExtend,
     ListInsert,
@@ -320,7 +321,8 @@ impl DictObject {
 
     pub fn remove(&mut self, index: usize) -> (Value, Value) {
         let removed = self.entries.remove(index);
-        self.rebuild_index();
+        self.remove_bucket_index_for_key(&removed.0, index);
+        self.adjust_indices_after_remove(index);
         removed
     }
 
@@ -354,9 +356,7 @@ impl DictObject {
 
     pub fn remove_key(&mut self, key: &Value) -> Option<(Value, Value)> {
         let index = self.find_index(key)?;
-        let removed = self.entries.remove(index);
-        self.rebuild_index();
-        Some(removed)
+        Some(self.remove(index))
     }
 
     fn find_entry(&self, key: &Value) -> Option<&(Value, Value)> {
@@ -393,6 +393,32 @@ impl DictObject {
         for (index, (key, _)) in self.entries.iter().enumerate() {
             if let Some(hash) = value_hash_key(key) {
                 self.index.entry(hash).or_default().push(index);
+            }
+        }
+    }
+
+    fn remove_bucket_index_for_key(&mut self, key: &Value, index: usize) {
+        let Some(hash) = value_hash_key(key) else {
+            return;
+        };
+        let mut remove_bucket = false;
+        if let Some(bucket) = self.index.get_mut(&hash) {
+            if let Some(pos) = bucket.iter().position(|candidate| *candidate == index) {
+                bucket.swap_remove(pos);
+            }
+            remove_bucket = bucket.is_empty();
+        }
+        if remove_bucket {
+            self.index.remove(&hash);
+        }
+    }
+
+    fn adjust_indices_after_remove(&mut self, removed_index: usize) {
+        for bucket in self.index.values_mut() {
+            for index in bucket.iter_mut() {
+                if *index > removed_index {
+                    *index -= 1;
+                }
             }
         }
     }
@@ -496,8 +522,13 @@ impl SetObject {
     }
 
     pub fn remove(&mut self, index: usize) -> Value {
-        let removed = self.values.remove(index);
-        self.rebuild_index();
+        let last_index = self.values.len().saturating_sub(1);
+        let removed = self.values.swap_remove(index);
+        self.remove_bucket_index_for_value(&removed, index);
+        if index < self.values.len() {
+            let moved = self.values[index].clone();
+            self.replace_bucket_index_for_value(&moved, last_index, index);
+        }
         removed
     }
 
@@ -539,8 +570,7 @@ impl SetObject {
         let Some(index) = self.find_index(value) else {
             return false;
         };
-        self.values.remove(index);
-        self.rebuild_index();
+        self.remove(index);
         true
     }
 
@@ -565,6 +595,35 @@ impl SetObject {
                 self.index.entry(hash).or_default().push(index);
             }
         }
+    }
+
+    fn remove_bucket_index_for_value(&mut self, value: &Value, index: usize) {
+        let Some(hash) = value_hash_key(value) else {
+            return;
+        };
+        let mut remove_bucket = false;
+        if let Some(bucket) = self.index.get_mut(&hash) {
+            if let Some(pos) = bucket.iter().position(|candidate| *candidate == index) {
+                bucket.swap_remove(pos);
+            }
+            remove_bucket = bucket.is_empty();
+        }
+        if remove_bucket {
+            self.index.remove(&hash);
+        }
+    }
+
+    fn replace_bucket_index_for_value(&mut self, value: &Value, old_index: usize, new_index: usize) {
+        let Some(hash) = value_hash_key(value) else {
+            return;
+        };
+        if let Some(bucket) = self.index.get_mut(&hash) {
+            if let Some(pos) = bucket.iter().position(|candidate| *candidate == old_index) {
+                bucket[pos] = new_index;
+                return;
+            }
+        }
+        self.index.entry(hash).or_default().push(new_index);
     }
 }
 
@@ -1437,6 +1496,7 @@ pub enum BuiltinFunction {
     BytesMakeTrans,
     Compile,
     Ord,
+    Chr,
     Abs,
     Sum,
     Min,
@@ -1818,6 +1878,16 @@ pub enum BuiltinFunction {
     Uuid7,
     Uuid8,
     BinasciiCrc32,
+    CsvReader,
+    CsvWriter,
+    CsvWriterRow,
+    CsvWriterRows,
+    CsvRegisterDialect,
+    CsvUnregisterDialect,
+    CsvGetDialect,
+    CsvListDialects,
+    CsvFieldSizeLimit,
+    CsvDialectValidate,
     CollectionsCountElements,
     AtexitRegister,
     AtexitUnregister,
@@ -2221,6 +2291,25 @@ impl BuiltinFunction {
                     },
                     _ => Err(RuntimeError::new("ord() expected string of length 1")),
                 }
+            }
+            BuiltinFunction::Chr => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("chr() expects one argument"));
+                }
+                let codepoint = match &args[0] {
+                    Value::Int(value) => *value,
+                    Value::BigInt(value) => value
+                        .to_i64()
+                        .ok_or_else(|| RuntimeError::new("chr() arg not in range(0x110000)"))?,
+                    Value::Bool(value) => i64::from(*value),
+                    _ => return Err(RuntimeError::new("chr() argument must be int")),
+                };
+                if !(0..=0x10FFFF).contains(&codepoint) {
+                    return Err(RuntimeError::new("chr() arg not in range(0x110000)"));
+                }
+                let ch = char::from_u32(codepoint as u32)
+                    .ok_or_else(|| RuntimeError::new("chr() arg not in range(0x110000)"))?;
+                Ok(Value::Str(ch.to_string()))
             }
             BuiltinFunction::Abs => {
                 if args.len() != 1 {
@@ -3670,6 +3759,16 @@ impl BuiltinFunction {
             | BuiltinFunction::Uuid7
             | BuiltinFunction::Uuid8
             | BuiltinFunction::BinasciiCrc32
+            | BuiltinFunction::CsvReader
+            | BuiltinFunction::CsvWriter
+            | BuiltinFunction::CsvWriterRow
+            | BuiltinFunction::CsvWriterRows
+            | BuiltinFunction::CsvRegisterDialect
+            | BuiltinFunction::CsvUnregisterDialect
+            | BuiltinFunction::CsvGetDialect
+            | BuiltinFunction::CsvListDialects
+            | BuiltinFunction::CsvFieldSizeLimit
+            | BuiltinFunction::CsvDialectValidate
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
             | BuiltinFunction::AtexitUnregister
@@ -4490,6 +4589,7 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::DictGet => "<bound method dict.get>".to_string(),
                     NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
+                    NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
                     NativeMethodKind::ListAppend => "<bound method list.append>".to_string(),
                     NativeMethodKind::ListExtend => "<bound method list.extend>".to_string(),
                     NativeMethodKind::ListInsert => "<bound method list.insert>".to_string(),
