@@ -3946,6 +3946,16 @@ fn imports_gc_errno_weakref_and_array_modules() {
 }
 
 #[test]
+fn from_import_missing_name_raises_importerror() {
+    let source = "ok = False\ntry:\n    from _testinternalcapi import hamt\nexcept ImportError:\n    ok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn sys_module_exposes_argv_and_executable() {
     let source =
         "import sys\nok = isinstance(sys.argv, list) and isinstance(sys.executable, str)\n";

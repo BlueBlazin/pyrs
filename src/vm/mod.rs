@@ -26641,6 +26641,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.starts_with("module '") && message.ends_with("' not found") {
         return "ModuleNotFoundError";
     }
+    if message.starts_with("cannot import name '") && message.contains("' from '") {
+        return "ImportError";
+    }
     if message.contains("attempted relative import with no known parent package") {
         return "ImportError";
     }
