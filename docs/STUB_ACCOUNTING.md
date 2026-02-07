@@ -7,6 +7,7 @@ Nothing is allowed to stay "half-implemented" without a tracked owner and closur
 - `NoOp` builtin symbol inventory is tracked in `/Users/$USER/pyrs/docs/NOOP_BUILTIN_INVENTORY.txt`.
 - CI test gate: `/Users/$USER/pyrs/tests/noop_inventory.rs`.
 - Inventory generator: `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`.
+- Inventory traversal is recursive across module/class/instance/container object graphs and includes dynamic builtin-type no-op attributes (`builtins.float.fromhex`, `builtins.float.hex`, `builtins.str.maketrans`).
 
 ## Non-NoOp Partial Implementations
 These are implemented paths that are intentionally incomplete versus CPython and must be closed before release-complete parity.
@@ -25,8 +26,11 @@ These are implemented paths that are intentionally incomplete versus CPython and
 | `os` / `posix` / `pathlib` | Core filesystem/process paths plus non-`NoOp` `open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` and wait-status helpers; broader API surface still incomplete | Full pure-Python-usable path/process API surface for CPython test coverage in scope | Milestone 13 |
 | `inspect` / `types` | Foundational predicates/types plus a baseline non-`NoOp` `inspect.signature` path (Signature instance with parameter-kind/default metadata); full Signature/Parameter API and broader module parity pending | Full behavior required by stdlib + mainstream pure-Python packages | Milestone 13 |
 | `codecs` / `unicodedata` | Core codecs and minimal unicode normalization only | Full codecs registry/error-handler and unicode behavior parity | Milestone 13 |
-| `asyncio` / `threading` / `_thread` / `signal` / `_warnings` | Foundational runtime paths, including baseline non-`NoOp` `_thread.start_new_thread` and `_warnings._acquire_lock`/`_release_lock`, but full contract parity remains pending | CPython-compatible behavior for supported event loop and thread/signal/warnings-lock APIs | Milestone 13/16 |
-| `socket` / `_socket` | Module-level helpers now execute non-`NoOp` paths (`gethostname`, `gethostbyname`, `getaddrinfo`, `fromfd`, default-timeout helpers, and `hton*`/`ntoh*`), but socket class instance-method binding and broader network semantics remain partial | Real socket semantics for networked stdlib modules | Milestone 13 |
+| `asyncio` / `threading` / `_thread` / `signal` / `_warnings` | Foundational runtime paths, including non-`NoOp` `_thread.start_new_thread`, `_warnings._acquire_lock`/`_release_lock`, and baseline threading class methods (`Thread`, `Event`, `Condition`, `Semaphore`, `Barrier`), but full contract parity remains pending | CPython-compatible behavior for supported event loop and thread/signal/warnings-lock APIs | Milestone 13/16 |
+| `socket` / `_socket` | Module-level helpers plus baseline non-`NoOp` socket class methods (`__init__`, `close`, `detach`, `fileno`) are implemented; broader network/socket-option semantics remain partial | Real socket semantics for networked stdlib modules | Milestone 13 |
+| `uuid` | Baseline UUID object construction and module helpers (`UUID.__init__`, `uuid1/3/4/5/6/7/8`, `getnode`) are implemented, but cryptographic/hash fidelity and full API parity are partial | Full CPython uuid semantic parity and edge contracts | Milestone 13 |
+| `builtins` object protocol | `object.__reduce_ex__` now executes a non-`NoOp` baseline path, but full pickling parity and protocol edge semantics remain pending | Full CPython object reduction/pickling behavior parity | Milestone 13 |
+| `sys.monitoring` / `sys._jit` scaffolding | Monitoring/JIT helper APIs remain explicit no-op placeholders (non-goal feature hooks retained for compatibility shape) | Either implement full semantics or gate them behind explicit unsupported errors before release | Milestone 14/16 |
 | `subprocess` / `_posixsubprocess` | Minimal bootstrap with stubbed process spawn internals | Production-safe process creation semantics and regression coverage | Milestone 13 |
 | `typing` / `dataclasses` / `enum` / `contextvars` | Foundation coverage only | Full semantics required by modern frameworks and CPython suites in scope | Milestone 13 |
 | Native extension path | Not implemented in runtime yet | Limited C-API/abi3 and HPy compatibility milestones complete | Milestone 15 |

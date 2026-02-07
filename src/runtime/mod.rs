@@ -144,6 +144,7 @@ impl GeneratorObject {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NativeMethodKind {
+    Builtin(BuiltinFunction),
     GeneratorIter,
     GeneratorAwait,
     GeneratorANext,
@@ -941,6 +942,7 @@ pub enum BuiltinFunction {
     ObjectInit,
     ObjectGetAttribute,
     ObjectGetState,
+    ObjectReduceEx,
     ObjectSetAttr,
     ObjectDelAttr,
     ContextVar,
@@ -1215,6 +1217,29 @@ pub enum BuiltinFunction {
     ThreadingCurrentThread,
     ThreadingMainThread,
     ThreadingActiveCount,
+    ThreadClassInit,
+    ThreadClassStart,
+    ThreadClassJoin,
+    ThreadClassIsAlive,
+    ThreadEventInit,
+    ThreadEventClear,
+    ThreadEventIsSet,
+    ThreadEventSet,
+    ThreadEventWait,
+    ThreadConditionInit,
+    ThreadConditionAcquire,
+    ThreadConditionNotify,
+    ThreadConditionNotifyAll,
+    ThreadConditionRelease,
+    ThreadConditionWait,
+    ThreadSemaphoreInit,
+    ThreadSemaphoreAcquire,
+    ThreadSemaphoreRelease,
+    ThreadBoundedSemaphoreInit,
+    ThreadBarrierInit,
+    ThreadBarrierAbort,
+    ThreadBarrierReset,
+    ThreadBarrierWait,
     SignalSignal,
     SignalGetSignal,
     SignalRaiseSignal,
@@ -1228,6 +1253,19 @@ pub enum BuiltinFunction {
     SocketNtoHl,
     SocketHtoNs,
     SocketHtoNl,
+    SocketObjectInit,
+    SocketObjectClose,
+    SocketObjectDetach,
+    SocketObjectFileno,
+    UuidClassInit,
+    UuidGetNode,
+    Uuid1,
+    Uuid3,
+    Uuid4,
+    Uuid5,
+    Uuid6,
+    Uuid7,
+    Uuid8,
     BinasciiCrc32,
     CollectionsCountElements,
     AtexitRegister,
@@ -2880,6 +2918,29 @@ impl BuiltinFunction {
             | BuiltinFunction::ThreadingCurrentThread
             | BuiltinFunction::ThreadingMainThread
             | BuiltinFunction::ThreadingActiveCount
+            | BuiltinFunction::ThreadClassInit
+            | BuiltinFunction::ThreadClassStart
+            | BuiltinFunction::ThreadClassJoin
+            | BuiltinFunction::ThreadClassIsAlive
+            | BuiltinFunction::ThreadEventInit
+            | BuiltinFunction::ThreadEventClear
+            | BuiltinFunction::ThreadEventIsSet
+            | BuiltinFunction::ThreadEventSet
+            | BuiltinFunction::ThreadEventWait
+            | BuiltinFunction::ThreadConditionInit
+            | BuiltinFunction::ThreadConditionAcquire
+            | BuiltinFunction::ThreadConditionNotify
+            | BuiltinFunction::ThreadConditionNotifyAll
+            | BuiltinFunction::ThreadConditionRelease
+            | BuiltinFunction::ThreadConditionWait
+            | BuiltinFunction::ThreadSemaphoreInit
+            | BuiltinFunction::ThreadSemaphoreAcquire
+            | BuiltinFunction::ThreadSemaphoreRelease
+            | BuiltinFunction::ThreadBoundedSemaphoreInit
+            | BuiltinFunction::ThreadBarrierInit
+            | BuiltinFunction::ThreadBarrierAbort
+            | BuiltinFunction::ThreadBarrierReset
+            | BuiltinFunction::ThreadBarrierWait
             | BuiltinFunction::SignalSignal
             | BuiltinFunction::SignalGetSignal
             | BuiltinFunction::SignalRaiseSignal
@@ -2893,6 +2954,19 @@ impl BuiltinFunction {
             | BuiltinFunction::SocketNtoHl
             | BuiltinFunction::SocketHtoNs
             | BuiltinFunction::SocketHtoNl
+            | BuiltinFunction::SocketObjectInit
+            | BuiltinFunction::SocketObjectClose
+            | BuiltinFunction::SocketObjectDetach
+            | BuiltinFunction::SocketObjectFileno
+            | BuiltinFunction::UuidClassInit
+            | BuiltinFunction::UuidGetNode
+            | BuiltinFunction::Uuid1
+            | BuiltinFunction::Uuid3
+            | BuiltinFunction::Uuid4
+            | BuiltinFunction::Uuid5
+            | BuiltinFunction::Uuid6
+            | BuiltinFunction::Uuid7
+            | BuiltinFunction::Uuid8
             | BuiltinFunction::BinasciiCrc32
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
@@ -2915,6 +2989,7 @@ impl BuiltinFunction {
             | BuiltinFunction::ObjectDelAttr
             | BuiltinFunction::Dir
             | BuiltinFunction::ObjectGetState
+            | BuiltinFunction::ObjectReduceEx
             | BuiltinFunction::StringFormatterParser
             | BuiltinFunction::StringFormatterFieldNameSplit => {
                 Err(RuntimeError::new("builtin requires VM context"))
@@ -3583,6 +3658,9 @@ pub fn format_value(value: &Value) -> String {
                 Object::Function(func) => format!("<bound method {}>", func.code.name),
                 Object::NativeMethod(native) => match native.kind {
                     NativeMethodKind::GeneratorIter => "<bound method __iter__>".to_string(),
+                    NativeMethodKind::Builtin(builtin) => {
+                        format!("<bound method {:?}>", builtin)
+                    }
                     NativeMethodKind::GeneratorAwait => "<bound method __await__>".to_string(),
                     NativeMethodKind::GeneratorANext => "<bound method __anext__>".to_string(),
                     NativeMethodKind::GeneratorNext => "<bound method __next__>".to_string(),

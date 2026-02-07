@@ -1,7 +1,7 @@
 //! Bytecode virtual machine (minimal subset).
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -341,14 +341,16 @@ impl Vm {
 
     pub fn noop_builtin_inventory(&self) -> Vec<String> {
         let mut out = Vec::new();
+        let mut visited = HashSet::new();
         let mut module_names: Vec<String> = self.modules.keys().cloned().collect();
         module_names.sort();
         for module_name in module_names {
             let Some(module) = self.modules.get(&module_name) else {
                 continue;
             };
-            collect_noop_symbols_from_module(&module_name, module, &mut out);
+            collect_noop_symbols_from_module(&module_name, module, &mut out, &mut visited);
         }
+        collect_dynamic_builtin_noops(&mut out);
         out.sort();
         out.dedup();
         out
@@ -3206,7 +3208,7 @@ impl Vm {
         if let Object::Class(class_data) = &mut *uuid_class.kind_mut() {
             class_data.attrs.insert(
                 "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::UuidClassInit),
             );
             class_data
                 .attrs
@@ -3216,35 +3218,36 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::Repr),
             );
         }
-        let uuid_namespace_dns = self
-            .heap
-            .alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_namespace_url = self
-            .heap
-            .alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_namespace_oid = self
-            .heap
-            .alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_namespace_x500 = self
-            .heap
-            .alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_nil = self
-            .heap
-            .alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_max = self
-            .heap
-            .alloc_instance(InstanceObject::new(uuid_class.clone()));
+        let alloc_uuid_constant = |vm: &mut Vm, text: &str| -> Value {
+            let bytes = parse_uuid_like_string(text).expect("static UUID constant must be valid");
+            let instance = match vm
+                .heap
+                .alloc_instance(InstanceObject::new(uuid_class.clone()))
+            {
+                Value::Instance(obj) => obj,
+                _ => unreachable!(),
+            };
+            vm.populate_uuid_instance(&instance, bytes)
+                .expect("UUID constant population must succeed");
+            Value::Instance(instance)
+        };
+        let uuid_namespace_dns = alloc_uuid_constant(self, "6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+        let uuid_namespace_url = alloc_uuid_constant(self, "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+        let uuid_namespace_oid = alloc_uuid_constant(self, "6ba7b812-9dad-11d1-80b4-00c04fd430c8");
+        let uuid_namespace_x500 = alloc_uuid_constant(self, "6ba7b814-9dad-11d1-80b4-00c04fd430c8");
+        let uuid_nil = alloc_uuid_constant(self, "00000000-0000-0000-0000-000000000000");
+        let uuid_max = alloc_uuid_constant(self, "ffffffff-ffff-ffff-ffff-ffffffffffff");
         self.install_builtin_module(
             "uuid",
             &[
-                ("uuid1", BuiltinFunction::NoOp),
-                ("uuid3", BuiltinFunction::NoOp),
-                ("uuid4", BuiltinFunction::NoOp),
-                ("uuid5", BuiltinFunction::NoOp),
-                ("uuid6", BuiltinFunction::NoOp),
-                ("uuid7", BuiltinFunction::NoOp),
-                ("uuid8", BuiltinFunction::NoOp),
-                ("getnode", BuiltinFunction::NoOp),
+                ("uuid1", BuiltinFunction::Uuid1),
+                ("uuid3", BuiltinFunction::Uuid3),
+                ("uuid4", BuiltinFunction::Uuid4),
+                ("uuid5", BuiltinFunction::Uuid5),
+                ("uuid6", BuiltinFunction::Uuid6),
+                ("uuid7", BuiltinFunction::Uuid7),
+                ("uuid8", BuiltinFunction::Uuid8),
+                ("getnode", BuiltinFunction::UuidGetNode),
             ],
             vec![
                 ("UUID", Value::Class(uuid_class)),
@@ -3276,17 +3279,17 @@ impl Vm {
         if let Object::Class(class_data) = &mut *thread_class.kind_mut() {
             class_data.attrs.insert(
                 "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ThreadClassInit),
             );
             class_data
                 .attrs
-                .insert("start".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("start".to_string(), Value::Builtin(BuiltinFunction::ThreadClassStart));
             class_data
                 .attrs
-                .insert("join".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("join".to_string(), Value::Builtin(BuiltinFunction::ThreadClassJoin));
             class_data.attrs.insert(
                 "is_alive".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ThreadClassIsAlive),
             );
         }
         let event_class = match self
@@ -3299,20 +3302,20 @@ impl Vm {
         if let Object::Class(class_data) = &mut *event_class.kind_mut() {
             class_data.attrs.insert(
                 "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ThreadEventInit),
             );
             class_data
                 .attrs
-                .insert("set".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("set".to_string(), Value::Builtin(BuiltinFunction::ThreadEventSet));
             class_data
                 .attrs
-                .insert("clear".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("clear".to_string(), Value::Builtin(BuiltinFunction::ThreadEventClear));
             class_data
                 .attrs
-                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::ThreadEventWait));
             class_data
                 .attrs
-                .insert("is_set".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("is_set".to_string(), Value::Builtin(BuiltinFunction::ThreadEventIsSet));
         }
         let condition_class = match self
             .heap
@@ -3324,23 +3327,23 @@ impl Vm {
         if let Object::Class(class_data) = &mut *condition_class.kind_mut() {
             class_data.attrs.insert(
                 "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ThreadConditionInit),
             );
             class_data
                 .attrs
-                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::ThreadConditionAcquire));
             class_data
                 .attrs
-                .insert("release".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("release".to_string(), Value::Builtin(BuiltinFunction::ThreadConditionRelease));
             class_data
                 .attrs
-                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::ThreadConditionWait));
             class_data
                 .attrs
-                .insert("notify".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("notify".to_string(), Value::Builtin(BuiltinFunction::ThreadConditionNotify));
             class_data.attrs.insert(
                 "notify_all".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ThreadConditionNotifyAll),
             );
         }
         let semaphore_class = match self
@@ -3353,14 +3356,14 @@ impl Vm {
         if let Object::Class(class_data) = &mut *semaphore_class.kind_mut() {
             class_data.attrs.insert(
                 "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ThreadSemaphoreInit),
             );
             class_data
                 .attrs
-                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::ThreadSemaphoreAcquire));
             class_data
                 .attrs
-                .insert("release".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("release".to_string(), Value::Builtin(BuiltinFunction::ThreadSemaphoreRelease));
         }
         let bounded_semaphore_class = match self
             .heap
@@ -3372,14 +3375,14 @@ impl Vm {
         if let Object::Class(class_data) = &mut *bounded_semaphore_class.kind_mut() {
             class_data.attrs.insert(
                 "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ThreadBoundedSemaphoreInit),
             );
             class_data
                 .attrs
-                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::ThreadSemaphoreAcquire));
             class_data
                 .attrs
-                .insert("release".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("release".to_string(), Value::Builtin(BuiltinFunction::ThreadSemaphoreRelease));
         }
         let barrier_class = match self
             .heap
@@ -3391,17 +3394,17 @@ impl Vm {
         if let Object::Class(class_data) = &mut *barrier_class.kind_mut() {
             class_data.attrs.insert(
                 "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ThreadBarrierInit),
             );
             class_data
                 .attrs
-                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::ThreadBarrierWait));
             class_data
                 .attrs
-                .insert("reset".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("reset".to_string(), Value::Builtin(BuiltinFunction::ThreadBarrierReset));
             class_data
                 .attrs
-                .insert("abort".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("abort".to_string(), Value::Builtin(BuiltinFunction::ThreadBarrierAbort));
         }
         self.install_builtin_module(
             "threading",
@@ -3453,17 +3456,17 @@ impl Vm {
         if let Object::Class(class_data) = &mut *socket_class.kind_mut() {
             class_data.attrs.insert(
                 "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::SocketObjectInit),
             );
             class_data
                 .attrs
-                .insert("close".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("close".to_string(), Value::Builtin(BuiltinFunction::SocketObjectClose));
             class_data
                 .attrs
-                .insert("fileno".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("fileno".to_string(), Value::Builtin(BuiltinFunction::SocketObjectFileno));
             class_data
                 .attrs
-                .insert("detach".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("detach".to_string(), Value::Builtin(BuiltinFunction::SocketObjectDetach));
         }
         self.install_builtin_module(
             "_socket",
@@ -5891,42 +5894,63 @@ impl Vm {
                                     _ => unreachable!(),
                                 };
                                 let init = class_attr_lookup(&class, "__init__");
-                                if let Some(Value::Function(init_func)) = init {
-                                    let func_data = match &*init_func.kind() {
-                                        Object::Function(data) => data.clone(),
-                                        _ => {
-                                            return Err(RuntimeError::new(
-                                                "attempted to call non-function",
-                                            ));
+                                if let Some(init_callable) = init {
+                                    if let Value::Function(init_func) = init_callable {
+                                        let func_data = match &*init_func.kind() {
+                                            Object::Function(data) => data.clone(),
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "attempted to call non-function",
+                                                ));
+                                            }
+                                        };
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        let bindings = bind_arguments(
+                                            &func_data,
+                                            &self.heap,
+                                            init_args,
+                                            HashMap::new(),
+                                        )?;
+                                        let cells = self
+                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let mut frame = Frame::new(
+                                            func_data.code.clone(),
+                                            func_data.module.clone(),
+                                            false,
+                                            false,
+                                            cells,
+                                        );
+                                        frame.return_instance = Some(instance);
+                                        frame.expect_none_return = true;
+                                        apply_bindings(
+                                            &mut frame,
+                                            &func_data.code,
+                                            bindings,
+                                            &self.heap,
+                                        );
+                                        self.frames.push(frame);
+                                    } else {
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        match self.call_internal(
+                                            init_callable,
+                                            init_args,
+                                            HashMap::new(),
+                                        )? {
+                                            InternalCallOutcome::Value(Value::None) => {
+                                                self.push_value(Value::Instance(instance));
+                                            }
+                                            InternalCallOutcome::Value(_) => {
+                                                return Err(RuntimeError::new(
+                                                    "__init__() should return None",
+                                                ));
+                                            }
+                                            InternalCallOutcome::CallerExceptionHandled => {}
                                         }
-                                    };
-                                    let mut init_args = Vec::with_capacity(args.len() + 1);
-                                    init_args.push(Value::Instance(instance.clone()));
-                                    init_args.extend(args);
-                                    let bindings = bind_arguments(
-                                        &func_data,
-                                        &self.heap,
-                                        init_args,
-                                        HashMap::new(),
-                                    )?;
-                                    let cells = self
-                                        .build_cells(&func_data.code, func_data.closure.clone());
-                                    let mut frame = Frame::new(
-                                        func_data.code.clone(),
-                                        func_data.module.clone(),
-                                        false,
-                                        false,
-                                        cells,
-                                    );
-                                    frame.return_instance = Some(instance);
-                                    frame.expect_none_return = true;
-                                    apply_bindings(
-                                        &mut frame,
-                                        &func_data.code,
-                                        bindings,
-                                        &self.heap,
-                                    );
-                                    self.frames.push(frame);
+                                    }
                                 } else {
                                     self.push_value(Value::Instance(instance));
                                 }
@@ -6106,39 +6130,65 @@ impl Vm {
                                     _ => unreachable!(),
                                 };
                                 let init = class_attr_lookup(&class, "__init__");
-                                if let Some(Value::Function(init_func)) = init {
-                                    let func_data = match &*init_func.kind() {
-                                        Object::Function(data) => data.clone(),
-                                        _ => {
-                                            return Err(RuntimeError::new(
-                                                "attempted to call non-function",
-                                            ));
+                                if let Some(init_callable) = init {
+                                    if let Value::Function(init_func) = init_callable {
+                                        let func_data = match &*init_func.kind() {
+                                            Object::Function(data) => data.clone(),
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "attempted to call non-function",
+                                                ));
+                                            }
+                                        };
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        let bindings = bind_arguments(
+                                            &func_data,
+                                            &self.heap,
+                                            init_args,
+                                            kwargs,
+                                        )?;
+                                        let cells = self
+                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let mut frame = Frame::new(
+                                            func_data.code.clone(),
+                                            func_data.module.clone(),
+                                            false,
+                                            false,
+                                            cells,
+                                        );
+                                        frame.return_instance = Some(instance);
+                                        frame.expect_none_return = true;
+                                        apply_bindings(
+                                            &mut frame,
+                                            &func_data.code,
+                                            bindings,
+                                            &self.heap,
+                                        );
+                                        self.frames.push(frame);
+                                    } else {
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        match self.call_internal(init_callable, init_args, kwargs)? {
+                                            InternalCallOutcome::Value(Value::None) => {
+                                                self.push_value(Value::Instance(instance));
+                                            }
+                                            InternalCallOutcome::Value(_) => {
+                                                return Err(RuntimeError::new(
+                                                    "__init__() should return None",
+                                                ));
+                                            }
+                                            InternalCallOutcome::CallerExceptionHandled => {}
                                         }
-                                    };
-                                    let mut init_args = Vec::with_capacity(args.len() + 1);
-                                    init_args.push(Value::Instance(instance.clone()));
-                                    init_args.extend(args);
-                                    let bindings =
-                                        bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
-                                    let cells = self
-                                        .build_cells(&func_data.code, func_data.closure.clone());
-                                    let mut frame = Frame::new(
-                                        func_data.code.clone(),
-                                        func_data.module.clone(),
-                                        false,
-                                        false,
-                                        cells,
-                                    );
-                                    frame.return_instance = Some(instance);
-                                    frame.expect_none_return = true;
-                                    apply_bindings(
-                                        &mut frame,
-                                        &func_data.code,
-                                        bindings,
-                                        &self.heap,
-                                    );
-                                    self.frames.push(frame);
+                                    }
                                 } else {
+                                    if !kwargs.is_empty() {
+                                        return Err(RuntimeError::new(
+                                            "unexpected keyword arguments",
+                                        ));
+                                    }
                                     self.push_value(Value::Instance(instance));
                                 }
                             }
@@ -6294,38 +6344,59 @@ impl Vm {
                                     _ => unreachable!(),
                                 };
                                 let init = class_attr_lookup(&class, "__init__");
-                                if let Some(Value::Function(init_func)) = init {
-                                    let func_data = match &*init_func.kind() {
-                                        Object::Function(data) => data.clone(),
-                                        _ => {
-                                            return Err(RuntimeError::new(
-                                                "attempted to call non-function",
-                                            ));
+                                if let Some(init_callable) = init {
+                                    if let Value::Function(init_func) = init_callable {
+                                        let func_data = match &*init_func.kind() {
+                                            Object::Function(data) => data.clone(),
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "attempted to call non-function",
+                                                ));
+                                            }
+                                        };
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        let bindings = bind_arguments(
+                                            &func_data,
+                                            &self.heap,
+                                            init_args,
+                                            kwargs,
+                                        )?;
+                                        let cells = self
+                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let mut frame = Frame::new(
+                                            func_data.code.clone(),
+                                            func_data.module.clone(),
+                                            false,
+                                            false,
+                                            cells,
+                                        );
+                                        frame.return_instance = Some(instance);
+                                        frame.expect_none_return = true;
+                                        apply_bindings(
+                                            &mut frame,
+                                            &func_data.code,
+                                            bindings,
+                                            &self.heap,
+                                        );
+                                        self.frames.push(frame);
+                                    } else {
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        match self.call_internal(init_callable, init_args, kwargs)? {
+                                            InternalCallOutcome::Value(Value::None) => {
+                                                self.push_value(Value::Instance(instance));
+                                            }
+                                            InternalCallOutcome::Value(_) => {
+                                                return Err(RuntimeError::new(
+                                                    "__init__() should return None",
+                                                ));
+                                            }
+                                            InternalCallOutcome::CallerExceptionHandled => {}
                                         }
-                                    };
-                                    let mut init_args = Vec::with_capacity(args.len() + 1);
-                                    init_args.push(Value::Instance(instance.clone()));
-                                    init_args.extend(args);
-                                    let bindings =
-                                        bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
-                                    let cells = self
-                                        .build_cells(&func_data.code, func_data.closure.clone());
-                                    let mut frame = Frame::new(
-                                        func_data.code.clone(),
-                                        func_data.module.clone(),
-                                        false,
-                                        false,
-                                        cells,
-                                    );
-                                    frame.return_instance = Some(instance);
-                                    frame.expect_none_return = true;
-                                    apply_bindings(
-                                        &mut frame,
-                                        &func_data.code,
-                                        bindings,
-                                        &self.heap,
-                                    );
-                                    self.frames.push(frame);
+                                    }
                                 } else {
                                     self.push_value(Value::Instance(instance));
                                 }
@@ -6449,38 +6520,59 @@ impl Vm {
                                     _ => unreachable!(),
                                 };
                                 let init = class_attr_lookup(&class, "__init__");
-                                if let Some(Value::Function(init_func)) = init {
-                                    let func_data = match &*init_func.kind() {
-                                        Object::Function(data) => data.clone(),
-                                        _ => {
-                                            return Err(RuntimeError::new(
-                                                "attempted to call non-function",
-                                            ));
+                                if let Some(init_callable) = init {
+                                    if let Value::Function(init_func) = init_callable {
+                                        let func_data = match &*init_func.kind() {
+                                            Object::Function(data) => data.clone(),
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "attempted to call non-function",
+                                                ));
+                                            }
+                                        };
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        let bindings = bind_arguments(
+                                            &func_data,
+                                            &self.heap,
+                                            init_args,
+                                            kwargs,
+                                        )?;
+                                        let cells = self
+                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let mut frame = Frame::new(
+                                            func_data.code.clone(),
+                                            func_data.module.clone(),
+                                            false,
+                                            false,
+                                            cells,
+                                        );
+                                        frame.return_instance = Some(instance);
+                                        frame.expect_none_return = true;
+                                        apply_bindings(
+                                            &mut frame,
+                                            &func_data.code,
+                                            bindings,
+                                            &self.heap,
+                                        );
+                                        self.frames.push(frame);
+                                    } else {
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        match self.call_internal(init_callable, init_args, kwargs)? {
+                                            InternalCallOutcome::Value(Value::None) => {
+                                                self.push_value(Value::Instance(instance));
+                                            }
+                                            InternalCallOutcome::Value(_) => {
+                                                return Err(RuntimeError::new(
+                                                    "__init__() should return None",
+                                                ));
+                                            }
+                                            InternalCallOutcome::CallerExceptionHandled => {}
                                         }
-                                    };
-                                    let mut init_args = Vec::with_capacity(args.len() + 1);
-                                    init_args.push(Value::Instance(instance.clone()));
-                                    init_args.extend(args);
-                                    let bindings =
-                                        bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
-                                    let cells = self
-                                        .build_cells(&func_data.code, func_data.closure.clone());
-                                    let mut frame = Frame::new(
-                                        func_data.code.clone(),
-                                        func_data.module.clone(),
-                                        false,
-                                        false,
-                                        cells,
-                                    );
-                                    frame.return_instance = Some(instance);
-                                    frame.expect_none_return = true;
-                                    apply_bindings(
-                                        &mut frame,
-                                        &func_data.code,
-                                        bindings,
-                                        &self.heap,
-                                    );
-                                    self.frames.push(frame);
+                                    }
                                 } else {
                                     if !kwargs.is_empty() {
                                         return Err(RuntimeError::new(
@@ -6622,38 +6714,59 @@ impl Vm {
                                     _ => unreachable!(),
                                 };
                                 let init = class_attr_lookup(&class, "__init__");
-                                if let Some(Value::Function(init_func)) = init {
-                                    let func_data = match &*init_func.kind() {
-                                        Object::Function(data) => data.clone(),
-                                        _ => {
-                                            return Err(RuntimeError::new(
-                                                "attempted to call non-function",
-                                            ));
+                                if let Some(init_callable) = init {
+                                    if let Value::Function(init_func) = init_callable {
+                                        let func_data = match &*init_func.kind() {
+                                            Object::Function(data) => data.clone(),
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "attempted to call non-function",
+                                                ));
+                                            }
+                                        };
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        let bindings = bind_arguments(
+                                            &func_data,
+                                            &self.heap,
+                                            init_args,
+                                            kwargs,
+                                        )?;
+                                        let cells = self
+                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let mut frame = Frame::new(
+                                            func_data.code.clone(),
+                                            func_data.module.clone(),
+                                            false,
+                                            false,
+                                            cells,
+                                        );
+                                        frame.return_instance = Some(instance);
+                                        frame.expect_none_return = true;
+                                        apply_bindings(
+                                            &mut frame,
+                                            &func_data.code,
+                                            bindings,
+                                            &self.heap,
+                                        );
+                                        self.frames.push(frame);
+                                    } else {
+                                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                                        init_args.push(Value::Instance(instance.clone()));
+                                        init_args.extend(args);
+                                        match self.call_internal(init_callable, init_args, kwargs)? {
+                                            InternalCallOutcome::Value(Value::None) => {
+                                                self.push_value(Value::Instance(instance));
+                                            }
+                                            InternalCallOutcome::Value(_) => {
+                                                return Err(RuntimeError::new(
+                                                    "__init__() should return None",
+                                                ));
+                                            }
+                                            InternalCallOutcome::CallerExceptionHandled => {}
                                         }
-                                    };
-                                    let mut init_args = Vec::with_capacity(args.len() + 1);
-                                    init_args.push(Value::Instance(instance.clone()));
-                                    init_args.extend(args);
-                                    let bindings =
-                                        bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
-                                    let cells = self
-                                        .build_cells(&func_data.code, func_data.closure.clone());
-                                    let mut frame = Frame::new(
-                                        func_data.code.clone(),
-                                        func_data.module.clone(),
-                                        false,
-                                        false,
-                                        cells,
-                                    );
-                                    frame.return_instance = Some(instance);
-                                    frame.expect_none_return = true;
-                                    apply_bindings(
-                                        &mut frame,
-                                        &func_data.code,
-                                        bindings,
-                                        &self.heap,
-                                    );
-                                    self.frames.push(frame);
+                                    }
                                 } else {
                                     if !kwargs.is_empty() {
                                         return Err(RuntimeError::new(
@@ -8050,6 +8163,10 @@ impl Vm {
         self.heap.alloc_bound_method(bound)
     }
 
+    fn alloc_builtin_bound_method(&self, builtin: BuiltinFunction, receiver: ObjRef) -> Value {
+        self.alloc_native_bound_method(NativeMethodKind::Builtin(builtin), receiver)
+    }
+
     fn property_descriptor_parts(
         &self,
         descriptor: &ObjRef,
@@ -8251,7 +8368,7 @@ impl Vm {
             }
             "hex" if builtin == BuiltinFunction::Float => Ok(Value::Builtin(BuiltinFunction::NoOp)),
             "__repr__" | "__str__" | "__format__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
-            "__reduce_ex__" => Ok(Value::Builtin(BuiltinFunction::NoOp)),
+            "__reduce_ex__" => Ok(Value::Builtin(BuiltinFunction::ObjectReduceEx)),
             "bit_length" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntBitLength))
             }
@@ -8949,29 +9066,45 @@ impl Vm {
                     _ => unreachable!(),
                 };
                 let init = class_attr_lookup(&class, "__init__");
-                if let Some(Value::Function(init_func)) = init {
-                    let func_data = match &*init_func.kind() {
-                        Object::Function(data) => data.clone(),
-                        _ => return Err(RuntimeError::new("attempted to call non-function")),
-                    };
-                    let mut init_args = Vec::with_capacity(args.len() + 1);
-                    init_args.push(Value::Instance(instance.clone()));
-                    init_args.extend(args);
-                    let bindings = bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
-                    let cells = self.build_cells(&func_data.code, func_data.closure.clone());
-                    let mut frame = Frame::new(
-                        func_data.code.clone(),
-                        func_data.module.clone(),
-                        false,
-                        false,
-                        cells,
-                    );
-                    frame.return_instance = Some(instance);
-                    frame.expect_none_return = true;
-                    apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                    let depth_before = self.frames.len();
-                    self.frames.push(frame);
-                    self.frames.len() > depth_before
+                if let Some(init_callable) = init {
+                    if let Value::Function(init_func) = init_callable {
+                        let func_data = match &*init_func.kind() {
+                            Object::Function(data) => data.clone(),
+                            _ => return Err(RuntimeError::new("attempted to call non-function")),
+                        };
+                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                        init_args.push(Value::Instance(instance.clone()));
+                        init_args.extend(args);
+                        let bindings = bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
+                        let cells = self.build_cells(&func_data.code, func_data.closure.clone());
+                        let mut frame = Frame::new(
+                            func_data.code.clone(),
+                            func_data.module.clone(),
+                            false,
+                            false,
+                            cells,
+                        );
+                        frame.return_instance = Some(instance);
+                        frame.expect_none_return = true;
+                        apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                        let depth_before = self.frames.len();
+                        self.frames.push(frame);
+                        self.frames.len() > depth_before
+                    } else {
+                        let mut init_args = Vec::with_capacity(args.len() + 1);
+                        init_args.push(Value::Instance(instance.clone()));
+                        init_args.extend(args);
+                        match self.call_internal(init_callable, init_args, kwargs)? {
+                            InternalCallOutcome::Value(Value::None) => {
+                                self.push_value(Value::Instance(instance));
+                                false
+                            }
+                            InternalCallOutcome::Value(_) => {
+                                return Err(RuntimeError::new("__init__() should return None"));
+                            }
+                            InternalCallOutcome::CallerExceptionHandled => false,
+                        }
+                    }
                 } else {
                     if !kwargs.is_empty() || !args.is_empty() {
                         return Err(RuntimeError::new("class constructor takes no arguments"));
@@ -9213,6 +9346,11 @@ impl Vm {
                     self.heap.alloc_bound_method(bound),
                 ));
             }
+            if let Value::Builtin(builtin) = attr.clone() {
+                return Ok(AttrAccessOutcome::Value(
+                    self.alloc_builtin_bound_method(builtin, instance.clone()),
+                ));
+            }
             let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
             if let Some(getter) = getter {
                 return Ok(
@@ -9292,6 +9430,11 @@ impl Vm {
                     let bound = BoundMethod::new(func, receiver.clone());
                     return Ok(AttrAccessOutcome::Value(
                         self.heap.alloc_bound_method(bound),
+                    ));
+                }
+                if let Value::Builtin(builtin) = attr.clone() {
+                    return Ok(AttrAccessOutcome::Value(
+                        self.alloc_builtin_bound_method(builtin, receiver.clone()),
                     ));
                 }
                 let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
@@ -9546,11 +9689,19 @@ impl Vm {
                 NativeMethodKind::FunctoolsPartialCall
                     | NativeMethodKind::DictUpdateMethod
                     | NativeMethodKind::StrFormat
+                    | NativeMethodKind::Builtin(_)
             )
         {
             return Err(RuntimeError::new("native methods do not accept keywords"));
         }
         match kind {
+            NativeMethodKind::Builtin(builtin) => {
+                let mut call_args = Vec::with_capacity(args.len() + 1);
+                call_args.push(self.receiver_value(&receiver)?);
+                call_args.extend(args);
+                let value = self.call_builtin(builtin, call_args, kwargs)?;
+                Ok(NativeCallResult::Value(value))
+            }
             NativeMethodKind::GeneratorIter => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("__iter__() expects no arguments"));
@@ -11527,6 +11678,7 @@ impl Vm {
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
             BuiltinFunction::ObjectGetAttribute => self.builtin_object_getattribute(args, kwargs),
             BuiltinFunction::ObjectGetState => self.builtin_object_getstate(args, kwargs),
+            BuiltinFunction::ObjectReduceEx => self.builtin_object_reduce_ex(args, kwargs),
             BuiltinFunction::ObjectSetAttr => self.builtin_object_setattr(args, kwargs),
             BuiltinFunction::ObjectDelAttr => self.builtin_object_delattr(args, kwargs),
             BuiltinFunction::List => self.builtin_list(args, kwargs),
@@ -11822,6 +11974,47 @@ impl Vm {
             BuiltinFunction::ThreadingActiveCount => {
                 self.builtin_threading_active_count(args, kwargs)
             }
+            BuiltinFunction::ThreadClassInit => self.builtin_thread_class_init(args, kwargs),
+            BuiltinFunction::ThreadClassStart => self.builtin_thread_class_start(args, kwargs),
+            BuiltinFunction::ThreadClassJoin => self.builtin_thread_class_join(args, kwargs),
+            BuiltinFunction::ThreadClassIsAlive => self.builtin_thread_class_is_alive(args, kwargs),
+            BuiltinFunction::ThreadEventInit => self.builtin_thread_event_init(args, kwargs),
+            BuiltinFunction::ThreadEventClear => self.builtin_thread_event_clear(args, kwargs),
+            BuiltinFunction::ThreadEventIsSet => self.builtin_thread_event_is_set(args, kwargs),
+            BuiltinFunction::ThreadEventSet => self.builtin_thread_event_set(args, kwargs),
+            BuiltinFunction::ThreadEventWait => self.builtin_thread_event_wait(args, kwargs),
+            BuiltinFunction::ThreadConditionInit => {
+                self.builtin_thread_condition_init(args, kwargs)
+            }
+            BuiltinFunction::ThreadConditionAcquire => {
+                self.builtin_thread_condition_acquire(args, kwargs)
+            }
+            BuiltinFunction::ThreadConditionNotify => {
+                self.builtin_thread_condition_notify(args, kwargs)
+            }
+            BuiltinFunction::ThreadConditionNotifyAll => {
+                self.builtin_thread_condition_notify_all(args, kwargs)
+            }
+            BuiltinFunction::ThreadConditionRelease => {
+                self.builtin_thread_condition_release(args, kwargs)
+            }
+            BuiltinFunction::ThreadConditionWait => self.builtin_thread_condition_wait(args, kwargs),
+            BuiltinFunction::ThreadSemaphoreInit => {
+                self.builtin_thread_semaphore_init(args, kwargs)
+            }
+            BuiltinFunction::ThreadSemaphoreAcquire => {
+                self.builtin_thread_semaphore_acquire(args, kwargs)
+            }
+            BuiltinFunction::ThreadSemaphoreRelease => {
+                self.builtin_thread_semaphore_release(args, kwargs)
+            }
+            BuiltinFunction::ThreadBoundedSemaphoreInit => {
+                self.builtin_thread_bounded_semaphore_init(args, kwargs)
+            }
+            BuiltinFunction::ThreadBarrierInit => self.builtin_thread_barrier_init(args, kwargs),
+            BuiltinFunction::ThreadBarrierAbort => self.builtin_thread_barrier_abort(args, kwargs),
+            BuiltinFunction::ThreadBarrierReset => self.builtin_thread_barrier_reset(args, kwargs),
+            BuiltinFunction::ThreadBarrierWait => self.builtin_thread_barrier_wait(args, kwargs),
             BuiltinFunction::SignalSignal => self.builtin_signal_signal(args, kwargs),
             BuiltinFunction::SignalGetSignal => self.builtin_signal_getsignal(args, kwargs),
             BuiltinFunction::SignalRaiseSignal => self.builtin_signal_raise_signal(args, kwargs),
@@ -11839,6 +12032,19 @@ impl Vm {
             BuiltinFunction::SocketNtoHl => self.builtin_socket_ntohl(args, kwargs),
             BuiltinFunction::SocketHtoNs => self.builtin_socket_htons(args, kwargs),
             BuiltinFunction::SocketHtoNl => self.builtin_socket_htonl(args, kwargs),
+            BuiltinFunction::SocketObjectInit => self.builtin_socket_object_init(args, kwargs),
+            BuiltinFunction::SocketObjectClose => self.builtin_socket_object_close(args, kwargs),
+            BuiltinFunction::SocketObjectDetach => self.builtin_socket_object_detach(args, kwargs),
+            BuiltinFunction::SocketObjectFileno => self.builtin_socket_object_fileno(args, kwargs),
+            BuiltinFunction::UuidClassInit => self.builtin_uuid_class_init(args, kwargs),
+            BuiltinFunction::UuidGetNode => self.builtin_uuid_getnode(args, kwargs),
+            BuiltinFunction::Uuid1 => self.builtin_uuid1(args, kwargs),
+            BuiltinFunction::Uuid3 => self.builtin_uuid3(args, kwargs),
+            BuiltinFunction::Uuid4 => self.builtin_uuid4(args, kwargs),
+            BuiltinFunction::Uuid5 => self.builtin_uuid5(args, kwargs),
+            BuiltinFunction::Uuid6 => self.builtin_uuid6(args, kwargs),
+            BuiltinFunction::Uuid7 => self.builtin_uuid7(args, kwargs),
+            BuiltinFunction::Uuid8 => self.builtin_uuid8(args, kwargs),
             BuiltinFunction::BinasciiCrc32 => self.builtin_binascii_crc32(args, kwargs),
             BuiltinFunction::AtexitRegister => self.builtin_atexit_register(args, kwargs),
             BuiltinFunction::AtexitUnregister => self.builtin_atexit_unregister(args, kwargs),
@@ -12748,6 +12954,51 @@ impl Vm {
             },
             _ => Ok(Value::None),
         }
+    }
+
+    fn builtin_object_reduce_ex(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !(1..=2).contains(&args.len()) {
+            return Err(RuntimeError::new(
+                "object.__reduce_ex__() takes one or two arguments",
+            ));
+        }
+        let value = args[0].clone();
+        if args.len() == 2 {
+            let _ = value_to_int(args[1].clone())?;
+        }
+        let class_value = self.class_of_value(&value).map(Value::Class).unwrap_or_else(|| {
+            match value {
+                Value::Bool(_) => Value::Builtin(BuiltinFunction::Bool),
+                Value::Int(_) => Value::Builtin(BuiltinFunction::Int),
+                Value::Float(_) => Value::Builtin(BuiltinFunction::Float),
+                Value::Complex { .. } => Value::Builtin(BuiltinFunction::Complex),
+                Value::Str(_) => Value::Builtin(BuiltinFunction::Str),
+                Value::List(_) => Value::Builtin(BuiltinFunction::List),
+                Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
+                Value::Dict(_) => Value::Builtin(BuiltinFunction::Dict),
+                Value::Set(_) => Value::Builtin(BuiltinFunction::Set),
+                Value::FrozenSet(_) => Value::Builtin(BuiltinFunction::FrozenSet),
+                Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
+                Value::ByteArray(_) => Value::Builtin(BuiltinFunction::ByteArray),
+                Value::MemoryView(_) => Value::Builtin(BuiltinFunction::MemoryView),
+                _ => Value::Builtin(BuiltinFunction::ObjectNew),
+            }
+        });
+        let state = self.builtin_object_getstate(vec![value], HashMap::new())?;
+        let constructor = if matches!(class_value, Value::Class(_) | Value::Builtin(_)) {
+            class_value.clone()
+        } else {
+            Value::Builtin(BuiltinFunction::ObjectNew)
+        };
+        Ok(self.heap.alloc_tuple(vec![
+            constructor,
+            self.heap.alloc_tuple(Vec::new()),
+            state,
+        ]))
     }
 
     fn builtin_object_getattribute(
@@ -19135,6 +19386,39 @@ impl Vm {
         Ok(self.make_immediate_coroutine(self.heap.alloc_list(results)))
     }
 
+    fn take_bound_instance_arg(
+        &self,
+        args: &mut Vec<Value>,
+        method_name: &str,
+    ) -> Result<ObjRef, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "{method_name}() missing bound instance"
+            )));
+        }
+        match args.remove(0) {
+            Value::Instance(instance) => Ok(instance),
+            _ => Err(RuntimeError::new(format!(
+                "{method_name}() descriptor requires an instance"
+            ))),
+        }
+    }
+
+    fn instance_attr_get(instance: &ObjRef, name: &str) -> Option<Value> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        instance_data.attrs.get(name).cloned()
+    }
+
+    fn instance_attr_set(instance: &ObjRef, name: &str, value: Value) -> Result<(), RuntimeError> {
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new("expected instance object"));
+        };
+        instance_data.attrs.insert(name.to_string(), value);
+        Ok(())
+    }
+
     fn builtin_threading_get_ident(
         &mut self,
         args: Vec<Value>,
@@ -19241,6 +19525,555 @@ impl Vm {
             return Err(RuntimeError::new("active_count() expects no arguments"));
         }
         Ok(Value::Int(1))
+    }
+
+    fn builtin_thread_class_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "Thread.__init__")?;
+        if args.len() > 6 {
+            return Err(RuntimeError::new(
+                "Thread.__init__() expects up to 6 positional arguments",
+            ));
+        }
+        let group = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("group").unwrap_or(Value::None)
+        };
+        if group != Value::None {
+            return Err(RuntimeError::new("group argument must be None for now"));
+        }
+        let target = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("target").unwrap_or(Value::None)
+        };
+        let name = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("name").unwrap_or(Value::None)
+        };
+        let call_args = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs
+                .remove("args")
+                .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()))
+        };
+        let call_kwargs = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs
+                .remove("kwargs")
+                .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()))
+        };
+        let daemon = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("daemon").unwrap_or(Value::None)
+        };
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "Thread.__init__() got unexpected arguments",
+            ));
+        }
+        let name_value = match name {
+            Value::None => Value::Str("Thread-1".to_string()),
+            Value::Str(text) => Value::Str(text),
+            _ => return Err(RuntimeError::new("Thread name must be str or None")),
+        };
+        let args_value = match call_args {
+            Value::Tuple(tuple) => Value::Tuple(tuple),
+            _ => return Err(RuntimeError::new("Thread args must be a tuple")),
+        };
+        let kwargs_value = match call_kwargs {
+            Value::Dict(dict) => Value::Dict(dict),
+            _ => return Err(RuntimeError::new("Thread kwargs must be a dict")),
+        };
+        Self::instance_attr_set(&instance, "_target", target)?;
+        Self::instance_attr_set(&instance, "_name", name_value)?;
+        Self::instance_attr_set(&instance, "_args", args_value)?;
+        Self::instance_attr_set(&instance, "_kwargs", kwargs_value)?;
+        Self::instance_attr_set(&instance, "_daemon", daemon)?;
+        Self::instance_attr_set(&instance, "_started", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_class_start(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Thread.start() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Thread.start")?;
+        if matches!(Self::instance_attr_get(&instance, "_started"), Some(Value::Bool(true))) {
+            return Err(RuntimeError::new("threads can only be started once"));
+        }
+        Self::instance_attr_set(&instance, "_started", Value::Bool(true))?;
+        Self::instance_attr_set(&instance, "_alive", Value::Bool(true))?;
+        let target = Self::instance_attr_get(&instance, "_target").unwrap_or(Value::None);
+        if target != Value::None {
+            let call_args = match Self::instance_attr_get(&instance, "_args") {
+                Some(Value::Tuple(tuple)) => match &*tuple.kind() {
+                    Object::Tuple(values) => values.clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            let call_kwargs = match Self::instance_attr_get(&instance, "_kwargs") {
+                Some(Value::Dict(dict)) => match &*dict.kind() {
+                    Object::Dict(entries) => {
+                        let mut out = HashMap::new();
+                        for (key, value) in entries {
+                            if let Value::Str(name) = key {
+                                out.insert(name.clone(), value.clone());
+                            }
+                        }
+                        out
+                    }
+                    _ => HashMap::new(),
+                },
+                _ => HashMap::new(),
+            };
+            match self.call_internal(target, call_args, call_kwargs)? {
+                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(RuntimeError::new("thread target raised"));
+                }
+            }
+        }
+        Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_class_join(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "Thread.join() expects optional timeout",
+            ));
+        }
+        let _instance = self.take_bound_instance_arg(&mut args, "Thread.join")?;
+        if let Some(timeout) = args.first().cloned() {
+            let timeout = value_to_f64(timeout)?;
+            if timeout.is_sign_negative() {
+                return Err(RuntimeError::new("timeout must be non-negative"));
+            }
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_class_is_alive(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Thread.is_alive() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Thread.is_alive")?;
+        Ok(Value::Bool(matches!(
+            Self::instance_attr_get(&instance, "_alive"),
+            Some(Value::Bool(true))
+        )))
+    }
+
+    fn builtin_thread_event_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Event.__init__() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Event.__init__")?;
+        Self::instance_attr_set(&instance, "_flag", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_event_clear(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Event.clear() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Event.clear")?;
+        Self::instance_attr_set(&instance, "_flag", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_event_is_set(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Event.is_set() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Event.is_set")?;
+        Ok(Value::Bool(matches!(
+            Self::instance_attr_get(&instance, "_flag"),
+            Some(Value::Bool(true))
+        )))
+    }
+
+    fn builtin_thread_event_set(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Event.set() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Event.set")?;
+        Self::instance_attr_set(&instance, "_flag", Value::Bool(true))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_event_wait(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("Event.wait() expects optional timeout"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Event.wait")?;
+        if let Some(timeout) = args.first().cloned() {
+            let timeout = value_to_f64(timeout)?;
+            if timeout.is_sign_negative() {
+                return Err(RuntimeError::new("timeout must be non-negative"));
+            }
+        }
+        Ok(Value::Bool(matches!(
+            Self::instance_attr_get(&instance, "_flag"),
+            Some(Value::Bool(true))
+        )))
+    }
+
+    fn builtin_thread_condition_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "Condition.__init__() expects optional lock",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Condition.__init__")?;
+        let lock_value = args.pop().unwrap_or(Value::None);
+        Self::instance_attr_set(&instance, "_lock", lock_value)?;
+        Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_condition_acquire(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if kwargs.keys().any(|key| key != "blocking" && key != "timeout")
+            || args.is_empty()
+            || args.len() > 3
+        {
+            return Err(RuntimeError::new(
+                "Condition.acquire() got unexpected arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Condition.acquire")?;
+        if let Some(timeout) = kwargs.get("timeout").cloned() {
+            let timeout = value_to_f64(timeout)?;
+            if timeout.is_sign_negative() {
+                return Err(RuntimeError::new("timeout must be non-negative"));
+            }
+        }
+        Self::instance_attr_set(&instance, "_locked", Value::Bool(true))?;
+        Ok(Value::Bool(true))
+    }
+
+    fn builtin_thread_condition_notify(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "Condition.notify() expects optional count",
+            ));
+        }
+        let _instance = self.take_bound_instance_arg(&mut args, "Condition.notify")?;
+        if let Some(count) = args.first().cloned() {
+            let count = value_to_int(count)?;
+            if count < 0 {
+                return Err(RuntimeError::new("notify count must be non-negative"));
+            }
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_condition_notify_all(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Condition.notify_all() expects no arguments"));
+        }
+        let _instance = self.take_bound_instance_arg(&mut args, "Condition.notify_all")?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_condition_release(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Condition.release() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Condition.release")?;
+        Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_condition_wait(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if kwargs.keys().any(|key| key != "timeout") || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "Condition.wait() expects optional timeout",
+            ));
+        }
+        let _instance = self.take_bound_instance_arg(&mut args, "Condition.wait")?;
+        let timeout = kwargs.remove("timeout").or_else(|| args.pop());
+        if let Some(timeout) = timeout {
+            let timeout = value_to_f64(timeout)?;
+            if timeout.is_sign_negative() {
+                return Err(RuntimeError::new("timeout must be non-negative"));
+            }
+        }
+        Ok(Value::Bool(true))
+    }
+
+    fn builtin_thread_semaphore_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 || kwargs.keys().any(|key| key != "value") {
+            return Err(RuntimeError::new(
+                "Semaphore.__init__() expects optional value",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Semaphore.__init__")?;
+        let value = kwargs
+            .remove("value")
+            .or_else(|| args.pop())
+            .unwrap_or(Value::Int(1));
+        let value = value_to_int(value)?;
+        if value < 0 {
+            return Err(RuntimeError::new("semaphore initial value must be >= 0"));
+        }
+        Self::instance_attr_set(&instance, "_value", Value::Int(value))?;
+        Self::instance_attr_set(&instance, "_bound", Value::Int(value))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_semaphore_acquire(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if kwargs.keys().any(|key| key != "blocking" && key != "timeout")
+            || args.is_empty()
+            || args.len() > 3
+        {
+            return Err(RuntimeError::new(
+                "Semaphore.acquire() got unexpected arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Semaphore.acquire")?;
+        let blocking = kwargs
+            .get("blocking")
+            .cloned()
+            .or_else(|| args.first().cloned())
+            .map(|value| is_truthy(&value))
+            .unwrap_or(true);
+        let current = match Self::instance_attr_get(&instance, "_value") {
+            Some(Value::Int(value)) => value,
+            _ => 0,
+        };
+        if current > 0 {
+            Self::instance_attr_set(&instance, "_value", Value::Int(current - 1))?;
+            return Ok(Value::Bool(true));
+        }
+        if blocking {
+            Ok(Value::Bool(false))
+        } else {
+            Ok(Value::Bool(false))
+        }
+    }
+
+    fn builtin_thread_semaphore_release(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 || kwargs.keys().any(|key| key != "n") {
+            return Err(RuntimeError::new(
+                "Semaphore.release() expects optional n argument",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Semaphore.release")?;
+        let increment = kwargs
+            .remove("n")
+            .or_else(|| args.pop())
+            .unwrap_or(Value::Int(1));
+        let increment = value_to_int(increment)?;
+        if increment < 0 {
+            return Err(RuntimeError::new("release increment must be >= 0"));
+        }
+        let current = match Self::instance_attr_get(&instance, "_value") {
+            Some(Value::Int(value)) => value,
+            _ => 0,
+        };
+        let bound = match Self::instance_attr_get(&instance, "_bound") {
+            Some(Value::Int(value)) => value,
+            _ => i64::MAX,
+        };
+        let new_value = current.saturating_add(increment);
+        if bound != i64::MAX && new_value > bound {
+            return Err(RuntimeError::new("Semaphore released too many times"));
+        }
+        Self::instance_attr_set(&instance, "_value", Value::Int(new_value))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_bounded_semaphore_init(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_thread_semaphore_init(args, kwargs)
+    }
+
+    fn builtin_thread_barrier_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "Barrier.__init__() expects parties and optional action/timeout",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Barrier.__init__")?;
+        let parties_value = args.remove(0);
+        let parties = value_to_int(parties_value)?;
+        if parties <= 0 {
+            return Err(RuntimeError::new("parties must be > 0"));
+        }
+        let action = kwargs
+            .remove("action")
+            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .unwrap_or(Value::None);
+        let timeout = kwargs
+            .remove("timeout")
+            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .unwrap_or(Value::None);
+        if timeout != Value::None {
+            let timeout = value_to_f64(timeout)?;
+            if timeout.is_sign_negative() {
+                return Err(RuntimeError::new("timeout must be non-negative"));
+            }
+        }
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(RuntimeError::new("Barrier.__init__() got unexpected arguments"));
+        }
+        Self::instance_attr_set(&instance, "_parties", Value::Int(parties))?;
+        Self::instance_attr_set(&instance, "_action", action)?;
+        Self::instance_attr_set(&instance, "_n_waiting", Value::Int(0))?;
+        Self::instance_attr_set(&instance, "_broken", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_barrier_abort(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Barrier.abort() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Barrier.abort")?;
+        Self::instance_attr_set(&instance, "_broken", Value::Bool(true))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_barrier_reset(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("Barrier.reset() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Barrier.reset")?;
+        Self::instance_attr_set(&instance, "_broken", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "_n_waiting", Value::Int(0))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_thread_barrier_wait(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if kwargs.keys().any(|key| key != "timeout") || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "Barrier.wait() expects optional timeout",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Barrier.wait")?;
+        let timeout = kwargs.remove("timeout").or_else(|| args.pop());
+        if let Some(timeout) = timeout {
+            let timeout = value_to_f64(timeout)?;
+            if timeout.is_sign_negative() {
+                return Err(RuntimeError::new("timeout must be non-negative"));
+            }
+        }
+        if matches!(Self::instance_attr_get(&instance, "_broken"), Some(Value::Bool(true))) {
+            return Err(RuntimeError::new("barrier is broken"));
+        }
+        let parties = match Self::instance_attr_get(&instance, "_parties") {
+            Some(Value::Int(value)) => value.max(1),
+            _ => 1,
+        };
+        let waiting = match Self::instance_attr_get(&instance, "_n_waiting") {
+            Some(Value::Int(value)) => value,
+            _ => 0,
+        };
+        let next_waiting = waiting + 1;
+        if next_waiting >= parties {
+            Self::instance_attr_set(&instance, "_n_waiting", Value::Int(0))?;
+            return Ok(Value::Int(0));
+        }
+        Self::instance_attr_set(&instance, "_n_waiting", Value::Int(next_waiting))?;
+        Ok(Value::Int(next_waiting))
     }
 
     fn builtin_signal_signal(
@@ -19586,6 +20419,445 @@ impl Vm {
         let value = value_to_int(args.remove(0))?;
         let value = u32::try_from(value).map_err(|_| RuntimeError::new("value out of range"))?;
         Ok(Value::Int(value.to_be() as i64))
+    }
+
+    fn builtin_socket_object_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 5 {
+            return Err(RuntimeError::new(
+                "socket.__init__() expects optional family, type, proto, fileno",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "socket.__init__")?;
+        let family = kwargs
+            .remove("family")
+            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .unwrap_or(Value::Int(2));
+        let sock_type = kwargs
+            .remove("type")
+            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .unwrap_or(Value::Int(1));
+        let proto = kwargs
+            .remove("proto")
+            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .unwrap_or(Value::Int(0));
+        let fileno = kwargs
+            .remove("fileno")
+            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .unwrap_or(Value::None);
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "socket.__init__() got unexpected arguments",
+            ));
+        }
+        let fd = match fileno {
+            Value::None => {
+                let fd = self.next_fd;
+                self.next_fd = self.next_fd.saturating_add(1);
+                fd
+            }
+            value => value_to_int(value)?,
+        };
+        Self::instance_attr_set(&instance, "_family", Value::Int(value_to_int(family)?))?;
+        Self::instance_attr_set(&instance, "_type", Value::Int(value_to_int(sock_type)?))?;
+        Self::instance_attr_set(&instance, "_proto", Value::Int(value_to_int(proto)?))?;
+        Self::instance_attr_set(&instance, "_fd", Value::Int(fd))?;
+        Self::instance_attr_set(&instance, "_closed", Value::Bool(fd < 0))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_socket_object_close(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("socket.close() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "socket.close")?;
+        Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(&instance, "_fd", Value::Int(-1))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_socket_object_detach(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("socket.detach() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "socket.detach")?;
+        let fd = match Self::instance_attr_get(&instance, "_fd") {
+            Some(Value::Int(value)) => value,
+            _ => -1,
+        };
+        Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(&instance, "_fd", Value::Int(-1))?;
+        Ok(Value::Int(fd))
+    }
+
+    fn builtin_socket_object_fileno(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("socket.fileno() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "socket.fileno")?;
+        Ok(match Self::instance_attr_get(&instance, "_fd") {
+            Some(Value::Int(value)) => Value::Int(value),
+            _ => Value::Int(-1),
+        })
+    }
+
+    fn uuid_class_ref(&self) -> Result<ObjRef, RuntimeError> {
+        let Some(module) = self.modules.get("uuid").cloned() else {
+            return Err(RuntimeError::new("module 'uuid' not found"));
+        };
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("module 'uuid' is invalid"));
+        };
+        match module_data.globals.get("UUID") {
+            Some(Value::Class(class_ref)) => Ok(class_ref.clone()),
+            _ => Err(RuntimeError::new("module 'uuid' missing UUID class")),
+        }
+    }
+
+    fn uuid_value_to_bytes(&self, value: Value) -> Result<[u8; 16], RuntimeError> {
+        match value {
+            Value::Instance(instance) => match Self::instance_attr_get(&instance, "__uuid_bytes__") {
+                Some(Value::Bytes(bytes_obj)) => match &*bytes_obj.kind() {
+                    Object::Bytes(bytes) if bytes.len() == 16 => {
+                        let mut out = [0u8; 16];
+                        out.copy_from_slice(bytes);
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::new("UUID object missing bytes payload")),
+                },
+                Some(Value::Str(text)) => parse_uuid_like_string(&text),
+                _ => Err(RuntimeError::new("expected UUID instance")),
+            },
+            Value::Str(text) => parse_uuid_like_string(&text),
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(bytes) if bytes.len() == 16 => {
+                    let mut out = [0u8; 16];
+                    out.copy_from_slice(bytes);
+                    Ok(out)
+                }
+                _ => Err(RuntimeError::new("UUID bytes argument must be length 16")),
+            },
+            _ => Err(RuntimeError::new("expected UUID-compatible value")),
+        }
+    }
+
+    fn make_uuid_instance_from_bytes(&self, mut bytes: [u8; 16]) -> Result<Value, RuntimeError> {
+        apply_uuid_variant(&mut bytes);
+        let class_ref = self.uuid_class_ref()?;
+        let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.populate_uuid_instance(&instance, bytes)?;
+        Ok(Value::Instance(instance))
+    }
+
+    fn populate_uuid_instance(
+        &self,
+        instance: &ObjRef,
+        bytes: [u8; 16],
+    ) -> Result<(), RuntimeError> {
+        let text = format_uuid_hyphenated(bytes);
+        let hex = format_uuid_hex(bytes);
+        let bytes_value = self.heap.alloc_bytes(bytes.to_vec());
+        let fields = self.heap.alloc_tuple(vec![
+            Value::Int(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64),
+            Value::Int(u16::from_be_bytes([bytes[4], bytes[5]]) as i64),
+            Value::Int(u16::from_be_bytes([bytes[6], bytes[7]]) as i64),
+            Value::Int(bytes[8] as i64),
+            Value::Int(bytes[9] as i64),
+            Value::Int(
+                (((bytes[10] as u64) << 40)
+                    | ((bytes[11] as u64) << 32)
+                    | ((bytes[12] as u64) << 24)
+                    | ((bytes[13] as u64) << 16)
+                    | ((bytes[14] as u64) << 8)
+                    | (bytes[15] as u64)) as i64,
+            ),
+        ]);
+        Self::instance_attr_set(instance, "__uuid_bytes__", bytes_value.clone())?;
+        Self::instance_attr_set(instance, "bytes", bytes_value)?;
+        Self::instance_attr_set(instance, "hex", Value::Str(hex.clone()))?;
+        Self::instance_attr_set(instance, "urn", Value::Str(format!("urn:uuid:{text}")))?;
+        Self::instance_attr_set(instance, "__str__", Value::Str(text))?;
+        Self::instance_attr_set(instance, "fields", fields)?;
+        Self::instance_attr_set(instance, "version", Value::Int(((bytes[6] >> 4) & 0x0f) as i64))?;
+        Self::instance_attr_set(
+            instance,
+            "variant",
+            Value::Str("specified in RFC 4122".to_string()),
+        )?;
+        Self::instance_attr_set(instance, "is_safe", Value::None)?;
+        Ok(())
+    }
+
+    fn builtin_uuid_class_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("UUID.__init__() missing instance"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "UUID.__init__")?;
+        let source = kwargs
+            .remove("hex")
+            .or_else(|| kwargs.remove("bytes"))
+            .or_else(|| kwargs.remove("int"))
+            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None });
+        let version = kwargs
+            .remove("version")
+            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None });
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("UUID.__init__() got unexpected arguments"));
+        }
+        let mut bytes = if let Some(source) = source {
+            match source {
+                Value::Int(value) => {
+                    if value < 0 {
+                        return Err(RuntimeError::new("UUID int value must be non-negative"));
+                    }
+                    let mut out = [0u8; 16];
+                    out[8..].copy_from_slice(&(value as u64).to_be_bytes());
+                    out
+                }
+                other => self.uuid_value_to_bytes(other)?,
+            }
+        } else {
+            uuid_random_bytes(&mut self.random)
+        };
+        if let Some(version) = version {
+            let version = value_to_int(version)?;
+            if !(1..=8).contains(&version) {
+                return Err(RuntimeError::new("UUID version must be in [1, 8]"));
+            }
+            apply_uuid_version(&mut bytes, version as u8);
+        } else {
+            apply_uuid_variant(&mut bytes);
+        }
+        self.populate_uuid_instance(&instance, bytes)?;
+        Ok(Value::None)
+    }
+
+    fn builtin_uuid_getnode(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("uuid.getnode() expects no arguments"));
+        }
+        Ok(Value::Int(uuid_node_from_hostname()))
+    }
+
+    fn builtin_uuid1(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if kwargs.keys().any(|key| key != "node" && key != "clock_seq") || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "uuid1() expects optional node and clock_seq",
+            ));
+        }
+        let node = if let Some(value) = kwargs.get("node").cloned().or_else(|| args.first().cloned())
+        {
+            value_to_int(value)?
+        } else {
+            uuid_node_from_hostname()
+        } as u64
+            & 0x0000_FFFF_FFFF_FFFF;
+        let clock_seq = if let Some(value) = kwargs
+            .get("clock_seq")
+            .cloned()
+            .or_else(|| args.get(1).cloned())
+        {
+            value_to_int(value)? as u16
+        } else {
+            (self.random.next_u32() as u16) & 0x3fff
+        };
+        let timestamp = uuid_timestamp_100ns_since_gregorian()?;
+        let mut bytes = [0u8; 16];
+        let time_low = (timestamp & 0xffff_ffff) as u32;
+        let time_mid = ((timestamp >> 32) & 0xffff) as u16;
+        let time_hi = ((timestamp >> 48) & 0x0fff) as u16;
+        bytes[0..4].copy_from_slice(&time_low.to_be_bytes());
+        bytes[4..6].copy_from_slice(&time_mid.to_be_bytes());
+        bytes[6..8].copy_from_slice(&(time_hi | (1 << 12)).to_be_bytes());
+        bytes[8] = ((clock_seq >> 8) as u8 & 0x3f) | 0x80;
+        bytes[9] = (clock_seq & 0xff) as u8;
+        bytes[10..16].copy_from_slice(&node.to_be_bytes()[2..]);
+        self.make_uuid_instance_from_bytes(bytes)
+    }
+
+    fn builtin_uuid3(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "uuid3() expects namespace and name arguments",
+            ));
+        }
+        let namespace = self.uuid_value_to_bytes(args.remove(0))?;
+        let name = match args.remove(0) {
+            Value::Str(text) => text.into_bytes(),
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(bytes) => bytes.clone(),
+                _ => return Err(RuntimeError::new("name must be str or bytes")),
+            },
+            _ => return Err(RuntimeError::new("name must be str or bytes")),
+        };
+        let mut bytes = uuid_hash_mix_bytes(3, namespace, &name);
+        apply_uuid_version(&mut bytes, 3);
+        self.make_uuid_instance_from_bytes(bytes)
+    }
+
+    fn builtin_uuid4(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("uuid4() expects no arguments"));
+        }
+        let mut bytes = uuid_random_bytes(&mut self.random);
+        apply_uuid_version(&mut bytes, 4);
+        self.make_uuid_instance_from_bytes(bytes)
+    }
+
+    fn builtin_uuid5(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "uuid5() expects namespace and name arguments",
+            ));
+        }
+        let namespace = self.uuid_value_to_bytes(args.remove(0))?;
+        let name = match args.remove(0) {
+            Value::Str(text) => text.into_bytes(),
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(bytes) => bytes.clone(),
+                _ => return Err(RuntimeError::new("name must be str or bytes")),
+            },
+            _ => return Err(RuntimeError::new("name must be str or bytes")),
+        };
+        let mut bytes = uuid_hash_mix_bytes(5, namespace, &name);
+        apply_uuid_version(&mut bytes, 5);
+        self.make_uuid_instance_from_bytes(bytes)
+    }
+
+    fn builtin_uuid6(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("uuid6() expects no arguments"));
+        }
+        let timestamp = uuid_timestamp_100ns_since_gregorian()?;
+        let mut bytes = [0u8; 16];
+        bytes[0] = (timestamp >> 52) as u8;
+        bytes[1] = (timestamp >> 44) as u8;
+        bytes[2] = (timestamp >> 36) as u8;
+        bytes[3] = (timestamp >> 28) as u8;
+        bytes[4] = (timestamp >> 20) as u8;
+        bytes[5] = (timestamp >> 12) as u8;
+        bytes[6] = ((timestamp >> 4) as u8) & 0x0f;
+        bytes[7] = ((timestamp & 0x0f) as u8) << 4;
+        let rand = self.random.next_u32() as u64;
+        bytes[8] = ((rand >> 24) as u8 & 0x3f) | 0x80;
+        bytes[9] = (rand >> 16) as u8;
+        let node = (uuid_node_from_hostname() as u64) & 0x0000_FFFF_FFFF_FFFF;
+        bytes[10..16].copy_from_slice(&node.to_be_bytes()[2..]);
+        apply_uuid_version(&mut bytes, 6);
+        self.make_uuid_instance_from_bytes(bytes)
+    }
+
+    fn builtin_uuid7(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("uuid7() expects no arguments"));
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| RuntimeError::new("system time before epoch"))?;
+        let millis = now.as_millis() as u64;
+        let mut bytes = [0u8; 16];
+        bytes[0] = (millis >> 40) as u8;
+        bytes[1] = (millis >> 32) as u8;
+        bytes[2] = (millis >> 24) as u8;
+        bytes[3] = (millis >> 16) as u8;
+        bytes[4] = (millis >> 8) as u8;
+        bytes[5] = millis as u8;
+        let rand_a = self.random.next_u32() as u16;
+        bytes[6] = (rand_a >> 8) as u8;
+        bytes[7] = rand_a as u8;
+        let mut rand_b = [0u8; 8];
+        rand_b[..4].copy_from_slice(&self.random.next_u32().to_be_bytes());
+        rand_b[4..].copy_from_slice(&self.random.next_u32().to_be_bytes());
+        bytes[8..16].copy_from_slice(&rand_b);
+        apply_uuid_version(&mut bytes, 7);
+        self.make_uuid_instance_from_bytes(bytes)
+    }
+
+    fn builtin_uuid8(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "uuid8() expects up to three integer components",
+            ));
+        }
+        let a = args
+            .first()
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(self.random.next_u32() as i64) as u32;
+        let b = args
+            .get(1)
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(self.random.next_u32() as i64) as u32;
+        let c = args
+            .get(2)
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(self.random.next_u32() as i64) as u64;
+        let mut bytes = [0u8; 16];
+        bytes[0..4].copy_from_slice(&a.to_be_bytes());
+        bytes[4..8].copy_from_slice(&b.to_be_bytes());
+        let lower = c.to_be_bytes();
+        bytes[8..16].copy_from_slice(&lower);
+        apply_uuid_version(&mut bytes, 8);
+        self.make_uuid_instance_from_bytes(bytes)
     }
 
     fn builtin_colorize_can_colorize(
@@ -20207,7 +21479,7 @@ impl Vm {
             );
             class_data.attrs.insert(
                 "__reduce_ex__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ObjectReduceEx),
             );
         }
         self.builtins
@@ -20885,6 +22157,116 @@ fn cache_path_from_source_path(path: &str) -> String {
         .join(format!("{stem}.cpython-314.pyc"))
         .to_string_lossy()
         .to_string()
+}
+
+fn uuid_random_bytes(rng: &mut Mt19937) -> [u8; 16] {
+    let mut bytes = [0u8; 16];
+    bytes[..4].copy_from_slice(&rng.next_u32().to_be_bytes());
+    bytes[4..8].copy_from_slice(&rng.next_u32().to_be_bytes());
+    bytes[8..12].copy_from_slice(&rng.next_u32().to_be_bytes());
+    bytes[12..].copy_from_slice(&rng.next_u32().to_be_bytes());
+    bytes
+}
+
+fn apply_uuid_variant(bytes: &mut [u8; 16]) {
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+}
+
+fn apply_uuid_version(bytes: &mut [u8; 16], version: u8) {
+    bytes[6] = (bytes[6] & 0x0f) | ((version & 0x0f) << 4);
+    apply_uuid_variant(bytes);
+}
+
+fn format_uuid_hex(bytes: [u8; 16]) -> String {
+    bytes.iter().map(|value| format!("{value:02x}")).collect()
+}
+
+fn format_uuid_hyphenated(bytes: [u8; 16]) -> String {
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    )
+}
+
+fn parse_uuid_like_string(text: &str) -> Result<[u8; 16], RuntimeError> {
+    let trimmed = text.trim();
+    let without_urn = trimmed
+        .strip_prefix("urn:uuid:")
+        .or_else(|| trimmed.strip_prefix("URN:UUID:"))
+        .unwrap_or(trimmed);
+    let without_braces = without_urn
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+        .unwrap_or(without_urn);
+    let compact: String = without_braces
+        .chars()
+        .filter(|ch| *ch != '-')
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect();
+    if compact.len() != 32 || !compact.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(RuntimeError::new("invalid UUID string"));
+    }
+    let mut out = [0u8; 16];
+    for (index, slot) in out.iter_mut().enumerate() {
+        let pair = &compact[index * 2..index * 2 + 2];
+        *slot = u8::from_str_radix(pair, 16).map_err(|_| RuntimeError::new("invalid UUID"))?;
+    }
+    Ok(out)
+}
+
+fn uuid_hash_mix_bytes(tag: u8, namespace: [u8; 16], name: &[u8]) -> [u8; 16] {
+    let mut first = DefaultHasher::new();
+    tag.hash(&mut first);
+    namespace.hash(&mut first);
+    name.hash(&mut first);
+    let high = first.finish();
+
+    let mut second = DefaultHasher::new();
+    (tag.wrapping_add(0x9d)).hash(&mut second);
+    namespace.hash(&mut second);
+    high.hash(&mut second);
+    name.hash(&mut second);
+    let low = second.finish();
+
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&high.to_be_bytes());
+    bytes[8..].copy_from_slice(&low.to_be_bytes());
+    bytes
+}
+
+fn uuid_node_from_hostname() -> i64 {
+    let mut hasher = DefaultHasher::new();
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
+    host.hash(&mut hasher);
+    let mut node = hasher.finish() & 0x0000_FFFF_FFFF_FFFF;
+    node |= 0x0000_0100_0000_0000;
+    node as i64
+}
+
+fn uuid_timestamp_100ns_since_gregorian() -> Result<u64, RuntimeError> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| RuntimeError::new("system time before epoch"))?;
+    let ticks = now
+        .as_secs()
+        .saturating_mul(10_000_000)
+        .saturating_add((now.subsec_nanos() / 100) as u64);
+    Ok(ticks.saturating_add(0x01B2_1DD2_1381_4000))
 }
 
 #[derive(Debug, Clone)]
@@ -22591,7 +23973,15 @@ fn call_builtin_with_kwargs(
     }
 }
 
-fn collect_noop_symbols_from_module(module_name: &str, module: &ObjRef, out: &mut Vec<String>) {
+fn collect_noop_symbols_from_module(
+    module_name: &str,
+    module: &ObjRef,
+    out: &mut Vec<String>,
+    visited: &mut HashSet<u64>,
+) {
+    if !visited.insert(module.id()) {
+        return;
+    }
     let module_kind = module.kind();
     let module_data = match &*module_kind {
         Object::Module(module_data) => module_data,
@@ -22603,14 +23993,23 @@ fn collect_noop_symbols_from_module(module_name: &str, module: &ObjRef, out: &mu
         let Some(value) = module_data.globals.get(&name) else {
             continue;
         };
-        collect_noop_symbols_from_value(&format!("{module_name}.{name}"), value, out);
+        collect_noop_symbols_from_value(&format!("{module_name}.{name}"), value, out, visited);
     }
 }
 
-fn collect_noop_symbols_from_value(path: &str, value: &Value, out: &mut Vec<String>) {
+fn collect_noop_symbols_from_value(
+    path: &str,
+    value: &Value,
+    out: &mut Vec<String>,
+    visited: &mut HashSet<u64>,
+) {
     match value {
         Value::Builtin(BuiltinFunction::NoOp) => out.push(path.to_string()),
+        Value::Module(module) => collect_noop_symbols_from_module(path, module, out, visited),
         Value::Class(class) => {
+            if !visited.insert(class.id()) {
+                return;
+            }
             let class_kind = class.kind();
             let class_data = match &*class_kind {
                 Object::Class(class_data) => class_data,
@@ -22622,11 +24021,89 @@ fn collect_noop_symbols_from_value(path: &str, value: &Value, out: &mut Vec<Stri
                 let Some(attr_value) = class_data.attrs.get(&attr) else {
                     continue;
                 };
-                collect_noop_symbols_from_value(&format!("{path}.{attr}"), attr_value, out);
+                collect_noop_symbols_from_value(&format!("{path}.{attr}"), attr_value, out, visited);
+            }
+        }
+        Value::Instance(instance) => {
+            if !visited.insert(instance.id()) {
+                return;
+            }
+            let instance_kind = instance.kind();
+            let instance_data = match &*instance_kind {
+                Object::Instance(instance_data) => instance_data,
+                _ => return,
+            };
+            let mut attrs: Vec<String> = instance_data.attrs.keys().cloned().collect();
+            attrs.sort();
+            for attr in attrs {
+                let Some(attr_value) = instance_data.attrs.get(&attr) else {
+                    continue;
+                };
+                collect_noop_symbols_from_value(
+                    &format!("{path}.{attr}"),
+                    attr_value,
+                    out,
+                    visited,
+                );
+            }
+        }
+        Value::List(obj) | Value::Tuple(obj) | Value::Set(obj) | Value::FrozenSet(obj) => {
+            if !visited.insert(obj.id()) {
+                return;
+            }
+            let kind = obj.kind();
+            let values = match &*kind {
+                Object::List(values)
+                | Object::Tuple(values)
+                | Object::Set(values)
+                | Object::FrozenSet(values) => values,
+                _ => return,
+            };
+            for (idx, item) in values.iter().enumerate() {
+                collect_noop_symbols_from_value(&format!("{path}[{idx}]"), item, out, visited);
+            }
+        }
+        Value::Dict(obj) => {
+            if !visited.insert(obj.id()) {
+                return;
+            }
+            let kind = obj.kind();
+            let entries = match &*kind {
+                Object::Dict(entries) => entries,
+                _ => return,
+            };
+            for (idx, (key, value)) in entries.iter().enumerate() {
+                collect_noop_symbols_from_value(&format!("{path}{{key:{idx}}}"), key, out, visited);
+                collect_noop_symbols_from_value(
+                    &format!("{path}{{value:{idx}}}"),
+                    value,
+                    out,
+                    visited,
+                );
+            }
+        }
+        Value::Cell(cell) => {
+            if !visited.insert(cell.id()) {
+                return;
+            }
+            let cell_value = match &*cell.kind() {
+                Object::Cell(cell_data) => cell_data.value.clone(),
+                _ => None,
+            };
+            if let Some(cell_value) = cell_value {
+                collect_noop_symbols_from_value(path, &cell_value, out, visited);
             }
         }
         _ => {}
     }
+}
+
+fn collect_dynamic_builtin_noops(out: &mut Vec<String>) {
+    out.extend([
+        "builtins.float.fromhex".to_string(),
+        "builtins.float.hex".to_string(),
+        "builtins.str.maketrans".to_string(),
+    ]);
 }
 
 fn decode_call_counts(arg: u32) -> (usize, usize) {

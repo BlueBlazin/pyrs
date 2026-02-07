@@ -44,7 +44,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 
 ## Stdlib Coverage
 - [x] Stub/partial accounting gate (`docs/STUB_ACCOUNTING.md` + generated `docs/NOOP_BUILTIN_INVENTORY.txt` enforced by `tests/noop_inventory.rs`)
-- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/float/str, abs/sum/min/max/all/any/pow, list/tuple/set/frozenset, bytes/bytearray/memoryview, complex, divmod, iter/next/`aiter`/`anext`, `type` (1-arg + 3-arg), locals, globals, `exec` (source/code with explicit globals/locals handling), `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, basic `__import__` name/fromlist/level semantics)
+- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/float/str, abs/sum/min/max/all/any/pow, list/tuple/set/frozenset, bytes/bytearray/memoryview, complex, divmod, iter/next/`aiter`/`anext`, `type` (1-arg + 3-arg), locals, globals, `exec` (source/code with explicit globals/locals handling), `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, baseline `object.__reduce_ex__`, basic `__import__` name/fromlist/level semantics)
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
 - [~] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`, `importlib.invalidate_caches`, baseline `importlib.util.spec_from_file_location`, `_frozen_importlib.spec_from_loader`/`_verbose_message`, and `_frozen_importlib_external` `_path_*` + `_unpack_uint*`; full spec/loader object parity still pending)
 - [~] `types`, `inspect` (`inspect.signature` now executes a non-`NoOp` path returning a `Signature` instance with baseline parameter-kind/default metadata; full CPython object/method parity still pending)
@@ -58,9 +58,10 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] `json`, `re`, `datetime`
 - [~] `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`)
 - [~] `asyncio` foundations (`run`, `sleep`, `create_task`, `gather`)
-- [~] `threading` foundations (`get_ident`, `current_thread`, `main_thread`, `active_count`)
+- [~] `threading` foundations (`get_ident`, `current_thread`, `main_thread`, `active_count`, plus baseline class methods for `Thread`, `Event`, `Condition`, `Semaphore`, `BoundedSemaphore`, `Barrier`)
 - [~] `signal` foundations (`signal`, `getsignal`, `raise_signal`, core constants)
-- [~] `socket` / `_socket` foundations (`gethostname`, `gethostbyname`, `getaddrinfo`, `fromfd`, `getdefaulttimeout`/`setdefaulttimeout`, and `hton*`/`ntoh*` now execute non-`NoOp` module-level paths; class-instance method binding parity still pending)
+- [~] `socket` / `_socket` foundations (`gethostname`, `gethostbyname`, `getaddrinfo`, `fromfd`, `getdefaulttimeout`/`setdefaulttimeout`, and `hton*`/`ntoh*` module-level paths plus baseline `socket.__init__`/`close`/`detach`/`fileno`; full socket API parity still pending)
+- [~] `uuid` foundations (`UUID.__init__`, `uuid1/3/4/5/6/7/8`, `getnode`, and namespace constants with baseline object attributes; full CPython algorithm/edge parity pending)
 
 ## CPython Tests
 - [x] First-class CPython harness with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`)

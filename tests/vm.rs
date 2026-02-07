@@ -3939,6 +3939,46 @@ fn executes_thread_start_new_thread_baseline() {
 }
 
 #[test]
+fn executes_threading_class_methods_baseline() {
+    let source = "import threading\nout = []\ndef worker(x):\n    out.append(x)\nt = threading.Thread(target=worker, args=(7,))\na = t.is_alive()\nt.start()\nt.join()\nb = t.is_alive()\nok = (not a) and (not b) and out == [7]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_threading_sync_primitives_baseline() {
+    let source = "import threading\ne = threading.Event()\na = e.is_set()\ne.set()\nb = e.wait(0.01)\nc = e.is_set()\ne.clear()\nd = (not e.is_set())\ns = threading.Semaphore(1)\nx = s.acquire()\ny = (not s.acquire(False))\ns.release()\nz = s.acquire(False)\nbarrier = threading.Barrier(2)\np = barrier.wait()\nq = barrier.wait()\nok = (not a) and b and c and d and x and y and z and isinstance(p, int) and isinstance(q, int)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_socket_object_methods_baseline() {
+    let source = "import _socket\ns = _socket.socket()\nfd0 = s.fileno()\nfd1 = s.detach()\nfd2 = s.fileno()\ns.close()\nok = isinstance(fd0, int) and fd1 == fd0 and fd2 == -1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_uuid_and_reduce_ex_baseline() {
+    let source = "import uuid\nu = uuid.uuid4()\nv = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')\nu3 = uuid.uuid3(uuid.NAMESPACE_DNS, 'example.com')\nnode = uuid.getnode()\nred = object.__reduce_ex__(object(), 4)\nok = isinstance(u, uuid.UUID) and u.version == 4 and isinstance(v.hex, str) and isinstance(u3, uuid.UUID) and isinstance(node, int) and isinstance(red, tuple) and len(red) == 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_warnings_lock_helpers() {
     let source = "import _warnings\n_warnings._acquire_lock()\n_warnings._release_lock()\nok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
