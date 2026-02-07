@@ -164,6 +164,7 @@ pub enum NativeMethodKind {
     ListInsert,
     ListRemove,
     ListCount,
+    ListReverse,
     IntToBytes,
     IntBitLengthMethod,
     StrStartsWith,
@@ -179,12 +180,15 @@ pub enum NativeMethodKind {
     StrIsUpper,
     StrIsLower,
     StrIsAscii,
+    StrIsAlNum,
     StrIsDigit,
     StrIsSpace,
     StrJoin,
     StrSplit,
+    StrRSplit,
     StrPartition,
     StrRPartition,
+    StrFind,
     StrRFind,
     StrLStrip,
     StrRStrip,
@@ -192,6 +196,9 @@ pub enum NativeMethodKind {
     SetContains,
     SetAdd,
     SetUpdate,
+    SetIsSuperset,
+    SetIsSubset,
+    SetIsDisjoint,
     RePatternSearch,
     RePatternMatch,
     RePatternFullMatch,
@@ -942,6 +949,7 @@ pub enum BuiltinFunction {
     Map,
     Pow,
     List,
+    ListAppendDescriptor,
     Tuple,
     Dict,
     DictFromKeys,
@@ -1784,6 +1792,24 @@ impl BuiltinFunction {
                     _ => Err(RuntimeError::new("list() unsupported type")),
                 }
             }
+            BuiltinFunction::ListAppendDescriptor => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("descriptor 'append' expects 2 arguments"));
+                }
+                let target = args[0].clone();
+                let value = args[1].clone();
+                match target {
+                    Value::List(obj) => {
+                        let mut list = obj.kind_mut();
+                        let Object::List(values) = &mut *list else {
+                            return Err(RuntimeError::new("append() receiver must be list"));
+                        };
+                        values.push(value);
+                        Ok(Value::None)
+                    }
+                    _ => Err(RuntimeError::new("append() receiver must be list")),
+                }
+            }
             BuiltinFunction::Tuple => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new("tuple() expects at most one argument"));
@@ -2052,7 +2078,16 @@ impl BuiltinFunction {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("classmethod() expects one argument"));
                 }
-                Ok(args[0].clone())
+                let wrapped = match heap.alloc_module(ModuleObject::new("__classmethod__")) {
+                    Value::Module(module) => module,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *wrapped.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("__func__".to_string(), args[0].clone());
+                }
+                Ok(Value::Module(wrapped))
             }
             BuiltinFunction::StaticMethod => {
                 if args.len() != 1 {
@@ -3755,6 +3790,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ListInsert => "<bound method list.insert>".to_string(),
                     NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
+                    NativeMethodKind::ListReverse => "<bound method list.reverse>".to_string(),
                     NativeMethodKind::IntToBytes => "<bound method int.to_bytes>".to_string(),
                     NativeMethodKind::IntBitLengthMethod => {
                         "<bound method int.bit_length>".to_string()
@@ -3776,14 +3812,17 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrIsUpper => "<bound method str.isupper>".to_string(),
                     NativeMethodKind::StrIsLower => "<bound method str.islower>".to_string(),
                     NativeMethodKind::StrIsAscii => "<bound method str.isascii>".to_string(),
+                    NativeMethodKind::StrIsAlNum => "<bound method str.isalnum>".to_string(),
                     NativeMethodKind::StrIsDigit => "<bound method str.isdigit>".to_string(),
                     NativeMethodKind::StrIsSpace => "<bound method str.isspace>".to_string(),
                     NativeMethodKind::StrJoin => "<bound method str.join>".to_string(),
                     NativeMethodKind::StrSplit => "<bound method str.split>".to_string(),
+                    NativeMethodKind::StrRSplit => "<bound method str.rsplit>".to_string(),
                     NativeMethodKind::StrPartition => "<bound method str.partition>".to_string(),
                     NativeMethodKind::StrRPartition => {
                         "<bound method str.rpartition>".to_string()
                     }
+                    NativeMethodKind::StrFind => "<bound method str.find>".to_string(),
                     NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
                     NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
                     NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
@@ -3791,6 +3830,13 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
+                    NativeMethodKind::SetIsSuperset => {
+                        "<bound method set.issuperset>".to_string()
+                    }
+                    NativeMethodKind::SetIsSubset => "<bound method set.issubset>".to_string(),
+                    NativeMethodKind::SetIsDisjoint => {
+                        "<bound method set.isdisjoint>".to_string()
+                    }
                     NativeMethodKind::RePatternSearch => {
                         "<bound method Pattern.search>".to_string()
                     }

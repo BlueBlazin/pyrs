@@ -1273,6 +1273,25 @@ c = complex(1, 2)\n";
 }
 
 #[test]
+fn executes_set_relationship_methods() {
+    let source = "a = {1, 2, 3}\n\
+b = {1, 2}\n\
+c = {5, 6}\n\
+sup = a.issuperset(b)\n\
+sub = b.issubset(a)\n\
+dis = a.isdisjoint(c)\n\
+f_ok = frozenset({1, 2}).issuperset({2}) and frozenset({1, 2}).issubset({1, 2, 3})\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("sup"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("sub"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("dis"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("f_ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_iter_and_next_builtins() {
     let source = "it = iter([1, 2])\n\
 a = next(it)\n\
@@ -2638,7 +2657,7 @@ fn imports_using_importlib_module_helpers() {
     std::fs::write(temp_dir.join("mod.py"), "value = 107\n").expect("write module");
     let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
     let source = format!(
-        "import sys\nimport importlib\nimport importlib.util\nsys.path = ['{path_literal}']\nspec = importlib.find_spec('mod')\nname = spec['name']\nloader = spec['loader']\nm = importlib.import_module('mod')\nu_spec = importlib.util.find_spec('mod')\nu_name = u_spec['name']\nx = m.value\n"
+        "import sys\nimport importlib\nimport importlib.util\nsys.path = ['{path_literal}']\nspec = importlib.find_spec('mod')\nname = spec['name']\nname_attr = spec.name\nloader = spec['loader']\nloader_attr = spec.loader\nm = importlib.import_module('mod')\nu_spec = importlib.util.find_spec('mod')\nu_name = u_spec['name']\nu_name_attr = u_spec.name\nx = m.value\n"
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -2647,10 +2666,22 @@ fn imports_using_importlib_module_helpers() {
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("name"), Some(Value::Str("mod".to_string())));
     assert_eq!(
+        vm.get_global("name_attr"),
+        Some(Value::Str("mod".to_string()))
+    );
+    assert_eq!(
         vm.get_global("loader"),
         Some(Value::Str("pyrs.SourceFileLoader".to_string()))
     );
+    assert_eq!(
+        vm.get_global("loader_attr"),
+        Some(Value::Str("pyrs.SourceFileLoader".to_string()))
+    );
     assert_eq!(vm.get_global("u_name"), Some(Value::Str("mod".to_string())));
+    assert_eq!(
+        vm.get_global("u_name_attr"),
+        Some(Value::Str("mod".to_string()))
+    );
     assert_eq!(vm.get_global("x"), Some(Value::Int(107)));
 
     let _ = std::fs::remove_file(temp_dir.join("mod.py"));
@@ -2670,7 +2701,29 @@ fn exposes_importlib_cache_path_helpers() {
 
 #[test]
 fn exposes_importlib_invalidate_caches_and_spec_from_file_location() {
-    let source = "import sys\nimport importlib\nimport importlib.util\nsys.path_importer_cache['/tmp/demo'] = 42\nbefore = '/tmp/demo' in sys.path_importer_cache\nimportlib.invalidate_caches()\nafter = '/tmp/demo' in sys.path_importer_cache\nspec = importlib.util.spec_from_file_location('demo', '/tmp/demo.py')\nok = before and (not after) and spec['name'] == 'demo' and spec['origin'] == '/tmp/demo.py' and spec['loader'] == 'pyrs.SourceFileLoader' and spec['has_location'] and spec['cached'][-4:] == '.pyc'\n";
+    let source = "import sys\nimport importlib\nimport importlib.util\nsys.path_importer_cache['/tmp/demo'] = 42\nbefore = '/tmp/demo' in sys.path_importer_cache\nimportlib.invalidate_caches()\nafter = '/tmp/demo' in sys.path_importer_cache\nspec = importlib.util.spec_from_file_location('demo', '/tmp/demo.py')\nok = before and (not after) and spec['name'] == 'demo' and spec.name == 'demo' and spec['origin'] == '/tmp/demo.py' and spec.origin == '/tmp/demo.py' and spec['loader'] == 'pyrs.SourceFileLoader' and spec.loader == 'pyrs.SourceFileLoader' and spec['has_location'] and spec.has_location and spec['cached'][-4:] == '.pyc' and spec.cached[-4:] == '.pyc'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exposes_os_error_family_exception_types() {
+    let source = "ok = issubclass(TimeoutError, OSError) and issubclass(NotADirectoryError, OSError) and issubclass(PermissionError, OSError)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn main_module_spec_supports_attribute_access() {
+    let source = "import sys\nok = (sys.modules['__main__'].__spec__.name == '__main__')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4320,7 +4373,7 @@ fn executes_large_power_without_overflow_error() {
 
 #[test]
 fn executes_list_extend_dict_update_and_function_dict_paths() {
-    let source = "def f():\n    return None\nf.marker = 1\ndef g():\n    return None\ng.__dict__.update(f.__dict__)\nvals = [1]\nvals.extend((2, 3))\nd = {}\nitem = d.setdefault('k', [])\nitem.append(4)\nd.update({'a': 1}, b=2)\nok = vals == [1, 2, 3] and d['k'] == [4] and d['a'] == 1 and d['b'] == 2 and g.marker == 1\n";
+    let source = "def f():\n    return None\nf.marker = 1\ndef g():\n    return None\ng.__dict__.update(f.__dict__)\nvals = [1]\nvals.extend((2, 3))\nvals.reverse()\nd = {}\nitem = d.setdefault('k', [])\nitem.append(4)\nd.update({'a': 1}, b=2)\nd.update([('c', 3)])\nok = vals == [3, 2, 1] and d['k'] == [4] and d['a'] == 1 and d['b'] == 2 and d['c'] == 3 and g.marker == 1\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4809,7 +4862,7 @@ ok = (table[97] == 120 and table[98] == 121 and value == 0x01020304)\n";
 
 #[test]
 fn string_predicates_isascii_isdigit_and_islower_work() {
-    let source = "ok = ('123'.isdigit() and 'abc'.islower() and 'abc'.isascii() and not ''.isdigit())\n";
+    let source = "ok = ('123'.isdigit() and 'abc'.islower() and 'abc'.isascii() and 'abc123'.isalnum() and not ''.isdigit())\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4833,6 +4886,32 @@ ok = (a == ('ab', '=', 'cd') and b == ('ab', '=', 'cd') and c == ('abcd', '', ''
 #[test]
 fn string_split_accepts_keyword_arguments() {
     let source = "parts = 'a:b:c'.split(':', maxsplit=1)\nok = (parts == ['a', 'b:c'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn string_rsplit_accepts_keyword_arguments_and_whitespace_semantics() {
+    let source = "a = 'a:b:c'.rsplit(':', maxsplit=1)\n\
+b = '   foo   '.split(maxsplit=0)\n\
+c = '   foo   '.rsplit(maxsplit=0)\n\
+ok = (a == ['a:b', 'c'] and b == ['foo   '] and c == ['   foo'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn string_find_accepts_optional_bounds_and_keywords() {
+    let source = "a = 'abcabc'.find('bc')\n\
+b = 'abcabc'.find('bc', 2)\n\
+c = 'abcabc'.find('bc', end=3)\n\
+ok = (a == 1 and b == 4 and c == 1)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4874,8 +4953,48 @@ fn staticmethod_does_not_bind_instance_receiver() {
 }
 
 #[test]
+fn classmethod_binds_class_receiver_for_class_and_instance_access() {
+    let source = "class C:\n    value = 3\n    @classmethod\n    def f(cls, x):\n        return cls.value + x\nok = (C.f(2) == 5 and C().f(2) == 5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn builtin_type_descriptor_attrs_exist_for_reduction_paths() {
+    let source = "out = []\nlist.append(out, 1)\nok = (out == [1] and int.__add__(1, 2) == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn super_uses_owner_class_for_classmethod_descriptors() {
+    let source = "class A:\n    @classmethod\n    def who(cls):\n        return cls.__name__\nclass B(A):\n    @classmethod\n    def who(cls):\n        return super(B, cls).who()\nok = (B.who() == 'B')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_urandom_returns_requested_number_of_bytes() {
     let source = "import os\npayload = os.urandom(16)\nok = (isinstance(payload, bytes) and len(payload) == 16)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn threading_local_baseline_type_is_available() {
+    let source = "import threading\nx = threading.local()\nx.value = 7\nok = (x.value == 7)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

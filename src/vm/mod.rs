@@ -3444,6 +3444,13 @@ impl Vm {
                 .attrs
                 .insert("abort".to_string(), Value::Builtin(BuiltinFunction::ThreadBarrierAbort));
         }
+        let thread_local_class = match self
+            .heap
+            .alloc_class(ClassObject::new("local".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
         self.install_builtin_module(
             "threading",
             &[
@@ -3464,6 +3471,7 @@ impl Vm {
                 ("Semaphore", Value::Class(semaphore_class)),
                 ("BoundedSemaphore", Value::Class(bounded_semaphore_class)),
                 ("Barrier", Value::Class(barrier_class)),
+                ("local", Value::Class(thread_local_class)),
                 (
                     "ThreadError",
                     Value::ExceptionType("RuntimeError".to_string()),
@@ -4201,29 +4209,51 @@ impl Vm {
             Value::None
         };
 
-        self.heap.alloc_dict(vec![
-            (Value::Str("name".to_string()), Value::Str(name.to_string())),
-            (Value::Str("origin".to_string()), origin_value),
-            (Value::Str("loader".to_string()), loader_value),
-            (Value::Str("parent".to_string()), Value::Str(parent)),
-            (
-                Value::Str("submodule_search_locations".to_string()),
-                submodule_locations,
-            ),
-            (
-                Value::Str("is_package".to_string()),
-                Value::Bool(is_package),
-            ),
-            (
-                Value::Str("is_namespace".to_string()),
-                Value::Bool(is_namespace),
-            ),
-            (
-                Value::Str("has_location".to_string()),
-                Value::Bool(origin.is_some()),
-            ),
-            (Value::Str("cached".to_string()), Value::None),
-        ])
+        let spec = match self
+            .heap
+            .alloc_module(ModuleObject::new("__module_spec__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *spec.kind_mut() {
+            module_data
+                .globals
+                .insert("name".to_string(), Value::Str(name.to_string()));
+            module_data.globals.insert("origin".to_string(), origin_value);
+            module_data.globals.insert("loader".to_string(), loader_value);
+            module_data
+                .globals
+                .insert("parent".to_string(), Value::Str(parent));
+            module_data
+                .globals
+                .insert("submodule_search_locations".to_string(), submodule_locations);
+            module_data
+                .globals
+                .insert("is_package".to_string(), Value::Bool(is_package));
+            module_data
+                .globals
+                .insert("is_namespace".to_string(), Value::Bool(is_namespace));
+            module_data
+                .globals
+                .insert("has_location".to_string(), Value::Bool(origin.is_some()));
+            module_data.globals.insert("cached".to_string(), Value::None);
+        }
+        Value::Module(spec)
+    }
+
+    fn set_module_spec_field(&self, spec: &Value, field: &str, value: Value) {
+        match spec {
+            Value::Module(spec_obj) => {
+                if let Object::Module(module_data) = &mut *spec_obj.kind_mut() {
+                    module_data.globals.insert(field.to_string(), value);
+                }
+            }
+            Value::Dict(spec_obj) => {
+                dict_set_value(spec_obj, Value::Str(field.to_string()), value);
+            }
+            _ => {}
+        }
     }
 
     fn link_module_chain(&mut self, name: &str, module: ObjRef) {
@@ -8609,8 +8639,14 @@ impl Vm {
             "bit_length" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntBitLength))
             }
+            "__add__" if builtin == BuiltinFunction::Int => {
+                Ok(Value::Builtin(BuiltinFunction::OperatorAdd))
+            }
             "from_bytes" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntFromBytes))
+            }
+            "append" if builtin == BuiltinFunction::List => {
+                Ok(Value::Builtin(BuiltinFunction::ListAppendDescriptor))
             }
             "maketrans" if builtin == BuiltinFunction::Bytes => {
                 Ok(Value::Builtin(BuiltinFunction::BytesMakeTrans))
@@ -8635,6 +8671,7 @@ impl Vm {
             "insert" => NativeMethodKind::ListInsert,
             "remove" => NativeMethodKind::ListRemove,
             "count" => NativeMethodKind::ListCount,
+            "reverse" => NativeMethodKind::ListReverse,
             _ => {
                 return Err(RuntimeError::new(format!(
                     "list has no attribute '{}'",
@@ -8685,12 +8722,15 @@ impl Vm {
             "isupper" => NativeMethodKind::StrIsUpper,
             "islower" => NativeMethodKind::StrIsLower,
             "isascii" => NativeMethodKind::StrIsAscii,
+            "isalnum" => NativeMethodKind::StrIsAlNum,
             "isdigit" => NativeMethodKind::StrIsDigit,
             "isspace" => NativeMethodKind::StrIsSpace,
             "join" => NativeMethodKind::StrJoin,
             "split" => NativeMethodKind::StrSplit,
+            "rsplit" => NativeMethodKind::StrRSplit,
             "partition" => NativeMethodKind::StrPartition,
             "rpartition" => NativeMethodKind::StrRPartition,
+            "find" => NativeMethodKind::StrFind,
             "rfind" => NativeMethodKind::StrRFind,
             "lstrip" => NativeMethodKind::StrLStrip,
             "rstrip" => NativeMethodKind::StrRStrip,
@@ -8747,15 +8787,26 @@ impl Vm {
     }
 
     fn load_attr_set_method(&self, set: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
+        let (type_name, is_frozenset) = match &*set.kind() {
+            Object::Set(_) => ("set", false),
+            Object::FrozenSet(_) => ("frozenset", true),
+            _ => return Err(RuntimeError::new("attribute access unsupported type")),
+        };
         match attr_name {
             "__contains__" => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetContains, set))
             }
-            "add" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetAdd, set)),
-            "update" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetUpdate, set)),
+            "issuperset" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsSuperset, set)),
+            "issubset" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsSubset, set)),
+            "isdisjoint" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsDisjoint, set)),
+            "add" if !is_frozenset => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::SetAdd, set))
+            }
+            "update" if !is_frozenset => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::SetUpdate, set))
+            }
             _ => Err(RuntimeError::new(format!(
-                "set has no attribute '{}'",
-                attr_name
+                "{type_name} has no attribute '{attr_name}'"
             ))),
         }
     }
@@ -9247,6 +9298,34 @@ impl Vm {
         module_data.globals.get("__func__").cloned()
     }
 
+    fn unwrap_classmethod_attr(&self, value: &Value) -> Option<Value> {
+        let Value::Module(module) = value else {
+            return None;
+        };
+        let Object::Module(module_data) = &*module.kind() else {
+            return None;
+        };
+        if module_data.name != "__classmethod__" {
+            return None;
+        }
+        module_data.globals.get("__func__").cloned()
+    }
+
+    fn bind_classmethod_attr(&self, owner_class: &ObjRef, value: &Value) -> Option<Value> {
+        let unwrapped = self.unwrap_classmethod_attr(value)?;
+        match unwrapped {
+            Value::Function(func) => Some(self.heap.alloc_bound_method(BoundMethod::new(
+                func,
+                owner_class.clone(),
+            ))),
+            Value::Builtin(builtin) => Some(self.alloc_builtin_bound_method(
+                builtin,
+                owner_class.clone(),
+            )),
+            _ => Some(unwrapped),
+        }
+    }
+
     fn call_internal(
         &mut self,
         callable: Value,
@@ -9464,6 +9543,10 @@ impl Vm {
             )));
         };
 
+        if let Some(bound) = self.bind_classmethod_attr(class, &attr) {
+            return Ok(AttrAccessOutcome::Value(bound));
+        }
+
         if let Some(unwrapped) = self.unwrap_staticmethod_attr(&attr) {
             return Ok(AttrAccessOutcome::Value(unwrapped));
         }
@@ -9606,6 +9689,10 @@ impl Vm {
         }
 
         if let Some(attr) = class_attr {
+            if let Some(bound) = self.bind_classmethod_attr(&class_ref, &attr) {
+                return Ok(AttrAccessOutcome::Value(bound));
+            }
+
             if let Some(unwrapped) = self.unwrap_staticmethod_attr(&attr) {
                 return Ok(AttrAccessOutcome::Value(unwrapped));
             }
@@ -9695,6 +9782,9 @@ impl Vm {
 
         for class in mro.into_iter().skip(start_idx) {
             if let Some(attr) = class_attr_lookup_direct(&class, attr_name) {
+                if let Some(bound) = self.bind_classmethod_attr(&object_type, &attr) {
+                    return Ok(AttrAccessOutcome::Value(bound));
+                }
                 if let Some(unwrapped) = self.unwrap_staticmethod_attr(&attr) {
                     return Ok(AttrAccessOutcome::Value(unwrapped));
                 }
@@ -9962,6 +10052,8 @@ impl Vm {
                     | NativeMethodKind::DictUpdateMethod
                     | NativeMethodKind::StrFormat
                     | NativeMethodKind::StrSplit
+                    | NativeMethodKind::StrRSplit
+                    | NativeMethodKind::StrFind
                     | NativeMethodKind::StrRFind
                     | NativeMethodKind::Builtin(_)
             )
@@ -10157,13 +10249,65 @@ impl Vm {
                 }
                 let mut incoming = Vec::new();
                 if let Some(source) = args.first() {
-                    let Value::Dict(other) = source else {
-                        return Err(RuntimeError::new("dict.update() expects dict"));
-                    };
-                    let Object::Dict(entries) = &*other.kind() else {
-                        return Err(RuntimeError::new("dict.update() expects dict"));
-                    };
-                    incoming.extend(entries.clone());
+                    if let Value::Dict(other) = source {
+                        let Object::Dict(entries) = &*other.kind() else {
+                            return Err(RuntimeError::new("dict.update() expects dict"));
+                        };
+                        incoming.extend(entries.clone());
+                    } else {
+                        let keys_callable = self
+                            .builtin_getattr(
+                                vec![source.clone(), Value::Str("keys".to_string())],
+                                HashMap::new(),
+                            )
+                            .ok();
+                        if let Some(keys_callable) = keys_callable {
+                            let keys_value =
+                                match self.call_internal(keys_callable, Vec::new(), HashMap::new())? {
+                                    InternalCallOutcome::Value(value) => value,
+                                    InternalCallOutcome::CallerExceptionHandled => {
+                                        return Ok(NativeCallResult::PropagatedException);
+                                    }
+                                };
+                            for key in self.collect_iterable_values(keys_value)? {
+                                let value = self.getitem_value(source.clone(), key.clone())?;
+                                incoming.push((key, value));
+                            }
+                        } else {
+                            let pairs = self.collect_iterable_values(source.clone())?;
+                            for pair in pairs {
+                                let values = match pair {
+                                    Value::Tuple(obj) => match &*obj.kind() {
+                                        Object::Tuple(values) => values.clone(),
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "dict.update() expects mapping or iterable of pairs",
+                                            ))
+                                        }
+                                    },
+                                    Value::List(obj) => match &*obj.kind() {
+                                        Object::List(values) => values.clone(),
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "dict.update() expects mapping or iterable of pairs",
+                                            ))
+                                        }
+                                    },
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "dict.update() expects mapping or iterable of pairs",
+                                        ))
+                                    }
+                                };
+                                if values.len() != 2 {
+                                    return Err(RuntimeError::new(
+                                        "dict.update() expects mapping or iterable of pairs",
+                                    ));
+                                }
+                                incoming.push((values[0].clone(), values[1].clone()));
+                            }
+                        }
+                    }
                 }
                 for (name, value) in kwargs.drain() {
                     incoming.push((Value::Str(name), value));
@@ -10307,6 +10451,17 @@ impl Vm {
                 };
                 let count = values.iter().filter(|value| **value == target).count() as i64;
                 Ok(NativeCallResult::Value(Value::Int(count)))
+            }
+            NativeMethodKind::ListReverse => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("list.reverse() expects no arguments"));
+                }
+                let mut receiver_kind = receiver.kind_mut();
+                let Object::List(values) = &mut *receiver_kind else {
+                    return Err(RuntimeError::new("list.reverse() receiver must be list"));
+                };
+                values.reverse();
+                Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::IntToBytes => {
                 if args.len() < 2 || args.len() > 3 {
@@ -10746,6 +10901,20 @@ impl Vm {
                 let is_digit = !text.is_empty() && text.chars().all(|ch| ch.is_numeric());
                 Ok(NativeCallResult::Value(Value::Bool(is_digit)))
             }
+            NativeMethodKind::StrIsAlNum => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("isalnum() expects no arguments"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let is_alnum = !text.is_empty() && text.chars().all(|ch| ch.is_alphanumeric());
+                Ok(NativeCallResult::Value(Value::Bool(is_alnum)))
+            }
             NativeMethodKind::StrIsSpace => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("isspace() expects no arguments"));
@@ -10827,7 +10996,7 @@ impl Vm {
                 } else {
                     -1
                 };
-                let parts = if let Some(sep) = sep {
+                let parts: Vec<Value> = if let Some(sep) = sep {
                     if sep.is_empty() {
                         return Err(RuntimeError::new("empty separator"));
                     }
@@ -10840,14 +11009,78 @@ impl Vm {
                             .map(|part| Value::Str(part.to_string()))
                             .collect()
                     }
-                } else if maxsplit < 0 {
-                    text.split_whitespace()
-                        .map(|part| Value::Str(part.to_string()))
-                        .collect()
                 } else {
-                    text.split_whitespace()
-                        .take((maxsplit + 1) as usize)
-                        .map(|part| Value::Str(part.to_string()))
+                    py_split_whitespace(&text, maxsplit)
+                        .into_iter()
+                        .map(Value::Str)
+                        .collect()
+                };
+                Ok(NativeCallResult::Value(self.heap.alloc_list(parts)))
+            }
+            NativeMethodKind::StrRSplit => {
+                let sep_kw = kwargs.remove("sep");
+                let maxsplit_kw = kwargs.remove("maxsplit");
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "rsplit() got an unexpected keyword argument",
+                    ));
+                }
+                if args.len() > 2 {
+                    return Err(RuntimeError::new("rsplit() expects at most two arguments"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                if sep_kw.is_some() && !args.is_empty() {
+                    return Err(RuntimeError::new("rsplit() got multiple values for sep"));
+                }
+                if maxsplit_kw.is_some() && args.len() > 1 {
+                    return Err(RuntimeError::new("rsplit() got multiple values for maxsplit"));
+                }
+                let sep_arg = if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    sep_kw
+                };
+                let maxsplit_arg = if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    maxsplit_kw
+                };
+                let sep = match sep_arg {
+                    Some(Value::Str(value)) => Some(value),
+                    Some(Value::None) | None => None,
+                    Some(_) => return Err(RuntimeError::new("rsplit() separator must be str")),
+                };
+                let maxsplit = if let Some(value) = maxsplit_arg {
+                    value_to_int(value)?
+                } else {
+                    -1
+                };
+                let parts: Vec<Value> = if let Some(sep) = sep {
+                    if sep.is_empty() {
+                        return Err(RuntimeError::new("empty separator"));
+                    }
+                    if maxsplit < 0 {
+                        text.split(&sep)
+                            .map(|part| Value::Str(part.to_string()))
+                            .collect()
+                    } else {
+                        let mut reversed: Vec<Value> = text
+                            .rsplitn((maxsplit + 1) as usize, &sep)
+                            .map(|part| Value::Str(part.to_string()))
+                            .collect();
+                        reversed.reverse();
+                        reversed
+                    }
+                } else {
+                    py_rsplit_whitespace(&text, maxsplit)
+                        .into_iter()
+                        .map(Value::Str)
                         .collect()
                 };
                 Ok(NativeCallResult::Value(self.heap.alloc_list(parts)))
@@ -10918,11 +11151,25 @@ impl Vm {
                 };
                 Ok(NativeCallResult::Value(self.heap.alloc_tuple(parts)))
             }
-            NativeMethodKind::StrRFind => {
+            NativeMethodKind::StrFind | NativeMethodKind::StrRFind => {
+                let method_name = if matches!(kind, NativeMethodKind::StrFind) {
+                    "find"
+                } else {
+                    "rfind"
+                };
+                let start_kw = kwargs.remove("start");
+                let end_kw = kwargs.remove("end");
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(format!(
+                        "{}() got an unexpected keyword argument",
+                        method_name
+                    )));
+                }
                 if args.is_empty() || args.len() > 3 {
-                    return Err(RuntimeError::new(
-                        "rfind() expects sub, optional start, optional end",
-                    ));
+                    return Err(RuntimeError::new(format!(
+                        "{}() expects sub, optional start, optional end",
+                        method_name
+                    )));
                 }
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
@@ -10933,15 +11180,36 @@ impl Vm {
                 };
                 let needle = match &args[0] {
                     Value::Str(value) => value.clone(),
-                    _ => return Err(RuntimeError::new("rfind() substring must be str")),
+                    _ => {
+                        return Err(RuntimeError::new(format!(
+                            "{}() substring must be str",
+                            method_name
+                        )))
+                    }
                 };
+                if start_kw.is_some() && args.len() > 1 {
+                    return Err(RuntimeError::new(format!(
+                        "{}() got multiple values for start",
+                        method_name
+                    )));
+                }
+                if end_kw.is_some() && args.len() > 2 {
+                    return Err(RuntimeError::new(format!(
+                        "{}() got multiple values for end",
+                        method_name
+                    )));
+                }
                 let len = text.len() as i64;
-                let mut start = if let Some(value) = args.get(1) {
+                let mut start = if let Some(value) = start_kw {
+                    value_to_int(value)?
+                } else if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
                     0
                 };
-                let mut end = if let Some(value) = args.get(2) {
+                let mut end = if let Some(value) = end_kw {
+                    value_to_int(value)?
+                } else if let Some(value) = args.get(2) {
                     value_to_int(value.clone())?
                 } else {
                     len
@@ -10962,10 +11230,12 @@ impl Vm {
                 let Some(slice) = text.get(start_idx..end_idx) else {
                     return Ok(NativeCallResult::Value(Value::Int(-1)));
                 };
-                let found = slice
-                    .rfind(&needle)
-                    .map(|idx| (idx + start_idx) as i64)
-                    .unwrap_or(-1);
+                let found = if matches!(kind, NativeMethodKind::StrFind) {
+                    slice.find(&needle)
+                } else {
+                    slice.rfind(&needle)
+                };
+                let found = found.map(|idx| (idx + start_idx) as i64).unwrap_or(-1);
                 Ok(NativeCallResult::Value(Value::Int(found)))
             }
             NativeMethodKind::StrLStrip => {
@@ -11169,6 +11439,48 @@ impl Vm {
                     }
                 }
                 Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::SetIsSuperset => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("issuperset() expects one argument"));
+                }
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("issuperset() receiver must be set")),
+                };
+                let other_values = self.collect_iterable_values(args[0].clone())?;
+                let is_superset = other_values
+                    .iter()
+                    .all(|item| receiver_values.iter().any(|value| value == item));
+                Ok(NativeCallResult::Value(Value::Bool(is_superset)))
+            }
+            NativeMethodKind::SetIsSubset => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("issubset() expects one argument"));
+                }
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("issubset() receiver must be set")),
+                };
+                let other_values = self.collect_iterable_values(args[0].clone())?;
+                let is_subset = receiver_values
+                    .iter()
+                    .all(|item| other_values.iter().any(|value| value == item));
+                Ok(NativeCallResult::Value(Value::Bool(is_subset)))
+            }
+            NativeMethodKind::SetIsDisjoint => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("isdisjoint() expects one argument"));
+                }
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("isdisjoint() receiver must be set")),
+                };
+                let other_values = self.collect_iterable_values(args[0].clone())?;
+                let is_disjoint = receiver_values
+                    .iter()
+                    .all(|item| other_values.iter().all(|value| value != item));
+                Ok(NativeCallResult::Value(Value::Bool(is_disjoint)))
             }
             NativeMethodKind::ClassRegister => {
                 if args.len() != 1 {
@@ -15779,37 +16091,39 @@ impl Vm {
                 "spec_from_file_location() got an unexpected keyword argument",
             ));
         }
-
-        let mut entries = vec![
-            (Value::Str("name".to_string()), Value::Str(name)),
-            (Value::Str("loader".to_string()), loader),
-            (Value::Str("origin".to_string()), Value::Str(location.clone())),
-            (
-                Value::Str("cached".to_string()),
-                Value::Str(cache_path_from_source_path(&location)),
-            ),
-            (Value::Str("has_location".to_string()), Value::Bool(true)),
-            (Value::Str("__spec__".to_string()), Value::None),
-            (
-                Value::Str("submodule_search_locations".to_string()),
-                Value::None,
-            ),
-        ];
-        if let Some(value) = search_locations {
-            let normalized = if matches!(value, Value::None) {
+        let normalized_search_locations = if let Some(value) = search_locations {
+            if matches!(value, Value::None) {
                 Value::None
             } else {
                 let locations = self.collect_iterable_values(value)?;
                 self.heap.alloc_list(locations)
-            };
-            if let Some((_, field)) = entries
-                .iter_mut()
-                .find(|(key, _)| matches!(key, Value::Str(name) if name == "submodule_search_locations"))
-            {
-                *field = normalized;
             }
-        }
-        Ok(self.heap.alloc_dict(entries))
+        } else {
+            Value::None
+        };
+        let is_package = !matches!(normalized_search_locations, Value::None);
+        let location_path = PathBuf::from(&location);
+        let spec = self.build_module_spec_value(
+            &name,
+            Some(&location_path),
+            None,
+            is_package,
+            &[],
+            false,
+        );
+        self.set_module_spec_field(&spec, "loader", loader);
+        self.set_module_spec_field(
+            &spec,
+            "cached",
+            Value::Str(cache_path_from_source_path(&location)),
+        );
+        self.set_module_spec_field(
+            &spec,
+            "submodule_search_locations",
+            normalized_search_locations,
+        );
+        self.set_module_spec_field(&spec, "__spec__", Value::None);
+        Ok(spec)
     }
 
     fn builtin_frozen_importlib_spec_from_loader(
@@ -15852,7 +16166,7 @@ impl Vm {
             Value::Bool(value) => value,
             other => is_truthy(&other),
         };
-        let mut spec = self.build_module_spec_value(
+        let spec = self.build_module_spec_value(
             &name,
             None,
             if matches!(loader, Value::None) {
@@ -15864,15 +16178,13 @@ impl Vm {
             &[],
             false,
         );
-        if let Value::Dict(spec_obj) = &mut spec {
-            dict_set_value(spec_obj, Value::Str("loader".to_string()), loader);
-            dict_set_value(spec_obj, Value::Str("origin".to_string()), origin.clone());
-            dict_set_value(
-                spec_obj,
-                Value::Str("has_location".to_string()),
-                Value::Bool(!matches!(origin, Value::None)),
-            );
-        }
+        self.set_module_spec_field(&spec, "loader", loader);
+        self.set_module_spec_field(&spec, "origin", origin.clone());
+        self.set_module_spec_field(
+            &spec,
+            "has_location",
+            Value::Bool(!matches!(origin, Value::None)),
+        );
         Ok(spec)
     }
 
@@ -19941,6 +20253,9 @@ impl Vm {
         if let Some(unwrapped) = self.unwrap_staticmethod_attr(&callable) {
             callable = unwrapped;
         }
+        if let Some(unwrapped) = self.unwrap_classmethod_attr(&callable) {
+            callable = unwrapped;
+        }
         if !self.is_callable_value(&callable) {
             return Err(RuntimeError::new("first argument must be callable"));
         }
@@ -22526,6 +22841,24 @@ impl Vm {
                         Err(RuntimeError::new("key not found"))
                     }
                 }
+                Value::Module(obj) => {
+                    let key = match index {
+                        Value::Str(name) => name,
+                        _ => return Err(RuntimeError::new("subscript unsupported type")),
+                    };
+                    let module_kind = obj.kind();
+                    let Object::Module(module_data) = &*module_kind else {
+                        return Err(RuntimeError::new("subscript unsupported type"));
+                    };
+                    if module_data.name != "__module_spec__" {
+                        return Err(RuntimeError::new("subscript unsupported type"));
+                    }
+                    module_data
+                        .globals
+                        .get(&key)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("key not found"))
+                }
                 Value::Bytes(obj) => match &*obj.kind() {
                     Object::Bytes(values) => {
                         let mut index_int = value_to_int(index)? as isize;
@@ -22982,6 +23315,18 @@ impl Vm {
         self.builtins.insert(
             "BlockingIOError".to_string(),
             Value::ExceptionType("BlockingIOError".to_string()),
+        );
+        self.builtins.insert(
+            "TimeoutError".to_string(),
+            Value::ExceptionType("TimeoutError".to_string()),
+        );
+        self.builtins.insert(
+            "NotADirectoryError".to_string(),
+            Value::ExceptionType("NotADirectoryError".to_string()),
+        );
+        self.builtins.insert(
+            "PermissionError".to_string(),
+            Value::ExceptionType("PermissionError".to_string()),
         );
         self.builtins.insert(
             "NotImplementedError".to_string(),
@@ -25042,6 +25387,9 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "OSError" => Some("Exception"),
         "FileNotFoundError" => Some("OSError"),
         "BlockingIOError" => Some("OSError"),
+        "TimeoutError" => Some("OSError"),
+        "NotADirectoryError" => Some("OSError"),
+        "PermissionError" => Some("OSError"),
         "TypeError" => Some("Exception"),
         "ValueError" => Some("Exception"),
         "UnicodeError" => Some("ValueError"),
@@ -25749,6 +26097,116 @@ fn class_of_class(class: &ObjRef) -> Option<ObjRef> {
     }
 }
 
+fn first_whitespace_run(text: &str) -> Option<(usize, usize)> {
+    let mut run_start: Option<usize> = None;
+    for (idx, ch) in text.char_indices() {
+        if ch.is_whitespace() {
+            if run_start.is_none() {
+                run_start = Some(idx);
+            }
+        } else if let Some(start) = run_start {
+            return Some((start, idx));
+        }
+    }
+    run_start.map(|start| (start, text.len()))
+}
+
+fn last_whitespace_run(text: &str) -> Option<(usize, usize)> {
+    let mut run_start: Option<usize> = None;
+    let mut last_run: Option<(usize, usize)> = None;
+    for (idx, ch) in text.char_indices() {
+        if ch.is_whitespace() {
+            if run_start.is_none() {
+                run_start = Some(idx);
+            }
+        } else if let Some(start) = run_start.take() {
+            last_run = Some((start, idx));
+        }
+    }
+    if let Some(start) = run_start {
+        Some((start, text.len()))
+    } else {
+        last_run
+    }
+}
+
+fn py_split_whitespace(text: &str, maxsplit: i64) -> Vec<String> {
+    if maxsplit < 0 {
+        return text.split_whitespace().map(|part| part.to_string()).collect();
+    }
+
+    if maxsplit == 0 {
+        let trimmed = text.trim_start_matches(|ch: char| ch.is_whitespace());
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        return vec![trimmed.to_string()];
+    }
+
+    let mut remainder = text.trim_start_matches(|ch: char| ch.is_whitespace());
+    if remainder.is_empty() {
+        return Vec::new();
+    }
+
+    let mut parts = Vec::new();
+    let mut splits = 0;
+    while splits < maxsplit {
+        let Some((run_start, run_end)) = first_whitespace_run(remainder) else {
+            break;
+        };
+        parts.push(remainder[..run_start].to_string());
+        remainder = remainder[run_end..].trim_start_matches(|ch: char| ch.is_whitespace());
+        splits += 1;
+        if remainder.is_empty() {
+            break;
+        }
+    }
+
+    if !remainder.is_empty() {
+        parts.push(remainder.to_string());
+    }
+    parts
+}
+
+fn py_rsplit_whitespace(text: &str, maxsplit: i64) -> Vec<String> {
+    if maxsplit < 0 {
+        return text.split_whitespace().map(|part| part.to_string()).collect();
+    }
+
+    if maxsplit == 0 {
+        let trimmed = text.trim_end_matches(|ch: char| ch.is_whitespace());
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        return vec![trimmed.to_string()];
+    }
+
+    let mut remainder = text.trim_end_matches(|ch: char| ch.is_whitespace());
+    if remainder.is_empty() {
+        return Vec::new();
+    }
+
+    let mut parts = Vec::new();
+    let mut splits = 0;
+    while splits < maxsplit {
+        let Some((run_start, run_end)) = last_whitespace_run(remainder) else {
+            break;
+        };
+        parts.push(remainder[run_end..].to_string());
+        remainder = remainder[..run_start].trim_end_matches(|ch: char| ch.is_whitespace());
+        splits += 1;
+        if remainder.is_empty() {
+            break;
+        }
+    }
+
+    if !remainder.is_empty() {
+        parts.push(remainder.to_string());
+    }
+    parts.reverse();
+    parts
+}
+
 fn class_name_for_instance(instance: &ObjRef) -> Option<String> {
     let kind = instance.kind();
     let class = match &*kind {
@@ -25780,6 +26238,18 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
         return true;
     }
     if expected == "ImportError" && candidate == "ModuleNotFoundError" {
+        return true;
+    }
+    if expected == "OSError"
+        && matches!(
+            candidate,
+            "FileNotFoundError"
+                | "BlockingIOError"
+                | "TimeoutError"
+                | "NotADirectoryError"
+                | "PermissionError"
+        )
+    {
         return true;
     }
     false
