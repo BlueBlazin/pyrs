@@ -60,7 +60,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Runtime Object Model & Data Model**
 - [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC (runtime dict/set now use hash-indexed container objects with insertion-order backing vectors; long-tail hash/equality semantics and perf closure are tracked separately below).
-- [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (float/complex and mixed int/bool coercion foundations implemented; big-int parity pending).
+- [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (`Value::BigInt` now covers core large-int arithmetic/bitwise/shift/comparison paths plus lazy large-stop `range` support; long-tail arbitrary-precision parity for formatting/conversion and some arithmetic edges remains pending).
 - [~] P0: bytes/bytearray/memoryview and buffer protocol (core bytes-like runtime types implemented; full buffer protocol pending).
 - [x] P0: set/frozenset.
 - [~] P0: Hash-based dict/set/frozenset semantic parity (`__hash__` contract, unhashable key/item rejection, CPython-compatible lookup/update behavior) (core unhashable key/item rejection is now enforced on constructor/update/assignment/membership flows; dict equality is insertion-order independent and set/frozenset equality is value-based including cross-type equality; hash-table storage and long-tail edge parity remain pending).
@@ -74,7 +74,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Builtins**
 - [x] P0: Stub accounting is enforced (`docs/STUB_ACCOUNTING.md`, generated `docs/NOOP_BUILTIN_INVENTORY.txt`, and CI gate `tests/noop_inventory.rs`).
-- [~] P0: Core builtin set (print, len, range, float/int coercions, numeric ops, `set`/`frozenset`, bytes-like constructors, `complex`, `iter`/`next`, `type`, and random module foundations).
+- [~] P0: Core builtin set (print, len, range, float/int coercions, numeric ops, `set`/`frozenset`, bytes-like constructors, `complex`, `iter`/`next`, `type`, and random module foundations; `range` now supports lazy bigint-backed large-stop iteration to avoid eager huge-list materialization).
 - [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, dir, help, input, etc.; `getattr`/`setattr`/`delattr`/`hasattr` and explicit-args `super` implemented).
 - [x] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to loader path).
 
@@ -111,6 +111,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).
 - [x] P1: Curated real-world smoke/regression suite with constrained subprocess profile (`tests/realworld_smoke.rs`, `scripts/run_parity_gate.sh`).
+- [~] P1: Stdlib-import regression probes for bigint-heavy paths (`ipaddress` class-raise path currently tracked via ignored regression test pending exception-model closure).
 - [ ] P2: Deterministic reproduction harness for crash bugs.
 
 **Performance & Profiling**

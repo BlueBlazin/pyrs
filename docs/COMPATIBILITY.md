@@ -27,6 +27,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 
 ## Runtime & Object Model
 - [x] Core types subset (None, bool, int, float, str, tuple, list, dict)
+- [~] Arbitrary-precision `int` parity (`Value::BigInt` now powers core large-int arithmetic/bitwise/shift/comparison paths and lazy large-stop `range` iteration; long-tail formatting/conversion/division parity remains pending)
 - [x] `bytes`, `bytearray`, `memoryview`, `set`, `frozenset`, `complex`
 - [x] Function + frame model (positional-only params, positional params, defaults, keyword args, keyword-only params, *args/**kwargs; closures + `nonlocal`)
 - [x] Generators (lazy suspended-frame protocol: `__next__`, `send`, `throw`, `close`)
@@ -47,7 +48,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 
 ## Stdlib Coverage
 - [x] Stub/partial accounting gate (`docs/STUB_ACCOUNTING.md` + generated `docs/NOOP_BUILTIN_INVENTORY.txt` enforced by `tests/noop_inventory.rs`)
-- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, `filter` (`callable`/`None` predicate), slice, bool/int/float/str (including `float.fromhex`, `float.hex`, `str.maketrans`, `str.find`, `str.rsplit`, `str.isalnum` baseline behavior), abs/sum/min/max/all/any/pow, list/tuple/set/frozenset (`list.reverse` baseline), bytes/bytearray/memoryview, complex, divmod, iter/next/`aiter`/`anext`, `type` (1-arg + 3-arg), locals, globals, `exec` (source/code with explicit globals/locals handling), `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, baseline `object.__reduce_ex__`, basic `__import__` name/fromlist/level semantics)
+- [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords + lazy large-stop bigint iterator fallback, sum `start`, sorted `reverse`, enumerate `start`, `filter` (`callable`/`None` predicate), slice, bool/int/float/str (including `float.fromhex`, `float.hex`, `str.maketrans`, `str.find`, `str.rsplit`, `str.isalnum` baseline behavior), abs/sum/min/max/all/any/pow, list/tuple/set/frozenset (`list.reverse` baseline), bytes/bytearray/memoryview, complex, divmod, iter/next/`aiter`/`anext`, `type` (1-arg + 3-arg), locals, globals, `exec` (source/code with explicit globals/locals handling), `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, baseline `object.__reduce_ex__`, basic `__import__` name/fromlist/level semantics)
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`, baseline `sys.exit`)
 - [~] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`, `importlib.invalidate_caches`, baseline `importlib.util.spec_from_file_location`, `_frozen_importlib.spec_from_loader`/`_verbose_message`, and `_frozen_importlib_external` `_path_*` + `_unpack_uint*`; full spec/loader object parity still pending)
 - [~] `pkgutil` / `importlib.resources` foundations (fallback shim workflows for stdlib-less environments: `pkgutil.get_data`, `importlib.resources.files/read_text/read_binary/open_*`; full CPython parity still pending)
