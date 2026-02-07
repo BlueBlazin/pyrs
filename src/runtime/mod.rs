@@ -970,6 +970,7 @@ pub enum BuiltinFunction {
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
     PlatformLibcVer,
+    PlatformWin32IsIot,
     Import,
     ImportModule,
     FindSpec,
@@ -1190,6 +1191,12 @@ pub enum BuiltinFunction {
     SignalSignal,
     SignalGetSignal,
     SignalRaiseSignal,
+    BinasciiCrc32,
+    CollectionsCountElements,
+    AtexitRegister,
+    AtexitUnregister,
+    AtexitRunExitFuncs,
+    AtexitClear,
     ColorizeCanColorize,
     ColorizeGetTheme,
     ColorizeGetColors,
@@ -2640,6 +2647,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
             | BuiltinFunction::PlatformLibcVer
+            | BuiltinFunction::PlatformWin32IsIot
             | BuiltinFunction::ImportlibInvalidateCaches
             | BuiltinFunction::ImportlibSourceFromCache
             | BuiltinFunction::ImportlibCacheFromSource
@@ -2809,6 +2817,12 @@ impl BuiltinFunction {
             | BuiltinFunction::SignalSignal
             | BuiltinFunction::SignalGetSignal
             | BuiltinFunction::SignalRaiseSignal
+            | BuiltinFunction::BinasciiCrc32
+            | BuiltinFunction::CollectionsCountElements
+            | BuiltinFunction::AtexitRegister
+            | BuiltinFunction::AtexitUnregister
+            | BuiltinFunction::AtexitRunExitFuncs
+            | BuiltinFunction::AtexitClear
             | BuiltinFunction::ColorizeCanColorize
             | BuiltinFunction::ColorizeGetTheme
             | BuiltinFunction::ColorizeGetColors

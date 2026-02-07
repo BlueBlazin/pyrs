@@ -42,6 +42,13 @@ struct ModuleSourceInfo {
     is_namespace: bool,
 }
 
+#[derive(Clone)]
+struct AtexitHandler {
+    callable: Value,
+    args: Vec<Value>,
+    kwargs: HashMap<String, Value>,
+}
+
 const DEFAULT_META_PATH_FINDER: &str = "pyrs.PathFinder";
 const DEFAULT_PATH_HOOK: &str = "pyrs.FileFinder";
 const SOURCE_FILE_LOADER: &str = "pyrs.SourceFileLoader";
@@ -260,6 +267,7 @@ pub struct Vm {
     next_fd: i64,
     defaultdict_factories: HashMap<u64, Value>,
     exception_parents: HashMap<String, String>,
+    atexit_handlers: Vec<AtexitHandler>,
 }
 
 impl Vm {
@@ -295,6 +303,7 @@ impl Vm {
             next_fd: 3,
             defaultdict_factories: HashMap::new(),
             exception_parents: HashMap::new(),
+            atexit_handlers: Vec::new(),
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -1365,7 +1374,7 @@ impl Vm {
                     BuiltinFunction::SysGetFilesystemEncoding,
                 ),
                 ("libc_ver", BuiltinFunction::PlatformLibcVer),
-                ("win32_is_iot", BuiltinFunction::NoOp),
+                ("win32_is_iot", BuiltinFunction::PlatformWin32IsIot),
                 ("uname", BuiltinFunction::Tuple),
             ],
             Vec::new(),
@@ -1680,7 +1689,7 @@ impl Vm {
         );
         self.install_builtin_module(
             "binascii",
-            &[("crc32", BuiltinFunction::NoOp)],
+            &[("crc32", BuiltinFunction::BinasciiCrc32)],
             vec![
                 ("Error", Value::ExceptionType("Exception".to_string())),
                 ("Incomplete", Value::ExceptionType("Exception".to_string())),
@@ -2125,7 +2134,7 @@ impl Vm {
                 ("deque", BuiltinFunction::CollectionsDeque),
                 ("namedtuple", BuiltinFunction::CollectionsNamedTuple),
                 ("defaultdict", BuiltinFunction::CollectionsDefaultDict),
-                ("_count_elements", BuiltinFunction::NoOp),
+                ("_count_elements", BuiltinFunction::CollectionsCountElements),
                 ("OrderedDict", BuiltinFunction::Dict),
                 ("ChainMap", BuiltinFunction::Dict),
                 ("UserDict", BuiltinFunction::Dict),
@@ -2372,10 +2381,10 @@ impl Vm {
         self.install_builtin_module(
             "atexit",
             &[
-                ("register", BuiltinFunction::NoOp),
-                ("unregister", BuiltinFunction::NoOp),
-                ("_run_exitfuncs", BuiltinFunction::NoOp),
-                ("_clear", BuiltinFunction::NoOp),
+                ("register", BuiltinFunction::AtexitRegister),
+                ("unregister", BuiltinFunction::AtexitUnregister),
+                ("_run_exitfuncs", BuiltinFunction::AtexitRunExitFuncs),
+                ("_clear", BuiltinFunction::AtexitClear),
             ],
             Vec::new(),
         );
@@ -11458,6 +11467,9 @@ impl Vm {
                 self.builtin_sys_getfilesystemencodeerrors(args, kwargs)
             }
             BuiltinFunction::PlatformLibcVer => self.builtin_platform_libc_ver(args, kwargs),
+            BuiltinFunction::PlatformWin32IsIot => {
+                self.builtin_platform_win32_is_iot(args, kwargs)
+            }
             BuiltinFunction::GetAttr => self.builtin_getattr(args, kwargs),
             BuiltinFunction::SetAttr => self.builtin_setattr(args, kwargs),
             BuiltinFunction::DelAttr => self.builtin_delattr(args, kwargs),
@@ -11664,6 +11676,9 @@ impl Vm {
             BuiltinFunction::CollectionsDefaultDict => {
                 self.builtin_collections_defaultdict(args, kwargs)
             }
+            BuiltinFunction::CollectionsCountElements => {
+                self.builtin_collections_count_elements(args, kwargs)
+            }
             BuiltinFunction::InspectSignature => self.builtin_inspect_signature(args, kwargs),
             BuiltinFunction::InspectIsFunction => self.builtin_inspect_isfunction(args, kwargs),
             BuiltinFunction::InspectIsClass => self.builtin_inspect_isclass(args, kwargs),
@@ -11711,6 +11726,11 @@ impl Vm {
             BuiltinFunction::SignalSignal => self.builtin_signal_signal(args, kwargs),
             BuiltinFunction::SignalGetSignal => self.builtin_signal_getsignal(args, kwargs),
             BuiltinFunction::SignalRaiseSignal => self.builtin_signal_raise_signal(args, kwargs),
+            BuiltinFunction::BinasciiCrc32 => self.builtin_binascii_crc32(args, kwargs),
+            BuiltinFunction::AtexitRegister => self.builtin_atexit_register(args, kwargs),
+            BuiltinFunction::AtexitUnregister => self.builtin_atexit_unregister(args, kwargs),
+            BuiltinFunction::AtexitRunExitFuncs => self.builtin_atexit_run_exitfuncs(args, kwargs),
+            BuiltinFunction::AtexitClear => self.builtin_atexit_clear(args, kwargs),
             BuiltinFunction::ColorizeCanColorize => {
                 self.builtin_colorize_can_colorize(args, kwargs)
             }
@@ -12075,6 +12095,17 @@ impl Vm {
         Ok(self
             .heap
             .alloc_tuple(vec![Value::Str(detected_lib), Value::Str(default_version)]))
+    }
+
+    fn builtin_platform_win32_is_iot(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("platform.win32_is_iot() expects no arguments"));
+        }
+        Ok(Value::Bool(false))
     }
 
     fn builtin_callable(
@@ -15863,6 +15894,120 @@ impl Vm {
         }
     }
 
+    fn builtin_binascii_crc32(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("crc32() expects data and optional value"));
+        }
+        let data_kw = kwargs.remove("data");
+        let value_kw = kwargs.remove("value").or_else(|| kwargs.remove("crc"));
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "crc32() got an unexpected keyword argument",
+            ));
+        }
+        if !args.is_empty() && data_kw.is_some() {
+            return Err(RuntimeError::new("crc32() got multiple values for data"));
+        }
+        if args.len() > 1 && value_kw.is_some() {
+            return Err(RuntimeError::new("crc32() got multiple values for value"));
+        }
+        let data = if let Some(value) = data_kw {
+            value
+        } else {
+            args.remove(0)
+        };
+        let seed = if let Some(value) = value_kw {
+            value_to_int(value)? as u32
+        } else if !args.is_empty() {
+            value_to_int(args.remove(0))? as u32
+        } else {
+            0
+        };
+        let bytes = bytes_like_from_value(data)?;
+        let mut crc = !seed;
+        for byte in bytes {
+            let mut value = (crc ^ u32::from(byte)) & 0xFF;
+            for _ in 0..8 {
+                if value & 1 != 0 {
+                    value = 0xEDB8_8320 ^ (value >> 1);
+                } else {
+                    value >>= 1;
+                }
+            }
+            crc = (crc >> 8) ^ value;
+        }
+        Ok(Value::Int((!crc) as i64))
+    }
+
+    fn builtin_atexit_register(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("register() expects at least one argument"));
+        }
+        let callable = args[0].clone();
+        if !self.is_callable_value(&callable) {
+            return Err(RuntimeError::new("register() first argument must be callable"));
+        }
+        self.atexit_handlers.push(AtexitHandler {
+            callable: callable.clone(),
+            args: args[1..].to_vec(),
+            kwargs,
+        });
+        Ok(callable)
+    }
+
+    fn builtin_atexit_unregister(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("unregister() expects one argument"));
+        }
+        let target = args[0].clone();
+        self.atexit_handlers
+            .retain(|handler| handler.callable != target);
+        Ok(Value::None)
+    }
+
+    fn builtin_atexit_run_exitfuncs(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_run_exitfuncs() expects no arguments"));
+        }
+        while let Some(handler) = self.atexit_handlers.pop() {
+            match self.call_internal(handler.callable, handler.args, handler.kwargs)? {
+                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(RuntimeError::new("atexit callback raised"));
+                }
+            }
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_atexit_clear(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_clear() expects no arguments"));
+        }
+        self.atexit_handlers.clear();
+        Ok(Value::None)
+    }
+
     fn builtin_select_select(
         &mut self,
         args: Vec<Value>,
@@ -17402,6 +17547,28 @@ impl Vm {
         self.defaultdict_factories
             .insert(dict.id(), default_factory);
         Ok(Value::Dict(dict))
+    }
+
+    fn builtin_collections_count_elements(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "_count_elements() expects mapping and iterable arguments",
+            ));
+        }
+        let mapping = match &args[0] {
+            Value::Dict(dict) => dict.clone(),
+            _ => return Err(RuntimeError::new("_count_elements() mapping must be dict")),
+        };
+        for item in self.collect_iterable_values(args[1].clone())? {
+            let current = dict_get_value(&mapping, &item).unwrap_or(Value::Int(0));
+            let next = add_values(current, Value::Int(1), &self.heap)?;
+            dict_set_value(&mapping, item, next);
+        }
+        Ok(Value::None)
     }
 
     fn builtin_inspect_signature(

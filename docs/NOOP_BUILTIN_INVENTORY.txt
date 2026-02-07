@@ -64,14 +64,8 @@ _testinternalcapi.set_eval_frame_default
 _thread.start_new_thread
 _warnings._acquire_lock
 _warnings._release_lock
-atexit._clear
-atexit._run_exitfuncs
-atexit.register
-atexit.unregister
-binascii.crc32
 builtins.exec
 builtins.object.__reduce_ex__
-collections._count_elements
 dataclasses.asdict
 dataclasses.astuple
 dataclasses.field
@@ -82,7 +76,6 @@ dataclasses.replace
 decimal.getcontext
 decimal.localcontext
 decimal.setcontext
-platform.win32_is_iot
 threading.Barrier.__init__
 threading.Barrier.abort
 threading.Barrier.reset

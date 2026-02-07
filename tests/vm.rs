@@ -3762,6 +3762,16 @@ fn exposes_platform_libc_ver_tuple() {
 }
 
 #[test]
+fn exposes_platform_win32_is_iot_bool() {
+    let source = "import platform\nok = isinstance(platform.win32_is_iot(), bool)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_os_fsencode_fsdecode_and_unicodeerror() {
     let source = "import os\npayload = os.fsencode('abc')\ntext = os.fsdecode(payload)\ncaught = False\ntry:\n    raise UnicodeError\nexcept UnicodeError:\n    caught = True\nok = isinstance(payload, bytes) and text == 'abc' and caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3889,6 +3899,26 @@ fn executes_collections_defaultdict_factory_on_getitem() {
 }
 
 #[test]
+fn executes_collections_count_elements_builtin() {
+    let source = "import collections\ncounts = {}\ncollections._count_elements(counts, ['a', 'b', 'a'])\nok = counts['a'] == 2 and counts['b'] == 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_atexit_register_unregister_run_and_clear() {
+    let source = "import atexit\nout = []\ndef f(x):\n    out.append(x)\ndef g(x):\n    out.append(x)\natexit.register(f, 1)\natexit.register(g, 2)\natexit.unregister(f)\natexit.register(f, 3)\natexit._run_exitfuncs()\natexit._clear()\nok = out == [3, 2]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_types_markers_and_functools_partial() {
     let source = "import functools\nimport types\ndef add(a, b, c=0):\n    return a + b + c\npart = functools.partial(add, 1, c=3)\nok = part(2) == 6 and hasattr(types, 'BuiltinFunctionType') and hasattr(types, 'EllipsisType')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3919,8 +3949,8 @@ fn executes_unicodedata_normalize_stub() {
 }
 
 #[test]
-fn exposes_binascii_crc32_stub() {
-    let source = "import binascii\nok = callable(binascii.crc32)\n";
+fn executes_binascii_crc32() {
+    let source = "import binascii\ncrc = binascii.crc32(b'hello')\ncrc2 = binascii.crc32(b'world', crc)\nok = (crc == 907060870) and (crc2 == 4192936109)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
