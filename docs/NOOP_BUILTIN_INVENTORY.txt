@@ -4,16 +4,6 @@ _pylong.compute_powers
 _pylong.int_divmod
 _pylong.int_from_string
 _pylong.int_to_decimal_string
-_socket.fromfd
-_socket.getaddrinfo
-_socket.getdefaulttimeout
-_socket.gethostbyname
-_socket.gethostname
-_socket.htonl
-_socket.htons
-_socket.ntohl
-_socket.ntohs
-_socket.setdefaulttimeout
 _socket.socket.__init__
 _socket.socket.close
 _socket.socket.detach

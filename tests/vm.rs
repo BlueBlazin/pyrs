@@ -4451,3 +4451,23 @@ fn exec_builtin_respects_explicit_globals_and_locals() {
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn socket_byteorder_and_timeout_helpers_work() {
+    let source = "import _socket\na = _socket.htons(0x1234)\nb = _socket.ntohs(a)\nc = _socket.htonl(0x12345678)\nd = _socket.ntohl(c)\n_socket.setdefaulttimeout(1.5)\nt = _socket.getdefaulttimeout()\n_socket.setdefaulttimeout(None)\nu = _socket.getdefaulttimeout()\nok = (b == 0x1234 and d == 0x12345678 and t == 1.5 and u is None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn socket_hostname_addrinfo_and_fromfd_smoke() {
+    let source = "import _socket\nname = _socket.gethostname()\nhost = _socket.gethostbyname('127.0.0.1')\ninfo = _socket.getaddrinfo('127.0.0.1', 80)\nsock = _socket.fromfd(5, _socket.AF_INET, _socket.SOCK_STREAM)\nok = (isinstance(name, str) and len(name) >= 1 and host == '127.0.0.1' and len(info) >= 1 and sock is not None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

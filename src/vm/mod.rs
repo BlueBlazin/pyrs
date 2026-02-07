@@ -6,6 +6,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::IsTerminal;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -265,6 +266,7 @@ pub struct Vm {
     generator_resume_outcome: Option<GeneratorResumeOutcome>,
     run_stop_depth: Option<usize>,
     signal_handlers: HashMap<i64, Value>,
+    socket_default_timeout: Option<f64>,
     open_files: HashMap<i64, fs::File>,
     next_fd: i64,
     defaultdict_factories: HashMap<u64, Value>,
@@ -301,6 +303,7 @@ impl Vm {
             generator_resume_outcome: None,
             run_stop_depth: None,
             signal_handlers: HashMap::new(),
+            socket_default_timeout: None,
             open_files: HashMap::new(),
             next_fd: 3,
             defaultdict_factories: HashMap::new(),
@@ -3459,16 +3462,16 @@ impl Vm {
         self.install_builtin_module(
             "_socket",
             &[
-                ("gethostname", BuiltinFunction::NoOp),
-                ("gethostbyname", BuiltinFunction::NoOp),
-                ("getaddrinfo", BuiltinFunction::NoOp),
-                ("fromfd", BuiltinFunction::NoOp),
-                ("getdefaulttimeout", BuiltinFunction::NoOp),
-                ("setdefaulttimeout", BuiltinFunction::NoOp),
-                ("ntohs", BuiltinFunction::NoOp),
-                ("ntohl", BuiltinFunction::NoOp),
-                ("htons", BuiltinFunction::NoOp),
-                ("htonl", BuiltinFunction::NoOp),
+                ("gethostname", BuiltinFunction::SocketGetHostName),
+                ("gethostbyname", BuiltinFunction::SocketGetHostByName),
+                ("getaddrinfo", BuiltinFunction::SocketGetAddrInfo),
+                ("fromfd", BuiltinFunction::SocketFromFd),
+                ("getdefaulttimeout", BuiltinFunction::SocketGetDefaultTimeout),
+                ("setdefaulttimeout", BuiltinFunction::SocketSetDefaultTimeout),
+                ("ntohs", BuiltinFunction::SocketNtoHs),
+                ("ntohl", BuiltinFunction::SocketNtoHl),
+                ("htons", BuiltinFunction::SocketHtoNs),
+                ("htonl", BuiltinFunction::SocketHtoNl),
             ],
             vec![
                 ("socket", Value::Class(socket_class)),
@@ -11803,6 +11806,20 @@ impl Vm {
             BuiltinFunction::SignalSignal => self.builtin_signal_signal(args, kwargs),
             BuiltinFunction::SignalGetSignal => self.builtin_signal_getsignal(args, kwargs),
             BuiltinFunction::SignalRaiseSignal => self.builtin_signal_raise_signal(args, kwargs),
+            BuiltinFunction::SocketGetHostName => self.builtin_socket_gethostname(args, kwargs),
+            BuiltinFunction::SocketGetHostByName => self.builtin_socket_gethostbyname(args, kwargs),
+            BuiltinFunction::SocketGetAddrInfo => self.builtin_socket_getaddrinfo(args, kwargs),
+            BuiltinFunction::SocketFromFd => self.builtin_socket_fromfd(args, kwargs),
+            BuiltinFunction::SocketGetDefaultTimeout => {
+                self.builtin_socket_getdefaulttimeout(args, kwargs)
+            }
+            BuiltinFunction::SocketSetDefaultTimeout => {
+                self.builtin_socket_setdefaulttimeout(args, kwargs)
+            }
+            BuiltinFunction::SocketNtoHs => self.builtin_socket_ntohs(args, kwargs),
+            BuiltinFunction::SocketNtoHl => self.builtin_socket_ntohl(args, kwargs),
+            BuiltinFunction::SocketHtoNs => self.builtin_socket_htons(args, kwargs),
+            BuiltinFunction::SocketHtoNl => self.builtin_socket_htonl(args, kwargs),
             BuiltinFunction::BinasciiCrc32 => self.builtin_binascii_crc32(args, kwargs),
             BuiltinFunction::AtexitRegister => self.builtin_atexit_register(args, kwargs),
             BuiltinFunction::AtexitUnregister => self.builtin_atexit_unregister(args, kwargs),
@@ -19125,6 +19142,278 @@ impl Vm {
                 }
             }
         }
+    }
+
+    fn socket_class_ref(&self) -> Result<ObjRef, RuntimeError> {
+        let Some(module) = self.modules.get("_socket").cloned() else {
+            return Err(RuntimeError::new("module '_socket' not found"));
+        };
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("module '_socket' is invalid"));
+        };
+        let Some(Value::Class(class_ref)) = module_data.globals.get("socket").cloned() else {
+            return Err(RuntimeError::new("module '_socket' has no socket class"));
+        };
+        Ok(class_ref)
+    }
+
+    fn alloc_socket_instance_with_fd(&self, fd: i64) -> Result<Value, RuntimeError> {
+        let class_ref = self.socket_class_ref()?;
+        let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data.attrs.insert("_fd".to_string(), Value::Int(fd));
+            instance_data
+                .attrs
+                .insert("_closed".to_string(), Value::Bool(fd < 0));
+        }
+        Ok(Value::Instance(instance))
+    }
+
+    fn builtin_socket_gethostname(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("gethostname() expects no arguments"));
+        }
+        let hostname = std::env::var("HOSTNAME")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "localhost".to_string());
+        Ok(Value::Str(hostname))
+    }
+
+    fn builtin_socket_gethostbyname(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("gethostbyname() expects one host argument"));
+        }
+        let host = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("host must be a string")),
+        };
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return Ok(Value::Str(ip.to_string()));
+        }
+        let addrs = (host.as_str(), 0u16)
+            .to_socket_addrs()
+            .map_err(|err| RuntimeError::new(format!("name resolution failed: {err}")))?;
+        if let Some(ip) = addrs
+            .into_iter()
+            .find_map(|addr| match addr {
+                SocketAddr::V4(v4) => Some(v4.ip().to_string()),
+                SocketAddr::V6(_) => None,
+            })
+        {
+            return Ok(Value::Str(ip));
+        }
+        Err(RuntimeError::new("name resolution failed"))
+    }
+
+    fn builtin_socket_getaddrinfo(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 6 {
+            return Err(RuntimeError::new(
+                "getaddrinfo() expects host, port and optional hints",
+            ));
+        }
+
+        let host = args.remove(0);
+        let port = args.remove(0);
+        let family_hint = if let Some(value) = args.first().cloned() {
+            value_to_int(value)?
+        } else {
+            0
+        };
+        let socktype_hint = if let Some(value) = args.get(1).cloned() {
+            value_to_int(value)?
+        } else {
+            0
+        };
+        let proto_hint = if let Some(value) = args.get(2).cloned() {
+            value_to_int(value)?
+        } else {
+            0
+        };
+
+        let host_name = match host {
+            Value::None => "0.0.0.0".to_string(),
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("host must be string or None")),
+        };
+        let port_value = match port {
+            Value::Int(value) => value,
+            Value::Bool(value) => {
+                if value {
+                    1
+                } else {
+                    0
+                }
+            }
+            Value::Str(value) => value
+                .parse::<i64>()
+                .map_err(|_| RuntimeError::new("port must be int-compatible"))?,
+            _ => return Err(RuntimeError::new("port must be int-compatible")),
+        };
+        if !(0..=u16::MAX as i64).contains(&port_value) {
+            return Err(RuntimeError::new("port out of range"));
+        }
+        let port = port_value as u16;
+
+        let resolved = (host_name.as_str(), port)
+            .to_socket_addrs()
+            .map_err(|err| RuntimeError::new(format!("name resolution failed: {err}")))?;
+        let mut entries = Vec::new();
+        for addr in resolved {
+            let family = match addr {
+                SocketAddr::V4(_) => 2,
+                SocketAddr::V6(_) => 10,
+            };
+            if family_hint != 0 && family_hint != family {
+                continue;
+            }
+            let sockaddr = match addr {
+                SocketAddr::V4(v4) => self.heap.alloc_tuple(vec![
+                    Value::Str(v4.ip().to_string()),
+                    Value::Int(v4.port() as i64),
+                ]),
+                SocketAddr::V6(v6) => self.heap.alloc_tuple(vec![
+                    Value::Str(v6.ip().to_string()),
+                    Value::Int(v6.port() as i64),
+                    Value::Int(v6.flowinfo() as i64),
+                    Value::Int(v6.scope_id() as i64),
+                ]),
+            };
+            let entry = self.heap.alloc_tuple(vec![
+                Value::Int(family),
+                Value::Int(if socktype_hint == 0 { 1 } else { socktype_hint }),
+                Value::Int(proto_hint),
+                Value::Str(String::new()),
+                sockaddr,
+            ]);
+            entries.push(entry);
+        }
+        Ok(self.heap.alloc_list(entries))
+    }
+
+    fn builtin_socket_fromfd(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || (args.len() != 3 && args.len() != 4) {
+            return Err(RuntimeError::new(
+                "fromfd() expects fd, family, type and optional proto",
+            ));
+        }
+        let fd = value_to_int(args.remove(0))?;
+        let _family = value_to_int(args.remove(0))?;
+        let _sock_type = value_to_int(args.remove(0))?;
+        if !args.is_empty() {
+            let _ = value_to_int(args.remove(0))?;
+        }
+        self.alloc_socket_instance_with_fd(fd)
+    }
+
+    fn builtin_socket_getdefaulttimeout(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "getdefaulttimeout() expects no arguments",
+            ));
+        }
+        match self.socket_default_timeout {
+            Some(timeout) => Ok(Value::Float(timeout)),
+            None => Ok(Value::None),
+        }
+    }
+
+    fn builtin_socket_setdefaulttimeout(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "setdefaulttimeout() expects one timeout argument",
+            ));
+        }
+        match args.remove(0) {
+            Value::None => self.socket_default_timeout = None,
+            value => {
+                let timeout = value_to_f64(value)?;
+                if timeout.is_sign_negative() {
+                    return Err(RuntimeError::new("timeout must be non-negative"));
+                }
+                self.socket_default_timeout = Some(timeout);
+            }
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_socket_ntohs(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("ntohs() expects one argument"));
+        }
+        let value = value_to_int(args.remove(0))?;
+        let value = u16::try_from(value).map_err(|_| RuntimeError::new("value out of range"))?;
+        Ok(Value::Int(u16::from_be(value) as i64))
+    }
+
+    fn builtin_socket_ntohl(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("ntohl() expects one argument"));
+        }
+        let value = value_to_int(args.remove(0))?;
+        let value = u32::try_from(value).map_err(|_| RuntimeError::new("value out of range"))?;
+        Ok(Value::Int(u32::from_be(value) as i64))
+    }
+
+    fn builtin_socket_htons(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("htons() expects one argument"));
+        }
+        let value = value_to_int(args.remove(0))?;
+        let value = u16::try_from(value).map_err(|_| RuntimeError::new("value out of range"))?;
+        Ok(Value::Int(value.to_be() as i64))
+    }
+
+    fn builtin_socket_htonl(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("htonl() expects one argument"));
+        }
+        let value = value_to_int(args.remove(0))?;
+        let value = u32::try_from(value).map_err(|_| RuntimeError::new("value out of range"))?;
+        Ok(Value::Int(value.to_be() as i64))
     }
 
     fn builtin_colorize_can_colorize(

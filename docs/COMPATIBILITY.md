@@ -60,6 +60,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] `asyncio` foundations (`run`, `sleep`, `create_task`, `gather`)
 - [~] `threading` foundations (`get_ident`, `current_thread`, `main_thread`, `active_count`)
 - [~] `signal` foundations (`signal`, `getsignal`, `raise_signal`, core constants)
+- [~] `socket` / `_socket` foundations (`gethostname`, `gethostbyname`, `getaddrinfo`, `fromfd`, `getdefaulttimeout`/`setdefaulttimeout`, and `hton*`/`ntoh*` now execute non-`NoOp` module-level paths; class-instance method binding parity still pending)
 
 ## CPython Tests
 - [x] First-class CPython harness with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`)

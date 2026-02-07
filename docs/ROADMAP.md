@@ -281,6 +281,7 @@ Progress:
 - `_opcode` parity batch landed for metadata helpers: `stack_effect`, `has_arg`, `has_const`, `has_name`, `has_jump`, `has_free`, `has_local`, `has_exc`, and `get_executor` now execute non-`NoOp` metadata-backed logic with dedicated VM regressions.
 - `decimal`/`_thread`/`_warnings` parity batch landed for foundational runtime helpers: `decimal.getcontext`/`setcontext`/`localcontext`, `_thread.start_new_thread`, and `_warnings._acquire_lock`/`_release_lock` now execute non-`NoOp` baseline logic with dedicated VM regressions.
 - `builtins.exec` parity batch landed for executable code paths: `exec` now executes source strings and code objects with explicit `globals`/`locals` namespace handling and closure arity validation, replacing prior `NoOp` behavior with dedicated VM regressions.
+- `_socket` parity batch landed for module-level networking helpers: `gethostname`, `gethostbyname`, `getaddrinfo`, `fromfd`, default-timeout getters/setters, and byte-order helpers (`hton*`/`ntoh*`) now execute non-`NoOp` logic with dedicated VM regressions; socket instance method binding parity is still tracked in Milestone 13.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)

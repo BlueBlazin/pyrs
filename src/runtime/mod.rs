@@ -1213,6 +1213,16 @@ pub enum BuiltinFunction {
     SignalSignal,
     SignalGetSignal,
     SignalRaiseSignal,
+    SocketGetHostName,
+    SocketGetHostByName,
+    SocketGetAddrInfo,
+    SocketFromFd,
+    SocketGetDefaultTimeout,
+    SocketSetDefaultTimeout,
+    SocketNtoHs,
+    SocketNtoHl,
+    SocketHtoNs,
+    SocketHtoNl,
     BinasciiCrc32,
     CollectionsCountElements,
     AtexitRegister,
@@ -2863,6 +2873,16 @@ impl BuiltinFunction {
             | BuiltinFunction::SignalSignal
             | BuiltinFunction::SignalGetSignal
             | BuiltinFunction::SignalRaiseSignal
+            | BuiltinFunction::SocketGetHostName
+            | BuiltinFunction::SocketGetHostByName
+            | BuiltinFunction::SocketGetAddrInfo
+            | BuiltinFunction::SocketFromFd
+            | BuiltinFunction::SocketGetDefaultTimeout
+            | BuiltinFunction::SocketSetDefaultTimeout
+            | BuiltinFunction::SocketNtoHs
+            | BuiltinFunction::SocketNtoHl
+            | BuiltinFunction::SocketHtoNs
+            | BuiltinFunction::SocketHtoNl
             | BuiltinFunction::BinasciiCrc32
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
