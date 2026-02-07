@@ -2077,7 +2077,7 @@ impl Vm {
                 ("cmp_to_key", BuiltinFunction::FunctoolsCmpToKey),
                 ("lru_cache", BuiltinFunction::FunctoolsLruCache),
                 ("cache", BuiltinFunction::FunctoolsLruCache),
-                ("cached_property", BuiltinFunction::TypingIdFunc),
+                ("cached_property", BuiltinFunction::FunctoolsCachedProperty),
                 ("total_ordering", BuiltinFunction::TypingIdFunc),
                 ("singledispatch", BuiltinFunction::FunctoolsSingleDispatch),
                 (
@@ -7873,9 +7873,7 @@ impl Vm {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
-                Object::Class(class_data) => {
-                    class_data.name == "BaseException" || class_data.name == "Exception"
-                }
+                Object::Class(class_data) => self.exception_inherits(&class_data.name, "BaseException"),
                 _ => false,
             })
     }
@@ -8538,6 +8536,36 @@ impl Vm {
         Some((fget, fset, fdel, doc))
     }
 
+    fn cached_property_descriptor_parts(
+        &self,
+        descriptor: &ObjRef,
+    ) -> Option<(Value, Option<String>, Value)> {
+        let descriptor_kind = descriptor.kind();
+        let instance_data = match &*descriptor_kind {
+            Object::Instance(instance_data) => instance_data,
+            _ => return None,
+        };
+        match instance_data.attrs.get("__pyrs_cached_property__") {
+            Some(Value::Bool(true)) => {}
+            _ => return None,
+        }
+        let func = instance_data
+            .attrs
+            .get("func")
+            .cloned()
+            .unwrap_or(Value::None);
+        let attr_name = match instance_data.attrs.get("attrname") {
+            Some(Value::Str(name)) => Some(name.clone()),
+            _ => None,
+        };
+        let doc = instance_data
+            .attrs
+            .get("__doc__")
+            .cloned()
+            .unwrap_or(Value::None);
+        Some((func, attr_name, doc))
+    }
+
     fn build_property_descriptor(
         &self,
         fget: Value,
@@ -8618,6 +8646,27 @@ impl Vm {
         }
     }
 
+    fn load_attr_cached_property_instance(&self, instance: &ObjRef, attr_name: &str) -> Option<Value> {
+        let Some((func, attr_name_value, doc)) = self.cached_property_descriptor_parts(instance)
+        else {
+            return None;
+        };
+        match attr_name {
+            "func" => Some(func),
+            "attrname" => Some(
+                attr_name_value
+                    .map(Value::Str)
+                    .unwrap_or(Value::None),
+            ),
+            "__doc__" => Some(doc),
+            "__isabstractmethod__" => Some(Value::Bool(false)),
+            "__get__" => Some(
+                self.alloc_native_bound_method(NativeMethodKind::CachedPropertyGet, instance.clone()),
+            ),
+            _ => None,
+        }
+    }
+
     fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
         match builtin {
             BuiltinFunction::Type => "type",
@@ -8638,6 +8687,7 @@ impl Vm {
             BuiltinFunction::ClassMethod => "classmethod",
             BuiltinFunction::StaticMethod => "staticmethod",
             BuiltinFunction::Property => "property",
+            BuiltinFunction::FunctoolsCachedProperty => "cached_property",
             _ => "builtin",
         }
     }
@@ -9339,6 +9389,16 @@ impl Vm {
                     )),
                 ));
             }
+            if self.cached_property_descriptor_parts(instance).is_some() {
+                return Ok((
+                    Some(self.alloc_native_bound_method(
+                        NativeMethodKind::CachedPropertyGet,
+                        instance.clone(),
+                    )),
+                    None,
+                    None,
+                ));
+            }
         }
 
         let Some(class_ref) = self.class_of_value(descriptor) else {
@@ -9727,6 +9787,9 @@ impl Vm {
         };
 
         if let Some(attr) = self.load_attr_property_instance(instance, attr_name) {
+            return Ok(AttrAccessOutcome::Value(attr));
+        }
+        if let Some(attr) = self.load_attr_cached_property_instance(instance, attr_name) {
             return Ok(AttrAccessOutcome::Value(attr));
         }
 
@@ -11669,6 +11732,51 @@ impl Vm {
                 )?;
                 Ok(NativeCallResult::Value(updated))
             }
+            NativeMethodKind::CachedPropertyGet => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("__get__() expects 2 arguments"));
+                }
+                let obj = args.first().cloned().expect("checked len");
+                if matches!(obj, Value::None) {
+                    return Ok(NativeCallResult::Value(Value::Instance(receiver)));
+                }
+                let instance = match obj {
+                    Value::Instance(instance) => instance,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "cached_property.__get__ expects an instance",
+                        ));
+                    }
+                };
+                let Some((func, attr_name, _doc)) = self.cached_property_descriptor_parts(&receiver)
+                else {
+                    return Err(RuntimeError::new("cached_property receiver is invalid"));
+                };
+                let Some(attr_name) = attr_name else {
+                    return Err(RuntimeError::new("cached_property is missing attrname"));
+                };
+                if let Object::Instance(instance_data) = &*instance.kind() {
+                    if let Some(existing) = instance_data.attrs.get(&attr_name).cloned() {
+                        return Ok(NativeCallResult::Value(existing));
+                    }
+                }
+                let value = match self.call_internal(
+                    func,
+                    vec![Value::Instance(instance.clone())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Ok(NativeCallResult::PropagatedException);
+                    }
+                };
+                match self.store_attr_instance_direct(&instance, &attr_name, value.clone())? {
+                    AttrMutationOutcome::Done => Ok(NativeCallResult::Value(value)),
+                    AttrMutationOutcome::ExceptionHandled => {
+                        Ok(NativeCallResult::PropagatedException)
+                    }
+                }
+            }
             NativeMethodKind::OperatorItemGetterCall => {
                 if !kwargs.is_empty() || args.len() != 1 {
                     return Err(RuntimeError::new("itemgetter expected 1 argument"));
@@ -12858,6 +12966,9 @@ impl Vm {
             BuiltinFunction::FunctoolsWraps => self.builtin_functools_wraps(args, kwargs),
             BuiltinFunction::FunctoolsPartial => self.builtin_functools_partial(args, kwargs),
             BuiltinFunction::FunctoolsCmpToKey => self.builtin_functools_cmp_to_key(args, kwargs),
+            BuiltinFunction::FunctoolsCachedProperty => {
+                self.builtin_functools_cached_property(args, kwargs)
+            }
             BuiltinFunction::CollectionsCounter => self.builtin_collections_counter(args, kwargs),
             BuiltinFunction::CollectionsDeque => self.builtin_collections_deque(args, kwargs),
             BuiltinFunction::CollectionsDefaultDict => {
@@ -13778,7 +13889,7 @@ impl Vm {
                         if let Some(method) = self.lookup_bound_special_method(&arg, "__int__")? {
                             return match self.call_internal(method, Vec::new(), HashMap::new())? {
                                 InternalCallOutcome::Value(value) => match value {
-                                    Value::Int(_) | Value::Bool(_) => {
+                                    Value::Int(_) | Value::BigInt(_) | Value::Bool(_) => {
                                         BuiltinFunction::Int.call(&self.heap, vec![value])
                                     }
                                     _ => Err(RuntimeError::new("__int__ returned non-int")),
@@ -15497,7 +15608,7 @@ impl Vm {
                 )
             }
             BuiltinFunction::Bool => matches!(value, Value::Bool(_)),
-            BuiltinFunction::Int => matches!(value, Value::Int(_) | Value::Bool(_)),
+            BuiltinFunction::Int => matches!(value, Value::Int(_) | Value::BigInt(_) | Value::Bool(_)),
             BuiltinFunction::Float => matches!(value, Value::Float(_)),
             BuiltinFunction::Str => matches!(value, Value::Str(_)),
             BuiltinFunction::List => matches!(value, Value::List(_)),
@@ -20761,6 +20872,47 @@ impl Vm {
             module_data.globals.insert("cmp".to_string(), comparator);
         }
         Ok(self.alloc_native_bound_method(NativeMethodKind::FunctoolsCmpToKeyCall, receiver))
+    }
+
+    fn builtin_functools_cached_property(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "cached_property() expects one callable",
+            ));
+        }
+        let func = args[0].clone();
+        if !self.is_callable_value(&func) {
+            return Err(RuntimeError::new("cached_property() expects callable"));
+        }
+        let attr_name = match &func {
+            Value::Function(func_ref) => match &*func_ref.kind() {
+                Object::Function(func_data) => Some(func_data.code.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let class = match self
+            .heap
+            .alloc_class(ClassObject::new("cached_property".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        let mut instance = InstanceObject::new(class);
+        instance
+            .attrs
+            .insert("__pyrs_cached_property__".to_string(), Value::Bool(true));
+        instance.attrs.insert("func".to_string(), func);
+        instance.attrs.insert(
+            "attrname".to_string(),
+            attr_name.map(Value::Str).unwrap_or(Value::None),
+        );
+        instance.attrs.insert("__doc__".to_string(), Value::None);
+        Ok(self.heap.alloc_instance(instance))
     }
 
     fn builtin_collections_counter(

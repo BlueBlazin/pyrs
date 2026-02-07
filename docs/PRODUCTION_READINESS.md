@@ -106,12 +106,12 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Testing & QA**
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
-- [x] P0: Current curated CPython language/import harness suites pass with zero allowlist entries (`tests/cpython_allowlist.txt`).
+- [~] P0: Current curated CPython language/import harness suites are near zero-allowlist; expanded language-suite import closure is blocked by class-statement inheritance hangs for `seq_tests`-style bases (`tests/cpython_allowlist.txt` remains empty, blocker tracked in `docs/STUB_ACCOUNTING.md`).
 - [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).
 - [x] P1: Curated real-world smoke/regression suite with constrained subprocess profile (`tests/realworld_smoke.rs`, `scripts/run_parity_gate.sh`).
-- [~] P1: Stdlib-import regression probes for bigint-heavy paths (`ipaddress` class-raise path currently tracked via ignored regression test pending exception-model closure).
+- [~] P1: Stdlib-import regression probes for bigint-heavy paths (`ipaddress` import path now has active regression coverage; remaining probe blocker is class-statement inheritance hang for `seq_tests`-style bases during expanded CPython suite imports).
 - [ ] P2: Deterministic reproduction harness for crash bugs.
 
 **Performance & Profiling**

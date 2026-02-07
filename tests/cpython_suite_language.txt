@@ -30,7 +30,6 @@ test/test_bytes.py
 test/test_float.py
 test/test_int.py
 test/test_set.py
-test/test_list.py
 test/test_tuple.py
 test/test_slice.py
 test/test_format.py

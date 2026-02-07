@@ -60,7 +60,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] `decimal`, `_pylong`, `_thread`, `_warnings` (`decimal.getcontext`/`setcontext`/`localcontext`, `_pylong` conversion/division helpers (`int_to_decimal_string`, `int_divmod`, `int_from_string`, `compute_powers`, `_dec_str_to_int_inner`), `_thread.start_new_thread`, and `_warnings._acquire_lock`/`_release_lock` now execute non-`NoOp` baseline paths; full semantics still pending)
 - [~] `random` foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`)
 - [~] `math`, `itertools` (`math` core transcendentals/aggregates now execute non-`NoOp` paths; `itertools` long-tail helpers now execute non-`NoOp` paths (`accumulate`, `combinations*`, `compress`, `dropwhile`, `filterfalse`, `groupby`, `islice`, `pairwise`, `starmap`, `takewhile`, `tee`, `zip_longest`); full iterator/laziness edge parity still pending)
-- [~] `operator`, `functools` (`operator.itemgetter`/`attrgetter`/`methodcaller` and `functools.cmp_to_key` now execute non-`NoOp` paths with `sorted`/`min`/`max` key interoperability; `functools.partial` unwraps `staticmethod(...)` and `classmethod(...)` wrappers for partial/partialmethod class-body compatibility; `functools.wraps` now copies wrapper metadata (`__dict__`, `__wrapped__`) for function and bound-method inputs; long-tail API parity still pending)
+- [~] `operator`, `functools` (`operator.itemgetter`/`attrgetter`/`methodcaller` and `functools.cmp_to_key` now execute non-`NoOp` paths with `sorted`/`min`/`max` key interoperability; `functools.partial` unwraps `staticmethod(...)` and `classmethod(...)` wrappers for partial/partialmethod class-body compatibility; `functools.wraps` now copies wrapper metadata (`__dict__`, `__wrapped__`) for function and bound-method inputs; `functools.cached_property` now executes descriptor-backed cache semantics used by stdlib paths like `ipaddress`; long-tail API parity still pending)
 - [~] `json`, `re`, `datetime`
 - [~] `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`)
 - [~] `asyncio` foundations (`run`, `sleep`, `create_task`, `gather`)
@@ -74,7 +74,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 ## CPython Tests
 - [x] First-class CPython harness with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`)
 - [x] Owned allowlist tracking (`tests/cpython_allowlist.txt`) with stale-entry detection in harness
-- [x] Current curated language/import harness suites pass with an empty allowlist
+- [~] Current curated language/import harness suites are near-empty-allowlist; expanded language-suite import closure is currently blocked by class-statement inheritance hangs for `seq_tests`-style bases (tracked in `docs/STUB_ACCOUNTING.md`)
 - [x] Differential tests vs CPython (`tests/differential_cpython.rs`)
 - [x] Parser/compiler/VM fuzzing (`tests/fuzz_parser_vm.rs` + existing arithmetic fuzz)
 - [~] Incremental `Lib/test` coverage expansion (broader suite growth and allowlist reduction ongoing; latest language-suite expansion adds `test_set`, `test_list`, `test_tuple`, `test_slice`, `test_format`, and `test_configparser`)

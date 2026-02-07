@@ -334,7 +334,6 @@ ok = (a == 0 and b == 1)\n";
 }
 
 #[test]
-#[ignore = "Milestone 13 backlog: class-based raise parity for stdlib ipaddress import"]
 fn imports_ipaddress_and_executes_ipv6_bigint_paths() {
     let Some(lib) = cpython_lib_path() else {
         return;
@@ -4256,6 +4255,45 @@ fn filter_builtin_supports_callable_and_none_predicate() {
 #[test]
 fn list_slice_assignment_supports_replacement_and_extended_steps() {
     let source = "a = [0, 1, 2, 3, 4]\na[1:4] = [10, 11]\nb = [0, 1, 2, 3, 4, 5]\nb[::2] = [9, 8, 7]\nerr = False\ntry:\n    b[::2] = [1]\nexcept Exception:\n    err = True\nok = (a == [0, 10, 11, 4] and b == [9, 1, 8, 3, 7, 5] and err)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn functools_cached_property_caches_instance_value() {
+    let source = r#"import functools
+class C:
+    def __init__(self):
+        self.calls = 0
+    @functools.cached_property
+    def value(self):
+        self.calls += 1
+        return 40 + self.calls
+c = C()
+a = c.value
+b = c.value
+ok = (a == 41 and b == 41 and c.calls == 1 and hasattr(c, 'value'))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn functools_cached_property_exposes_descriptor_on_class_access() {
+    let source = r#"import functools
+class C:
+    @functools.cached_property
+    def value(self):
+        return 1
+desc = C.value
+ok = (hasattr(desc, '__get__') and desc.attrname == 'value')
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

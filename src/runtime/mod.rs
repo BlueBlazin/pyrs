@@ -216,6 +216,7 @@ pub enum NativeMethodKind {
     PropertyGetter,
     PropertySetter,
     PropertyDeleter,
+    CachedPropertyGet,
     OperatorItemGetterCall,
     OperatorAttrGetterCall,
     OperatorMethodCallerCall,
@@ -1657,6 +1658,7 @@ pub enum BuiltinFunction {
     FunctoolsWraps,
     FunctoolsPartial,
     FunctoolsCmpToKey,
+    FunctoolsCachedProperty,
     FunctoolsLruCache,
     CollectionsCounter,
     CollectionsDeque,
@@ -2056,6 +2058,7 @@ impl BuiltinFunction {
                 }
                 match &args[0] {
                     Value::Int(value) => Ok(Value::Int(*value)),
+                    Value::BigInt(value) => Ok(Value::BigInt(value.clone())),
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
                     Value::Float(value) => Ok(Value::Int(*value as i64)),
                     Value::Str(value) => Ok(Value::Int(parse_with_base(value, explicit_base)?)),
@@ -2702,6 +2705,9 @@ impl BuiltinFunction {
                     Ok(Value::Builtin(BuiltinFunction::FunctoolsLruCache))
                 }
             }
+            BuiltinFunction::FunctoolsCachedProperty => Err(RuntimeError::new(
+                "cached_property() requires VM context",
+            )),
             BuiltinFunction::TokenizeTokenizerIter => {
                 if args.is_empty() {
                     return Err(RuntimeError::new("TokenizerIter() expects source"));
@@ -4364,6 +4370,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::PropertyDeleter => {
                         "<bound method property.deleter>".to_string()
+                    }
+                    NativeMethodKind::CachedPropertyGet => {
+                        "<bound method cached_property.__get__>".to_string()
                     }
                     NativeMethodKind::OperatorItemGetterCall => {
                         "<bound method operator.itemgetter-call>".to_string()
