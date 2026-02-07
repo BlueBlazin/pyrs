@@ -7436,19 +7436,15 @@ impl Vm {
             _ => ("<class>".to_string(), HashMap::new()),
         };
 
+        let resolved_metaclass = self.resolve_class_metaclass(&bases, metaclass.as_ref())?;
         if let Some(meta) = metaclass {
-            if matches!(meta, Value::Builtin(BuiltinFunction::Type)) {
-                return Ok(ClassBuildOutcome::Value(
-                    self.build_default_class_value(name, attrs, bases),
-                ));
-            }
-            if matches!(meta, Value::Class(_)) {
-                // Temporary compatibility path: treat custom metaclass objects as a
-                // normal class constructor until full metaclass __new__/__call__
-                // semantics are implemented.
-                return Ok(ClassBuildOutcome::Value(
-                    self.build_default_class_value(name, attrs, bases),
-                ));
+            if matches!(meta, Value::Builtin(BuiltinFunction::Type) | Value::Class(_)) {
+                return Ok(ClassBuildOutcome::Value(self.build_default_class_value(
+                    name,
+                    attrs,
+                    bases,
+                    resolved_metaclass,
+                )));
             }
             if self.frames.is_empty() {
                 return Err(RuntimeError::new("metaclass call requires active frame"));
@@ -7470,7 +7466,12 @@ impl Vm {
                 class_keywords,
             )? {
                 InternalCallOutcome::Value(value) => {
-                    if matches!(value, Value::Class(_)) {
+                    if let Value::Class(class) = &value {
+                        if let Some(meta_class) = resolved_metaclass {
+                            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                                class_data.metaclass = Some(meta_class);
+                            }
+                        }
                         Ok(ClassBuildOutcome::Value(value))
                     } else {
                         Err(RuntimeError::new("metaclass must return a class object"))
@@ -7482,9 +7483,64 @@ impl Vm {
             };
         }
 
-        Ok(ClassBuildOutcome::Value(
-            self.build_default_class_value(name, attrs, bases),
-        ))
+        Ok(ClassBuildOutcome::Value(self.build_default_class_value(
+            name,
+            attrs,
+            bases,
+            resolved_metaclass,
+        )))
+    }
+
+    fn resolve_class_metaclass(
+        &self,
+        bases: &[ObjRef],
+        explicit_metaclass: Option<&Value>,
+    ) -> Result<Option<ObjRef>, RuntimeError> {
+        let mut winner = match explicit_metaclass {
+            Some(Value::Class(class)) => Some(class.clone()),
+            _ => None,
+        };
+
+        for base in bases {
+            let base_meta = match &*base.kind() {
+                Object::Class(class_data) => class_data.metaclass.clone(),
+                _ => None,
+            };
+            winner = self.merge_metaclass_candidates(winner, base_meta)?;
+        }
+
+        Ok(winner)
+    }
+
+    fn merge_metaclass_candidates(
+        &self,
+        left: Option<ObjRef>,
+        right: Option<ObjRef>,
+    ) -> Result<Option<ObjRef>, RuntimeError> {
+        match (left, right) {
+            (None, None) => Ok(None),
+            (Some(meta), None) | (None, Some(meta)) => Ok(Some(meta)),
+            (Some(left_meta), Some(right_meta)) => {
+                if left_meta.id() == right_meta.id() {
+                    return Ok(Some(left_meta));
+                }
+                if self.class_is_subclass_of(&left_meta, &right_meta) {
+                    return Ok(Some(left_meta));
+                }
+                if self.class_is_subclass_of(&right_meta, &left_meta) {
+                    return Ok(Some(right_meta));
+                }
+                Err(RuntimeError::new(
+                    "metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases",
+                ))
+            }
+        }
+    }
+
+    fn class_is_subclass_of(&self, class: &ObjRef, target: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| entry.id() == target.id())
     }
 
     fn build_default_class_value(
@@ -7492,6 +7548,7 @@ impl Vm {
         name: String,
         attrs: HashMap<String, Value>,
         bases: Vec<ObjRef>,
+        metaclass: Option<ObjRef>,
     ) -> Value {
         let module_name = self
             .frames
@@ -7506,6 +7563,7 @@ impl Vm {
         if let Value::Class(class_ref) = &class_value {
             if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                 class_data.attrs.extend(attrs);
+                class_data.metaclass = metaclass;
                 if matches!(
                     class_data.name.as_str(),
                     "Enum"
@@ -7800,7 +7858,10 @@ impl Vm {
                 Object::Instance(instance_data) => Some(instance_data.class.clone()),
                 _ => None,
             },
-            Value::Class(class) => Some(class.clone()),
+            Value::Class(class) => match &*class.kind() {
+                Object::Class(class_data) => class_data.metaclass.clone().or(Some(class.clone())),
+                _ => Some(class.clone()),
+            },
             Value::Super(super_obj) => match &*super_obj.kind() {
                 Object::Super(data) => Some(data.object_type.clone()),
                 _ => None,
@@ -8672,11 +8733,6 @@ impl Vm {
                 return self.call_internal(call_target, args, kwargs);
             }
             Value::Class(class) => {
-                if !kwargs.is_empty() {
-                    return Err(RuntimeError::new(
-                        "class calls with keyword arguments are not supported",
-                    ));
-                }
                 let instance = match self.heap.alloc_instance(InstanceObject::new(class.clone())) {
                     Value::Instance(obj) => obj,
                     _ => unreachable!(),
@@ -8690,7 +8746,7 @@ impl Vm {
                     let mut init_args = Vec::with_capacity(args.len() + 1);
                     init_args.push(Value::Instance(instance.clone()));
                     init_args.extend(args);
-                    let bindings = bind_arguments(&func_data, &self.heap, init_args, HashMap::new())?;
+                    let bindings = bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
                     let cells = self.build_cells(&func_data.code, func_data.closure.clone());
                     let mut frame = Frame::new(
                         func_data.code.clone(),
@@ -8706,6 +8762,11 @@ impl Vm {
                     self.frames.push(frame);
                     self.frames.len() > depth_before
                 } else {
+                    if !kwargs.is_empty() || !args.is_empty() {
+                        return Err(RuntimeError::new(
+                            "class constructor takes no arguments",
+                        ));
+                    }
                     self.push_value(Value::Instance(instance));
                     false
                 }
@@ -8749,10 +8810,11 @@ impl Vm {
         class: &ObjRef,
         attr_name: &str,
     ) -> Result<AttrAccessOutcome, RuntimeError> {
-        let class_name = match &*class.kind() {
-            Object::Class(class_data) => class_data.name.clone(),
-            _ => "<class>".to_string(),
+        let (class_name, class_metaclass) = match &*class.kind() {
+            Object::Class(class_data) => (class_data.name.clone(), class_data.metaclass.clone()),
+            _ => ("<class>".to_string(), None),
         };
+        let mut descriptor_owner: Option<ObjRef> = None;
         let attr = if let Some(attr) = class_attr_lookup(class, attr_name) {
             attr
         } else if attr_name == "__dict__" {
@@ -8781,6 +8843,16 @@ impl Vm {
             Value::None
         } else if attr_name == "__flags__" {
             Value::Int(PY_TPFLAGS_HEAPTYPE)
+        } else if let Some(meta) = class_metaclass {
+            if let Some(meta_attr) = class_attr_lookup(&meta, attr_name) {
+                descriptor_owner = Some(meta);
+                meta_attr
+            } else {
+                return Err(RuntimeError::new(format!(
+                    "class '{}' has no attribute '{}'",
+                    class_name, attr_name
+                )));
+            }
         } else {
             return Err(RuntimeError::new(format!(
                 "class '{}' has no attribute '{}'",
@@ -8788,12 +8860,26 @@ impl Vm {
             )));
         };
 
+        if descriptor_owner.is_some() {
+            if let Value::Function(func) = attr.clone() {
+                let bound = BoundMethod::new(func, class.clone());
+                return Ok(AttrAccessOutcome::Value(
+                    self.heap.alloc_bound_method(bound),
+                ));
+            }
+        }
+
         let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
         if let Some(getter) = getter {
+            let getter_args = if let Some(owner) = descriptor_owner {
+                vec![Value::Class(class.clone()), Value::Class(owner)]
+            } else {
+                vec![Value::None, Value::Class(class.clone())]
+            };
             return Ok(
                 match self.call_internal(
                     getter,
-                    vec![Value::None, Value::Class(class.clone())],
+                    getter_args,
                     HashMap::new(),
                 )? {
                     InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
@@ -9145,6 +9231,15 @@ impl Vm {
         }
 
         if let Some(allowed_slots) = collect_slot_names(&class_ref) {
+            let has_dynamic_dict = allowed_slots
+                .iter()
+                .any(|name| name == "__dict__");
+            if has_dynamic_dict {
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data.attrs.insert(attr_name.to_string(), value);
+                }
+                return Ok(AttrMutationOutcome::Done);
+            }
             let allowed = allowed_slots.iter().any(|name| name == attr_name);
             if !allowed {
                 return Err(RuntimeError::new(format!(
@@ -12363,10 +12458,15 @@ impl Vm {
                                 .any(|entry| entry.id() == expected.id())),
                             _ => Ok(false),
                         },
-                        Value::Class(class) => Ok(self
-                            .class_mro_entries(class)
-                            .iter()
-                            .any(|entry| entry.id() == expected.id())),
+                        Value::Class(class) => {
+                            let Some(meta_class) = class_of_class(class) else {
+                                return Ok(false);
+                            };
+                            Ok(self
+                                .class_mro_entries(&meta_class)
+                                .iter()
+                                .any(|entry| entry.id() == expected.id()))
+                        }
                         _ => Ok(false),
                     }
                 }
@@ -15194,8 +15294,16 @@ impl Vm {
             }
         };
 
-        let class_value =
-            self.build_default_class_value(class_name.clone(), HashMap::new(), vec![enum_base]);
+        let enum_metaclass = match &*enum_base.kind() {
+            Object::Class(class_data) => class_data.metaclass.clone(),
+            _ => None,
+        };
+        let class_value = self.build_default_class_value(
+            class_name.clone(),
+            HashMap::new(),
+            vec![enum_base],
+            enum_metaclass,
+        );
         let class_ref = match &class_value {
             Value::Class(class) => class.clone(),
             _ => unreachable!(),
@@ -17486,6 +17594,9 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
         "utf-16" | "utf16" => Ok("utf-16".to_string()),
         "utf-16-le" | "utf16-le" | "utf-16le" | "utf16le" => Ok("utf-16-le".to_string()),
         "utf-16-be" | "utf16-be" | "utf-16be" | "utf16be" => Ok("utf-16-be".to_string()),
+        "utf-32" | "utf32" => Ok("utf-32".to_string()),
+        "utf-32-le" | "utf32-le" | "utf-32le" | "utf32le" => Ok("utf-32-le".to_string()),
+        "utf-32-be" | "utf32-be" | "utf-32be" | "utf32be" => Ok("utf-32-be".to_string()),
         "ascii" => Ok("ascii".to_string()),
         "latin-1" | "latin1" => Ok("latin-1".to_string()),
         _ => Err(RuntimeError::new("unsupported encoding")),
@@ -17525,6 +17636,28 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
             let mut out = Vec::new();
             for unit in text.encode_utf16() {
                 out.extend_from_slice(&unit.to_be_bytes());
+            }
+            Ok(out)
+        }
+        "utf-32" => {
+            let mut out = Vec::new();
+            out.extend_from_slice(&[0xFF, 0xFE, 0x00, 0x00]);
+            for ch in text.chars() {
+                out.extend_from_slice(&(ch as u32).to_le_bytes());
+            }
+            Ok(out)
+        }
+        "utf-32-le" => {
+            let mut out = Vec::new();
+            for ch in text.chars() {
+                out.extend_from_slice(&(ch as u32).to_le_bytes());
+            }
+            Ok(out)
+        }
+        "utf-32-be" => {
+            let mut out = Vec::new();
+            for ch in text.chars() {
+                out.extend_from_slice(&(ch as u32).to_be_bytes());
             }
             Ok(out)
         }
@@ -17582,6 +17715,17 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
         }
         "utf-16-le" => decode_utf16_bytes(bytes, errors, false),
         "utf-16-be" => decode_utf16_bytes(bytes, errors, true),
+        "utf-32" => {
+            if bytes.len() >= 4 && bytes[0..4] == [0x00, 0x00, 0xFE, 0xFF] {
+                decode_utf32_bytes(&bytes[4..], errors, true)
+            } else if bytes.len() >= 4 && bytes[0..4] == [0xFF, 0xFE, 0x00, 0x00] {
+                decode_utf32_bytes(&bytes[4..], errors, false)
+            } else {
+                decode_utf32_bytes(bytes, errors, false)
+            }
+        }
+        "utf-32-le" => decode_utf32_bytes(bytes, errors, false),
+        "utf-32-be" => decode_utf32_bytes(bytes, errors, true),
         "ascii" => {
             let mut out = String::new();
             for byte in bytes {
@@ -17641,6 +17785,38 @@ fn decode_utf16_bytes(bytes: &[u8], errors: &str, big_endian: bool) -> Result<St
                 "replace" | "surrogateescape" => out.push('\u{FFFD}'),
                 _ => return Err(RuntimeError::new("unsupported error handler")),
             },
+        }
+    }
+    Ok(out)
+}
+
+fn decode_utf32_bytes(bytes: &[u8], errors: &str, big_endian: bool) -> Result<String, RuntimeError> {
+    let mut out = String::new();
+    let mut pos = 0usize;
+    while pos + 4 <= bytes.len() {
+        let chunk = [bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]];
+        let code = if big_endian {
+            u32::from_be_bytes(chunk)
+        } else {
+            u32::from_le_bytes(chunk)
+        };
+        match char::from_u32(code) {
+            Some(ch) => out.push(ch),
+            None => match errors {
+                "strict" => return Err(RuntimeError::new("utf-32 codec can't decode bytes")),
+                "ignore" => {}
+                "replace" | "surrogateescape" => out.push('\u{FFFD}'),
+                _ => return Err(RuntimeError::new("unsupported error handler")),
+            },
+        }
+        pos += 4;
+    }
+    if pos < bytes.len() {
+        match errors {
+            "strict" => return Err(RuntimeError::new("utf-32 codec can't decode bytes")),
+            "ignore" => {}
+            "replace" | "surrogateescape" => out.push('\u{FFFD}'),
+            _ => return Err(RuntimeError::new("unsupported error handler")),
         }
     }
     Ok(out)
@@ -18988,12 +19164,17 @@ fn slot_names_from_value(value: Option<Value>) -> Option<Vec<String>> {
 }
 
 fn collect_slot_names(class: &ObjRef) -> Option<Vec<String>> {
-    let mut has_slots = false;
+    let Object::Class(input_class_data) = &*class.kind() else {
+        return None;
+    };
+    if input_class_data.slots.is_none() {
+        return None;
+    }
+
     let mut names = Vec::new();
     for candidate in class_attr_walk(class) {
         if let Object::Class(class_data) = &*candidate.kind() {
             if let Some(slots) = &class_data.slots {
-                has_slots = true;
                 for slot in slots {
                     if !names.iter().any(|existing| existing == slot) {
                         names.push(slot.clone());
@@ -19002,10 +19183,13 @@ fn collect_slot_names(class: &ObjRef) -> Option<Vec<String>> {
             }
         }
     }
-    if has_slots && !names.is_empty() {
-        Some(names)
-    } else {
-        None
+    Some(names)
+}
+
+fn class_of_class(class: &ObjRef) -> Option<ObjRef> {
+    match &*class.kind() {
+        Object::Class(class_data) => class_data.metaclass.clone(),
+        _ => None,
     }
 }
 
@@ -19087,6 +19271,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     }
     if message.contains("attempted relative import with no known parent package") {
         return "ImportError";
+    }
+    if message.contains("metaclass conflict") {
+        return "TypeError";
     }
     if message.contains("unsupported operand type") || message.contains("expects") {
         return "TypeError";

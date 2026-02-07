@@ -37,7 +37,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] `__annotations__` storage for modules/classes/functions
 - [x] Module/import system parity for supported pure-Python scenarios (file-based imports, dotted modules, lazy submodule loading on attribute access, relative `from .` imports, `sys.path`-driven source lookup, `sys.modules` exposure, filesystem namespace-package loading, submodule lookup via package `__path__`, `sys.meta_path` default path-finder control, `sys.path_hooks` + `sys.path_importer_cache` contracts)
 - [x] Module metadata/spec fields for supported loaders (`__package__`, `__spec__`, `__loader__`, `__path__`, `has_location`, `cached`)
-- [x] Classes subset (multiple inheritance with C3 MRO metadata, instance attrs + bound methods, descriptor-aware attribute load/store paths, explicit `super(type, obj)` support, `__slots__` restrictions, class-header `metaclass=` keyword path)
+- [x] Classes subset (multiple inheritance with C3 MRO metadata, instance attrs + bound methods, descriptor-aware attribute load/store paths, explicit `super(type, obj)` support, `__slots__` restrictions including empty-slot and `__dict__` slot behavior, class-header `metaclass=` keyword path, metaclass conflict detection, and metaclass method lookup fallback)
 - [~] Attribute-hook parity (`__getattribute__` custom override path + `object.__getattribute__` baseline are implemented; full CPython fallback/error-edge semantics remain pending)
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
 
@@ -51,7 +51,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] `random` foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`)
 - [~] `math`, `itertools`
 - [~] `json`, `re`, `datetime`
-- [~] `codecs` foundations (`encode`/`decode` for `utf-8`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`)
+- [~] `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`)
 - [~] `asyncio` foundations (`run`, `sleep`, `create_task`, `gather`)
 - [~] `threading` foundations (`get_ident`, `current_thread`, `main_thread`, `active_count`)
 - [~] `signal` foundations (`signal`, `getsignal`, `raise_signal`, core constants)

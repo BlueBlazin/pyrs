@@ -265,6 +265,11 @@ DoD:
 - venv + pip pure-Python package workflows are production-usable and covered by regression tests.
 - Real-world smoke/regression matrix includes CLI/web/data pure-Python app classes running under constrained sandbox profile.
 - `NoOp` and non-`NoOp` partial implementation ledgers stay current (`docs/NOOP_BUILTIN_INVENTORY.txt` + `docs/STUB_ACCOUNTING.md`) with CI drift checks.
+Progress:
+- Metaclass/runtime parity batch landed: resolved-metaclass tracking on class objects, metaclass conflict detection across base classes, and metaclass attribute fallback for class-object attribute access.
+- Class-instance data-model parity batch landed for slot edges: empty `__slots__` classes block dynamic attributes, and `__slots__ = ('__dict__',)` enables dynamic attribute assignment.
+- Codec parity batch expanded foundations to include `utf-32`, `utf-32-le`, and `utf-32-be` encode/decode paths with existing error-mode handling.
+- Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:

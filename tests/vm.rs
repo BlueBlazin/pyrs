@@ -1771,6 +1771,57 @@ fn executes_class_metaclass_keyword_argument() {
 }
 
 #[test]
+fn class_objects_are_instances_of_declared_metaclass() {
+    let source = "class Meta(type):\n    pass\nclass Base(metaclass=Meta):\n    pass\nclass Child(Base):\n    pass\nbase_ok = isinstance(Base, Meta)\nchild_ok = isinstance(Child, Meta)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("base_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("child_ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn class_attribute_falls_back_to_metaclass_method() {
+    let source = "class Meta(type):\n    def tag(cls):\n        return cls.__name__\nclass Sample(metaclass=Meta):\n    pass\nok = Sample.tag() == 'Sample'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn class_metaclass_conflict_raises_type_error() {
+    let source = "class M1(type):\n    pass\nclass M2(type):\n    pass\nclass A(metaclass=M1):\n    pass\nclass B(metaclass=M2):\n    pass\nok = False\ntry:\n    class C(A, B):\n        pass\nexcept TypeError:\n    ok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn empty_slots_block_dynamic_attributes() {
+    let source = "class Empty:\n    __slots__ = ()\nobj = Empty()\nok = False\ntry:\n    obj.value = 1\nexcept AttributeError:\n    ok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dict_slot_allows_dynamic_attributes() {
+    let source = "class Dynamic:\n    __slots__ = ('__dict__',)\nobj = Dynamic()\nobj.value = 12\nok = obj.value == 12\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_type_three_arg_class_creation() {
     let source = "C = type('C', (), {'x': 7})\nc = C()\nv = c.x\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3860,6 +3911,16 @@ fn exposes_sys_builtin_module_names_and_importlib_spec_helper() {
 #[test]
 fn executes_utf16_codec_paths() {
     let source = "import codecs\ntext = 'Hi'\nencoded = text.encode('utf-16-le')\ndecoded = codecs.decode(encoded, 'utf-16-le')\nok = isinstance(encoded, bytes) and decoded == text and len(encoded) == 4\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_utf32_codec_paths() {
+    let source = "import codecs\ntext = 'Hi'\nencoded = text.encode('utf-32-le')\ndecoded = codecs.decode(encoded, 'utf-32-le')\nroundtrip = text.encode('utf-32').decode('utf-32')\nok = isinstance(encoded, bytes) and decoded == text and roundtrip == text and len(encoded) == 8\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

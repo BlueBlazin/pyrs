@@ -61,6 +61,7 @@ pub struct ClassObject {
     pub mro: Vec<ObjRef>,
     pub attrs: HashMap<String, Value>,
     pub slots: Option<Vec<String>>,
+    pub metaclass: Option<ObjRef>,
 }
 
 impl ClassObject {
@@ -71,6 +72,7 @@ impl ClassObject {
             mro: Vec::new(),
             attrs: HashMap::new(),
             slots: None,
+            metaclass: None,
         }
     }
 }
@@ -588,6 +590,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             for base in &class.bases {
                 stack.push(base.clone());
             }
+            if let Some(meta) = &class.metaclass {
+                stack.push(meta.clone());
+            }
             for entry in &class.mro {
                 stack.push(entry.clone());
             }
@@ -688,6 +693,7 @@ fn clear_object_refs(obj: &ObjRef) {
             class.mro.clear();
             class.attrs.clear();
             class.slots = None;
+            class.metaclass = None;
         }
         Object::Instance(instance) => {
             instance.attrs.clear();
@@ -1812,6 +1818,13 @@ impl BuiltinFunction {
                 };
                 let mut class = ClassObject::new(name.clone(), bases);
                 class.attrs = attrs;
+                class.metaclass = class
+                    .bases
+                    .iter()
+                    .find_map(|base| match &*base.kind() {
+                        Object::Class(class_data) => class_data.metaclass.clone(),
+                        _ => None,
+                    });
                 class
                     .attrs
                     .entry("__name__".to_string())
