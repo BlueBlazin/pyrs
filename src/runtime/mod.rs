@@ -385,7 +385,14 @@ impl DictObject {
 
 impl PartialEq for DictObject {
     fn eq(&self, other: &Self) -> bool {
-        self.entries == other.entries
+        if self.len() != other.len() {
+            return false;
+        }
+        self.entries.iter().all(|(key, value)| {
+            other
+                .find(key)
+                .is_some_and(|other_value| other_value == value)
+        })
     }
 }
 
@@ -525,7 +532,10 @@ impl SetObject {
 
 impl PartialEq for SetObject {
     fn eq(&self, other: &Self) -> bool {
-        self.values == other.values
+        if self.len() != other.len() {
+            return false;
+        }
+        self.values.iter().all(|value| other.contains(value))
     }
 }
 
@@ -1275,13 +1285,16 @@ impl PartialEq for Value {
                 (Object::Dict(left), Object::Dict(right)) => left == right,
                 _ => false,
             },
-            (Value::Set(a), Value::Set(b)) | (Value::FrozenSet(a), Value::FrozenSet(b)) => {
-                match (&*a.kind(), &*b.kind()) {
-                    (Object::Set(left), Object::Set(right))
-                    | (Object::FrozenSet(left), Object::FrozenSet(right)) => left == right,
-                    _ => false,
-                }
-            }
+            (Value::Set(a), Value::Set(b))
+            | (Value::Set(a), Value::FrozenSet(b))
+            | (Value::FrozenSet(a), Value::Set(b))
+            | (Value::FrozenSet(a), Value::FrozenSet(b)) => match (&*a.kind(), &*b.kind()) {
+                (
+                    Object::Set(left) | Object::FrozenSet(left),
+                    Object::Set(right) | Object::FrozenSet(right),
+                ) => left == right,
+                _ => false,
+            },
             (Value::Bytes(a), Value::Bytes(b)) | (Value::ByteArray(a), Value::ByteArray(b)) => {
                 match (&*a.kind(), &*b.kind()) {
                     (Object::Bytes(left), Object::Bytes(right))

@@ -1292,6 +1292,30 @@ f_ok = frozenset({1, 2}).issuperset({2}) and frozenset({1, 2}).issubset({1, 2, 3
 }
 
 #[test]
+fn executes_dict_equality_independent_of_insertion_order() {
+    let source = "a = {'left': 1, 'right': 2}\nb = {'right': 2, 'left': 1}\nok = (a == b) and not (a != b)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_set_and_frozenset_equality_with_value_semantics() {
+    let source = "a = {1, 2, 3}\n\
+b = {3, 2, 1}\n\
+c = frozenset({1, 2, 3})\n\
+d = frozenset({3, 1, 2})\n\
+ok = (a == b) and (c == d) and (a == c) and (c == a) and not (a != c)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn rejects_unhashable_dict_key_assignment() {
     let source = "d = {}\nd[[1, 2]] = 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");

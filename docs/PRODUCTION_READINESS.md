@@ -63,7 +63,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (float/complex and mixed int/bool coercion foundations implemented; big-int parity pending).
 - [~] P0: bytes/bytearray/memoryview and buffer protocol (core bytes-like runtime types implemented; full buffer protocol pending).
 - [x] P0: set/frozenset.
-- [~] P0: Hash-based dict/set/frozenset semantic parity (`__hash__` contract, unhashable key/item rejection, CPython-compatible lookup/update behavior) (core unhashable key/item rejection is now enforced on constructor/update/assignment/membership flows; hash-table storage and long-tail edge parity remain pending).
+- [~] P0: Hash-based dict/set/frozenset semantic parity (`__hash__` contract, unhashable key/item rejection, CPython-compatible lookup/update behavior) (core unhashable key/item rejection is now enforced on constructor/update/assignment/membership flows; dict equality is insertion-order independent and set/frozenset equality is value-based including cross-type equality; hash-table storage and long-tail edge parity remain pending).
 - [~] P0: Unicode/codec behavior parity (including error handlers) (`codecs.encode`/`decode` foundations for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace` implemented; full parity pending).
 - [~] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`) (core VM descriptor hooks implemented; metaclass/slot edge parity pending).
 - [~] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) (instance hooks plus custom `__getattribute__` override and `object.__getattribute__` baseline are implemented; full fallback/error-edge parity pending).

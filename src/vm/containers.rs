@@ -17,10 +17,7 @@ pub(crate) fn dict_get_value(dict: &ObjRef, key: &Value) -> Option<Value> {
         Object::Dict(entries) => entries,
         _ => return None,
     };
-    entries
-        .iter()
-        .find(|(entry_key, _)| entry_key == key)
-        .map(|(_, value)| value.clone())
+    entries.find(key).cloned()
 }
 
 pub(crate) fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
@@ -29,11 +26,7 @@ pub(crate) fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
         Object::Dict(entries) => entries,
         _ => return,
     };
-    if let Some((_, entry_value)) = entries.iter_mut().find(|(entry_key, _)| *entry_key == key) {
-        *entry_value = value;
-        return;
-    }
-    entries.push((key, value));
+    entries.insert(key, value);
 }
 
 pub(crate) fn dict_set_value_checked(

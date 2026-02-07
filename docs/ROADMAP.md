@@ -305,6 +305,7 @@ Progress:
 - Container semantics hardening batch landed: hashability guards now enforce `TypeError` for unhashable `dict` keys and `set`/`frozenset` items across core constructor/update/assignment/membership flows, with dedicated VM regressions.
 - VM refactor kickoff landed: container/hashability helpers are extracted into `src/vm/containers.rs` to begin decomposing `src/vm/mod.rs` without behavior regressions.
 - Runtime container upgrade landed: `dict`/`set`/`frozenset` now use dedicated hash-indexed runtime container objects with insertion-order backing vectors.
+- Container equality parity batch landed: dict equality is now insertion-order independent, and set/frozenset equality is now value-based (including cross-type `set == frozenset` semantics), with dedicated VM regressions.
 - Container internals remain a Milestone 13/14 blocker for completion: finish CPython hash/equality edge parity and production-performance closure (growth/load-factor and hot-path behavior).
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
