@@ -1,11 +1,3 @@
-_frozen_importlib._verbose_message
-_frozen_importlib.spec_from_loader
-_frozen_importlib_external._path_join
-_frozen_importlib_external._path_split
-_frozen_importlib_external._path_stat
-_frozen_importlib_external._unpack_uint16
-_frozen_importlib_external._unpack_uint32
-_frozen_importlib_external._unpack_uint64
 _opcode.get_executor
 _opcode.has_arg
 _opcode.has_const

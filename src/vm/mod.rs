@@ -988,12 +988,27 @@ impl Vm {
         self.install_builtin_module(
             "_frozen_importlib_external",
             &[
-                ("_unpack_uint16", BuiltinFunction::NoOp),
-                ("_unpack_uint32", BuiltinFunction::NoOp),
-                ("_unpack_uint64", BuiltinFunction::NoOp),
-                ("_path_stat", BuiltinFunction::NoOp),
-                ("_path_split", BuiltinFunction::NoOp),
-                ("_path_join", BuiltinFunction::NoOp),
+                (
+                    "_unpack_uint16",
+                    BuiltinFunction::FrozenImportlibExternalUnpackUint16,
+                ),
+                (
+                    "_unpack_uint32",
+                    BuiltinFunction::FrozenImportlibExternalUnpackUint32,
+                ),
+                (
+                    "_unpack_uint64",
+                    BuiltinFunction::FrozenImportlibExternalUnpackUint64,
+                ),
+                (
+                    "_path_stat",
+                    BuiltinFunction::FrozenImportlibExternalPathStat,
+                ),
+                (
+                    "_path_split",
+                    BuiltinFunction::FrozenImportlibExternalPathSplit,
+                ),
+                ("_path_join", BuiltinFunction::FrozenImportlibExternalPathJoin),
             ],
             vec![
                 (
@@ -1014,8 +1029,14 @@ impl Vm {
         self.install_builtin_module(
             "_frozen_importlib",
             &[
-                ("spec_from_loader", BuiltinFunction::NoOp),
-                ("_verbose_message", BuiltinFunction::NoOp),
+                (
+                    "spec_from_loader",
+                    BuiltinFunction::FrozenImportlibSpecFromLoader,
+                ),
+                (
+                    "_verbose_message",
+                    BuiltinFunction::FrozenImportlibVerboseMessage,
+                ),
             ],
             vec![(
                 "ModuleSpec",
@@ -11518,6 +11539,30 @@ impl Vm {
             BuiltinFunction::ImportlibSpecFromFileLocation => {
                 self.builtin_importlib_spec_from_file_location(args, kwargs)
             }
+            BuiltinFunction::FrozenImportlibSpecFromLoader => {
+                self.builtin_frozen_importlib_spec_from_loader(args, kwargs)
+            }
+            BuiltinFunction::FrozenImportlibVerboseMessage => {
+                self.builtin_frozen_importlib_verbose_message(args, kwargs)
+            }
+            BuiltinFunction::FrozenImportlibExternalPathJoin => {
+                self.builtin_frozen_importlib_external_path_join(args, kwargs)
+            }
+            BuiltinFunction::FrozenImportlibExternalPathSplit => {
+                self.builtin_frozen_importlib_external_path_split(args, kwargs)
+            }
+            BuiltinFunction::FrozenImportlibExternalPathStat => {
+                self.builtin_frozen_importlib_external_path_stat(args, kwargs)
+            }
+            BuiltinFunction::FrozenImportlibExternalUnpackUint16 => {
+                self.builtin_frozen_importlib_external_unpack_uint16(args, kwargs)
+            }
+            BuiltinFunction::FrozenImportlibExternalUnpackUint32 => {
+                self.builtin_frozen_importlib_external_unpack_uint32(args, kwargs)
+            }
+            BuiltinFunction::FrozenImportlibExternalUnpackUint64 => {
+                self.builtin_frozen_importlib_external_unpack_uint64(args, kwargs)
+            }
             BuiltinFunction::RandomSeed => self.builtin_random_seed(args, kwargs),
             BuiltinFunction::RandomRandom => self.builtin_random_random(args, kwargs),
             BuiltinFunction::RandomRandRange => self.builtin_random_randrange(args, kwargs),
@@ -13839,6 +13884,180 @@ impl Vm {
             }
         }
         Ok(self.heap.alloc_dict(entries))
+    }
+
+    fn builtin_frozen_importlib_spec_from_loader(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "spec_from_loader() expects name, loader, and optional origin/is_package",
+            ));
+        }
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("spec_from_loader() name must be string")),
+        };
+        let loader = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("loader").unwrap_or(Value::None)
+        };
+        let origin = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("origin").unwrap_or(Value::None)
+        };
+        let is_package_value = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("is_package").unwrap_or(Value::Bool(false))
+        };
+        kwargs.remove("cached");
+        kwargs.remove("submodule_search_locations");
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "spec_from_loader() got an unexpected keyword argument",
+            ));
+        }
+        let is_package = match is_package_value {
+            Value::Bool(value) => value,
+            other => is_truthy(&other),
+        };
+        let mut spec = self.build_module_spec_value(
+            &name,
+            None,
+            if matches!(loader, Value::None) {
+                None
+            } else {
+                Some(BUILTIN_MODULE_LOADER)
+            },
+            is_package,
+            &[],
+            false,
+        );
+        if let Value::Dict(spec_obj) = &mut spec {
+            dict_set_value(spec_obj, Value::Str("loader".to_string()), loader);
+            dict_set_value(spec_obj, Value::Str("origin".to_string()), origin.clone());
+            dict_set_value(
+                spec_obj,
+                Value::Str("has_location".to_string()),
+                Value::Bool(!matches!(origin, Value::None)),
+            );
+        }
+        Ok(spec)
+    }
+
+    fn builtin_frozen_importlib_verbose_message(
+        &self,
+        _args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        Ok(Value::None)
+    }
+
+    fn builtin_frozen_importlib_external_path_join(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("_path_join() got unexpected keyword argument"));
+        }
+        let mut out = PathBuf::new();
+        for part in args {
+            out.push(value_to_path(&part)?);
+        }
+        Ok(Value::Str(out.to_string_lossy().to_string()))
+    }
+
+    fn builtin_frozen_importlib_external_path_split(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_path_split() expects one path argument"));
+        }
+        let path = PathBuf::from(value_to_path(&args[0])?);
+        let parent = path
+            .parent()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let tail = path
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_default();
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(parent), Value::Str(tail)]))
+    }
+
+    fn builtin_frozen_importlib_external_path_stat(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_path_stat() expects one path argument"));
+        }
+        let path = value_to_path(&args[0])?;
+        let metadata =
+            fs::metadata(path).map_err(|err| RuntimeError::new(format!("stat failed: {err}")))?;
+        self.build_stat_result(metadata, false)
+    }
+
+    fn builtin_frozen_importlib_external_unpack_uint16(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_frozen_importlib_external_unpack_uint(args, kwargs, 2)
+    }
+
+    fn builtin_frozen_importlib_external_unpack_uint32(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_frozen_importlib_external_unpack_uint(args, kwargs, 4)
+    }
+
+    fn builtin_frozen_importlib_external_unpack_uint64(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_frozen_importlib_external_unpack_uint(args, kwargs, 8)
+    }
+
+    fn builtin_frozen_importlib_external_unpack_uint(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        width: usize,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_unpack_uint*() expects one bytes argument"));
+        }
+        let bytes = bytes_like_from_value(args[0].clone())?;
+        if bytes.len() < width {
+            return Err(RuntimeError::new("_unpack_uint*() argument too short"));
+        }
+        let value = match width {
+            2 => u16::from_le_bytes([bytes[0], bytes[1]]) as u64,
+            4 => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64,
+            8 => u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]),
+            _ => unreachable!(),
+        };
+        if value > i64::MAX as u64 {
+            return Err(RuntimeError::new("_unpack_uint*() value exceeds runtime int range"));
+        }
+        Ok(Value::Int(value as i64))
     }
 
     fn builtin_importlib_source_from_cache(

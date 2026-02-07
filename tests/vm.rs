@@ -100,7 +100,7 @@ fn executes_destructuring_assignment() {
 #[test]
 fn executes_destructuring_assignment_nested() {
     let source = "a, (b, c) = (1, (2, 3))";
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
@@ -133,7 +133,7 @@ fn executes_comparison_assignment() {
 #[test]
 fn executes_comparison_variants() {
     let source = "a = 1 != 2\nb = 2 <= 2\nc = 3 > 2\nd = 2 >= 3\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
@@ -147,7 +147,7 @@ fn executes_comparison_variants() {
 #[test]
 fn executes_bool_int_numeric_ops() {
     let source = "a = True + 1\nb = False + 2\nc = True * 3\nd = True == 1\ne = True < 2\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
@@ -4181,8 +4181,32 @@ fn exposes_types_new_class_constructor() {
 }
 
 #[test]
-fn imports_frozen_importlib_external_stubs() {
-    let source = "import _frozen_importlib_external as ext\nok = hasattr(ext, 'path_sep') and hasattr(ext, '_LoaderBasics') and callable(ext._unpack_uint16)\n";
+fn executes_frozen_importlib_external_helpers() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_frozen_importlib_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let file = temp_dir.join("demo.py");
+    std::fs::write(&file, "value = 1\n").expect("write module");
+    let file_literal = file.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import _frozen_importlib_external as ext\nparts = ext._path_split('{file_literal}')\njoined = ext._path_join(parts[0], parts[1])\nstat = ext._path_stat('{file_literal}')\nu16 = ext._unpack_uint16(b'\\x01\\x02')\nu32 = ext._unpack_uint32(b'\\x01\\x02\\x03\\x04')\nu64 = ext._unpack_uint64(b'\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00')\nok = hasattr(ext, 'path_sep') and hasattr(ext, '_LoaderBasics') and parts[1] == 'demo.py' and joined[-7:] == 'demo.py' and stat.st_size >= 0 and u16 == 513 and u32 == 67305985 and u64 == 1\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn executes_frozen_importlib_spec_from_loader_helper() {
+    let source = "import _frozen_importlib as frozen\nspec = frozen.spec_from_loader('pkg.mod', None, origin='x.py', is_package=False)\nfrozen._verbose_message('x')\nok = spec['name'] == 'pkg.mod' and spec['parent'] == 'pkg' and spec['origin'] == 'x.py' and not spec['is_package']\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

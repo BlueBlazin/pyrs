@@ -978,6 +978,14 @@ pub enum BuiltinFunction {
     ImportlibSourceFromCache,
     ImportlibCacheFromSource,
     ImportlibSpecFromFileLocation,
+    FrozenImportlibSpecFromLoader,
+    FrozenImportlibVerboseMessage,
+    FrozenImportlibExternalPathJoin,
+    FrozenImportlibExternalPathSplit,
+    FrozenImportlibExternalPathStat,
+    FrozenImportlibExternalUnpackUint16,
+    FrozenImportlibExternalUnpackUint32,
+    FrozenImportlibExternalUnpackUint64,
     RandomSeed,
     RandomRandom,
     RandomRandRange,
@@ -2652,6 +2660,14 @@ impl BuiltinFunction {
             | BuiltinFunction::ImportlibSourceFromCache
             | BuiltinFunction::ImportlibCacheFromSource
             | BuiltinFunction::ImportlibSpecFromFileLocation
+            | BuiltinFunction::FrozenImportlibSpecFromLoader
+            | BuiltinFunction::FrozenImportlibVerboseMessage
+            | BuiltinFunction::FrozenImportlibExternalPathJoin
+            | BuiltinFunction::FrozenImportlibExternalPathSplit
+            | BuiltinFunction::FrozenImportlibExternalPathStat
+            | BuiltinFunction::FrozenImportlibExternalUnpackUint16
+            | BuiltinFunction::FrozenImportlibExternalUnpackUint32
+            | BuiltinFunction::FrozenImportlibExternalUnpackUint64
             | BuiltinFunction::RandomSeed
             | BuiltinFunction::RandomRandom
             | BuiltinFunction::RandomRandRange
