@@ -350,7 +350,6 @@ impl Vm {
             };
             collect_noop_symbols_from_module(&module_name, module, &mut out, &mut visited);
         }
-        collect_dynamic_builtin_noops(&mut out);
         out.sort();
         out.dedup();
         out
@@ -638,7 +637,11 @@ impl Vm {
                 "getfilesystemencodeerrors".to_string(),
                 Value::Builtin(BuiltinFunction::SysGetFilesystemEncodeErrors),
             );
-            let build_stream = |name: &str, heap: &Heap| -> ObjRef {
+            let build_stream = |name: &str,
+                                write_builtin: BuiltinFunction,
+                                flush_builtin: BuiltinFunction,
+                                heap: &Heap|
+             -> ObjRef {
                 let stream = match heap.alloc_module(ModuleObject::new(name.to_string())) {
                     Value::Module(obj) => obj,
                     _ => unreachable!(),
@@ -646,22 +649,37 @@ impl Vm {
                 if let Object::Module(stream_data) = &mut *stream.kind_mut() {
                     stream_data
                         .globals
-                        .insert("write".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                        .insert("write".to_string(), Value::Builtin(write_builtin));
                     stream_data
                         .globals
-                        .insert("flush".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                        .insert("flush".to_string(), Value::Builtin(flush_builtin));
                     stream_data
                         .globals
-                        .insert("isatty".to_string(), Value::Builtin(BuiltinFunction::Bool));
+                        .insert("isatty".to_string(), Value::Builtin(BuiltinFunction::SysStreamIsATty));
                     stream_data
                         .globals
                         .insert("encoding".to_string(), Value::Str("utf-8".to_string()));
                 }
                 stream
             };
-            let stdout = build_stream("sys.stdout", &self.heap);
-            let stderr = build_stream("sys.stderr", &self.heap);
-            let stdin = build_stream("sys.stdin", &self.heap);
+            let stdout = build_stream(
+                "sys.stdout",
+                BuiltinFunction::SysStdoutWrite,
+                BuiltinFunction::SysStdoutFlush,
+                &self.heap,
+            );
+            let stderr = build_stream(
+                "sys.stderr",
+                BuiltinFunction::SysStderrWrite,
+                BuiltinFunction::SysStderrFlush,
+                &self.heap,
+            );
+            let stdin = build_stream(
+                "sys.stdin",
+                BuiltinFunction::SysStdinWrite,
+                BuiltinFunction::SysStdinFlush,
+                &self.heap,
+            );
             module_data
                 .globals
                 .insert("stdout".to_string(), Value::Module(stdout.clone()));
@@ -2139,13 +2157,13 @@ impl Vm {
             "dataclasses",
             &[
                 ("dataclass", BuiltinFunction::TypingIdFunc),
-                ("field", BuiltinFunction::NoOp),
-                ("is_dataclass", BuiltinFunction::NoOp),
-                ("fields", BuiltinFunction::NoOp),
-                ("asdict", BuiltinFunction::NoOp),
-                ("astuple", BuiltinFunction::NoOp),
-                ("replace", BuiltinFunction::NoOp),
-                ("make_dataclass", BuiltinFunction::NoOp),
+                ("field", BuiltinFunction::DataclassesField),
+                ("is_dataclass", BuiltinFunction::DataclassesIsDataclass),
+                ("fields", BuiltinFunction::DataclassesFields),
+                ("asdict", BuiltinFunction::DataclassesAsDict),
+                ("astuple", BuiltinFunction::DataclassesAsTuple),
+                ("replace", BuiltinFunction::DataclassesReplace),
+                ("make_dataclass", BuiltinFunction::DataclassesMakeDataclass),
             ],
             vec![
                 ("MISSING", Value::Module(dataclasses_missing)),
@@ -3168,7 +3186,7 @@ impl Vm {
         );
         self.install_builtin_module(
             "_posixsubprocess",
-            &[("fork_exec", BuiltinFunction::NoOp)],
+            &[("fork_exec", BuiltinFunction::PosixSubprocessForkExec)],
             vec![(
                 "__doc__",
                 Value::Str("pyrs _posixsubprocess stub".to_string()),
@@ -8364,9 +8382,11 @@ impl Vm {
                 Ok(Value::Builtin(BuiltinFunction::Str))
             }
             "fromhex" if builtin == BuiltinFunction::Float => {
-                Ok(Value::Builtin(BuiltinFunction::NoOp))
+                Ok(Value::Builtin(BuiltinFunction::FloatFromHex))
             }
-            "hex" if builtin == BuiltinFunction::Float => Ok(Value::Builtin(BuiltinFunction::NoOp)),
+            "hex" if builtin == BuiltinFunction::Float => {
+                Ok(Value::Builtin(BuiltinFunction::FloatHex))
+            }
             "__repr__" | "__str__" | "__format__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
             "__reduce_ex__" => Ok(Value::Builtin(BuiltinFunction::ObjectReduceEx)),
             "bit_length" if builtin == BuiltinFunction::Int => {
@@ -8376,7 +8396,7 @@ impl Vm {
                 Ok(Value::Builtin(BuiltinFunction::DictFromKeys))
             }
             "maketrans" if builtin == BuiltinFunction::Str => {
-                Ok(Value::Builtin(BuiltinFunction::NoOp))
+                Ok(Value::Builtin(BuiltinFunction::StrMakeTrans))
             }
             _ => Err(RuntimeError::new(format!(
                 "builtin has no attribute '{}'",
@@ -9425,7 +9445,7 @@ impl Vm {
             .unwrap_or(0);
 
         for class in mro.into_iter().skip(start_idx) {
-            if let Some(attr) = class_attr_lookup(&class, attr_name) {
+            if let Some(attr) = class_attr_lookup_direct(&class, attr_name) {
                 if let Value::Function(func) = attr.clone() {
                     let bound = BoundMethod::new(func, receiver.clone());
                     return Ok(AttrAccessOutcome::Value(
@@ -11661,6 +11681,16 @@ impl Vm {
             BuiltinFunction::SysGetFilesystemEncodeErrors => {
                 self.builtin_sys_getfilesystemencodeerrors(args, kwargs)
             }
+            BuiltinFunction::SysStdoutWrite => self.builtin_sys_stream_write(args, kwargs, false),
+            BuiltinFunction::SysStdoutFlush => self.builtin_sys_stream_flush(args, kwargs),
+            BuiltinFunction::SysStderrWrite => self.builtin_sys_stream_write(args, kwargs, true),
+            BuiltinFunction::SysStderrFlush => self.builtin_sys_stream_flush(args, kwargs),
+            BuiltinFunction::SysStdinWrite => self.builtin_sys_stdin_write(args, kwargs),
+            BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
+            BuiltinFunction::SysStreamIsATty => self.builtin_sys_stream_isatty(args, kwargs),
+            BuiltinFunction::FloatFromHex => self.builtin_float_fromhex(args, kwargs),
+            BuiltinFunction::FloatHex => self.builtin_float_hex(args, kwargs),
+            BuiltinFunction::StrMakeTrans => self.builtin_str_maketrans(args, kwargs),
             BuiltinFunction::PlatformLibcVer => self.builtin_platform_libc_ver(args, kwargs),
             BuiltinFunction::PlatformWin32IsIot => {
                 self.builtin_platform_win32_is_iot(args, kwargs)
@@ -11828,6 +11858,9 @@ impl Vm {
             BuiltinFunction::OsPathExpandUser => self.builtin_os_path_expanduser(args, kwargs),
             BuiltinFunction::OsPathRealPath => self.builtin_os_path_realpath(args, kwargs),
             BuiltinFunction::OsPathCommonPrefix => self.builtin_os_path_commonprefix(args, kwargs),
+            BuiltinFunction::PosixSubprocessForkExec => {
+                self.builtin_posixsubprocess_fork_exec(args, kwargs)
+            }
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
             BuiltinFunction::PyLongIntToDecimalString => {
@@ -11946,6 +11979,17 @@ impl Vm {
             BuiltinFunction::TypesNewClass => self.builtin_types_new_class(args, kwargs),
             BuiltinFunction::EnumConvert => self.builtin_enum_convert(args, kwargs),
             BuiltinFunction::TypeAnnotationsGet => self.builtin_type_annotations_get(args, kwargs),
+            BuiltinFunction::DataclassesField => self.builtin_dataclasses_field(args, kwargs),
+            BuiltinFunction::DataclassesIsDataclass => {
+                self.builtin_dataclasses_is_dataclass(args, kwargs)
+            }
+            BuiltinFunction::DataclassesFields => self.builtin_dataclasses_fields(args, kwargs),
+            BuiltinFunction::DataclassesAsDict => self.builtin_dataclasses_asdict(args, kwargs),
+            BuiltinFunction::DataclassesAsTuple => self.builtin_dataclasses_astuple(args, kwargs),
+            BuiltinFunction::DataclassesReplace => self.builtin_dataclasses_replace(args, kwargs),
+            BuiltinFunction::DataclassesMakeDataclass => {
+                self.builtin_dataclasses_make_dataclass(args, kwargs)
+            }
             BuiltinFunction::IoOpen => self.builtin_io_open(args, kwargs),
             BuiltinFunction::IoReadText => self.builtin_io_read_text(args, kwargs),
             BuiltinFunction::IoWriteText => self.builtin_io_write_text(args, kwargs),
@@ -12641,6 +12685,165 @@ impl Vm {
         Ok(Value::Str("surrogateescape".to_string()))
     }
 
+    fn builtin_sys_stream_write(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        stderr: bool,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("write() expects one argument"));
+        }
+        let text = format_value(&args[0]);
+        if stderr {
+            eprint!("{text}");
+        } else {
+            print!("{text}");
+        }
+        Ok(Value::Int(text.chars().count() as i64))
+    }
+
+    fn builtin_sys_stream_flush(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("flush() expects no arguments"));
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_sys_stdin_write(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("write() expects one argument"));
+        }
+        Err(RuntimeError::new("stdin is read-only"))
+    }
+
+    fn builtin_sys_stream_isatty(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("isatty() expects no arguments"));
+        }
+        Ok(Value::Bool(false))
+    }
+
+    fn builtin_float_fromhex(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("float.fromhex() expects one argument"));
+        }
+        let text = match args.remove(0) {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::new("fromhex() argument must be str")),
+        };
+        let parsed = parse_hex_float_literal(&text)?;
+        Ok(Value::Float(parsed))
+    }
+
+    fn builtin_float_hex(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("float.hex() expects one argument"));
+        }
+        let value = value_to_f64(args.remove(0))?;
+        Ok(Value::Str(format_float_hex(value)))
+    }
+
+    fn builtin_str_maketrans(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new("str.maketrans() expects 1-3 arguments"));
+        }
+
+        let mapping = match args.len() {
+            1 => match args.remove(0) {
+                Value::Dict(dict) => match &*dict.kind() {
+                    Object::Dict(entries) => {
+                        let mut out = Vec::new();
+                        for (key, value) in entries {
+                            let key = match key {
+                                Value::Int(_) => key.clone(),
+                                Value::Str(text) => {
+                                    let mut chars = text.chars();
+                                    let Some(ch) = chars.next() else {
+                                        return Err(RuntimeError::new(
+                                            "maketrans() keys must be length 1 strings",
+                                        ));
+                                    };
+                                    if chars.next().is_some() {
+                                        return Err(RuntimeError::new(
+                                            "maketrans() keys must be length 1 strings",
+                                        ));
+                                    }
+                                    Value::Int(ch as i64)
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "maketrans() keys must be integers or strings",
+                                    ));
+                                }
+                            };
+                            out.push((key, value.clone()));
+                        }
+                        self.heap.alloc_dict(out)
+                    }
+                    _ => return Err(RuntimeError::new("maketrans() expects a dict")),
+                },
+                _ => return Err(RuntimeError::new("maketrans() expects a dict")),
+            },
+            2 | 3 => {
+                let from = match args.remove(0) {
+                    Value::Str(text) => text,
+                    _ => return Err(RuntimeError::new("first maketrans arg must be str")),
+                };
+                let to = match args.remove(0) {
+                    Value::Str(text) => text,
+                    _ => return Err(RuntimeError::new("second maketrans arg must be str")),
+                };
+                if from.chars().count() != to.chars().count() {
+                    return Err(RuntimeError::new(
+                        "first two maketrans arguments must have equal length",
+                    ));
+                }
+                let mut out = Vec::new();
+                for (src, dst) in from.chars().zip(to.chars()) {
+                    out.push((Value::Int(src as i64), Value::Int(dst as i64)));
+                }
+                if args.len() == 1 {
+                    let deletions = match args.remove(0) {
+                        Value::Str(text) => text,
+                        _ => return Err(RuntimeError::new("third maketrans arg must be str")),
+                    };
+                    for ch in deletions.chars() {
+                        out.push((Value::Int(ch as i64), Value::None));
+                    }
+                }
+                self.heap.alloc_dict(out)
+            }
+            _ => unreachable!(),
+        };
+
+        Ok(mapping)
+    }
+
     fn builtin_platform_libc_ver(
         &self,
         args: Vec<Value>,
@@ -12835,6 +13038,324 @@ impl Vm {
         Ok(Value::Dict(annotations))
     }
 
+    fn builtin_dataclasses_field(
+        &self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("field() accepts at most one positional argument"));
+        }
+        let default = if let Some(value) = args.first() {
+            value.clone()
+        } else {
+            kwargs.remove("default").unwrap_or(Value::None)
+        };
+        let default_factory = kwargs.remove("default_factory").unwrap_or(Value::None);
+        let init = kwargs.remove("init").unwrap_or(Value::Bool(true));
+        let repr = kwargs.remove("repr").unwrap_or(Value::Bool(true));
+        let hash = kwargs.remove("hash").unwrap_or(Value::None);
+        let compare = kwargs.remove("compare").unwrap_or(Value::Bool(true));
+        let metadata = kwargs.remove("metadata").unwrap_or_else(|| self.heap.alloc_dict(Vec::new()));
+        let kw_only = kwargs.remove("kw_only").unwrap_or(Value::None);
+        let doc = kwargs.remove("doc").unwrap_or(Value::None);
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("field() got an unexpected keyword argument"));
+        }
+        Ok(self.heap.alloc_dict(vec![
+            (Value::Str("default".to_string()), default),
+            (Value::Str("default_factory".to_string()), default_factory),
+            (Value::Str("init".to_string()), init),
+            (Value::Str("repr".to_string()), repr),
+            (Value::Str("hash".to_string()), hash),
+            (Value::Str("compare".to_string()), compare),
+            (Value::Str("metadata".to_string()), metadata),
+            (Value::Str("kw_only".to_string()), kw_only),
+            (Value::Str("doc".to_string()), doc),
+        ]))
+    }
+
+    fn builtin_dataclasses_is_dataclass(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("is_dataclass() expects one argument"));
+        }
+        let target = &args[0];
+        match target {
+            Value::Class(class) => {
+                let Object::Class(class_data) = &*class.kind() else {
+                    return Ok(Value::Bool(false));
+                };
+                Ok(Value::Bool(
+                    class_data.attrs.contains_key("__dataclass_fields__")
+                        || class_data.attrs.contains_key("__dataclass_params__"),
+                ))
+            }
+            Value::Instance(instance) => {
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    return Ok(Value::Bool(false));
+                };
+                let Object::Class(class_data) = &*instance_data.class.kind() else {
+                    return Ok(Value::Bool(false));
+                };
+                Ok(Value::Bool(
+                    class_data.attrs.contains_key("__dataclass_fields__")
+                        || class_data.attrs.contains_key("__dataclass_params__"),
+                ))
+            }
+            _ => Ok(Value::Bool(false)),
+        }
+    }
+
+    fn dataclass_fields_value(&self, target: &Value) -> Option<Value> {
+        match target {
+            Value::Class(class) => {
+                let Object::Class(class_data) = &*class.kind() else {
+                    return None;
+                };
+                class_data.attrs.get("__dataclass_fields__").cloned()
+            }
+            Value::Instance(instance) => {
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    return None;
+                };
+                let Object::Class(class_data) = &*instance_data.class.kind() else {
+                    return None;
+                };
+                class_data.attrs.get("__dataclass_fields__").cloned()
+            }
+            _ => None,
+        }
+    }
+
+    fn dataclass_field_names(&self, target: &Value) -> Result<Vec<String>, RuntimeError> {
+        let Some(fields) = self.dataclass_fields_value(target) else {
+            return Err(RuntimeError::new("target is not a dataclass"));
+        };
+        match fields {
+            Value::Dict(dict) => {
+                let Object::Dict(entries) = &*dict.kind() else {
+                    return Err(RuntimeError::new("__dataclass_fields__ must be a dict"));
+                };
+                let mut names = Vec::new();
+                for (key, _) in entries {
+                    let Value::Str(name) = key else {
+                        return Err(RuntimeError::new("__dataclass_fields__ keys must be strings"));
+                    };
+                    names.push(name.clone());
+                }
+                Ok(names)
+            }
+            _ => Err(RuntimeError::new("__dataclass_fields__ must be a dict")),
+        }
+    }
+
+    fn builtin_dataclasses_fields(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("fields() expects one dataclass argument"));
+        }
+        let Some(fields) = self.dataclass_fields_value(&args[0]) else {
+            return Err(RuntimeError::new("fields() expects a dataclass or dataclass instance"));
+        };
+        match fields {
+            Value::Dict(dict) => {
+                let Object::Dict(entries) = &*dict.kind() else {
+                    return Err(RuntimeError::new("__dataclass_fields__ must be a dict"));
+                };
+                let values = entries.iter().map(|(_, value)| value.clone()).collect::<Vec<_>>();
+                Ok(self.heap.alloc_tuple(values))
+            }
+            _ => Err(RuntimeError::new("__dataclass_fields__ must be a dict")),
+        }
+    }
+
+    fn builtin_dataclasses_asdict(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("asdict() expects one dataclass instance"));
+        }
+        let instance = match &args[0] {
+            Value::Instance(instance) => instance.clone(),
+            _ => return Err(RuntimeError::new("asdict() expects a dataclass instance")),
+        };
+        let names = self.dataclass_field_names(&args[0])?;
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new("asdict() expects a dataclass instance"));
+        };
+        let mut entries = Vec::new();
+        for name in names {
+            entries.push((
+                Value::Str(name.clone()),
+                instance_data.attrs.get(&name).cloned().unwrap_or(Value::None),
+            ));
+        }
+        Ok(self.heap.alloc_dict(entries))
+    }
+
+    fn builtin_dataclasses_astuple(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("astuple() expects one dataclass instance"));
+        }
+        let instance = match &args[0] {
+            Value::Instance(instance) => instance.clone(),
+            _ => return Err(RuntimeError::new("astuple() expects a dataclass instance")),
+        };
+        let names = self.dataclass_field_names(&args[0])?;
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new("astuple() expects a dataclass instance"));
+        };
+        let mut values = Vec::new();
+        for name in names {
+            values.push(instance_data.attrs.get(&name).cloned().unwrap_or(Value::None));
+        }
+        Ok(self.heap.alloc_tuple(values))
+    }
+
+    fn builtin_dataclasses_replace(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "replace() expects instance plus keyword replacements",
+            ));
+        }
+        let instance = match args.remove(0) {
+            Value::Instance(instance) => instance,
+            _ => return Err(RuntimeError::new("replace() expects a dataclass instance")),
+        };
+        let class = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return Err(RuntimeError::new("replace() expects a dataclass instance")),
+        };
+        let mut attrs = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.attrs.clone(),
+            _ => HashMap::new(),
+        };
+        for (name, value) in kwargs {
+            attrs.insert(name, value);
+        }
+        let new_instance = match self.heap.alloc_instance(InstanceObject::new(class)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *new_instance.kind_mut() {
+            instance_data.attrs = attrs;
+        }
+        Ok(Value::Instance(new_instance))
+    }
+
+    fn builtin_dataclasses_make_dataclass(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 {
+            return Err(RuntimeError::new(
+                "make_dataclass() expects class name and field iterable",
+            ));
+        }
+        let class_name = match &args[0] {
+            Value::Str(name) => name.clone(),
+            _ => return Err(RuntimeError::new("make_dataclass() class name must be str")),
+        };
+        let field_values = self.collect_iterable_values(args[1].clone())?;
+        let mut field_names = Vec::new();
+        for item in field_values {
+            match item {
+                Value::Str(name) => field_names.push(name),
+                Value::Tuple(tuple) => match &*tuple.kind() {
+                    Object::Tuple(values) if !values.is_empty() => match &values[0] {
+                        Value::Str(name) => field_names.push(name.clone()),
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "make_dataclass() field tuple must start with str name",
+                            ));
+                        }
+                    },
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "make_dataclass() field tuple must not be empty",
+                        ));
+                    }
+                },
+                _ => {
+                    return Err(RuntimeError::new(
+                        "make_dataclass() fields must contain str or tuple entries",
+                    ));
+                }
+            }
+        }
+
+        let bases = if let Some(value) = kwargs.remove("bases") {
+            match value {
+                Value::Tuple(tuple) => {
+                    let Object::Tuple(values) = &*tuple.kind() else {
+                        return Err(RuntimeError::new(
+                            "make_dataclass() bases must be a tuple",
+                        ));
+                    };
+                    let mut out = Vec::new();
+                    for value in values {
+                        match value {
+                            Value::Class(class) => out.push(class.clone()),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "make_dataclass() bases must contain classes",
+                                ));
+                            }
+                        }
+                    }
+                    out
+                }
+                _ => return Err(RuntimeError::new("make_dataclass() bases must be a tuple")),
+            }
+        } else {
+            Vec::new()
+        };
+        let mut class = ClassObject::new(class_name, bases);
+        let mut entries = Vec::new();
+        for name in field_names {
+            entries.push((Value::Str(name), Value::None));
+        }
+        class
+            .attrs
+            .insert("__dataclass_fields__".to_string(), self.heap.alloc_dict(entries));
+        if let Some(namespace) = kwargs.remove("namespace") {
+            if let Value::Dict(dict) = namespace {
+                if let Object::Dict(entries) = &*dict.kind() {
+                    for (key, value) in entries {
+                        if let Value::Str(name) = key {
+                            class.attrs.insert(name.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+        }
+        let class_value = self.heap.alloc_class(class);
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "make_dataclass() got an unexpected keyword argument",
+            ));
+        }
+        Ok(class_value)
+    }
+
     fn builtin_isinstance(
         &self,
         mut args: Vec<Value>,
@@ -12915,12 +13436,56 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         // `object.__init__` is exposed as a plain builtin in this VM, so
         // super() calls can reach it without an implicit `self` bind.
-        if !kwargs.is_empty() || args.len() > 1 {
+        if !kwargs.is_empty() || args.is_empty() {
             return Err(RuntimeError::new(
                 "object.__init__() takes exactly one argument",
             ));
         }
+        if args.len() > 1 {
+            let allow_extra = match &args[0] {
+                Value::Instance(instance) => match &*instance.kind() {
+                    Object::Instance(instance_data) => {
+                        self.class_has_permissive_object_init_base(&instance_data.class)
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+            if !allow_extra {
+                return Err(RuntimeError::new(
+                    "object.__init__() takes exactly one argument",
+                ));
+            }
+        }
         Ok(Value::None)
+    }
+
+    fn class_has_permissive_object_init_base(&self, class: &ObjRef) -> bool {
+        let allowed = [
+            "list",
+            "tuple",
+            "dict",
+            "set",
+            "frozenset",
+            "bytes",
+            "bytearray",
+            "memoryview",
+            "complex",
+            "enumerate",
+            "Counter",
+        ];
+        let Object::Class(class_data) = &*class.kind() else {
+            return false;
+        };
+        for base in &class_data.bases {
+            let Object::Class(base_data) = &*base.kind() else {
+                continue;
+            };
+            if allowed.contains(&base_data.name.as_str()) {
+                return true;
+            }
+        }
+        false
     }
 
     fn builtin_object_getstate(
@@ -16120,6 +16685,16 @@ impl Vm {
         let pid = value_to_int(args[0].clone())?;
         let _options = value_to_int(args[1].clone())?;
         Ok(self.heap.alloc_tuple(vec![Value::Int(pid), Value::Int(0)]))
+    }
+
+    fn builtin_posixsubprocess_fork_exec(
+        &mut self,
+        _args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        Err(RuntimeError::new(
+            "_posixsubprocess.fork_exec() is not implemented yet",
+        ))
     }
 
     fn builtin_os_wifstopped(
@@ -22091,6 +22666,119 @@ fn value_to_f64(value: Value) -> Result<f64, RuntimeError> {
     }
 }
 
+fn parse_hex_float_literal(text: &str) -> Result<f64, RuntimeError> {
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("inf") || trimmed.eq_ignore_ascii_case("+inf") {
+        return Ok(f64::INFINITY);
+    }
+    if trimmed.eq_ignore_ascii_case("-inf") {
+        return Ok(f64::NEG_INFINITY);
+    }
+    if trimmed.eq_ignore_ascii_case("nan")
+        || trimmed.eq_ignore_ascii_case("+nan")
+        || trimmed.eq_ignore_ascii_case("-nan")
+    {
+        return Ok(f64::NAN);
+    }
+
+    let (sign, rest) = if let Some(stripped) = trimmed.strip_prefix('-') {
+        (-1.0, stripped)
+    } else if let Some(stripped) = trimmed.strip_prefix('+') {
+        (1.0, stripped)
+    } else {
+        (1.0, trimmed)
+    };
+
+    let Some(rest) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) else {
+        return Err(RuntimeError::new("fromhex() argument must be a hexadecimal string"));
+    };
+    let Some((mantissa_text, exponent_text)) = rest.split_once(['p', 'P']) else {
+        return Err(RuntimeError::new("fromhex() argument must be a hexadecimal string"));
+    };
+    if mantissa_text.is_empty() || exponent_text.is_empty() {
+        return Err(RuntimeError::new("fromhex() argument must be a hexadecimal string"));
+    }
+    let exponent = exponent_text
+        .parse::<i32>()
+        .map_err(|_| RuntimeError::new("fromhex() argument must be a hexadecimal string"))?;
+
+    let (whole_text, frac_text) = if let Some((left, right)) = mantissa_text.split_once('.') {
+        (left, right)
+    } else {
+        (mantissa_text, "")
+    };
+    if whole_text.is_empty() && frac_text.is_empty() {
+        return Err(RuntimeError::new("fromhex() argument must be a hexadecimal string"));
+    }
+
+    let mut value = 0.0;
+    for ch in whole_text.chars() {
+        let digit = ch
+            .to_digit(16)
+            .ok_or_else(|| RuntimeError::new("fromhex() argument must be a hexadecimal string"))?;
+        value = value * 16.0 + digit as f64;
+    }
+    let mut factor = 1.0 / 16.0;
+    for ch in frac_text.chars() {
+        let digit = ch
+            .to_digit(16)
+            .ok_or_else(|| RuntimeError::new("fromhex() argument must be a hexadecimal string"))?;
+        value += (digit as f64) * factor;
+        factor /= 16.0;
+    }
+
+    Ok(sign * value * 2.0_f64.powi(exponent))
+}
+
+fn format_float_hex(value: f64) -> String {
+    if value.is_nan() {
+        return "nan".to_string();
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() {
+            "-inf".to_string()
+        } else {
+            "inf".to_string()
+        };
+    }
+    if value == 0.0 {
+        return if value.is_sign_negative() {
+            "-0x0.0p+0".to_string()
+        } else {
+            "0x0.0p+0".to_string()
+        };
+    }
+
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    let mut normalized = value.abs();
+    let mut exponent = 0_i32;
+    while normalized >= 2.0 {
+        normalized /= 2.0;
+        exponent += 1;
+    }
+    while normalized < 1.0 {
+        normalized *= 2.0;
+        exponent -= 1;
+    }
+
+    let mut fraction = normalized - 1.0;
+    let mut digits = String::with_capacity(13);
+    for _ in 0..13 {
+        fraction *= 16.0;
+        let digit = fraction.floor() as u32;
+        let ch = char::from_digit(digit.min(15), 16).unwrap_or('0');
+        digits.push(ch);
+        fraction -= digit as f64;
+    }
+    while digits.ends_with('0') {
+        digits.pop();
+    }
+    if digits.is_empty() {
+        digits.push('0');
+    }
+    format!("{sign}0x1.{digits}p{exponent:+}")
+}
+
 fn value_to_path(value: &Value) -> Result<String, RuntimeError> {
     match value {
         Value::Str(path) => Ok(path.clone()),
@@ -24098,14 +24786,6 @@ fn collect_noop_symbols_from_value(
     }
 }
 
-fn collect_dynamic_builtin_noops(out: &mut Vec<String>) {
-    out.extend([
-        "builtins.float.fromhex".to_string(),
-        "builtins.float.hex".to_string(),
-        "builtins.str.maketrans".to_string(),
-    ]);
-}
-
 fn decode_call_counts(arg: u32) -> (usize, usize) {
     let pos = (arg & 0xFFFF) as usize;
     let kw = (arg >> 16) as usize;
@@ -24180,14 +24860,19 @@ fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
 
 fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
     for candidate in class_attr_walk(class) {
-        let class_kind = candidate.kind();
-        if let Object::Class(class_data) = &*class_kind {
-            if let Some(value) = class_data.attrs.get(name).cloned() {
-                return Some(value);
-            }
+        if let Some(value) = class_attr_lookup_direct(&candidate, name) {
+            return Some(value);
         }
     }
     None
+}
+
+fn class_attr_lookup_direct(class: &ObjRef, name: &str) -> Option<Value> {
+    let class_kind = class.kind();
+    let Object::Class(class_data) = &*class_kind else {
+        return None;
+    };
+    class_data.attrs.get(name).cloned()
 }
 
 fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {

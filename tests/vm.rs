@@ -4531,3 +4531,89 @@ fn pylong_decimal_inner_accepts_guard_keyword() {
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn float_fromhex_and_hex_helpers_work() {
+    let source = "a = float.fromhex('0x1.8p+1')\n\
+b = float.hex(3.0)\n\
+c = float.fromhex('inf')\n\
+ok = (a == 3.0 and b.startswith('0x1.8p+') and c > 1e300)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_maketrans_helper_supports_core_forms() {
+    let source = "d1 = str.maketrans({'a': 'x', 98: 'y'})\n\
+d2 = str.maketrans('ab', 'xy', 'c')\n\
+ok = (d1[97] == 'x' and d1[98] == 'y' and d2[97] == 120 and d2[99] is None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dataclasses_core_helpers_work() {
+    let source = r#"import dataclasses
+class C:
+    pass
+C.__dataclass_fields__ = {'x': 1, 'y': 2}
+obj = C()
+obj.x = 10
+obj.y = 20
+field_info = dataclasses.field(default=3, repr=False)
+values = dataclasses.asdict(obj)
+as_tuple = dataclasses.astuple(obj)
+repl = dataclasses.replace(obj, y=99)
+made = dataclasses.make_dataclass('Point', ['x', ('y', int)])
+ok = (dataclasses.is_dataclass(C)
+      and dataclasses.is_dataclass(obj)
+      and len(dataclasses.fields(C)) == 2
+      and field_info['default'] == 3
+      and values['x'] == 10 and values['y'] == 20
+      and as_tuple == (10, 20)
+      and repl.y == 99
+      and dataclasses.is_dataclass(made))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn posixsubprocess_fork_exec_is_explicitly_unsupported() {
+    let source = r#"import _posixsubprocess
+caught = False
+try:
+    _posixsubprocess.fork_exec()
+except Exception:
+    caught = True
+ok = caught
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_stream_helpers_return_expected_values() {
+    let source = "import sys\n\
+n = sys.stdout.write('x')\n\
+f = sys.stdout.flush()\n\
+t = sys.stdout.isatty()\n\
+ok = (n == 1 and f is None and t is False)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

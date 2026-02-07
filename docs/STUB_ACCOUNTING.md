@@ -7,7 +7,7 @@ Nothing is allowed to stay "half-implemented" without a tracked owner and closur
 - `NoOp` builtin symbol inventory is tracked in `/Users/$USER/pyrs/docs/NOOP_BUILTIN_INVENTORY.txt`.
 - CI test gate: `/Users/$USER/pyrs/tests/noop_inventory.rs`.
 - Inventory generator: `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`.
-- Inventory traversal is recursive across module/class/instance/container object graphs and includes dynamic builtin-type no-op attributes (`builtins.float.fromhex`, `builtins.float.hex`, `builtins.str.maketrans`).
+- Inventory traversal is recursive across module/class/instance/container object graphs.
 
 ## Non-NoOp Partial Implementations
 These are implemented paths that are intentionally incomplete versus CPython and must be closed before release-complete parity.
@@ -31,8 +31,9 @@ These are implemented paths that are intentionally incomplete versus CPython and
 | `uuid` | Baseline UUID object construction and module helpers (`UUID.__init__`, `uuid1/3/4/5/6/7/8`, `getnode`) are implemented, but cryptographic/hash fidelity and full API parity are partial | Full CPython uuid semantic parity and edge contracts | Milestone 13 |
 | `builtins` object protocol | `object.__reduce_ex__` now executes a non-`NoOp` baseline path, but full pickling parity and protocol edge semantics remain pending | Full CPython object reduction/pickling behavior parity | Milestone 13 |
 | `sys.monitoring` / `sys._jit` scaffolding | Monitoring/JIT helper APIs remain explicit no-op placeholders (non-goal feature hooks retained for compatibility shape) | Either implement full semantics or gate them behind explicit unsupported errors before release | Milestone 14/16 |
-| `subprocess` / `_posixsubprocess` | Minimal bootstrap with stubbed process spawn internals | Production-safe process creation semantics and regression coverage | Milestone 13 |
-| `typing` / `dataclasses` / `enum` / `contextvars` | Foundation coverage only | Full semantics required by modern frameworks and CPython suites in scope | Milestone 13 |
+| `subprocess` / `_posixsubprocess` | Minimal bootstrap; `_posixsubprocess.fork_exec` now fails explicitly with a clear unsupported error instead of silent `NoOp` behavior | Production-safe process creation semantics and regression coverage | Milestone 13 |
+| `typing` / `dataclasses` / `enum` / `contextvars` | Foundation coverage with baseline non-`NoOp` dataclasses helpers (`field`, `is_dataclass`, `fields`, `asdict`, `astuple`, `replace`, `make_dataclass`) now implemented; full semantic parity remains incomplete | Full semantics required by modern frameworks and CPython suites in scope | Milestone 13 |
+| `builtins` numeric/string helper surface | Baseline non-`NoOp` `float.fromhex`, `float.hex`, and `str.maketrans` are implemented, but full CPython edge/error-text parity remains partial | Full CPython helper semantics and compatibility text contracts | Milestone 13 |
 | Native extension path | Not implemented in runtime yet | Limited C-API/abi3 and HPy compatibility milestones complete | Milestone 15 |
 
 ## Maintenance Rule

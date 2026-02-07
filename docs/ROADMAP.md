@@ -286,7 +286,10 @@ Progress:
 - `threading` class-method parity batch landed for synchronization primitives: baseline non-`NoOp` behavior now exists for `Thread`, `Event`, `Condition`, `Semaphore`/`BoundedSemaphore`, and `Barrier` method surfaces, with dedicated VM regressions.
 - `uuid` parity batch landed for baseline object/model behavior: `UUID.__init__`, `uuid1/3/4/5/6/7/8`, `getnode`, and namespace constants now execute non-`NoOp` logic with dedicated VM regressions; full algorithm/text/edge parity remains tracked in Milestone 13.
 - `object.__reduce_ex__` no-op removal landed with baseline tuple-return semantics and regression coverage; full pickling protocol parity remains tracked in Milestone 13.
-- No-op accounting hardening landed: inventory walk is now recursive across module/class/instance/container graphs and includes dynamic builtin-type no-op attributes (`float.fromhex`, `float.hex`, `str.maketrans`) so stub drift cannot hide outside top-level module globals.
+- Dataclasses/runtime helper batch landed: `dataclasses.field`/`is_dataclass`/`fields`/`asdict`/`astuple`/`replace`/`make_dataclass` now execute baseline non-`NoOp` paths, stdio stream `write`/`flush`/`isatty` paths execute real behavior, `float.fromhex`/`float.hex` and `str.maketrans` execute non-`NoOp` helper logic, and `_posixsubprocess.fork_exec` now fails explicitly as unsupported instead of silently succeeding.
+- No-op accounting hardening landed: inventory walk is recursive across module/class/instance/container graphs so stub drift cannot hide outside top-level module globals.
+- Super/MRO parity fix landed: `super(...).__attr__` now checks direct attrs at each MRO step (instead of recursively re-walking parent MROs), eliminating incorrect early fallback to `object.__init__` in cooperative multiple-inheritance paths.
+- CPython harness breadth expanded with zero allowlist impact: `tests/cpython_suite_language.txt` now includes `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, and `test/test_configparser.py`.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)

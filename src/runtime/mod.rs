@@ -906,7 +906,10 @@ pub enum BuiltinFunction {
     Int,
     IntBitLength,
     Float,
+    FloatFromHex,
+    FloatHex,
     Str,
+    StrMakeTrans,
     Ord,
     Abs,
     Sum,
@@ -972,6 +975,13 @@ pub enum BuiltinFunction {
     SysGetFrame,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
+    SysStdoutWrite,
+    SysStdoutFlush,
+    SysStderrWrite,
+    SysStderrFlush,
+    SysStdinWrite,
+    SysStdinFlush,
+    SysStreamIsATty,
     PlatformLibcVer,
     PlatformWin32IsIot,
     Import,
@@ -1085,6 +1095,7 @@ pub enum BuiltinFunction {
     OsPathRealPath,
     OsPathCommonPrefix,
     OsWaitPid,
+    PosixSubprocessForkExec,
     JsonDumps,
     JsonLoads,
     MarshalLoads,
@@ -1204,6 +1215,13 @@ pub enum BuiltinFunction {
     TypesNewClass,
     EnumConvert,
     TypeAnnotationsGet,
+    DataclassesField,
+    DataclassesIsDataclass,
+    DataclassesFields,
+    DataclassesAsDict,
+    DataclassesAsTuple,
+    DataclassesReplace,
+    DataclassesMakeDataclass,
     IoOpen,
     IoReadText,
     IoWriteText,
@@ -2708,6 +2726,9 @@ impl BuiltinFunction {
             | BuiltinFunction::SetAttr
             | BuiltinFunction::DelAttr
             | BuiltinFunction::HasAttr
+            | BuiltinFunction::FloatFromHex
+            | BuiltinFunction::FloatHex
+            | BuiltinFunction::StrMakeTrans
             | BuiltinFunction::Callable
             | BuiltinFunction::IsInstance
             | BuiltinFunction::IsSubclass
@@ -2724,6 +2745,13 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetFrame
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
+            | BuiltinFunction::SysStdoutWrite
+            | BuiltinFunction::SysStdoutFlush
+            | BuiltinFunction::SysStderrWrite
+            | BuiltinFunction::SysStderrFlush
+            | BuiltinFunction::SysStdinWrite
+            | BuiltinFunction::SysStdinFlush
+            | BuiltinFunction::SysStreamIsATty
             | BuiltinFunction::PlatformLibcVer
             | BuiltinFunction::PlatformWin32IsIot
             | BuiltinFunction::ImportlibInvalidateCaches
@@ -2823,6 +2851,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsPathRealPath
             | BuiltinFunction::OsPathCommonPrefix
             | BuiltinFunction::OsWaitPid
+            | BuiltinFunction::PosixSubprocessForkExec
             | BuiltinFunction::JsonDumps
             | BuiltinFunction::JsonLoads
             | BuiltinFunction::PyLongIntToDecimalString
@@ -2904,6 +2933,13 @@ impl BuiltinFunction {
             | BuiltinFunction::TypesNewClass
             | BuiltinFunction::EnumConvert
             | BuiltinFunction::TypeAnnotationsGet
+            | BuiltinFunction::DataclassesField
+            | BuiltinFunction::DataclassesIsDataclass
+            | BuiltinFunction::DataclassesFields
+            | BuiltinFunction::DataclassesAsDict
+            | BuiltinFunction::DataclassesAsTuple
+            | BuiltinFunction::DataclassesReplace
+            | BuiltinFunction::DataclassesMakeDataclass
             | BuiltinFunction::IoOpen
             | BuiltinFunction::IoReadText
             | BuiltinFunction::IoWriteText
