@@ -5366,7 +5366,7 @@ impl Vm {
                     Opcode::BinarySub => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(sub_values(left, right)?);
+                        self.push_value(sub_values(left, right, &self.heap)?);
                     }
                     Opcode::BinaryMul => {
                         let right = self.pop_value()?;
@@ -5411,12 +5411,12 @@ impl Vm {
                     Opcode::BinaryAnd => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(and_values(left, right)?);
+                        self.push_value(and_values(left, right, &self.heap)?);
                     }
                     Opcode::BinaryXor => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(xor_values(left, right)?);
+                        self.push_value(xor_values(left, right, &self.heap)?);
                     }
                     Opcode::BinaryOr => {
                         let right = self.pop_value()?;
@@ -19434,12 +19434,31 @@ impl Vm {
             kwargs.remove("dialect")
         };
         let delimiter = self.extract_csv_delimiter(dialect_arg.clone(), &mut kwargs)?;
-        let quotechar = self.extract_csv_quotechar(dialect_arg, &mut kwargs)?;
+        let quotechar = self.extract_csv_quotechar(dialect_arg.clone(), &mut kwargs)?;
+        let escapechar = self.extract_csv_escapechar(dialect_arg, &mut kwargs)?;
+        let skipinitialspace = self.extract_csv_skipinitialspace(&mut kwargs)?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "reader() got unexpected keyword arguments",
+            ));
+        }
         let rows = self.collect_iterable_values(source)?;
         let mut parsed_rows = Vec::with_capacity(rows.len());
+        let field_limit = if self.csv_field_size_limit >= 0 {
+            Some(self.csv_field_size_limit as usize)
+        } else {
+            None
+        };
         for row in rows {
             let text = self.coerce_csv_field_text(row)?;
-            let fields = parse_csv_row_simple(&text, delimiter, quotechar)
+            let fields = parse_csv_row_simple(
+                &text,
+                delimiter,
+                quotechar,
+                escapechar,
+                skipinitialspace,
+                field_limit,
+            )?
                 .into_iter()
                 .map(Value::Str)
                 .collect();
@@ -19463,7 +19482,9 @@ impl Vm {
             kwargs.remove("dialect")
         };
         let delimiter = self.extract_csv_delimiter(dialect_arg.clone(), &mut kwargs)?;
-        let quotechar = self.extract_csv_quotechar(dialect_arg, &mut kwargs)?;
+        let quotechar = self.extract_csv_quotechar(dialect_arg.clone(), &mut kwargs)?;
+        let escapechar = self.extract_csv_escapechar(dialect_arg, &mut kwargs)?;
+        let quoting = self.extract_csv_quoting(&mut kwargs)?;
         let lineterminator = self.extract_csv_lineterminator(&mut kwargs)?;
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
@@ -19488,7 +19509,24 @@ impl Vm {
             );
             writer_data.globals.insert(
                 "__csv_quotechar__".to_string(),
-                Value::Str(quotechar.to_string()),
+                match quotechar {
+                    Some(ch) => Value::Str(ch.to_string()),
+                    None => Value::None,
+                },
+            );
+            writer_data.globals.insert(
+                "__csv_escapechar__".to_string(),
+                match escapechar {
+                    Some(ch) => Value::Str(ch.to_string()),
+                    None => Value::None,
+                },
+            );
+            writer_data
+                .globals
+                .insert("__csv_quoting__".to_string(), Value::Int(quoting));
+            writer_data.globals.insert(
+                "__csv_doublequote__".to_string(),
+                Value::Bool(true),
             );
             writer_data.globals.insert(
                 "__csv_lineterminator__".to_string(),
@@ -19523,8 +19561,24 @@ impl Vm {
                 );
                 dialect_data.globals.insert(
                     "quotechar".to_string(),
-                    Value::Str(quotechar.to_string()),
+                    match quotechar {
+                        Some(ch) => Value::Str(ch.to_string()),
+                        None => Value::None,
+                    },
                 );
+                dialect_data.globals.insert(
+                    "escapechar".to_string(),
+                    match escapechar {
+                        Some(ch) => Value::Str(ch.to_string()),
+                        None => Value::None,
+                    },
+                );
+                dialect_data
+                    .globals
+                    .insert("quoting".to_string(), Value::Int(quoting));
+                dialect_data
+                    .globals
+                    .insert("doublequote".to_string(), Value::Bool(true));
                 dialect_data
                     .globals
                     .insert("lineterminator".to_string(), Value::Str(lineterminator));
@@ -19549,13 +19603,20 @@ impl Vm {
             _ => return Err(RuntimeError::new("writerow() receiver must be csv writer")),
         };
         let row = args.remove(0);
-        let (target, delimiter, quotechar, lineterminator) =
+        let (target, delimiter, quotechar, escapechar, quoting, doublequote, lineterminator) =
             self.extract_csv_writer_state(&writer)?;
         let values = self.collect_iterable_values(row)?;
         let mut fields = Vec::with_capacity(values.len());
         for value in values {
             let text = self.coerce_csv_field_text(value)?;
-            fields.push(quote_csv_field(&text, delimiter, quotechar));
+            fields.push(quote_csv_field(
+                &text,
+                delimiter,
+                quotechar,
+                escapechar,
+                quoting,
+                doublequote,
+            )?);
         }
         let mut line = fields.join(&delimiter.to_string());
         line.push_str(&lineterminator);
@@ -19730,19 +19791,58 @@ impl Vm {
         &mut self,
         dialect: Option<Value>,
         kwargs: &mut HashMap<String, Value>,
-    ) -> Result<char, RuntimeError> {
+    ) -> Result<Option<char>, RuntimeError> {
         if let Some(value) = kwargs.remove("quotechar") {
-            return csv_char_from_value(value, "quotechar");
+            return csv_optional_char_from_value(value, "quotechar");
         }
         let resolved = self.resolve_csv_dialect(dialect)?;
         if let Some(dialect) = resolved {
             if let Ok(value) =
                 self.builtin_getattr(vec![dialect, Value::Str("quotechar".to_string())], HashMap::new())
             {
-                return csv_char_from_value(value, "quotechar");
+                return csv_optional_char_from_value(value, "quotechar");
             }
         }
-        Ok('"')
+        Ok(Some('"'))
+    }
+
+    fn extract_csv_escapechar(
+        &mut self,
+        dialect: Option<Value>,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<Option<char>, RuntimeError> {
+        if let Some(value) = kwargs.remove("escapechar") {
+            return csv_optional_char_from_value(value, "escapechar");
+        }
+        let resolved = self.resolve_csv_dialect(dialect)?;
+        if let Some(dialect) = resolved {
+            if let Ok(value) =
+                self.builtin_getattr(vec![dialect, Value::Str("escapechar".to_string())], HashMap::new())
+            {
+                return csv_optional_char_from_value(value, "escapechar");
+            }
+        }
+        Ok(None)
+    }
+
+    fn extract_csv_skipinitialspace(
+        &mut self,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<bool, RuntimeError> {
+        if let Some(value) = kwargs.remove("skipinitialspace") {
+            return value_to_bool_flag(value, "skipinitialspace");
+        }
+        Ok(false)
+    }
+
+    fn extract_csv_quoting(
+        &mut self,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<i64, RuntimeError> {
+        if let Some(value) = kwargs.remove("quoting") {
+            return value_to_int(value);
+        }
+        Ok(0)
     }
 
     fn extract_csv_lineterminator(
@@ -19761,7 +19861,7 @@ impl Vm {
     fn extract_csv_writer_state(
         &self,
         writer: &ObjRef,
-    ) -> Result<(Value, char, char, String), RuntimeError> {
+    ) -> Result<(Value, char, Option<char>, Option<char>, i64, bool, String), RuntimeError> {
         let Object::Module(writer_data) = &*writer.kind() else {
             return Err(RuntimeError::new("writer object is invalid"));
         };
@@ -19781,12 +19881,38 @@ impl Vm {
             .get("__csv_quotechar__")
             .cloned()
             .ok_or_else(|| RuntimeError::new("writer quotechar is missing"))
-            .and_then(|value| csv_char_from_value(value, "quotechar"))?;
+            .and_then(|value| csv_optional_char_from_value(value, "quotechar"))?;
+        let escapechar = writer_data
+            .globals
+            .get("__csv_escapechar__")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("writer escapechar is missing"))
+            .and_then(|value| csv_optional_char_from_value(value, "escapechar"))?;
+        let quoting = writer_data
+            .globals
+            .get("__csv_quoting__")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("writer quoting is missing"))
+            .and_then(value_to_int)?;
+        let doublequote = writer_data
+            .globals
+            .get("__csv_doublequote__")
+            .cloned()
+            .map(|value| is_truthy(&value))
+            .unwrap_or(true);
         let lineterminator = match writer_data.globals.get("__csv_lineterminator__") {
             Some(Value::Str(value)) => value.clone(),
             _ => return Err(RuntimeError::new("writer lineterminator is missing")),
         };
-        Ok((target, delimiter, quotechar, lineterminator))
+        Ok((
+            target,
+            delimiter,
+            quotechar,
+            escapechar,
+            quoting,
+            doublequote,
+            lineterminator,
+        ))
     }
 
     fn coerce_csv_field_text(&mut self, value: Value) -> Result<String, RuntimeError> {
@@ -20047,7 +20173,9 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, sub_values)
+        binary_operator(args, kwargs, |left, right| {
+            sub_values(left, right, &self.heap)
+        })
     }
 
     fn builtin_operator_mul(
@@ -24547,8 +24675,72 @@ impl Vm {
             Value::ExceptionType("Exception".to_string()),
         );
         self.builtins.insert(
+            "GeneratorExit".to_string(),
+            Value::ExceptionType("GeneratorExit".to_string()),
+        );
+        self.builtins.insert(
+            "SystemExit".to_string(),
+            Value::ExceptionType("SystemExit".to_string()),
+        );
+        self.builtins.insert(
+            "KeyboardInterrupt".to_string(),
+            Value::ExceptionType("KeyboardInterrupt".to_string()),
+        );
+        self.builtins.insert(
+            "StopIteration".to_string(),
+            Value::ExceptionType("StopIteration".to_string()),
+        );
+        self.builtins.insert(
+            "StopAsyncIteration".to_string(),
+            Value::ExceptionType("StopAsyncIteration".to_string()),
+        );
+        self.builtins.insert(
+            "EOFError".to_string(),
+            Value::ExceptionType("EOFError".to_string()),
+        );
+        self.builtins.insert(
+            "MemoryError".to_string(),
+            Value::ExceptionType("MemoryError".to_string()),
+        );
+        self.builtins.insert(
+            "OverflowError".to_string(),
+            Value::ExceptionType("OverflowError".to_string()),
+        );
+        self.builtins.insert(
+            "RecursionError".to_string(),
+            Value::ExceptionType("RecursionError".to_string()),
+        );
+        self.builtins.insert(
+            "ReferenceError".to_string(),
+            Value::ExceptionType("ReferenceError".to_string()),
+        );
+        self.builtins.insert(
+            "SyntaxError".to_string(),
+            Value::ExceptionType("SyntaxError".to_string()),
+        );
+        self.builtins.insert(
+            "IndentationError".to_string(),
+            Value::ExceptionType("IndentationError".to_string()),
+        );
+        self.builtins.insert(
+            "TabError".to_string(),
+            Value::ExceptionType("TabError".to_string()),
+        );
+        self.builtins.insert(
+            "BaseExceptionGroup".to_string(),
+            Value::ExceptionType("BaseExceptionGroup".to_string()),
+        );
+        self.builtins.insert(
+            "ExceptionGroup".to_string(),
+            Value::ExceptionType("ExceptionGroup".to_string()),
+        );
+        self.builtins.insert(
             "ArithmeticError".to_string(),
             Value::ExceptionType("ArithmeticError".to_string()),
+        );
+        self.builtins.insert(
+            "FloatingPointError".to_string(),
+            Value::ExceptionType("FloatingPointError".to_string()),
         );
         self.builtins.insert(
             "ValueError".to_string(),
@@ -24575,6 +24767,10 @@ impl Vm {
             Value::ExceptionType("NameError".to_string()),
         );
         self.builtins.insert(
+            "UnboundLocalError".to_string(),
+            Value::ExceptionType("UnboundLocalError".to_string()),
+        );
+        self.builtins.insert(
             "AttributeError".to_string(),
             Value::ExceptionType("AttributeError".to_string()),
         );
@@ -24587,7 +24783,19 @@ impl Vm {
             Value::ExceptionType("RuntimeError".to_string()),
         );
         self.builtins.insert(
+            "BufferError".to_string(),
+            Value::ExceptionType("BufferError".to_string()),
+        );
+        self.builtins.insert(
             "OSError".to_string(),
+            Value::ExceptionType("OSError".to_string()),
+        );
+        self.builtins.insert(
+            "EnvironmentError".to_string(),
+            Value::ExceptionType("OSError".to_string()),
+        );
+        self.builtins.insert(
+            "IOError".to_string(),
             Value::ExceptionType("OSError".to_string()),
         );
         self.builtins.insert(
@@ -24595,8 +24803,48 @@ impl Vm {
             Value::ExceptionType("FileNotFoundError".to_string()),
         );
         self.builtins.insert(
+            "FileExistsError".to_string(),
+            Value::ExceptionType("FileExistsError".to_string()),
+        );
+        self.builtins.insert(
+            "IsADirectoryError".to_string(),
+            Value::ExceptionType("IsADirectoryError".to_string()),
+        );
+        self.builtins.insert(
             "BlockingIOError".to_string(),
             Value::ExceptionType("BlockingIOError".to_string()),
+        );
+        self.builtins.insert(
+            "InterruptedError".to_string(),
+            Value::ExceptionType("InterruptedError".to_string()),
+        );
+        self.builtins.insert(
+            "ProcessLookupError".to_string(),
+            Value::ExceptionType("ProcessLookupError".to_string()),
+        );
+        self.builtins.insert(
+            "ChildProcessError".to_string(),
+            Value::ExceptionType("ChildProcessError".to_string()),
+        );
+        self.builtins.insert(
+            "ConnectionError".to_string(),
+            Value::ExceptionType("ConnectionError".to_string()),
+        );
+        self.builtins.insert(
+            "BrokenPipeError".to_string(),
+            Value::ExceptionType("BrokenPipeError".to_string()),
+        );
+        self.builtins.insert(
+            "ConnectionAbortedError".to_string(),
+            Value::ExceptionType("ConnectionAbortedError".to_string()),
+        );
+        self.builtins.insert(
+            "ConnectionRefusedError".to_string(),
+            Value::ExceptionType("ConnectionRefusedError".to_string()),
+        );
+        self.builtins.insert(
+            "ConnectionResetError".to_string(),
+            Value::ExceptionType("ConnectionResetError".to_string()),
         );
         self.builtins.insert(
             "TimeoutError".to_string(),
@@ -24874,41 +25122,145 @@ fn csv_char_from_value(value: Value, name: &str) -> Result<char, RuntimeError> {
     }
 }
 
-fn parse_csv_row_simple(row: &str, delimiter: char, quotechar: char) -> Vec<String> {
+fn csv_optional_char_from_value(value: Value, name: &str) -> Result<Option<char>, RuntimeError> {
+    match value {
+        Value::None => Ok(None),
+        other => csv_char_from_value(other, name).map(Some),
+    }
+}
+
+fn value_to_bool_flag(value: Value, name: &str) -> Result<bool, RuntimeError> {
+    match value {
+        Value::Bool(flag) => Ok(flag),
+        Value::Int(number) => Ok(number != 0),
+        Value::BigInt(number) => Ok(!number.is_zero()),
+        _ => Err(RuntimeError::new(format!("{name} must be bool"))),
+    }
+}
+
+fn parse_csv_row_simple(
+    row: &str,
+    delimiter: char,
+    quotechar: Option<char>,
+    escapechar: Option<char>,
+    skipinitialspace: bool,
+    field_limit: Option<usize>,
+) -> Result<Vec<String>, RuntimeError> {
     let mut fields = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
     let mut chars = row.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == quotechar {
-            if in_quotes && chars.peek().is_some_and(|next| *next == quotechar) {
-                current.push(quotechar);
-                chars.next();
-            } else {
-                in_quotes = !in_quotes;
+        if let Some(quote) = quotechar {
+            if ch == quote {
+                if in_quotes && chars.peek().is_some_and(|next| *next == quote) {
+                    current.push(quote);
+                    chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+                continue;
             }
-            continue;
+        }
+        if let Some(escape) = escapechar {
+            if ch == escape {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+                continue;
+            }
         }
         if ch == delimiter && !in_quotes {
             fields.push(std::mem::take(&mut current));
+            if skipinitialspace {
+                while chars.peek().is_some_and(|next| *next == ' ') {
+                    chars.next();
+                }
+            }
             continue;
         }
         current.push(ch);
+        if let Some(limit) = field_limit {
+            if current.chars().count() > limit {
+                return Err(RuntimeError::new("field larger than field limit"));
+            }
+        }
     }
     fields.push(current);
-    fields
+    Ok(fields)
 }
 
-fn quote_csv_field(field: &str, delimiter: char, quotechar: char) -> String {
+fn quote_csv_field(
+    field: &str,
+    delimiter: char,
+    quotechar: Option<char>,
+    escapechar: Option<char>,
+    quoting: i64,
+    doublequote: bool,
+) -> Result<String, RuntimeError> {
     let needs_quote = field.contains(delimiter)
         || field.contains('\n')
         || field.contains('\r')
-        || field.contains(quotechar);
-    if !needs_quote {
-        return field.to_string();
+        || quotechar.is_some_and(|quote| field.contains(quote));
+
+    if quoting == 3 {
+        let mut out = String::new();
+        for ch in field.chars() {
+            let must_escape = ch == delimiter
+                || ch == '\n'
+                || ch == '\r'
+                || quotechar.is_some_and(|quote| ch == quote);
+            if must_escape {
+                let Some(escape) = escapechar else {
+                    return Err(RuntimeError::new(
+                        "need to escape, but no escapechar set",
+                    ));
+                };
+                out.push(escape);
+            }
+            out.push(ch);
+        }
+        return Ok(out);
     }
-    let escaped = field.replace(quotechar, &format!("{quotechar}{quotechar}"));
-    format!("{quotechar}{escaped}{quotechar}")
+
+    let force_quote = quoting == 1;
+    if !force_quote && !needs_quote {
+        return Ok(field.to_string());
+    }
+    let Some(quotechar) = quotechar else {
+        let mut out = String::new();
+        for ch in field.chars() {
+            let must_escape = ch == delimiter || ch == '\n' || ch == '\r';
+            if must_escape {
+                let Some(escape) = escapechar else {
+                    return Err(RuntimeError::new(
+                        "need to escape, but no escapechar set",
+                    ));
+                };
+                out.push(escape);
+            }
+            out.push(ch);
+        }
+        return Ok(out);
+    };
+
+    let mut escaped = String::new();
+    for ch in field.chars() {
+        if ch == quotechar {
+            if doublequote {
+                escaped.push(quotechar);
+                escaped.push(quotechar);
+            } else if let Some(escape) = escapechar {
+                escaped.push(escape);
+                escaped.push(quotechar);
+            } else {
+                return Err(RuntimeError::new("need to escape quotechar"));
+            }
+        } else {
+            escaped.push(ch);
+        }
+    }
+    Ok(format!("{quotechar}{escaped}{quotechar}"))
 }
 
 fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
@@ -25885,6 +26237,338 @@ fn find_bytes_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+#[derive(Clone, Copy)]
+enum ReQuantifier {
+    One,
+    ZeroOrOne,
+    ZeroOrMore,
+    OneOrMore,
+}
+
+#[derive(Clone)]
+struct ReCharClass {
+    negated: bool,
+    singles: Vec<char>,
+    ranges: Vec<(char, char)>,
+}
+
+#[derive(Clone)]
+enum ReAtom {
+    Literal(char),
+    Any,
+    Class(ReCharClass),
+}
+
+#[derive(Clone)]
+struct ReToken {
+    atom: ReAtom,
+    quantifier: ReQuantifier,
+}
+
+#[derive(Clone)]
+struct ParsedSimpleRegex {
+    start_anchor: bool,
+    end_anchor: bool,
+    tokens: Vec<ReToken>,
+}
+
+fn digit_class(negated: bool) -> ReCharClass {
+    ReCharClass {
+        negated,
+        singles: Vec::new(),
+        ranges: vec![('0', '9')],
+    }
+}
+
+fn word_class(negated: bool) -> ReCharClass {
+    ReCharClass {
+        negated,
+        singles: vec!['_'],
+        ranges: vec![('0', '9'), ('A', 'Z'), ('a', 'z')],
+    }
+}
+
+fn space_class(negated: bool) -> ReCharClass {
+    ReCharClass {
+        negated,
+        singles: vec![' ', '\t', '\n', '\r', '\u{000b}', '\u{000c}'],
+        ranges: Vec::new(),
+    }
+}
+
+fn parse_simple_escape(ch: char) -> ReAtom {
+    match ch {
+        'd' => ReAtom::Class(digit_class(false)),
+        'D' => ReAtom::Class(digit_class(true)),
+        'w' => ReAtom::Class(word_class(false)),
+        'W' => ReAtom::Class(word_class(true)),
+        's' => ReAtom::Class(space_class(false)),
+        'S' => ReAtom::Class(space_class(true)),
+        'n' => ReAtom::Literal('\n'),
+        'r' => ReAtom::Literal('\r'),
+        't' => ReAtom::Literal('\t'),
+        other => ReAtom::Literal(other),
+    }
+}
+
+fn parse_char_class_char(chars: &[char], idx: &mut usize) -> Option<char> {
+    if *idx >= chars.len() {
+        return None;
+    }
+    let ch = chars[*idx];
+    if ch == '\\' {
+        *idx += 1;
+        if *idx >= chars.len() {
+            return None;
+        }
+        let escaped = chars[*idx];
+        *idx += 1;
+        return Some(match escaped {
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            other => other,
+        });
+    }
+    *idx += 1;
+    Some(ch)
+}
+
+fn parse_char_class(chars: &[char], idx: &mut usize) -> Option<ReCharClass> {
+    if *idx >= chars.len() || chars[*idx] != '[' {
+        return None;
+    }
+    *idx += 1;
+    let mut negated = false;
+    if *idx < chars.len() && chars[*idx] == '^' {
+        negated = true;
+        *idx += 1;
+    }
+
+    let mut singles = Vec::new();
+    let mut ranges = Vec::new();
+    let mut seen_item = false;
+    while *idx < chars.len() {
+        if chars[*idx] == ']' && seen_item {
+            *idx += 1;
+            return Some(ReCharClass {
+                negated,
+                singles,
+                ranges,
+            });
+        }
+        let start = parse_char_class_char(chars, idx)?;
+        seen_item = true;
+        if *idx + 1 < chars.len() && chars[*idx] == '-' && chars[*idx + 1] != ']' {
+            *idx += 1;
+            let end = parse_char_class_char(chars, idx)?;
+            ranges.push((start, end));
+        } else {
+            singles.push(start);
+        }
+    }
+    None
+}
+
+fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut idx = 0usize;
+    let mut start_anchor = false;
+    let mut end_anchor = false;
+    if idx < chars.len() && chars[idx] == '^' {
+        start_anchor = true;
+        idx += 1;
+    }
+
+    let mut tokens = Vec::new();
+    while idx < chars.len() {
+        if idx == chars.len() - 1 && chars[idx] == '$' {
+            end_anchor = true;
+            idx += 1;
+            break;
+        }
+
+        let atom = match chars[idx] {
+            '.' => {
+                idx += 1;
+                ReAtom::Any
+            }
+            '[' => parse_char_class(&chars, &mut idx).map(ReAtom::Class)?,
+            '\\' => {
+                idx += 1;
+                if idx >= chars.len() {
+                    return None;
+                }
+                let escaped = chars[idx];
+                idx += 1;
+                parse_simple_escape(escaped)
+            }
+            ch => {
+                idx += 1;
+                ReAtom::Literal(ch)
+            }
+        };
+
+        let quantifier = if idx < chars.len() {
+            match chars[idx] {
+                '?' => {
+                    idx += 1;
+                    ReQuantifier::ZeroOrOne
+                }
+                '*' => {
+                    idx += 1;
+                    ReQuantifier::ZeroOrMore
+                }
+                '+' => {
+                    idx += 1;
+                    ReQuantifier::OneOrMore
+                }
+                _ => ReQuantifier::One,
+            }
+        } else {
+            ReQuantifier::One
+        };
+        tokens.push(ReToken { atom, quantifier });
+    }
+    if idx != chars.len() {
+        return None;
+    }
+    Some(ParsedSimpleRegex {
+        start_anchor,
+        end_anchor,
+        tokens,
+    })
+}
+
+fn class_matches(class: &ReCharClass, ch: char) -> bool {
+    let mut matched = class.singles.contains(&ch);
+    if !matched {
+        let code = ch as u32;
+        matched = class.ranges.iter().any(|(start, end)| {
+            let start_code = *start as u32;
+            let end_code = *end as u32;
+            code >= start_code && code <= end_code
+        });
+    }
+    if class.negated { !matched } else { matched }
+}
+
+fn atom_matches(atom: &ReAtom, ch: char) -> bool {
+    match atom {
+        ReAtom::Literal(expected) => *expected == ch,
+        ReAtom::Any => true,
+        ReAtom::Class(class) => class_matches(class, ch),
+    }
+}
+
+fn match_simple_regex_tokens(
+    tokens: &[ReToken],
+    chars: &[char],
+    token_idx: usize,
+    char_idx: usize,
+    require_end: bool,
+) -> Option<usize> {
+    if token_idx == tokens.len() {
+        if require_end && char_idx != chars.len() {
+            return None;
+        }
+        return Some(char_idx);
+    }
+
+    let token = &tokens[token_idx];
+    match token.quantifier {
+        ReQuantifier::One => {
+            if char_idx < chars.len() && atom_matches(&token.atom, chars[char_idx]) {
+                return match_simple_regex_tokens(
+                    tokens,
+                    chars,
+                    token_idx + 1,
+                    char_idx + 1,
+                    require_end,
+                );
+            }
+            None
+        }
+        ReQuantifier::ZeroOrOne => {
+            if char_idx < chars.len() && atom_matches(&token.atom, chars[char_idx]) {
+                if let Some(end) = match_simple_regex_tokens(
+                    tokens,
+                    chars,
+                    token_idx + 1,
+                    char_idx + 1,
+                    require_end,
+                ) {
+                    return Some(end);
+                }
+            }
+            match_simple_regex_tokens(tokens, chars, token_idx + 1, char_idx, require_end)
+        }
+        ReQuantifier::ZeroOrMore => {
+            let mut max = char_idx;
+            while max < chars.len() && atom_matches(&token.atom, chars[max]) {
+                max += 1;
+            }
+            for candidate in (char_idx..=max).rev() {
+                if let Some(end) = match_simple_regex_tokens(
+                    tokens,
+                    chars,
+                    token_idx + 1,
+                    candidate,
+                    require_end,
+                ) {
+                    return Some(end);
+                }
+            }
+            None
+        }
+        ReQuantifier::OneOrMore => {
+            if char_idx >= chars.len() || !atom_matches(&token.atom, chars[char_idx]) {
+                return None;
+            }
+            let mut max = char_idx + 1;
+            while max < chars.len() && atom_matches(&token.atom, chars[max]) {
+                max += 1;
+            }
+            for candidate in ((char_idx + 1)..=max).rev() {
+                if let Some(end) = match_simple_regex_tokens(
+                    tokens,
+                    chars,
+                    token_idx + 1,
+                    candidate,
+                    require_end,
+                ) {
+                    return Some(end);
+                }
+            }
+            None
+        }
+    }
+}
+
+fn simple_regex_match_bounds(pattern: &str, text: &str, mode: ReMode) -> Option<(usize, usize)> {
+    let parsed = parse_simple_regex(pattern)?;
+    let chars: Vec<char> = text.chars().collect();
+    let starts: Vec<usize> = match mode {
+        ReMode::Search if !parsed.start_anchor => (0..=chars.len()).collect(),
+        _ => vec![0],
+    };
+    let require_end = matches!(mode, ReMode::FullMatch) || parsed.end_anchor;
+    let mut byte_offsets: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
+    byte_offsets.push(text.len());
+
+    for start in starts {
+        if parsed.start_anchor && start != 0 {
+            continue;
+        }
+        if let Some(end) =
+            match_simple_regex_tokens(&parsed.tokens, &chars, 0, start, require_end)
+        {
+            return Some((byte_offsets[start], byte_offsets[end]));
+        }
+    }
+    None
+}
+
 fn re_match_bounds(
     pattern: &RePatternValue,
     text: &Value,
@@ -25903,6 +26587,8 @@ fn re_match_bounds(
             };
             let found = if pattern_text == LOGGING_PERCENT_VALIDATION_PATTERN {
                 find_logging_percent_style_match(text)
+            } else if let Some(bounds) = simple_regex_match_bounds(pattern_text, text, mode) {
+                Some(bounds)
             } else {
                 match mode {
                     ReMode::Search => text

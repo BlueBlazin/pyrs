@@ -2911,7 +2911,7 @@ impl Compiler {
         clauses: &[ComprehensionClause],
     ) -> Result<(), CompileError> {
         let body = build_list_comp_body(elt, clauses);
-        self.emit_comp_function("<listcomp>", body)
+        self.emit_comp_function("<listcomp>", clauses, body)
     }
 
     fn compile_dict_comp(
@@ -2921,7 +2921,7 @@ impl Compiler {
         clauses: &[ComprehensionClause],
     ) -> Result<(), CompileError> {
         let body = build_dict_comp_body(key, value, clauses);
-        self.emit_comp_function("<dictcomp>", body)
+        self.emit_comp_function("<dictcomp>", clauses, body)
     }
 
     fn compile_generator_expr(
@@ -2930,10 +2930,28 @@ impl Compiler {
         clauses: &[ComprehensionClause],
     ) -> Result<(), CompileError> {
         let body = build_genexpr_body(elt, clauses);
-        self.emit_comp_function("<genexpr>", body)
+        self.emit_comp_function("<genexpr>", clauses, body)
     }
 
-    fn emit_comp_function(&mut self, name: &str, body: Vec<Stmt>) -> Result<(), CompileError> {
+    fn emit_comp_function(
+        &mut self,
+        name: &str,
+        clauses: &[ComprehensionClause],
+        mut body: Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        // CPython evaluates the first comprehension iterable in the enclosing scope.
+        // We model this by passing it as an explicit synthetic positional argument.
+        let mut params: Vec<Parameter> = Vec::new();
+        let mut outer_iter: Option<Expr> = None;
+        if let Some(first_clause) = clauses.first() {
+            params.push(Parameter {
+                name: "__pyrs_comp_iter0".to_string(),
+                default: None,
+                annotation: None,
+            });
+            rewrite_first_comp_iter_to_param(&mut body);
+            outer_iter = Some(first_clause.iter.clone());
+        }
         let empty_params: Vec<Parameter> = Vec::new();
         let vararg: Option<Parameter> = None;
         let kwarg: Option<Parameter> = None;
@@ -2941,7 +2959,7 @@ impl Compiler {
             name,
             false,
             &empty_params,
-            &empty_params,
+            &params,
             &empty_params,
             &vararg,
             &kwarg,
@@ -2949,14 +2967,17 @@ impl Compiler {
         )?;
         self.emit_function_with_defaults(
             &empty_params,
-            &empty_params,
+            &params,
             &empty_params,
             &vararg,
             &kwarg,
             None,
             func_code,
         )?;
-        self.emit(Opcode::CallFunction, Some(0));
+        if let Some(iter) = outer_iter {
+            self.compile_expr(&iter)?;
+        }
+        self.emit(Opcode::CallFunction, Some(params.len() as u32));
         Ok(())
     }
 
@@ -4035,6 +4056,34 @@ fn build_comp_stmt_chain(
             orelse: Vec::new(),
         },
     }]
+}
+
+fn rewrite_first_comp_iter_to_param(body: &mut [Stmt]) {
+    let _ = rewrite_first_comp_iter_stmt(body);
+}
+
+fn rewrite_first_comp_iter_stmt(stmts: &mut [Stmt]) -> bool {
+    for stmt in stmts {
+        match &mut stmt.node {
+            StmtKind::For { iter, .. } => {
+                *iter = Expr {
+                    span: iter.span,
+                    node: ExprKind::Name("__pyrs_comp_iter0".to_string()),
+                };
+                return true;
+            }
+            StmtKind::If { body, orelse, .. } => {
+                if rewrite_first_comp_iter_stmt(body) {
+                    return true;
+                }
+                if rewrite_first_comp_iter_stmt(orelse) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn pack_call_counts(positional: u32, keywords: u32) -> Result<u32, CompileError> {

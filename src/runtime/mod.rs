@@ -273,9 +273,111 @@ impl ObjRef {
 }
 
 #[derive(Debug, Clone)]
+struct HashLookupKey {
+    hash: u64,
+    value: Value,
+}
+
+impl PartialEq for HashLookupKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && value_key_equal(&self.value, &other.value)
+    }
+}
+
+impl Eq for HashLookupKey {}
+
+impl Hash for HashLookupKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+fn float_key_equal(left: f64, right: f64) -> bool {
+    if left == right {
+        return true;
+    }
+    left.is_nan() && right.is_nan() && left.to_bits() == right.to_bits()
+}
+
+fn frozenset_key_equal(left: &ObjRef, right: &ObjRef) -> bool {
+    let Object::FrozenSet(left_values) = &*left.kind() else {
+        return false;
+    };
+    let Object::FrozenSet(right_values) = &*right.kind() else {
+        return false;
+    };
+    if left_values.len() != right_values.len() {
+        return false;
+    }
+    let mut matched = vec![false; right_values.len()];
+    for left_value in left_values {
+        let mut found = false;
+        for (index, right_value) in right_values.iter().enumerate() {
+            if matched[index] {
+                continue;
+            }
+            if value_key_equal(left_value, right_value) {
+                matched[index] = true;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
+fn value_key_equal(left: &Value, right: &Value) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (Value::Float(left), Value::Float(right)) => float_key_equal(*left, *right),
+        (
+            Value::Complex {
+                real: left_real,
+                imag: left_imag,
+            },
+            Value::Complex {
+                real: right_real,
+                imag: right_imag,
+            },
+        ) => float_key_equal(*left_real, *right_real) && float_key_equal(*left_imag, *right_imag),
+        (Value::Tuple(left_obj), Value::Tuple(right_obj)) => {
+            let Object::Tuple(left_values) = &*left_obj.kind() else {
+                return false;
+            };
+            let Object::Tuple(right_values) = &*right_obj.kind() else {
+                return false;
+            };
+            if left_values.len() != right_values.len() {
+                return false;
+            }
+            left_values
+                .iter()
+                .zip(right_values.iter())
+                .all(|(left_value, right_value)| value_key_equal(left_value, right_value))
+        }
+        (Value::FrozenSet(left_obj), Value::FrozenSet(right_obj)) => {
+            frozenset_key_equal(left_obj, right_obj)
+        }
+        _ => false,
+    }
+}
+
+fn value_lookup_key(value: &Value) -> Option<HashLookupKey> {
+    Some(HashLookupKey {
+        hash: value_hash_key(value)?,
+        value: value.clone(),
+    })
+}
+
+#[derive(Debug, Clone)]
 pub struct DictObject {
     entries: Vec<(Value, Value)>,
-    index: HashMap<u64, Vec<usize>>,
+    index: HashMap<HashLookupKey, usize>,
 }
 
 impl DictObject {
@@ -321,7 +423,9 @@ impl DictObject {
 
     pub fn remove(&mut self, index: usize) -> (Value, Value) {
         let removed = self.entries.remove(index);
-        self.remove_bucket_index_for_key(&removed.0, index);
+        if let Some(key) = value_lookup_key(&removed.0) {
+            self.index.remove(&key);
+        }
         self.adjust_indices_after_remove(index);
         removed
     }
@@ -335,11 +439,12 @@ impl DictObject {
     }
 
     pub fn find(&self, key: &Value) -> Option<&Value> {
-        self.find_entry(key).map(|(_, value)| value)
+        let index = self.find_index(key)?;
+        Some(&self.entries[index].1)
     }
 
     pub fn contains_key(&self, key: &Value) -> bool {
-        self.find_entry(key).is_some()
+        self.find_index(key).is_some()
     }
 
     pub fn insert(&mut self, key: Value, value: Value) {
@@ -349,8 +454,8 @@ impl DictObject {
         }
         let index = self.entries.len();
         self.entries.push((key, value));
-        if let Some(hash) = value_hash_key(&self.entries[index].0) {
-            self.index.entry(hash).or_default().push(index);
+        if let Some(lookup) = value_lookup_key(&self.entries[index].0) {
+            self.index.insert(lookup, index);
         }
     }
 
@@ -359,66 +464,30 @@ impl DictObject {
         Some(self.remove(index))
     }
 
-    fn find_entry(&self, key: &Value) -> Option<&(Value, Value)> {
-        if let Some(hash) = value_hash_key(key) {
-            if let Some(bucket) = self.index.get(&hash) {
-                for index in bucket {
-                    let pair = &self.entries[*index];
-                    if pair.0 == *key {
-                        return Some(pair);
-                    }
-                }
-                return None;
-            }
-        }
-        self.entries.iter().find(|(stored, _)| *stored == *key)
-    }
-
     fn find_index(&self, key: &Value) -> Option<usize> {
-        if let Some(hash) = value_hash_key(key) {
-            if let Some(bucket) = self.index.get(&hash) {
-                for index in bucket {
-                    if self.entries[*index].0 == *key {
-                        return Some(*index);
-                    }
-                }
-                return None;
+        if let Some(lookup) = value_lookup_key(key) {
+            if let Some(index) = self.index.get(&lookup) {
+                return Some(*index);
             }
         }
-        self.entries.iter().position(|(stored, _)| *stored == *key)
+        self.entries
+            .iter()
+            .position(|(stored, _)| value_key_equal(stored, key))
     }
 
     fn rebuild_index(&mut self) {
         self.index.clear();
         for (index, (key, _)) in self.entries.iter().enumerate() {
-            if let Some(hash) = value_hash_key(key) {
-                self.index.entry(hash).or_default().push(index);
+            if let Some(lookup) = value_lookup_key(key) {
+                self.index.insert(lookup, index);
             }
-        }
-    }
-
-    fn remove_bucket_index_for_key(&mut self, key: &Value, index: usize) {
-        let Some(hash) = value_hash_key(key) else {
-            return;
-        };
-        let mut remove_bucket = false;
-        if let Some(bucket) = self.index.get_mut(&hash) {
-            if let Some(pos) = bucket.iter().position(|candidate| *candidate == index) {
-                bucket.swap_remove(pos);
-            }
-            remove_bucket = bucket.is_empty();
-        }
-        if remove_bucket {
-            self.index.remove(&hash);
         }
     }
 
     fn adjust_indices_after_remove(&mut self, removed_index: usize) {
-        for bucket in self.index.values_mut() {
-            for index in bucket.iter_mut() {
-                if *index > removed_index {
-                    *index -= 1;
-                }
+        for index in self.index.values_mut() {
+            if *index > removed_index {
+                *index -= 1;
             }
         }
     }
@@ -477,7 +546,7 @@ impl Index<usize> for DictObject {
 #[derive(Debug, Clone)]
 pub struct SetObject {
     values: Vec<Value>,
-    index: HashMap<u64, Vec<usize>>,
+    index: HashMap<HashLookupKey, usize>,
 }
 
 impl SetObject {
@@ -524,10 +593,16 @@ impl SetObject {
     pub fn remove(&mut self, index: usize) -> Value {
         let last_index = self.values.len().saturating_sub(1);
         let removed = self.values.swap_remove(index);
-        self.remove_bucket_index_for_value(&removed, index);
+        if let Some(lookup) = value_lookup_key(&removed) {
+            self.index.remove(&lookup);
+        }
         if index < self.values.len() {
             let moved = self.values[index].clone();
-            self.replace_bucket_index_for_value(&moved, last_index, index);
+            if let Some(moved_lookup) = value_lookup_key(&moved) {
+                if self.index.get(&moved_lookup) == Some(&last_index) {
+                    self.index.insert(moved_lookup, index);
+                }
+            }
         }
         removed
     }
@@ -541,17 +616,12 @@ impl SetObject {
     }
 
     pub fn contains(&self, value: &Value) -> bool {
-        if let Some(hash) = value_hash_key(value) {
-            if let Some(bucket) = self.index.get(&hash) {
-                for index in bucket {
-                    if self.values[*index] == *value {
-                        return true;
-                    }
-                }
-                return false;
+        if let Some(lookup) = value_lookup_key(value) {
+            if self.index.contains_key(&lookup) {
+                return true;
             }
         }
-        self.values.iter().any(|item| *item == *value)
+        self.values.iter().any(|item| value_key_equal(item, value))
     }
 
     pub fn insert(&mut self, value: Value) -> bool {
@@ -560,8 +630,8 @@ impl SetObject {
         }
         let index = self.values.len();
         self.values.push(value);
-        if let Some(hash) = value_hash_key(&self.values[index]) {
-            self.index.entry(hash).or_default().push(index);
+        if let Some(lookup) = value_lookup_key(&self.values[index]) {
+            self.index.insert(lookup, index);
         }
         true
     }
@@ -575,55 +645,23 @@ impl SetObject {
     }
 
     fn find_index(&self, value: &Value) -> Option<usize> {
-        if let Some(hash) = value_hash_key(value) {
-            if let Some(bucket) = self.index.get(&hash) {
-                for index in bucket {
-                    if self.values[*index] == *value {
-                        return Some(*index);
-                    }
-                }
-                return None;
+        if let Some(lookup) = value_lookup_key(value) {
+            if let Some(index) = self.index.get(&lookup) {
+                return Some(*index);
             }
         }
-        self.values.iter().position(|item| *item == *value)
+        self.values
+            .iter()
+            .position(|item| value_key_equal(item, value))
     }
 
     fn rebuild_index(&mut self) {
         self.index.clear();
         for (index, value) in self.values.iter().enumerate() {
-            if let Some(hash) = value_hash_key(value) {
-                self.index.entry(hash).or_default().push(index);
+            if let Some(lookup) = value_lookup_key(value) {
+                self.index.insert(lookup, index);
             }
         }
-    }
-
-    fn remove_bucket_index_for_value(&mut self, value: &Value, index: usize) {
-        let Some(hash) = value_hash_key(value) else {
-            return;
-        };
-        let mut remove_bucket = false;
-        if let Some(bucket) = self.index.get_mut(&hash) {
-            if let Some(pos) = bucket.iter().position(|candidate| *candidate == index) {
-                bucket.swap_remove(pos);
-            }
-            remove_bucket = bucket.is_empty();
-        }
-        if remove_bucket {
-            self.index.remove(&hash);
-        }
-    }
-
-    fn replace_bucket_index_for_value(&mut self, value: &Value, old_index: usize, new_index: usize) {
-        let Some(hash) = value_hash_key(value) else {
-            return;
-        };
-        if let Some(bucket) = self.index.get_mut(&hash) {
-            if let Some(pos) = bucket.iter().position(|candidate| *candidate == old_index) {
-                bucket[pos] = new_index;
-                return;
-            }
-        }
-        self.index.entry(hash).or_default().push(new_index);
     }
 }
 

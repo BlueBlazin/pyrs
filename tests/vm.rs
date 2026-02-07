@@ -1570,6 +1570,21 @@ ok = (len(d) == 1 and d[1] == 'float' and d[True] == 'float' and len(s) == 1 and
 }
 
 #[test]
+fn executes_set_binary_operators() {
+    let source = "a = {1, 2, 3}\n\
+b = {2, 4}\n\
+sub = a - b\n\
+inter = a & b\n\
+xorv = a ^ b\n\
+ok = (sub == {1, 3}) and (inter == {2}) and (xorv == {1, 3, 4})\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn set_relationship_methods_reject_unhashable_items() {
     let source = "{1}.issuperset([[]])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3955,6 +3970,17 @@ fn executes_list_comprehension_with_scope_isolation() {
 }
 
 #[test]
+fn list_comprehension_evaluates_first_iterable_in_outer_scope() {
+    let source =
+        "A = 1\nB = 2\nnames = [x for x in dir() if x.isupper() and not x.startswith('_')]\nok = ('A' in names) and ('B' in names)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_dict_comprehension() {
     let source = "d = {x: x + 1 for x in [1, 2, 3]}\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3982,6 +4008,16 @@ fn executes_generator_expression() {
         list_values(vm.get_global("vals")),
         Some(vec![Value::Int(3), Value::Int(6), Value::Int(9)])
     );
+}
+
+#[test]
+fn re_match_supports_char_classes_ranges_and_plus() {
+    let source = "import re\nm = re.match('[A-Z][A-Z0-9_]+$', 'INT')\nn = re.match('[A-Z][A-Z0-9_]+$', 'dump')\nok = (m is not None) and (n is None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -5666,6 +5702,39 @@ w = csv.writer(sink)
 n = w.writerow(['a', 'b,c'])
 rows = list(csv.reader(['a,b', 'c,d']))
 ok = (n == 9 and ''.join(sink.parts) == 'a,"b,c"\r\n' and rows == [['a', 'b'], ['c', 'd']] and 'excel' in csv.list_dialects() and csv.get_dialect('excel') is not None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_module_handles_escapechar_skipinitialspace_and_field_limits() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+class Sink:
+    def __init__(self):
+        self.parts = []
+    def write(self, text):
+        self.parts.append(text)
+        return len(text)
+rows = list(csv.reader(['a, b, c'], skipinitialspace=True))
+rows2 = list(csv.reader([r'a\,b,c'], quotechar=None, escapechar='\\'))
+sink = Sink()
+w = csv.writer(sink, quotechar=None, escapechar='\\', quoting=csv.QUOTE_NONE, lineterminator='\n')
+w.writerow(['a,b', 'c'])
+csv.field_size_limit(3)
+limit_raised = False
+try:
+    list(csv.reader(['abcd']))
+except Exception:
+    limit_raised = True
+ok = (rows == [['a', 'b', 'c']] and rows2 == [['a,b', 'c']] and ''.join(sink.parts) == 'a\\,b,c\n' and limit_raised)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

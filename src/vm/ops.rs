@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use super::class_name_for_instance;
-use super::containers::ensure_hashable;
+use super::containers::{dedup_hashable_values, ensure_hashable};
 use super::{
     mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod,
     value_to_int, NumericValue,
@@ -83,7 +83,16 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     }
 }
 
-pub(super) fn sub_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+pub(super) fn sub_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
+    if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
+        let mut difference = Vec::new();
+        for value in left_values {
+            if !right_values.iter().any(|candidate| *candidate == value) {
+                difference.push(value);
+            }
+        }
+        return set_op_result(left, difference, heap);
+    }
     if let Some((left, right)) = integer_pair(&left, &right) {
         return Ok(bigint_to_value(left.sub(&right)));
     }
@@ -409,18 +418,41 @@ pub(super) fn invert_value(value: Value) -> Result<Value, RuntimeError> {
     Ok(bigint_to_value(value.bitnot()))
 }
 
-pub(super) fn and_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+pub(super) fn and_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
         return Ok(Value::Bool(*left & *right));
+    }
+    if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
+        let mut intersection = Vec::new();
+        for value in left_values {
+            if right_values.iter().any(|candidate| *candidate == value) {
+                intersection.push(value);
+            }
+        }
+        return set_op_result(left, intersection, heap);
     }
     let (left, right) =
         integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for &"))?;
     Ok(bigint_to_value(left.bitand(&right)))
 }
 
-pub(super) fn xor_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+pub(super) fn xor_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
         return Ok(Value::Bool(*left ^ *right));
+    }
+    if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
+        let mut out = Vec::new();
+        for value in &left_values {
+            if !right_values.iter().any(|candidate| candidate == value) {
+                out.push(value.clone());
+            }
+        }
+        for value in &right_values {
+            if !left_values.iter().any(|candidate| candidate == value) {
+                out.push(value.clone());
+            }
+        }
+        return set_op_result(left, out, heap);
     }
     let (left, right) =
         integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for ^"))?;
@@ -658,6 +690,15 @@ fn as_set_values(value: &Value) -> Option<Vec<Value>> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn set_op_result(left: Value, values: Vec<Value>, heap: &Heap) -> Result<Value, RuntimeError> {
+    let values = dedup_hashable_values(values)?;
+    match left {
+        Value::Set(_) => Ok(heap.alloc_set(values)),
+        Value::FrozenSet(_) => Ok(heap.alloc_frozenset(values)),
+        _ => unreachable!(),
     }
 }
 
