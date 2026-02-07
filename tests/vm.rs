@@ -3937,7 +3937,7 @@ fn executes_custom_metaclass_fallback() {
 
 #[test]
 fn imports_gc_errno_weakref_and_array_modules() {
-    let source = "import gc\nimport errno\nimport weakref\nimport _weakref\nimport array\nvals = array.array('B', b'AB')\nref_value = weakref.ref(1)\nok = gc.isenabled() and errno.ENOENT == 2 and len(vals) == 2 and ref_value == 1\n";
+    let source = "import gc\nimport errno\nimport weakref\nimport _weakref\nimport array\nvals = array.array('B', b'AB')\nref_value = weakref.ref(1)\nout = []\nfor x in vals:\n    out.append(x)\nok = gc.isenabled() and errno.ENOENT == 2 and len(vals) == 2 and vals.itemsize == 1 and out == [65, 66] and ref_value == 1\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3949,6 +3949,17 @@ fn imports_gc_errno_weakref_and_array_modules() {
 fn sys_module_exposes_argv_and_executable() {
     let source =
         "import sys\nok = isinstance(sys.argv, list) and isinstance(sys.executable, str)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_exit_raises_systemexit() {
+    let source = "import sys\nok = False\ntry:\n    sys.exit(2)\nexcept SystemExit:\n    ok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4009,6 +4020,56 @@ fn exposes_functools_wraps_decorator_callable() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("out"), Some(Value::Int(5)));
+}
+
+#[test]
+fn functools_wraps_preserves_function_dict_metadata() {
+    let source = "import functools\n\ndef base(x):\n    return x + 1\nbase.client_skip = lambda f: f\n\n@functools.wraps(base)\ndef wrapper(x):\n    return base(x)\n\nok = (hasattr(wrapper, 'client_skip') and wrapper.client_skip is base.client_skip and wrapper.__wrapped__ is base and wrapper.__name__ == 'base')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn functools_wraps_accepts_bound_method_inputs() {
+    let source = "import functools\nclass C:\n    @classmethod\n    def setUpClass(cls):\n        return 1\nwrapped = functools.wraps(C.setUpClass)(lambda cls: None)\nok = (wrapped.__name__ == 'setUpClass' and hasattr(wrapped, '__wrapped__'))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn enumerate_accepts_iterator_inputs() {
+    let source = "it = (x for x in [10, 20])\nout = enumerate(it, start=3)\nok = (out == [(3, 10), (4, 20)])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn filter_builtin_supports_callable_and_none_predicate() {
+    let source = "a = filter(lambda x: x % 2 == 0, [1, 2, 3, 4])\nb = filter(None, [0, 1, '', 'ok'])\nok = (a == [2, 4] and b == [1, 'ok'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_slice_assignment_supports_replacement_and_extended_steps() {
+    let source = "a = [0, 1, 2, 3, 4]\na[1:4] = [10, 11]\nb = [0, 1, 2, 3, 4, 5]\nb[::2] = [9, 8, 7]\nerr = False\ntry:\n    b[::2] = [1]\nexcept Exception:\n    err = True\nok = (a == [0, 10, 11, 4] and b == [9, 1, 8, 3, 7, 5] and err)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -4985,6 +5046,26 @@ fn super_uses_owner_class_for_classmethod_descriptors() {
 #[test]
 fn os_urandom_returns_requested_number_of_bytes() {
     let source = "import os\npayload = os.urandom(16)\nok = (isinstance(payload, bytes) and len(payload) == 16)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_terminal_size_helpers_are_available() {
+    let source = "import os\na = os.get_terminal_size()\nb = os.terminal_size((100, 40))\nok = (a.columns == 80 and a.lines == 24 and b.columns == 100 and b.lines == 40)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn colorize_decolor_strips_ansi_sequences() {
+    let source = "import _colorize\ns = _colorize.decolor('\\x1b[31mhello\\x1b[0m')\nok = (s == 'hello')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

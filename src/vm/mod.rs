@@ -921,6 +921,9 @@ impl Vm {
             );
             module_data
                 .globals
+                .insert("exit".to_string(), Value::Builtin(BuiltinFunction::SysExit));
+            module_data
+                .globals
                 .insert("path".to_string(), self.heap.alloc_list(Vec::new()));
             module_data.globals.insert(
                 "meta_path".to_string(),
@@ -1459,6 +1462,7 @@ impl Vm {
             &[
                 ("getpid", BuiltinFunction::OsGetPid),
                 ("getcwd", BuiltinFunction::OsGetCwd),
+                ("get_terminal_size", BuiltinFunction::OsGetTerminalSize),
                 ("open", BuiltinFunction::OsOpen),
                 ("close", BuiltinFunction::OsClose),
                 ("isatty", BuiltinFunction::OsIsATty),
@@ -1554,6 +1558,7 @@ impl Vm {
                 ("SEEK_SET", Value::Int(0)),
                 ("SEEK_CUR", Value::Int(1)),
                 ("SEEK_END", Value::Int(2)),
+                ("terminal_size", Value::Builtin(BuiltinFunction::OsTerminalSize)),
                 ("supports_dir_fd", self.heap.alloc_set(Vec::new())),
                 ("supports_fd", self.heap.alloc_set(Vec::new())),
                 ("supports_follow_symlinks", self.heap.alloc_set(Vec::new())),
@@ -2001,6 +2006,7 @@ impl Vm {
                 ("get_theme", BuiltinFunction::ColorizeGetTheme),
                 ("get_colors", BuiltinFunction::ColorizeGetColors),
                 ("set_theme", BuiltinFunction::ColorizeSetTheme),
+                ("decolor", BuiltinFunction::ColorizeDecolor),
             ],
             vec![
                 ("COLORIZE", Value::Bool(false)),
@@ -5505,12 +5511,36 @@ impl Vm {
                         let value = self.pop_value()?;
                         let index = self.pop_value()?;
                         let target = self.pop_value()?;
-                        match index {
-                            Value::Slice { .. } => {
-                                return Err(RuntimeError::new("slice assignment not supported"));
-                            }
-                            index => match target {
-                                Value::List(obj) => {
+                        match target {
+                            Value::List(obj) => match index {
+                                Value::Slice { lower, upper, step } => {
+                                    let replacement = self
+                                        .collect_iterable_values(value)
+                                        .map_err(|_| RuntimeError::new("can only assign an iterable"))?;
+                                    if let Object::List(values) = &mut *obj.kind_mut() {
+                                        let step_value = step.unwrap_or(1);
+                                        if step_value == 1 {
+                                            let (start, stop) =
+                                                slice_bounds_for_step_one(values.len(), lower, upper);
+                                            values.splice(start..stop, replacement);
+                                        } else {
+                                            let indices =
+                                                slice_indices(values.len(), lower, upper, step)?;
+                                            if indices.len() != replacement.len() {
+                                                return Err(RuntimeError::new(format!(
+                                                    "attempt to assign sequence of size {} to extended slice of size {}",
+                                                    replacement.len(),
+                                                    indices.len()
+                                                )));
+                                            }
+                                            for (idx, item) in indices.into_iter().zip(replacement) {
+                                                values[idx] = item;
+                                            }
+                                        }
+                                    }
+                                    self.push_value(Value::List(obj));
+                                }
+                                index => {
                                     if let Object::List(values) = &mut *obj.kind_mut() {
                                         let mut idx = value_to_int(index)? as isize;
                                         if idx < 0 {
@@ -5525,6 +5555,12 @@ impl Vm {
                                     }
                                     self.push_value(Value::List(obj));
                                 }
+                            },
+                            target => match index {
+                                Value::Slice { .. } => {
+                                    return Err(RuntimeError::new("slice assignment not supported"));
+                                }
+                                index => match target {
                                 Value::Dict(obj) => {
                                     if let Object::Dict(entries) = &mut *obj.kind_mut() {
                                         let mut found = false;
@@ -5607,7 +5643,8 @@ impl Vm {
                                     ));
                                 }
                             },
-                        }
+                            },
+                        };
                     }
                     Opcode::DeleteSubscript => {
                         let index = self.pop_value()?;
@@ -7192,51 +7229,10 @@ impl Vm {
                     Opcode::GetIter => {
                         let value = self.pop_value()?;
                         self.ensure_sync_iterator_target(&value)?;
-                        let iterator = match value {
-                            Value::List(obj) => IteratorObject {
-                                kind: IteratorKind::List(obj),
-                                index: 0,
-                            },
-                            Value::Tuple(obj) => IteratorObject {
-                                kind: IteratorKind::Tuple(obj),
-                                index: 0,
-                            },
-                            Value::Str(value) => IteratorObject {
-                                kind: IteratorKind::Str(value),
-                                index: 0,
-                            },
-                            Value::Dict(obj) => IteratorObject {
-                                kind: IteratorKind::Dict(obj),
-                                index: 0,
-                            },
-                            Value::Set(obj) | Value::FrozenSet(obj) => IteratorObject {
-                                kind: IteratorKind::Set(obj),
-                                index: 0,
-                            },
-                            Value::Bytes(obj) => IteratorObject {
-                                kind: IteratorKind::Bytes(obj),
-                                index: 0,
-                            },
-                            Value::ByteArray(obj) => IteratorObject {
-                                kind: IteratorKind::ByteArray(obj),
-                                index: 0,
-                            },
-                            Value::MemoryView(obj) => IteratorObject {
-                                kind: IteratorKind::MemoryView(obj),
-                                index: 0,
-                            },
-                            Value::Generator(obj) => {
-                                self.push_value(Value::Generator(obj));
-                                return Ok(None);
-                            }
-                            Value::Iterator(obj) => {
-                                self.push_value(Value::Iterator(obj));
-                                return Ok(None);
-                            }
-                            _ => return Err(RuntimeError::new("object is not iterable")),
-                        };
-                        let value = self.heap.alloc_iterator(iterator);
-                        self.push_value(value);
+                        let iterator = self
+                            .to_iterator_value(value)
+                            .map_err(|_| RuntimeError::new("object is not iterable"))?;
+                        self.push_value(iterator);
                     }
                     Opcode::ForIter => {
                         let target = instr
@@ -11704,9 +11700,17 @@ impl Vm {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("wraps() decorator expects one argument"));
                 }
-                Ok(NativeCallResult::Value(
-                    args.first().cloned().expect("checked len"),
-                ))
+                let wrapped = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("wrapped")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("wraps receiver is invalid"))?,
+                    _ => return Err(RuntimeError::new("wraps receiver is invalid")),
+                };
+                let wrapper = args.first().cloned().expect("checked len");
+                self.apply_functools_wraps_metadata(&wrapper, &wrapped)?;
+                Ok(NativeCallResult::Value(wrapper))
             }
             NativeMethodKind::FunctoolsPartialCall => {
                 let (callable, frozen_args, frozen_kwargs) = match &*receiver.kind() {
@@ -11950,6 +11954,45 @@ impl Vm {
                 kind: IteratorKind::MemoryView(obj),
                 index: 0,
             })),
+            Value::Module(module) => {
+                let array_values = {
+                    let module_kind = module.kind();
+                    match &*module_kind {
+                        Object::Module(module_data) if module_data.name == "__array__" => {
+                            module_data.globals.get("values").cloned()
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(values) = array_values {
+                    return self.to_iterator_value(values);
+                }
+                let other = Value::Module(module);
+                let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
+                else {
+                    return Err(RuntimeError::new("yield from expects iterable"));
+                };
+
+                match self.call_internal(iter_method, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(iterable) => match iterable {
+                        Value::Iterator(_) | Value::Generator(_) => Ok(iterable),
+                        Value::List(_)
+                        | Value::Tuple(_)
+                        | Value::Str(_)
+                        | Value::Dict(_)
+                        | Value::Set(_)
+                        | Value::FrozenSet(_)
+                        | Value::Bytes(_)
+                        | Value::ByteArray(_)
+                        | Value::MemoryView(_)
+                        | Value::Module(_) => self.to_iterator_value(iterable),
+                        _ => Err(RuntimeError::new("__iter__() returned non-iterator")),
+                    },
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(RuntimeError::new("__iter__() failed"))
+                    }
+                }
+            }
             other => {
                 if let Value::Class(class) = &other {
                     if let Some(iterator) = self.class_fallback_iterator(class) {
@@ -12429,6 +12472,7 @@ impl Vm {
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
             BuiltinFunction::Dir => self.builtin_dir(args, kwargs),
             BuiltinFunction::SysGetFrame => self.builtin_sys_getframe(args, kwargs),
+            BuiltinFunction::SysExit => self.builtin_sys_exit(args, kwargs),
             BuiltinFunction::SysGetFilesystemEncoding => {
                 self.builtin_sys_getfilesystemencoding(args, kwargs)
             }
@@ -12479,6 +12523,8 @@ impl Vm {
             BuiltinFunction::Sorted => self.builtin_sorted(args, kwargs),
             BuiltinFunction::All => self.builtin_all(args, kwargs),
             BuiltinFunction::Any => self.builtin_any(args, kwargs),
+            BuiltinFunction::Enumerate => self.builtin_enumerate(args, kwargs),
+            BuiltinFunction::Filter => self.builtin_filter(args, kwargs),
             BuiltinFunction::Reversed => self.builtin_reversed(args, kwargs),
             BuiltinFunction::Zip => self.builtin_zip(args, kwargs),
             BuiltinFunction::Iter => self.builtin_iter(args, kwargs),
@@ -12580,6 +12626,10 @@ impl Vm {
             BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),
             BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),
+            BuiltinFunction::OsGetTerminalSize => {
+                self.builtin_os_get_terminal_size(args, kwargs)
+            }
+            BuiltinFunction::OsTerminalSize => self.builtin_os_terminal_size(args, kwargs),
             BuiltinFunction::OsOpen => self.builtin_os_open(args, kwargs),
             BuiltinFunction::OsClose => self.builtin_os_close(args, kwargs),
             BuiltinFunction::OsIsATty => self.builtin_os_isatty(args, kwargs),
@@ -12859,6 +12909,7 @@ impl Vm {
             BuiltinFunction::ColorizeGetTheme => self.builtin_colorize_get_theme(args, kwargs),
             BuiltinFunction::ColorizeGetColors => self.builtin_colorize_get_colors(args, kwargs),
             BuiltinFunction::ColorizeSetTheme => self.builtin_colorize_set_theme(args, kwargs),
+            BuiltinFunction::ColorizeDecolor => self.builtin_colorize_decolor(args, kwargs),
             BuiltinFunction::WarningsWarn => self.builtin_warnings_warn(args, kwargs),
             BuiltinFunction::WarningsWarnExplicit => {
                 self.builtin_warnings_warn_explicit(args, kwargs)
@@ -13416,6 +13467,23 @@ impl Vm {
                 .insert("f_globals".to_string(), globals_dict);
         }
         Ok(Value::Module(frame_obj))
+    }
+
+    fn builtin_sys_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new(
+                "sys.exit() expects at most one argument",
+            ));
+        }
+        if let Some(value) = args.pop() {
+            Err(RuntimeError::new(format!("SystemExit: {}", format_value(&value))))
+        } else {
+            Err(RuntimeError::new("SystemExit"))
+        }
     }
 
     fn builtin_sys_getfilesystemencoding(
@@ -15371,6 +15439,42 @@ impl Vm {
         }
     }
 
+    fn builtin_enumerate(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("enumerate() expects 1-2 arguments"));
+        }
+        let kw_start = kwargs.remove("start");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "enumerate() got an unexpected keyword argument",
+            ));
+        }
+        if kw_start.is_some() && args.len() == 2 {
+            return Err(RuntimeError::new("enumerate() got multiple values"));
+        }
+
+        let start = if let Some(value) = kw_start {
+            value_to_int(value)?
+        } else if args.len() == 2 {
+            value_to_int(args.remove(1))?
+        } else {
+            0
+        };
+        let iterable = args.remove(0);
+        let values = self
+            .collect_iterable_values(iterable)
+            .map_err(|_| RuntimeError::new("enumerate() expects iterable"))?;
+        let mut out = Vec::with_capacity(values.len());
+        for (offset, value) in values.into_iter().enumerate() {
+            out.push(self.heap.alloc_tuple(vec![Value::Int(start + offset as i64), value]));
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
     fn builtin_map(
         &mut self,
         mut args: Vec<Value>,
@@ -15412,6 +15516,47 @@ impl Vm {
             };
             mapped.push(value);
         }
+    }
+
+    fn builtin_filter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("filter() expects two arguments"));
+        }
+        let predicate = args.remove(0);
+        let source = args.remove(0);
+        self.ensure_sync_iterator_target(&source)?;
+        let iterator = self
+            .to_iterator_value(source)
+            .map_err(|_| RuntimeError::new("filter() argument 2 is not iterable"))?;
+        let mut filtered = Vec::new();
+        loop {
+            let item = match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(value) => value,
+                GeneratorResumeOutcome::Complete(_) => break,
+                GeneratorResumeOutcome::PropagatedException => {
+                    return Err(RuntimeError::new("filter() iteration failed"));
+                }
+            };
+
+            let include = if matches!(predicate, Value::None) {
+                is_truthy(&item)
+            } else {
+                match self.call_internal(predicate.clone(), vec![item.clone()], HashMap::new())? {
+                    InternalCallOutcome::Value(value) => is_truthy(&value),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("filter() callable failed"));
+                    }
+                }
+            };
+            if include {
+                filtered.push(item);
+            }
+        }
+        Ok(self.heap.alloc_list(filtered))
     }
 
     fn builtin_aiter(
@@ -17361,6 +17506,66 @@ impl Vm {
             return Err(RuntimeError::new("getpid() expects no arguments"));
         }
         Ok(Value::Int(std::process::id() as i64))
+    }
+
+    fn make_os_terminal_size(&self, columns: i64, lines: i64) -> Value {
+        let module = match self
+            .heap
+            .alloc_module(ModuleObject::new("__os_terminal_size__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .insert("columns".to_string(), Value::Int(columns));
+            module_data
+                .globals
+                .insert("lines".to_string(), Value::Int(lines));
+        }
+        Value::Module(module)
+    }
+
+    fn builtin_os_terminal_size(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("terminal_size() expects one argument"));
+        }
+        let values = match &args[0] {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("terminal_size() expects a 2-item sequence")),
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("terminal_size() expects a 2-item sequence")),
+            },
+            _ => return Err(RuntimeError::new("terminal_size() expects a 2-item sequence")),
+        };
+        if values.len() != 2 {
+            return Err(RuntimeError::new("terminal_size() expects a 2-item sequence"));
+        }
+        let columns = value_to_int(values[0].clone())?;
+        let lines = value_to_int(values[1].clone())?;
+        Ok(self.make_os_terminal_size(columns, lines))
+    }
+
+    fn builtin_os_get_terminal_size(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new("get_terminal_size() expects at most one argument"));
+        }
+        if let Some(fd) = args.first() {
+            let _ = value_to_int(fd.clone())?;
+        }
+        Ok(self.make_os_terminal_size(80, 24))
     }
 
     fn builtin_os_open(
@@ -20241,6 +20446,80 @@ impl Vm {
         Ok(self.alloc_native_bound_method(NativeMethodKind::FunctoolsWrapsDecorator, receiver))
     }
 
+    fn maybe_get_attribute(
+        &mut self,
+        target: Value,
+        name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match self.builtin_getattr(vec![target, Value::Str(name.to_string())], HashMap::new()) {
+            Ok(value) => Ok(Some(value)),
+            Err(err) if err.message.contains("has no attribute") => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn apply_functools_wraps_metadata(
+        &mut self,
+        wrapper: &Value,
+        wrapped: &Value,
+    ) -> Result<(), RuntimeError> {
+        let metadata_source = if let Value::BoundMethod(bound) = wrapped {
+            let bound_kind = bound.kind();
+            match &*bound_kind {
+                Object::BoundMethod(bound_data) => {
+                    let function_kind = bound_data.function.kind();
+                    if matches!(&*function_kind, Object::Function(_)) {
+                        Value::Function(bound_data.function.clone())
+                    } else {
+                        wrapped.clone()
+                    }
+                }
+                _ => wrapped.clone(),
+            }
+        } else {
+            wrapped.clone()
+        };
+
+        for attr in ["__module__", "__name__", "__qualname__", "__doc__", "__annotations__"] {
+            if let Some(value) = self.maybe_get_attribute(metadata_source.clone(), attr)? {
+                self.builtin_setattr(
+                    vec![wrapper.clone(), Value::Str(attr.to_string()), value],
+                    HashMap::new(),
+                )?;
+            }
+        }
+
+        let wrapped_dict = self.maybe_get_attribute(metadata_source, "__dict__")?;
+        if let Some(Value::Dict(source_dict)) = wrapped_dict {
+            let wrapper_dict = self.builtin_getattr(
+                vec![wrapper.clone(), Value::Str("__dict__".to_string())],
+                HashMap::new(),
+            )?;
+            if let Value::Dict(target_dict) = wrapper_dict {
+                let entries = {
+                    let source_kind = source_dict.kind();
+                    match &*source_kind {
+                        Object::Dict(entries) => entries.clone(),
+                        _ => Vec::new(),
+                    }
+                };
+                for (key, value) in entries {
+                    dict_set_value(&target_dict, key, value);
+                }
+            }
+        }
+
+        self.builtin_setattr(
+            vec![
+                wrapper.clone(),
+                Value::Str("__wrapped__".to_string()),
+                wrapped.clone(),
+            ],
+            HashMap::new(),
+        )?;
+        Ok(())
+    }
+
     fn builtin_functools_partial(
         &mut self,
         mut args: Vec<Value>,
@@ -22611,6 +22890,68 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn builtin_colorize_decolor(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("decolor() expects one string argument"));
+        }
+        let text = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("decolor() expects one string argument")),
+        };
+        let mut output = text;
+        for code in [
+            "\u{1b}[0m",
+            "\u{1b}[30m",
+            "\u{1b}[34m",
+            "\u{1b}[36m",
+            "\u{1b}[32m",
+            "\u{1b}[90m",
+            "\u{1b}[35m",
+            "\u{1b}[31m",
+            "\u{1b}[37m",
+            "\u{1b}[33m",
+            "\u{1b}[1m",
+            "\u{1b}[1;30m",
+            "\u{1b}[1;34m",
+            "\u{1b}[1;36m",
+            "\u{1b}[1;32m",
+            "\u{1b}[1;35m",
+            "\u{1b}[1;31m",
+            "\u{1b}[1;37m",
+            "\u{1b}[1;33m",
+            "\u{1b}[94m",
+            "\u{1b}[96m",
+            "\u{1b}[92m",
+            "\u{1b}[95m",
+            "\u{1b}[91m",
+            "\u{1b}[97m",
+            "\u{1b}[93m",
+            "\u{1b}[40m",
+            "\u{1b}[44m",
+            "\u{1b}[46m",
+            "\u{1b}[42m",
+            "\u{1b}[45m",
+            "\u{1b}[41m",
+            "\u{1b}[47m",
+            "\u{1b}[43m",
+            "\u{1b}[100m",
+            "\u{1b}[104m",
+            "\u{1b}[106m",
+            "\u{1b}[102m",
+            "\u{1b}[105m",
+            "\u{1b}[101m",
+            "\u{1b}[107m",
+            "\u{1b}[103m",
+        ] {
+            output = output.replace(code, "");
+        }
+        Ok(Value::Str(output))
+    }
+
     fn builtin_warnings_warn(
         &mut self,
         args: Vec<Value>,
@@ -23028,6 +23369,8 @@ impl Vm {
             .insert("any".to_string(), Value::Builtin(BuiltinFunction::Any));
         self.builtins
             .insert("map".to_string(), Value::Builtin(BuiltinFunction::Map));
+        self.builtins
+            .insert("filter".to_string(), Value::Builtin(BuiltinFunction::Filter));
         self.builtins
             .insert("pow".to_string(), Value::Builtin(BuiltinFunction::Pow));
         self.builtins
@@ -26265,6 +26608,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.trim() == "KeyboardInterrupt" {
         return "KeyboardInterrupt";
     }
+    if message.trim() == "SystemExit" || message.trim().starts_with("SystemExit:") {
+        return "SystemExit";
+    }
     if message.contains("index out of range") {
         return "IndexError";
     }
@@ -27162,6 +27508,31 @@ fn slice_indices(
         }
     }
     Ok(indices)
+}
+
+fn slice_bounds_for_step_one(len: usize, lower: Option<i64>, upper: Option<i64>) -> (usize, usize) {
+    let len_isize = len as isize;
+    let mut start = lower.unwrap_or(0) as isize;
+    if start < 0 {
+        start += len_isize;
+    }
+    if start < 0 {
+        start = 0;
+    } else if start > len_isize {
+        start = len_isize;
+    }
+
+    let mut stop = upper.unwrap_or(len as i64) as isize;
+    if stop < 0 {
+        stop += len_isize;
+    }
+    if stop < 0 {
+        stop = 0;
+    } else if stop > len_isize {
+        stop = len_isize;
+    }
+
+    (start as usize, stop as usize)
 }
 
 fn opcode_flags_contains(flags: &str, target: &str) -> bool {

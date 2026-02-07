@@ -947,6 +947,7 @@ pub enum BuiltinFunction {
     All,
     Any,
     Map,
+    Filter,
     Pow,
     List,
     ListAppendDescriptor,
@@ -1003,6 +1004,7 @@ pub enum BuiltinFunction {
     Locals,
     Globals,
     SysGetFrame,
+    SysExit,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
     SysStdoutWrite,
@@ -1091,6 +1093,8 @@ pub enum BuiltinFunction {
     TimeSleep,
     OsGetPid,
     OsGetCwd,
+    OsGetTerminalSize,
+    OsTerminalSize,
     OsOpen,
     OsClose,
     OsIsATty,
@@ -1325,6 +1329,7 @@ pub enum BuiltinFunction {
     ColorizeGetTheme,
     ColorizeGetColors,
     ColorizeSetTheme,
+    ColorizeDecolor,
     WarningsWarn,
     WarningsWarnExplicit,
     WarningsFiltersMutated,
@@ -1401,6 +1406,18 @@ impl BuiltinFunction {
                             }
                             _ => Err(RuntimeError::new("len() unsupported type")),
                         },
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::Module(obj) => match &*obj.kind() {
+                        Object::Module(module_data) if module_data.name == "__array__" => {
+                            match module_data.globals.get("values") {
+                                Some(Value::List(values)) => match &*values.kind() {
+                                    Object::List(items) => Ok(Value::Int(items.len() as i64)),
+                                    _ => Err(RuntimeError::new("len() unsupported type")),
+                                },
+                                _ => Err(RuntimeError::new("len() unsupported type")),
+                            }
+                        }
                         _ => Err(RuntimeError::new("len() unsupported type")),
                     },
                     _ => Err(RuntimeError::new("len() unsupported type")),
@@ -1708,6 +1725,7 @@ impl BuiltinFunction {
             BuiltinFunction::All => builtin_all_any(args, true),
             BuiltinFunction::Any => builtin_all_any(args, false),
             BuiltinFunction::Map => Err(RuntimeError::new("map() requires VM context")),
+            BuiltinFunction::Filter => Err(RuntimeError::new("filter() requires VM context")),
             BuiltinFunction::Pow => {
                 if args.len() < 2 || args.len() > 3 {
                     return Err(RuntimeError::new("pow() expects 2-3 arguments"));
@@ -2734,6 +2752,13 @@ impl BuiltinFunction {
                 if typecode.is_empty() {
                     return Err(RuntimeError::new("array() typecode cannot be empty"));
                 }
+                let itemsize = match typecode.chars().next().expect("checked empty") {
+                    'b' | 'B' => 1,
+                    'u' | 'h' | 'H' => 2,
+                    'i' | 'I' | 'l' | 'L' | 'f' => 4,
+                    'q' | 'Q' | 'd' => 8,
+                    _ => 1,
+                };
                 let mut values = Vec::new();
                 if let Some(initializer) = args.get(1) {
                     match initializer {
@@ -2770,7 +2795,21 @@ impl BuiltinFunction {
                         _ => return Err(RuntimeError::new("array() initializer must be iterable")),
                     }
                 }
-                Ok(heap.alloc_list(values))
+                let values = heap.alloc_list(values);
+                let module = match heap.alloc_module(ModuleObject::new("__array__")) {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *module.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("typecode".to_string(), Value::Str(typecode));
+                    module_data
+                        .globals
+                        .insert("itemsize".to_string(), Value::Int(itemsize));
+                    module_data.globals.insert("values".to_string(), values);
+                }
+                Ok(Value::Module(module))
             }
             BuiltinFunction::GcCollect => {
                 if args.len() > 1 {
@@ -2815,6 +2854,7 @@ impl BuiltinFunction {
             | BuiltinFunction::Globals
             | BuiltinFunction::Exec
             | BuiltinFunction::SysGetFrame
+            | BuiltinFunction::SysExit
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
             | BuiltinFunction::SysStdoutWrite
@@ -2889,6 +2929,8 @@ impl BuiltinFunction {
             | BuiltinFunction::TimeSleep
             | BuiltinFunction::OsGetPid
             | BuiltinFunction::OsGetCwd
+            | BuiltinFunction::OsGetTerminalSize
+            | BuiltinFunction::OsTerminalSize
             | BuiltinFunction::OsOpen
             | BuiltinFunction::OsClose
             | BuiltinFunction::OsIsATty
@@ -3086,6 +3128,7 @@ impl BuiltinFunction {
             | BuiltinFunction::ColorizeGetTheme
             | BuiltinFunction::ColorizeGetColors
             | BuiltinFunction::ColorizeSetTheme
+            | BuiltinFunction::ColorizeDecolor
             | BuiltinFunction::WarningsWarn
             | BuiltinFunction::WarningsWarnExplicit
             | BuiltinFunction::WarningsFiltersMutated

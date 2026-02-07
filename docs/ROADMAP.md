@@ -298,7 +298,8 @@ Progress:
 - No-op accounting hardening landed: inventory walk is recursive across module/class/instance/container graphs so stub drift cannot hide outside top-level module globals.
 - Super/MRO parity fix landed: `super(...).__attr__` now checks direct attrs at each MRO step (instead of recursively re-walking parent MROs), eliminating incorrect early fallback to `object.__init__` in cooperative multiple-inheritance paths.
 - CPython harness breadth expanded with zero allowlist impact: `tests/cpython_suite_language.txt` now includes `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, and `test/test_configparser.py`.
-- Expanded CPython probe runs outside the curated harness surfaced remaining Milestone 13 blockers now explicitly tracked in `docs/STUB_ACCOUNTING.md` (arbitrary-precision integer semantics for large shifts, `_testinternalcapi.hamt`, `os.get_terminal_size`/`os.terminal_size`, and `array.array` attribute/model parity including `itemsize`).
+- CPython harness regression-closure batch landed: `_colorize.decolor`, `functools.wraps` metadata propagation for bound-method inputs, VM-native `enumerate`/`filter` iterable handling, list slice assignment semantics, and `sys.exit` baseline behavior are now implemented with dedicated regressions.
+- Expanded CPython probe runs outside the curated harness now carry forward remaining Milestone 13 blockers tracked in `docs/STUB_ACCOUNTING.md` (arbitrary-precision integer semantics for large shifts and `_testinternalcapi.hamt`).
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
