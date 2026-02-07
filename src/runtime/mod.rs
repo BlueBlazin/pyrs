@@ -1087,6 +1087,11 @@ pub enum BuiltinFunction {
     JsonLoads,
     MarshalLoads,
     MarshalDumps,
+    PyLongIntToDecimalString,
+    PyLongIntDivMod,
+    PyLongIntFromString,
+    PyLongComputePowers,
+    PyLongDecStrToIntInner,
     CodecsEncode,
     CodecsDecode,
     CodecsLookup,
@@ -2782,6 +2787,11 @@ impl BuiltinFunction {
             | BuiltinFunction::OsWaitPid
             | BuiltinFunction::JsonDumps
             | BuiltinFunction::JsonLoads
+            | BuiltinFunction::PyLongIntToDecimalString
+            | BuiltinFunction::PyLongIntDivMod
+            | BuiltinFunction::PyLongIntFromString
+            | BuiltinFunction::PyLongComputePowers
+            | BuiltinFunction::PyLongDecStrToIntInner
             | BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
             | BuiltinFunction::CodecsLookup

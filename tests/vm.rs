@@ -4471,3 +4471,23 @@ fn socket_hostname_addrinfo_and_fromfd_smoke() {
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn pylong_basic_helpers_work() {
+    let source = "import _pylong\nv = _pylong.int_from_string('1_234 ')\ns = _pylong.int_to_decimal_string(-42)\nq, r = _pylong.int_divmod(-7, 3)\np = _pylong.compute_powers(5, 2, 3)\nok = (v == 1234 and s == '-42' and q == -3 and r == 2 and p[4] == 16 and p[5] == 32)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pylong_decimal_inner_accepts_guard_keyword() {
+    let source = "import _pylong\nv = _pylong._dec_str_to_int_inner('99', GUARD=4)\nok = (v == 99)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

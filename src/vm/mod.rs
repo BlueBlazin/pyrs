@@ -1359,11 +1359,17 @@ impl Vm {
         self.install_builtin_module(
             "_pylong",
             &[
-                ("int_to_decimal_string", BuiltinFunction::NoOp),
-                ("int_divmod", BuiltinFunction::NoOp),
-                ("int_from_string", BuiltinFunction::NoOp),
-                ("compute_powers", BuiltinFunction::NoOp),
-                ("_dec_str_to_int_inner", BuiltinFunction::NoOp),
+                (
+                    "int_to_decimal_string",
+                    BuiltinFunction::PyLongIntToDecimalString,
+                ),
+                ("int_divmod", BuiltinFunction::PyLongIntDivMod),
+                ("int_from_string", BuiltinFunction::PyLongIntFromString),
+                ("compute_powers", BuiltinFunction::PyLongComputePowers),
+                (
+                    "_dec_str_to_int_inner",
+                    BuiltinFunction::PyLongDecStrToIntInner,
+                ),
             ],
             vec![
                 ("_spread", self.heap.alloc_dict(Vec::new())),
@@ -11672,6 +11678,19 @@ impl Vm {
             BuiltinFunction::OsPathCommonPrefix => self.builtin_os_path_commonprefix(args, kwargs),
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
+            BuiltinFunction::PyLongIntToDecimalString => {
+                self.builtin_pylong_int_to_decimal_string(args, kwargs)
+            }
+            BuiltinFunction::PyLongIntDivMod => self.builtin_pylong_int_divmod(args, kwargs),
+            BuiltinFunction::PyLongIntFromString => {
+                self.builtin_pylong_int_from_string(args, kwargs)
+            }
+            BuiltinFunction::PyLongComputePowers => {
+                self.builtin_pylong_compute_powers(args, kwargs)
+            }
+            BuiltinFunction::PyLongDecStrToIntInner => {
+                self.builtin_pylong_dec_str_to_int_inner(args, kwargs)
+            }
             BuiltinFunction::CodecsEncode => self.builtin_codecs_encode(args, kwargs),
             BuiltinFunction::CodecsDecode => self.builtin_codecs_decode(args, kwargs),
             BuiltinFunction::CodecsLookup => self.builtin_codecs_lookup(args, kwargs),
@@ -16365,6 +16384,159 @@ impl Vm {
         };
         let node = parse_json_node(&text)?;
         Ok(json_node_to_value(node, &self.heap))
+    }
+
+    fn builtin_pylong_int_to_decimal_string(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "int_to_decimal_string() expects one argument",
+            ));
+        }
+        let value = value_to_int(args.remove(0))?;
+        Ok(Value::Str(value.to_string()))
+    }
+
+    fn builtin_pylong_int_divmod(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("int_divmod() expects two arguments"));
+        }
+        let left = value_to_int(args.remove(0))?;
+        let right = value_to_int(args.remove(0))?;
+        let quotient = python_floor_div(left, right)?;
+        let remainder = python_mod(left, right)?;
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Int(quotient), Value::Int(remainder)]))
+    }
+
+    fn builtin_pylong_int_from_string(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("int_from_string() expects one argument"));
+        }
+        let text = match args.remove(0) {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::new("int_from_string() expects a string")),
+        };
+        let cleaned = text.trim_end().replace('_', "");
+        if cleaned.is_empty() {
+            return Err(RuntimeError::new("invalid literal for int() with base 10"));
+        }
+        let parsed = cleaned
+            .parse::<i64>()
+            .map_err(|_| RuntimeError::new("invalid literal for int() with base 10"))?;
+        Ok(Value::Int(parsed))
+    }
+
+    fn builtin_pylong_compute_powers(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 3 {
+            return Err(RuntimeError::new(
+                "compute_powers() expects w, base, and more_than",
+            ));
+        }
+        let _need_hi = kwargs.remove("need_hi");
+        let _show = kwargs.remove("show");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "compute_powers() got an unexpected keyword argument",
+            ));
+        }
+        let w = value_to_int(args.remove(0))?;
+        let base = args.remove(0);
+        let more_than = value_to_int(args.remove(0))?;
+        if w < 0 || more_than < 0 {
+            return Err(RuntimeError::new("compute_powers() expects non-negative bounds"));
+        }
+        if w <= more_than {
+            return Ok(self.heap.alloc_dict(Vec::new()));
+        }
+        let max_entries = (w - more_than).min(2048) as usize;
+        if (w - more_than) as usize > max_entries {
+            return Err(RuntimeError::new("compute_powers() range too large"));
+        }
+        let mut entries = Vec::with_capacity(max_entries);
+        match base {
+            Value::Int(base) => {
+                for exponent in (more_than + 1)..=w {
+                    let exponent = u32::try_from(exponent)
+                        .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
+                    let value = i64::checked_pow(base, exponent)
+                        .ok_or_else(|| RuntimeError::new("compute_powers() overflow"))?;
+                    entries.push((Value::Int(exponent as i64), Value::Int(value)));
+                }
+            }
+            Value::Bool(base) => {
+                let base = if base { 1 } else { 0 };
+                for exponent in (more_than + 1)..=w {
+                    let exponent = u32::try_from(exponent)
+                        .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
+                    let value = i64::checked_pow(base, exponent)
+                        .ok_or_else(|| RuntimeError::new("compute_powers() overflow"))?;
+                    entries.push((Value::Int(exponent as i64), Value::Int(value)));
+                }
+            }
+            Value::Float(base) => {
+                for exponent in (more_than + 1)..=w {
+                    let exponent = i32::try_from(exponent)
+                        .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
+                    entries.push((
+                        Value::Int(exponent as i64),
+                        Value::Float(base.powi(exponent)),
+                    ));
+                }
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    "compute_powers() base must be int, bool, or float",
+                ));
+            }
+        }
+        Ok(self.heap.alloc_dict(entries))
+    }
+
+    fn builtin_pylong_dec_str_to_int_inner(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "_dec_str_to_int_inner() expects one string argument",
+            ));
+        }
+        let _guard = kwargs.remove("GUARD");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "_dec_str_to_int_inner() got an unexpected keyword argument",
+            ));
+        }
+        let text = match args.remove(0) {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::new("_dec_str_to_int_inner() expects a string")),
+        };
+        let cleaned = text.trim_end().replace('_', "");
+        if cleaned.is_empty() {
+            return Err(RuntimeError::new("invalid literal for int() with base 10"));
+        }
+        let parsed = cleaned
+            .parse::<i64>()
+            .map_err(|_| RuntimeError::new("invalid literal for int() with base 10"))?;
+        Ok(Value::Int(parsed))
     }
 
     fn builtin_string_formatter_parser(

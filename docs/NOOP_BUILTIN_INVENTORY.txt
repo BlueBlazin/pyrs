@@ -1,9 +1,4 @@
 _posixsubprocess.fork_exec
-_pylong._dec_str_to_int_inner
-_pylong.compute_powers
-_pylong.int_divmod
-_pylong.int_from_string
-_pylong.int_to_decimal_string
 _socket.socket.__init__
 _socket.socket.close
 _socket.socket.detach
