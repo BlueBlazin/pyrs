@@ -1928,23 +1928,26 @@ impl Vm {
         self.install_builtin_module(
             "itertools",
             &[
-                ("accumulate", BuiltinFunction::NoOp),
+                ("accumulate", BuiltinFunction::ItertoolsAccumulate),
                 ("chain", BuiltinFunction::ItertoolsChain),
-                ("combinations", BuiltinFunction::NoOp),
-                ("combinations_with_replacement", BuiltinFunction::NoOp),
-                ("compress", BuiltinFunction::NoOp),
+                ("combinations", BuiltinFunction::ItertoolsCombinations),
+                (
+                    "combinations_with_replacement",
+                    BuiltinFunction::ItertoolsCombinationsWithReplacement,
+                ),
+                ("compress", BuiltinFunction::ItertoolsCompress),
                 ("count", BuiltinFunction::ItertoolsCount),
                 ("cycle", BuiltinFunction::ItertoolsCycle),
-                ("dropwhile", BuiltinFunction::NoOp),
-                ("filterfalse", BuiltinFunction::NoOp),
-                ("groupby", BuiltinFunction::NoOp),
-                ("islice", BuiltinFunction::NoOp),
-                ("pairwise", BuiltinFunction::NoOp),
+                ("dropwhile", BuiltinFunction::ItertoolsDropWhile),
+                ("filterfalse", BuiltinFunction::ItertoolsFilterFalse),
+                ("groupby", BuiltinFunction::ItertoolsGroupBy),
+                ("islice", BuiltinFunction::ItertoolsISlice),
+                ("pairwise", BuiltinFunction::ItertoolsPairwise),
                 ("repeat", BuiltinFunction::ItertoolsRepeat),
-                ("starmap", BuiltinFunction::NoOp),
-                ("takewhile", BuiltinFunction::NoOp),
-                ("tee", BuiltinFunction::NoOp),
-                ("zip_longest", BuiltinFunction::NoOp),
+                ("starmap", BuiltinFunction::ItertoolsStarMap),
+                ("takewhile", BuiltinFunction::ItertoolsTakeWhile),
+                ("tee", BuiltinFunction::ItertoolsTee),
+                ("zip_longest", BuiltinFunction::ItertoolsZipLongest),
                 ("batched", BuiltinFunction::ItertoolsBatched),
                 ("permutations", BuiltinFunction::ItertoolsPermutations),
                 ("product", BuiltinFunction::ItertoolsProduct),
@@ -11608,9 +11611,30 @@ impl Vm {
                 self.builtin_operator_methodcaller(args, kwargs)
             }
             BuiltinFunction::ItertoolsChain => self.builtin_itertools_chain(args, kwargs),
+            BuiltinFunction::ItertoolsAccumulate => self.builtin_itertools_accumulate(args, kwargs),
+            BuiltinFunction::ItertoolsCombinations => {
+                self.builtin_itertools_combinations(args, kwargs)
+            }
+            BuiltinFunction::ItertoolsCombinationsWithReplacement => {
+                self.builtin_itertools_combinations_with_replacement(args, kwargs)
+            }
+            BuiltinFunction::ItertoolsCompress => self.builtin_itertools_compress(args, kwargs),
             BuiltinFunction::ItertoolsCount => self.builtin_itertools_count(args, kwargs),
             BuiltinFunction::ItertoolsCycle => self.builtin_itertools_cycle(args, kwargs),
+            BuiltinFunction::ItertoolsDropWhile => self.builtin_itertools_dropwhile(args, kwargs),
+            BuiltinFunction::ItertoolsFilterFalse => {
+                self.builtin_itertools_filterfalse(args, kwargs)
+            }
+            BuiltinFunction::ItertoolsGroupBy => self.builtin_itertools_groupby(args, kwargs),
+            BuiltinFunction::ItertoolsISlice => self.builtin_itertools_islice(args, kwargs),
+            BuiltinFunction::ItertoolsPairwise => self.builtin_itertools_pairwise(args, kwargs),
             BuiltinFunction::ItertoolsRepeat => self.builtin_itertools_repeat(args, kwargs),
+            BuiltinFunction::ItertoolsStarMap => self.builtin_itertools_starmap(args, kwargs),
+            BuiltinFunction::ItertoolsTakeWhile => self.builtin_itertools_takewhile(args, kwargs),
+            BuiltinFunction::ItertoolsTee => self.builtin_itertools_tee(args, kwargs),
+            BuiltinFunction::ItertoolsZipLongest => {
+                self.builtin_itertools_zip_longest(args, kwargs)
+            }
             BuiltinFunction::ItertoolsBatched => self.builtin_itertools_batched(args, kwargs),
             BuiltinFunction::ItertoolsPermutations => {
                 self.builtin_itertools_permutations(args, kwargs)
@@ -16145,6 +16169,519 @@ impl Vm {
                 .insert("kwargs".to_string(), self.heap.alloc_dict(frozen_kwargs));
         }
         Ok(self.alloc_native_bound_method(NativeMethodKind::OperatorMethodCallerCall, receiver))
+    }
+
+    fn builtin_itertools_accumulate(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "accumulate() expects iterable and optional function",
+            ));
+        }
+        let iterable = args.remove(0);
+        let mut func = if args.is_empty() {
+            None
+        } else {
+            Some(args.remove(0))
+        };
+        if let Some(value) = kwargs.remove("func") {
+            if func.is_some() {
+                return Err(RuntimeError::new(
+                    "accumulate() got multiple values for func",
+                ));
+            }
+            func = Some(value);
+        }
+        let initial = kwargs.remove("initial");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "accumulate() got an unexpected keyword argument",
+            ));
+        }
+
+        let mut out = Vec::new();
+        let values = self.collect_iterable_values(iterable)?;
+        let mut running = initial;
+        if let Some(value) = running.clone() {
+            out.push(value);
+        }
+        for value in values {
+            match running.take() {
+                None => {
+                    running = Some(value.clone());
+                    out.push(value);
+                }
+                Some(current) => {
+                    let next = if let Some(callable) = func.clone() {
+                        if matches!(callable, Value::None) {
+                            add_values(current, value, &self.heap)?
+                        } else {
+                            match self.call_internal(
+                                callable,
+                                vec![current, value],
+                                HashMap::new(),
+                            )? {
+                                InternalCallOutcome::Value(value) => value,
+                                InternalCallOutcome::CallerExceptionHandled => {
+                                    return Err(RuntimeError::new("accumulate() function raised"));
+                                }
+                            }
+                        }
+                    } else {
+                        add_values(current, value, &self.heap)?
+                    };
+                    running = Some(next.clone());
+                    out.push(next);
+                }
+            }
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_combinations(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("combinations() expects iterable and r"));
+        }
+        let values = self.collect_iterable_values(args.remove(0))?;
+        let r = value_to_int(args.remove(0))?;
+        if r < 0 {
+            return Err(RuntimeError::new("r must be non-negative"));
+        }
+        let r = r as usize;
+        if r > values.len() {
+            return Ok(self.heap.alloc_list(Vec::new()));
+        }
+        let mut out = Vec::new();
+        let mut current = Vec::with_capacity(r);
+        fn build_combinations(
+            values: &[Value],
+            start: usize,
+            target_len: usize,
+            current: &mut Vec<Value>,
+            out: &mut Vec<Vec<Value>>,
+        ) {
+            if current.len() == target_len {
+                out.push(current.clone());
+                return;
+            }
+            for idx in start..values.len() {
+                current.push(values[idx].clone());
+                build_combinations(values, idx + 1, target_len, current, out);
+                current.pop();
+            }
+        }
+        build_combinations(&values, 0, r, &mut current, &mut out);
+        Ok(self.heap.alloc_list(
+            out.into_iter()
+                .map(|row| self.heap.alloc_tuple(row))
+                .collect(),
+        ))
+    }
+
+    fn builtin_itertools_combinations_with_replacement(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "combinations_with_replacement() expects iterable and r",
+            ));
+        }
+        let values = self.collect_iterable_values(args.remove(0))?;
+        let r = value_to_int(args.remove(0))?;
+        if r < 0 {
+            return Err(RuntimeError::new("r must be non-negative"));
+        }
+        let r = r as usize;
+        if values.is_empty() && r > 0 {
+            return Ok(self.heap.alloc_list(Vec::new()));
+        }
+        let mut out = Vec::new();
+        let mut current = Vec::with_capacity(r);
+        fn build_combinations_replacement(
+            values: &[Value],
+            start: usize,
+            target_len: usize,
+            current: &mut Vec<Value>,
+            out: &mut Vec<Vec<Value>>,
+        ) {
+            if current.len() == target_len {
+                out.push(current.clone());
+                return;
+            }
+            for idx in start..values.len() {
+                current.push(values[idx].clone());
+                build_combinations_replacement(values, idx, target_len, current, out);
+                current.pop();
+            }
+        }
+        build_combinations_replacement(&values, 0, r, &mut current, &mut out);
+        Ok(self.heap.alloc_list(
+            out.into_iter()
+                .map(|row| self.heap.alloc_tuple(row))
+                .collect(),
+        ))
+    }
+
+    fn builtin_itertools_compress(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("compress() expects data and selectors"));
+        }
+        let data = self.collect_iterable_values(args.remove(0))?;
+        let selectors = self.collect_iterable_values(args.remove(0))?;
+        let mut out = Vec::new();
+        for (item, selector) in data.into_iter().zip(selectors) {
+            if is_truthy(&selector) {
+                out.push(item);
+            }
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_dropwhile(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "dropwhile() expects predicate and iterable",
+            ));
+        }
+        let predicate = args.remove(0);
+        let values = self.collect_iterable_values(args.remove(0))?;
+        let mut out = Vec::new();
+        let mut dropping = true;
+        for value in values {
+            if dropping {
+                let keep_dropping = match self.call_internal(
+                    predicate.clone(),
+                    vec![value.clone()],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(result) => is_truthy(&result),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("dropwhile() predicate raised"));
+                    }
+                };
+                if keep_dropping {
+                    continue;
+                }
+                dropping = false;
+            }
+            out.push(value);
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_filterfalse(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "filterfalse() expects predicate and iterable",
+            ));
+        }
+        let predicate = args.remove(0);
+        let values = self.collect_iterable_values(args.remove(0))?;
+        let mut out = Vec::new();
+        for value in values {
+            let passed = if matches!(predicate, Value::None) {
+                is_truthy(&value)
+            } else {
+                match self.call_internal(predicate.clone(), vec![value.clone()], HashMap::new())? {
+                    InternalCallOutcome::Value(result) => is_truthy(&result),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("filterfalse() predicate raised"));
+                    }
+                }
+            };
+            if !passed {
+                out.push(value);
+            }
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_groupby(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "groupby() expects iterable and optional key",
+            ));
+        }
+        let iterable = args.remove(0);
+        let mut key_func = if args.is_empty() {
+            None
+        } else {
+            Some(args.remove(0))
+        };
+        if let Some(value) = kwargs.remove("key") {
+            if key_func.is_some() {
+                return Err(RuntimeError::new("groupby() got multiple values for key"));
+            }
+            key_func = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "groupby() got an unexpected keyword argument",
+            ));
+        }
+        let values = self.collect_iterable_values(iterable)?;
+        if values.is_empty() {
+            return Ok(self.heap.alloc_list(Vec::new()));
+        }
+
+        let key_of = |vm: &mut Vm,
+                      item: Value,
+                      key: Option<Value>|
+         -> Result<Value, RuntimeError> {
+            match key {
+                None => Ok(item),
+                Some(callable) if matches!(callable, Value::None) => Ok(item),
+                Some(callable) => match vm.call_internal(callable, vec![item], HashMap::new())? {
+                    InternalCallOutcome::Value(value) => Ok(value),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(RuntimeError::new("groupby() key raised"))
+                    }
+                },
+            }
+        };
+
+        let mut out = Vec::new();
+        let mut current_group = Vec::new();
+        let mut iter = values.into_iter();
+        let first_value = iter.next().expect("checked not empty");
+        let mut current_key = key_of(self, first_value.clone(), key_func.clone())?;
+        current_group.push(first_value);
+        for value in iter {
+            let key = key_of(self, value.clone(), key_func.clone())?;
+            if key == current_key {
+                current_group.push(value);
+            } else {
+                out.push(
+                    self.heap
+                        .alloc_tuple(vec![current_key, self.heap.alloc_list(current_group)]),
+                );
+                current_key = key;
+                current_group = vec![value];
+            }
+        }
+        out.push(
+            self.heap
+                .alloc_tuple(vec![current_key, self.heap.alloc_list(current_group)]),
+        );
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_islice(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "islice() expects iterable and slice indices",
+            ));
+        }
+        let iterable = args.remove(0);
+        let values = self.collect_iterable_values(iterable)?;
+
+        let parse_opt_index = |value: Value| -> Result<Option<i64>, RuntimeError> {
+            if matches!(value, Value::None) {
+                Ok(None)
+            } else {
+                Ok(Some(value_to_int(value)?))
+            }
+        };
+
+        let (start, stop, step) = match args.len() {
+            1 => (0_i64, parse_opt_index(args.remove(0))?, 1_i64),
+            2 => (
+                value_to_int(args.remove(0))?,
+                parse_opt_index(args.remove(0))?,
+                1_i64,
+            ),
+            3 => (
+                value_to_int(args.remove(0))?,
+                parse_opt_index(args.remove(0))?,
+                value_to_int(args.remove(0))?,
+            ),
+            _ => unreachable!(),
+        };
+        if start < 0 {
+            return Err(RuntimeError::new("islice() start must be non-negative"));
+        }
+        if let Some(stop) = stop {
+            if stop < 0 {
+                return Err(RuntimeError::new("islice() stop must be non-negative"));
+            }
+        }
+        if step <= 0 {
+            return Err(RuntimeError::new("islice() step must be positive"));
+        }
+
+        let mut out = Vec::new();
+        let stop_index = stop.unwrap_or(values.len() as i64).min(values.len() as i64) as usize;
+        let mut idx = start as usize;
+        while idx < stop_index && idx < values.len() {
+            out.push(values[idx].clone());
+            idx += step as usize;
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_pairwise(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "pairwise() expects one iterable argument",
+            ));
+        }
+        let values = self.collect_iterable_values(args.remove(0))?;
+        if values.len() < 2 {
+            return Ok(self.heap.alloc_list(Vec::new()));
+        }
+        let mut out = Vec::with_capacity(values.len().saturating_sub(1));
+        for idx in 0..values.len() - 1 {
+            out.push(
+                self.heap
+                    .alloc_tuple(vec![values[idx].clone(), values[idx + 1].clone()]),
+            );
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_starmap(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("starmap() expects function and iterable"));
+        }
+        let callable = args.remove(0);
+        let rows = self.collect_iterable_values(args.remove(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let call_args = self.collect_iterable_values(row)?;
+            let value = match self.call_internal(callable.clone(), call_args, HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(RuntimeError::new("starmap() function raised"));
+                }
+            };
+            out.push(value);
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_takewhile(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "takewhile() expects predicate and iterable",
+            ));
+        }
+        let predicate = args.remove(0);
+        let values = self.collect_iterable_values(args.remove(0))?;
+        let mut out = Vec::new();
+        for value in values {
+            let keep =
+                match self.call_internal(predicate.clone(), vec![value.clone()], HashMap::new())? {
+                    InternalCallOutcome::Value(result) => is_truthy(&result),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("takewhile() predicate raised"));
+                    }
+                };
+            if !keep {
+                break;
+            }
+            out.push(value);
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_itertools_tee(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("tee() expects iterable and optional n"));
+        }
+        let iterable = args.remove(0);
+        let n = if args.is_empty() {
+            2
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        if n < 0 {
+            return Err(RuntimeError::new("tee() n must be non-negative"));
+        }
+        let values = self.collect_iterable_values(iterable)?;
+        let mut out = Vec::with_capacity(n as usize);
+        for _ in 0..n {
+            out.push(self.heap.alloc_list(values.clone()));
+        }
+        Ok(self.heap.alloc_tuple(out))
+    }
+
+    fn builtin_itertools_zip_longest(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let fillvalue = kwargs.remove("fillvalue").unwrap_or(Value::None);
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "zip_longest() got an unexpected keyword argument",
+            ));
+        }
+        if args.is_empty() {
+            return Ok(self.heap.alloc_list(Vec::new()));
+        }
+        let mut columns = Vec::with_capacity(args.len());
+        for source in args {
+            columns.push(self.collect_iterable_values(source)?);
+        }
+        let max_len = columns.iter().map(Vec::len).max().unwrap_or(0);
+        let mut out = Vec::with_capacity(max_len);
+        for idx in 0..max_len {
+            let mut row = Vec::with_capacity(columns.len());
+            for values in &columns {
+                if idx < values.len() {
+                    row.push(values[idx].clone());
+                } else {
+                    row.push(fillvalue.clone());
+                }
+            }
+            out.push(self.heap.alloc_tuple(row));
+        }
+        Ok(self.heap.alloc_list(out))
     }
 
     fn builtin_itertools_chain(

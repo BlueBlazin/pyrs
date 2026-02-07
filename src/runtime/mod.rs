@@ -1091,9 +1091,22 @@ pub enum BuiltinFunction {
     OperatorAttrGetter,
     OperatorMethodCaller,
     ItertoolsChain,
+    ItertoolsAccumulate,
+    ItertoolsCombinations,
+    ItertoolsCombinationsWithReplacement,
+    ItertoolsCompress,
     ItertoolsCount,
     ItertoolsCycle,
+    ItertoolsDropWhile,
+    ItertoolsFilterFalse,
+    ItertoolsGroupBy,
+    ItertoolsISlice,
+    ItertoolsPairwise,
     ItertoolsRepeat,
+    ItertoolsStarMap,
+    ItertoolsTakeWhile,
+    ItertoolsTee,
+    ItertoolsZipLongest,
     ItertoolsBatched,
     ItertoolsPermutations,
     ItertoolsProduct,
@@ -2731,9 +2744,22 @@ impl BuiltinFunction {
             | BuiltinFunction::OperatorAttrGetter
             | BuiltinFunction::OperatorMethodCaller
             | BuiltinFunction::ItertoolsChain
+            | BuiltinFunction::ItertoolsAccumulate
+            | BuiltinFunction::ItertoolsCombinations
+            | BuiltinFunction::ItertoolsCombinationsWithReplacement
+            | BuiltinFunction::ItertoolsCompress
             | BuiltinFunction::ItertoolsCount
             | BuiltinFunction::ItertoolsCycle
+            | BuiltinFunction::ItertoolsDropWhile
+            | BuiltinFunction::ItertoolsFilterFalse
+            | BuiltinFunction::ItertoolsGroupBy
+            | BuiltinFunction::ItertoolsISlice
+            | BuiltinFunction::ItertoolsPairwise
             | BuiltinFunction::ItertoolsRepeat
+            | BuiltinFunction::ItertoolsStarMap
+            | BuiltinFunction::ItertoolsTakeWhile
+            | BuiltinFunction::ItertoolsTee
+            | BuiltinFunction::ItertoolsZipLongest
             | BuiltinFunction::ItertoolsBatched
             | BuiltinFunction::ItertoolsPermutations
             | BuiltinFunction::ItertoolsProduct

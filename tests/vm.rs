@@ -4228,6 +4228,53 @@ fn supports_subclassing_enumerate_builtin() {
 }
 
 #[test]
+fn itertools_long_tail_helpers_work() {
+    let source = r#"import itertools
+import operator
+acc = itertools.accumulate([1, 2, 3])
+acc_init = itertools.accumulate([1, 2], initial=10)
+comb = itertools.combinations('ABC', 2)
+comb_rep = itertools.combinations_with_replacement([1, 2], 2)
+comp = itertools.compress('ABCDEF', [1, 0, 1, 0, 1, 1])
+dw = itertools.dropwhile(lambda x: x < 3, [1, 2, 3, 2, 1])
+ff = itertools.filterfalse(lambda x: x % 2, [0, 1, 2, 3, 4])
+ff_none = itertools.filterfalse(None, [0, 1, '', 2])
+grp = itertools.groupby('AAABBC')
+isl1 = itertools.islice(range(10), 3)
+isl2 = itertools.islice(range(10), 2, 8, 3)
+pw = itertools.pairwise([10, 20, 30])
+sm = itertools.starmap(operator.add, [(1, 2), (3, 4)])
+tw = itertools.takewhile(lambda x: x < 4, [1, 2, 3, 4, 1])
+t1, t2 = itertools.tee([7, 8], 2)
+zl = itertools.zip_longest([1, 2], [10], fillvalue=0)
+ok = (
+    acc == [1, 3, 6]
+    and acc_init == [10, 11, 13]
+    and comb == [('A', 'B'), ('A', 'C'), ('B', 'C')]
+    and comb_rep == [(1, 1), (1, 2), (2, 2)]
+    and comp == ['A', 'C', 'E', 'F']
+    and dw == [3, 2, 1]
+    and ff == [0, 2, 4]
+    and ff_none == [0, '']
+    and grp == [('A', ['A', 'A', 'A']), ('B', ['B', 'B']), ('C', ['C'])]
+    and isl1 == [0, 1, 2]
+    and isl2 == [2, 5]
+    and pw == [(10, 20), (20, 30)]
+    and sm == [3, 7]
+    and tw == [1, 2, 3]
+    and t1 == [7, 8]
+    and t2 == [7, 8]
+    and zl == [(1, 10), (2, 0)]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn operator_getter_and_methodcaller_helpers_work() {
     let source = r#"import operator
 class Inner:

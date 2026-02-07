@@ -273,6 +273,7 @@ Progress:
 - `os`/`posix` parity batch landed for core filesystem/process helpers: `open`, `close`, `isatty`, `stat`, `lstat`, `rmdir`, `utime`, `scandir`, and wait-status helper functions (`WIF*`/`W*SIG`/`WEXITSTATUS`) now execute real logic instead of `NoOp`.
 - `math` parity batch landed for previously stubbed numeric helpers: `ldexp`, `hypot`, `fabs`, `exp`, `erfc`, `log`, `fsum`, `sumprod`, `cos`, `sin`, `tan`, `cosh`, `asin`, `atan`, `acos`, and `isclose` now execute non-`NoOp` logic with new regression tests.
 - `operator`/`functools` parity batch landed for callable adapters: `operator.itemgetter`, `operator.attrgetter`, `operator.methodcaller`, and `functools.cmp_to_key` now execute non-`NoOp` logic (including `sorted`/`min`/`max` key-ordering interoperability), with dedicated VM regressions.
+- `itertools` parity batch landed for previously stubbed helpers: `accumulate`, `combinations`, `combinations_with_replacement`, `compress`, `dropwhile`, `filterfalse`, `groupby`, `islice`, `pairwise`, `starmap`, `takewhile`, `tee`, and `zip_longest` now execute non-`NoOp` logic with dedicated VM regressions.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
