@@ -973,6 +973,7 @@ pub enum BuiltinFunction {
     PlatformLibcVer,
     PlatformWin32IsIot,
     Import,
+    Exec,
     ImportModule,
     FindSpec,
     ImportlibInvalidateCaches,
@@ -2666,6 +2667,7 @@ impl BuiltinFunction {
             | BuiltinFunction::Super
             | BuiltinFunction::Locals
             | BuiltinFunction::Globals
+            | BuiltinFunction::Exec
             | BuiltinFunction::SysGetFrame
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors

@@ -280,6 +280,7 @@ Progress:
 - `_frozen_importlib`/`_frozen_importlib_external` parity batch landed for import bootstrap helpers: `spec_from_loader`/`_verbose_message`, `_path_join`/`_path_split`/`_path_stat`, and `_unpack_uint16`/`_unpack_uint32`/`_unpack_uint64` now execute non-`NoOp` logic with dedicated VM regressions.
 - `_opcode` parity batch landed for metadata helpers: `stack_effect`, `has_arg`, `has_const`, `has_name`, `has_jump`, `has_free`, `has_local`, `has_exc`, and `get_executor` now execute non-`NoOp` metadata-backed logic with dedicated VM regressions.
 - `decimal`/`_thread`/`_warnings` parity batch landed for foundational runtime helpers: `decimal.getcontext`/`setcontext`/`localcontext`, `_thread.start_new_thread`, and `_warnings._acquire_lock`/`_release_lock` now execute non-`NoOp` baseline logic with dedicated VM regressions.
+- `builtins.exec` parity batch landed for executable code paths: `exec` now executes source strings and code objects with explicit `globals`/`locals` namespace handling and closure arity validation, replacing prior `NoOp` behavior with dedicated VM regressions.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)

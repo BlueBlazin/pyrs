@@ -4431,3 +4431,23 @@ ok = ordered == ['bbb', 'aa', 'cc', 'a'] and smallest == 'bbb' and largest == 'a
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn exec_builtin_executes_source_string() {
+    let source = "x = 1\nexec('x = x + 4')\nok = (x == 5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exec_builtin_respects_explicit_globals_and_locals() {
+    let source = "g = {'base': 10}\nl = {}\nexec('value = base + 5', g, l)\nok = (l['value'] == 15 and ('value' not in g))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

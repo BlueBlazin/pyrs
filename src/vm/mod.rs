@@ -8918,6 +8918,13 @@ impl Vm {
             }
             Value::Builtin(builtin) => {
                 let result = self.call_builtin(builtin, args, kwargs)?;
+                let caller = self
+                    .frames
+                    .get(caller_depth - 1)
+                    .ok_or_else(|| RuntimeError::new("caller frame missing"))?;
+                if caller.active_exception.is_some() || caller.ip != caller_ip {
+                    return Ok(InternalCallOutcome::CallerExceptionHandled);
+                }
                 return Ok(InternalCallOutcome::Value(result));
             }
             Value::Instance(instance) => {
@@ -11532,6 +11539,7 @@ impl Vm {
             BuiltinFunction::ANext => self.builtin_anext(args, kwargs),
             BuiltinFunction::Super => self.builtin_super(args, kwargs),
             BuiltinFunction::Import => self.builtin_import(args, kwargs),
+            BuiltinFunction::Exec => self.builtin_exec(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
             BuiltinFunction::ImportlibInvalidateCaches => {
@@ -11898,6 +11906,308 @@ impl Vm {
         } else {
             Ok(self.heap.alloc_dict(Vec::new()))
         }
+    }
+
+    fn exec_namespace_map_from_dict(
+        &self,
+        dict: &ObjRef,
+        what: &str,
+    ) -> Result<HashMap<String, Value>, RuntimeError> {
+        let Object::Dict(entries) = &*dict.kind() else {
+            return Err(RuntimeError::new(format!(
+                "exec() {what} must be a dict or module"
+            )));
+        };
+        let mut map = HashMap::new();
+        for (key, value) in entries {
+            if let Value::Str(name) = key {
+                map.insert(name.clone(), value.clone());
+            }
+        }
+        Ok(map)
+    }
+
+    fn exec_namespace_map_from_module(
+        &self,
+        module: &ObjRef,
+    ) -> Result<HashMap<String, Value>, RuntimeError> {
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("exec() internal module expected"));
+        };
+        Ok(module_data.globals.clone())
+    }
+
+    fn alloc_exec_namespace_module(&self, name: &str, map: HashMap<String, Value>) -> ObjRef {
+        let module = match self.heap.alloc_module(ModuleObject::new(name)) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data.globals = map;
+        }
+        module
+    }
+
+    fn sync_exec_namespace_to_dict(
+        &self,
+        dict: &ObjRef,
+        module: &ObjRef,
+    ) -> Result<(), RuntimeError> {
+        let new_values = self.exec_namespace_map_from_module(module)?;
+        let Object::Dict(entries) = &mut *dict.kind_mut() else {
+            return Err(RuntimeError::new("exec() internal dict expected"));
+        };
+        entries.retain(|(key, _)| !matches!(key, Value::Str(_)));
+        for (name, value) in new_values {
+            entries.push((Value::Str(name), value));
+        }
+        Ok(())
+    }
+
+    fn exec_closure_cells(
+        &self,
+        code: &Rc<CodeObject>,
+        closure: Option<Value>,
+    ) -> Result<Vec<ObjRef>, RuntimeError> {
+        let Some(value) = closure else {
+            if code.freevars.is_empty() {
+                return Ok(Vec::new());
+            }
+            return Err(RuntimeError::new(
+                "exec() code object requires a closure of cell objects",
+            ));
+        };
+        if value == Value::None {
+            if code.freevars.is_empty() {
+                return Ok(Vec::new());
+            }
+            return Err(RuntimeError::new(
+                "exec() code object requires a closure of cell objects",
+            ));
+        }
+        let tuple = match value {
+            Value::Tuple(obj) => obj,
+            _ => {
+                return Err(RuntimeError::new(
+                    "exec() closure must be a tuple of cell objects",
+                ));
+            }
+        };
+        let Object::Tuple(values) = &*tuple.kind() else {
+            return Err(RuntimeError::new(
+                "exec() closure must be a tuple of cell objects",
+            ));
+        };
+        if values.len() != code.freevars.len() {
+            return Err(RuntimeError::new(
+                "exec() closure size does not match code free vars",
+            ));
+        }
+        let mut cells = Vec::with_capacity(values.len());
+        for value in values {
+            match value {
+                Value::Cell(cell) => cells.push(cell.clone()),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "exec() closure must contain only cell objects",
+                    ));
+                }
+            }
+        }
+        Ok(cells)
+    }
+
+    fn builtin_exec(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "exec() expects source plus optional globals and locals",
+            ));
+        }
+
+        let source = args.remove(0);
+        let globals_kw = kwargs.remove("globals");
+        let locals_kw = kwargs.remove("locals");
+        let closure_kw = kwargs.remove("closure");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "exec() got an unexpected keyword argument",
+            ));
+        }
+
+        let globals_arg = if let Some(arg) = args.first().cloned() {
+            if globals_kw.is_some() {
+                return Err(RuntimeError::new(
+                    "exec() got multiple values for globals",
+                ));
+            }
+            Some(arg)
+        } else {
+            globals_kw
+        };
+        let locals_arg = if let Some(arg) = args.get(1).cloned() {
+            if locals_kw.is_some() {
+                return Err(RuntimeError::new(
+                    "exec() got multiple values for locals",
+                ));
+            }
+            Some(arg)
+        } else {
+            locals_kw
+        };
+
+        let code = match source {
+            Value::Code(code) => code,
+            Value::Str(source) => {
+                let module_ast = parser::parse_module(&source).map_err(|err| {
+                    RuntimeError::new(format!(
+                        "exec() parse error at {}: {}",
+                        err.offset, err.message
+                    ))
+                })?;
+                Rc::new(
+                    compiler::compile_module_with_filename(&module_ast, "<exec>").map_err(
+                        |err| RuntimeError::new(format!("exec() compile error: {}", err.message)),
+                    )?,
+                )
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    "exec() source must be a string or code object",
+                ));
+            }
+        };
+
+        let caller_depth = self.frames.len();
+        if caller_depth == 0 {
+            return Err(RuntimeError::new("exec() requires an active frame"));
+        }
+        let caller_index = caller_depth - 1;
+        let caller_globals = self.frames[caller_index].function_globals.clone();
+        let caller_module = self.frames[caller_index].module.clone();
+        let caller_is_module = self.frames[caller_index].is_module;
+        let caller_locals = if caller_is_module {
+            HashMap::new()
+        } else {
+            self.frames[caller_index].locals.clone()
+        };
+
+        let mut globals_module = caller_globals.clone();
+        let mut globals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
+        let mut globals_explicit = false;
+        if let Some(value) = globals_arg {
+            if value != Value::None {
+                globals_explicit = true;
+                match value {
+                    Value::Module(module) => {
+                        globals_module = module;
+                    }
+                    Value::Dict(dict) => {
+                        let module = self.alloc_exec_namespace_module(
+                            "<exec_globals>",
+                            self.exec_namespace_map_from_dict(&dict, "globals")?,
+                        );
+                        globals_dict_writeback = Some((dict, module.clone()));
+                        globals_module = module;
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "exec() globals must be a dict or module",
+                        ));
+                    }
+                }
+            }
+        }
+
+        let mut locals_module = globals_module.clone();
+        let mut locals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
+        let mut caller_locals_writeback: Option<ObjRef> = None;
+        if let Some(value) = locals_arg {
+            if value != Value::None {
+                match value {
+                    Value::Module(module) => {
+                        locals_module = module;
+                    }
+                    Value::Dict(dict) => {
+                        if let Some((global_dict, global_module)) = &globals_dict_writeback {
+                            if global_dict.id() == dict.id() {
+                                locals_module = global_module.clone();
+                            } else {
+                                let module = self.alloc_exec_namespace_module(
+                                    "<exec_locals>",
+                                    self.exec_namespace_map_from_dict(&dict, "locals")?,
+                                );
+                                locals_dict_writeback = Some((dict, module.clone()));
+                                locals_module = module;
+                            }
+                        } else {
+                            let module = self.alloc_exec_namespace_module(
+                                "<exec_locals>",
+                                self.exec_namespace_map_from_dict(&dict, "locals")?,
+                            );
+                            locals_dict_writeback = Some((dict, module.clone()));
+                            locals_module = module;
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "exec() locals must be a dict or module",
+                        ));
+                    }
+                }
+            } else if !globals_explicit {
+                if caller_is_module {
+                    locals_module = caller_module;
+                } else {
+                    let module =
+                        self.alloc_exec_namespace_module("<exec_locals>", caller_locals.clone());
+                    caller_locals_writeback = Some(module.clone());
+                    locals_module = module;
+                }
+            }
+        } else if !globals_explicit {
+            if caller_is_module {
+                locals_module = caller_module;
+            } else {
+                let module = self.alloc_exec_namespace_module("<exec_locals>", caller_locals);
+                caller_locals_writeback = Some(module.clone());
+                locals_module = module;
+            }
+        }
+
+        let closure_cells = self.exec_closure_cells(&code, closure_kw)?;
+        let cells = self.build_cells(&code, closure_cells);
+        let mut frame = Frame::new(code, locals_module.clone(), true, false, cells);
+        frame.function_globals = globals_module.clone();
+        if locals_module.id() != globals_module.id() {
+            frame.globals_fallback = Some(globals_module.clone());
+        }
+        frame.discard_result = true;
+        self.frames.push(frame);
+
+        let previous_stop = self.run_stop_depth;
+        self.run_stop_depth = Some(caller_depth);
+        let run_result = self.run();
+        self.run_stop_depth = previous_stop;
+
+        if let Some((dict, module)) = &globals_dict_writeback {
+            self.sync_exec_namespace_to_dict(dict, module)?;
+        }
+        if let Some((dict, module)) = &locals_dict_writeback {
+            self.sync_exec_namespace_to_dict(dict, module)?;
+        }
+        if let Some(module) = &caller_locals_writeback {
+            let locals = self.exec_namespace_map_from_module(module)?;
+            if let Some(frame) = self.frames.get_mut(caller_index) {
+                frame.locals = locals;
+            }
+        }
+
+        run_result?;
+        Ok(Value::None)
     }
 
     fn builtin_dir(
@@ -19527,7 +19837,7 @@ impl Vm {
             Value::Builtin(BuiltinFunction::Import),
         );
         self.builtins
-            .insert("exec".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            .insert("exec".to_string(), Value::Builtin(BuiltinFunction::Exec));
         self.builtins
             .insert("__debug__".to_string(), Value::Bool(true));
         self.builtins.insert(
