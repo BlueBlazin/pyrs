@@ -177,9 +177,15 @@ pub enum NativeMethodKind {
     StrRemoveSuffix,
     StrFormat,
     StrIsUpper,
+    StrIsLower,
+    StrIsAscii,
+    StrIsDigit,
     StrIsSpace,
     StrJoin,
     StrSplit,
+    StrPartition,
+    StrRPartition,
+    StrRFind,
     StrLStrip,
     StrRStrip,
     StrStrip,
@@ -918,11 +924,14 @@ pub enum BuiltinFunction {
     Bool,
     Int,
     IntBitLength,
+    IntFromBytes,
     Float,
     FloatFromHex,
     FloatHex,
     Str,
     StrMakeTrans,
+    BytesMakeTrans,
+    Compile,
     Ord,
     Abs,
     Sum,
@@ -1077,6 +1086,7 @@ pub enum BuiltinFunction {
     OsOpen,
     OsClose,
     OsIsATty,
+    OsURandom,
     OsStat,
     OsLStat,
     OsRmdir,
@@ -1581,6 +1591,9 @@ impl BuiltinFunction {
                     (i64::BITS - value.unsigned_abs().leading_zeros()) as i64,
                 ))
             }
+            BuiltinFunction::IntFromBytes => {
+                Err(RuntimeError::new("int.from_bytes() requires VM context"))
+            }
             BuiltinFunction::Float => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("float() expects one argument"));
@@ -2045,7 +2058,16 @@ impl BuiltinFunction {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("staticmethod() expects one argument"));
                 }
-                Ok(args[0].clone())
+                let wrapped = match heap.alloc_module(ModuleObject::new("__staticmethod__")) {
+                    Value::Module(module) => module,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *wrapped.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("__func__".to_string(), args[0].clone());
+                }
+                Ok(Value::Module(wrapped))
             }
             BuiltinFunction::Property => {
                 if args.len() > 4 {
@@ -2742,6 +2764,8 @@ impl BuiltinFunction {
             | BuiltinFunction::FloatFromHex
             | BuiltinFunction::FloatHex
             | BuiltinFunction::StrMakeTrans
+            | BuiltinFunction::BytesMakeTrans
+            | BuiltinFunction::Compile
             | BuiltinFunction::Callable
             | BuiltinFunction::IsInstance
             | BuiltinFunction::IsSubclass
@@ -2833,6 +2857,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsOpen
             | BuiltinFunction::OsClose
             | BuiltinFunction::OsIsATty
+            | BuiltinFunction::OsURandom
             | BuiltinFunction::OsStat
             | BuiltinFunction::OsLStat
             | BuiltinFunction::OsRmdir
@@ -3749,9 +3774,17 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::StrFormat => "<bound method str.format>".to_string(),
                     NativeMethodKind::StrIsUpper => "<bound method str.isupper>".to_string(),
+                    NativeMethodKind::StrIsLower => "<bound method str.islower>".to_string(),
+                    NativeMethodKind::StrIsAscii => "<bound method str.isascii>".to_string(),
+                    NativeMethodKind::StrIsDigit => "<bound method str.isdigit>".to_string(),
                     NativeMethodKind::StrIsSpace => "<bound method str.isspace>".to_string(),
                     NativeMethodKind::StrJoin => "<bound method str.join>".to_string(),
                     NativeMethodKind::StrSplit => "<bound method str.split>".to_string(),
+                    NativeMethodKind::StrPartition => "<bound method str.partition>".to_string(),
+                    NativeMethodKind::StrRPartition => {
+                        "<bound method str.rpartition>".to_string()
+                    }
+                    NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
                     NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
                     NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
                     NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),

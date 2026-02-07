@@ -81,7 +81,9 @@ fn run_sandboxed_script(root: &Path, entry_rel: &str) -> (i32, String, String) {
 }
 
 fn compact(text: &str) -> String {
-    text.chars().filter(|ch| !ch.is_ascii_whitespace()).collect()
+    text.chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect()
 }
 
 #[test]

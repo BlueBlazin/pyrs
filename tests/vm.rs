@@ -4796,6 +4796,94 @@ ok = (d1[97] == 'x' and d1[98] == 'y' and d2[97] == 120 and d2[99] is None)\n";
 }
 
 #[test]
+fn bytes_maketrans_and_int_from_bytes_support_stdlib_style_usage() {
+    let source = "table = bytes.maketrans(b'ab', b'xy')\n\
+value = int.from_bytes(map(int, ['1', '2', '3', '4']), 'big')\n\
+ok = (table[97] == 120 and table[98] == 121 and value == 0x01020304)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn string_predicates_isascii_isdigit_and_islower_work() {
+    let source = "ok = ('123'.isdigit() and 'abc'.islower() and 'abc'.isascii() and not ''.isdigit())\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn string_partition_helpers_work() {
+    let source = "a = 'ab=cd'.partition('=')\n\
+b = 'ab=cd'.rpartition('=')\n\
+c = 'abcd'.partition('=')\n\
+ok = (a == ('ab', '=', 'cd') and b == ('ab', '=', 'cd') and c == ('abcd', '', ''))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn string_split_accepts_keyword_arguments() {
+    let source = "parts = 'a:b:c'.split(':', maxsplit=1)\nok = (parts == ['a', 'b:c'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn compile_builtin_exec_mode_returns_code_object() {
+    let source = "co = compile('x = 40 + 2', '<inline>', 'exec')\n\
+scope = {}\n\
+exec(co, scope)\n\
+ok = (scope['x'] == 42)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn int_builtin_uses_dunder_int_for_instances() {
+    let source = "class C:\n    def __int__(self):\n        return 7\nok = (int(C()) == 7)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn staticmethod_does_not_bind_instance_receiver() {
+    let source = "class C:\n    @staticmethod\n    def f(x):\n        return x + 1\nok = (C.f(1) == 2 and C().f(1) == 2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_urandom_returns_requested_number_of_bytes() {
+    let source = "import os\npayload = os.urandom(16)\nok = (isinstance(payload, bytes) and len(payload) == 16)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn dataclasses_core_helpers_work() {
     let source = r#"import dataclasses
 class C:

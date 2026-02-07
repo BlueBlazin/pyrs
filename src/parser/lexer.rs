@@ -417,7 +417,13 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     if self.peek_char() == Some('=') {
                         self.advance();
-                        tokens.push(Token::new(TokenKind::CaretEqual, "^=", offset, line, column));
+                        tokens.push(Token::new(
+                            TokenKind::CaretEqual,
+                            "^=",
+                            offset,
+                            line,
+                            column,
+                        ));
                     } else {
                         tokens.push(Token::new(TokenKind::Caret, "^", offset, line, column));
                     }
@@ -828,8 +834,7 @@ impl<'a> Lexer<'a> {
                     content.push(next);
                     continue;
                 }
-                let escaped =
-                    self.consume_escaped_char(start_offset, start_line, start_column)?;
+                let escaped = self.consume_escaped_char(start_offset, start_line, start_column)?;
                 content.push(escaped);
                 continue;
             }
@@ -898,8 +903,7 @@ impl<'a> Lexer<'a> {
 
             if ch == '\\' {
                 self.advance();
-                let escaped =
-                    self.consume_escaped_char(start_offset, start_line, start_column)?;
+                let escaped = self.consume_escaped_char(start_offset, start_line, start_column)?;
                 content.push(escaped);
                 continue;
             }
@@ -983,8 +987,8 @@ impl<'a> Lexer<'a> {
                     ));
                 }
                 self.advance();
-                let value = ((high.to_digit(16).unwrap_or(0) << 4) | low.to_digit(16).unwrap_or(0))
-                    as u8;
+                let value =
+                    ((high.to_digit(16).unwrap_or(0) << 4) | low.to_digit(16).unwrap_or(0)) as u8;
                 Ok(value as char)
             }
             Some(other) => {

@@ -2323,8 +2323,15 @@ impl Compiler {
                     let option_bindings = Self::validate_pattern_bindings(option)?;
                     if let Some(expected) = &expected_bindings {
                         if option_bindings != *expected {
+                            let mut expected_names = expected.iter().cloned().collect::<Vec<_>>();
+                            expected_names.sort();
+                            let mut option_names = option_bindings.iter().cloned().collect::<Vec<_>>();
+                            option_names.sort();
                             return Err(CompileError::new(
-                                "alternative patterns bind different names",
+                                format!(
+                                    "alternative patterns bind different names: expected {:?}, got {:?}",
+                                    expected_names, option_names
+                                ),
                             ));
                         }
                     } else {

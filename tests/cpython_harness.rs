@@ -29,21 +29,9 @@ fn read_allowlist(path: &str) -> HashMap<String, AllowEntry> {
     let mut allow = HashMap::new();
     for line in read_list(path) {
         let mut parts = line.split('|');
-        let test = parts
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let category = parts
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let owner = parts
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+        let test = parts.next().unwrap_or_default().trim().to_string();
+        let category = parts.next().unwrap_or_default().trim().to_string();
+        let owner = parts.next().unwrap_or_default().trim().to_string();
         assert!(
             !test.is_empty() && !category.is_empty() && !owner.is_empty(),
             "invalid allowlist row (need 3 pipe-delimited fields): {line}"
@@ -100,7 +88,10 @@ fn module_path(lib: &Path, entry: &str) -> Option<PathBuf> {
         if test_module.is_file() {
             return Some(test_module);
         }
-        let package = lib.join("test").join(entry.replace('.', "/")).join("__init__.py");
+        let package = lib
+            .join("test")
+            .join(entry.replace('.', "/"))
+            .join("__init__.py");
         if package.is_file() {
             return Some(package);
         }

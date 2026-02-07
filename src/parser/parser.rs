@@ -423,10 +423,13 @@ impl Parser {
     fn parse_match_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
         let start = pos;
         let mut pos = pos + 1;
-        let (subject, next) = self.parse_expr_at(pos)?;
+        let (subject, next) = self.parse_expr_with_tuple_tail(pos)?;
         pos = next;
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         pos = self.expect_kind(pos, TokenKind::Newline)?;
+        while matches!(self.token_at(pos).kind, TokenKind::Newline) {
+            pos += 1;
+        }
         pos = self.expect_kind(pos, TokenKind::Indent)?;
 
         let mut cases = Vec::new();
@@ -439,7 +442,7 @@ impl Parser {
                 return Err(self.error_at(pos, "expected case clause"));
             }
             pos += 1;
-            let (pattern, next) = self.parse_match_pattern(pos)?;
+            let (pattern, next) = self.parse_match_case_pattern(pos)?;
             pos = next;
             let mut guard = None;
             if self.match_keyword(pos, Keyword::If) {
@@ -465,14 +468,49 @@ impl Parser {
     }
 
     fn parse_match_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
-        self.parse_match_or_pattern(pos)
+        self.parse_match_as_pattern(pos)
+    }
+
+    fn parse_match_case_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
+        let (first, mut pos) = self.parse_match_pattern(pos)?;
+        if !matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            return Ok((first, pos));
+        }
+        let mut elements = vec![first];
+        while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+            pos += 1;
+            if self.is_capture_pattern_terminator(pos) {
+                break;
+            }
+            let element = if matches!(self.token_at(pos).kind, TokenKind::Star) {
+                pos += 1;
+                match self.token_at(pos).kind {
+                    TokenKind::Name => {
+                        let name = self.token_at(pos).lexeme.clone();
+                        pos += 1;
+                        if name == "_" {
+                            Pattern::Star(None)
+                        } else {
+                            Pattern::Star(Some(name))
+                        }
+                    }
+                    _ => return Err(self.error_at(pos, "expected name after '*' in pattern")),
+                }
+            } else {
+                let (element, next) = self.parse_match_pattern(pos)?;
+                pos = next;
+                element
+            };
+            elements.push(element);
+        }
+        Ok((Pattern::Sequence(elements), pos))
     }
 
     fn parse_match_or_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
-        let (first, mut pos) = self.parse_match_as_pattern(pos)?;
+        let (first, mut pos) = self.parse_match_closed_pattern(pos)?;
         let mut options = vec![first];
         while matches!(self.token_at(pos).kind, TokenKind::Pipe) {
-            let (next, after) = self.parse_match_as_pattern(pos + 1)?;
+            let (next, after) = self.parse_match_closed_pattern(pos + 1)?;
             options.push(next);
             pos = after;
         }
@@ -484,7 +522,7 @@ impl Parser {
     }
 
     fn parse_match_as_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
-        let (pattern, mut pos) = self.parse_match_closed_pattern(pos)?;
+        let (pattern, mut pos) = self.parse_match_or_pattern(pos)?;
         if self.match_keyword(pos, Keyword::As) {
             pos += 1;
             let token = self.token_at(pos);
@@ -526,13 +564,68 @@ impl Parser {
                 }
             }
             TokenKind::Number => {
-                let value = self.parse_number_literal(&token.lexeme, pos)?;
-                Ok((Pattern::Constant(value), pos + 1))
+                if let Some(imag) = self.parse_imag_literal(&token.lexeme, pos)? {
+                    let complex_ctor =
+                        self.make_expr(pos, ExprKind::Name("complex".to_string()));
+                    let zero = self.make_expr(pos, ExprKind::Constant(Constant::Int(0)));
+                    let imag_part =
+                        self.make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(imag))));
+                    let expr = self.make_expr(
+                        pos,
+                        ExprKind::Call {
+                            func: Box::new(complex_ctor),
+                            args: vec![CallArg::Positional(zero), CallArg::Positional(imag_part)],
+                        },
+                    );
+                    Ok((Pattern::Value(expr), pos + 1))
+                } else {
+                    let value = self.parse_number_literal(&token.lexeme, pos)?;
+                    let next_kind = self.token_at(pos + 1).kind.clone();
+                    let next_token = self.token_at(pos + 2);
+                    if matches!(next_kind, TokenKind::Plus | TokenKind::Minus)
+                        && next_token.kind == TokenKind::Number
+                    {
+                        if let Some(imag) = self.parse_imag_literal(&next_token.lexeme, pos + 2)? {
+                            let real = match value {
+                                Constant::Int(value) => value as f64,
+                                Constant::Float(value) => value.value(),
+                                _ => return Err(self.error_at(pos, "expected numeric pattern")),
+                            };
+                            let imag = if matches!(next_kind, TokenKind::Minus) {
+                                -imag
+                            } else {
+                                imag
+                            };
+                            let complex_ctor =
+                                self.make_expr(pos, ExprKind::Name("complex".to_string()));
+                            let real_expr =
+                                self.make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(real))));
+                            let imag_expr =
+                                self.make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(imag))));
+                            let expr = self.make_expr(
+                                pos,
+                                ExprKind::Call {
+                                    func: Box::new(complex_ctor),
+                                    args: vec![
+                                        CallArg::Positional(real_expr),
+                                        CallArg::Positional(imag_expr),
+                                    ],
+                                },
+                            );
+                            return Ok((Pattern::Value(expr), pos + 3));
+                        }
+                    }
+                    Ok((Pattern::Constant(value), pos + 1))
+                }
             }
             TokenKind::String => Ok((
                 Pattern::Constant(Constant::Str(token.lexeme.clone())),
                 pos + 1,
             )),
+            TokenKind::Bytes => {
+                let expr = self.make_bytes_literal_expr(pos, token.lexeme.clone());
+                Ok((Pattern::Value(expr), pos + 1))
+            }
             TokenKind::Keyword(Keyword::TrueLiteral) => {
                 Ok((Pattern::Constant(Constant::Bool(true)), pos + 1))
             }
@@ -547,13 +640,70 @@ impl Parser {
                 if next.kind != TokenKind::Number {
                     return Err(self.error_at(pos, "expected numeric pattern"));
                 }
-                let value = self.parse_number_literal(&next.lexeme, pos + 1)?;
-                let negated = match value {
-                    Constant::Int(value) => Constant::Int(-value),
-                    Constant::Float(value) => Constant::Float(FloatLiteral(-value.value())),
-                    _ => return Err(self.error_at(pos, "expected numeric pattern")),
-                };
-                Ok((Pattern::Constant(negated), pos + 2))
+                if let Some(imag) = self.parse_imag_literal(&next.lexeme, pos + 1)? {
+                    let complex_ctor =
+                        self.make_expr(pos, ExprKind::Name("complex".to_string()));
+                    let zero = self.make_expr(pos, ExprKind::Constant(Constant::Int(0)));
+                    let imag_part = self.make_expr(
+                        pos,
+                        ExprKind::Constant(Constant::Float(FloatLiteral(-imag))),
+                    );
+                    let expr = self.make_expr(
+                        pos,
+                        ExprKind::Call {
+                            func: Box::new(complex_ctor),
+                            args: vec![CallArg::Positional(zero), CallArg::Positional(imag_part)],
+                        },
+                    );
+                    Ok((Pattern::Value(expr), pos + 2))
+                } else {
+                    let value = self.parse_number_literal(&next.lexeme, pos + 1)?;
+                    let next_kind = self.token_at(pos + 2).kind.clone();
+                    let next_token = self.token_at(pos + 3);
+                    if matches!(next_kind, TokenKind::Plus | TokenKind::Minus)
+                        && next_token.kind == TokenKind::Number
+                    {
+                        if let Some(imag) = self.parse_imag_literal(&next_token.lexeme, pos + 3)? {
+                            let real = match value {
+                                Constant::Int(value) => -(value as f64),
+                                Constant::Float(value) => -value.value(),
+                                _ => return Err(self.error_at(pos, "expected numeric pattern")),
+                            };
+                            let imag = if matches!(next_kind, TokenKind::Minus) {
+                                -imag
+                            } else {
+                                imag
+                            };
+                            let complex_ctor =
+                                self.make_expr(pos, ExprKind::Name("complex".to_string()));
+                            let real_expr = self.make_expr(
+                                pos,
+                                ExprKind::Constant(Constant::Float(FloatLiteral(real))),
+                            );
+                            let imag_expr = self.make_expr(
+                                pos,
+                                ExprKind::Constant(Constant::Float(FloatLiteral(imag))),
+                            );
+                            let expr = self.make_expr(
+                                pos,
+                                ExprKind::Call {
+                                    func: Box::new(complex_ctor),
+                                    args: vec![
+                                        CallArg::Positional(real_expr),
+                                        CallArg::Positional(imag_expr),
+                                    ],
+                                },
+                            );
+                            return Ok((Pattern::Value(expr), pos + 4));
+                        }
+                    }
+                    let negated = match value {
+                        Constant::Int(value) => Constant::Int(-value),
+                        Constant::Float(value) => Constant::Float(FloatLiteral(-value.value())),
+                        _ => return Err(self.error_at(pos, "expected numeric pattern")),
+                    };
+                    Ok((Pattern::Constant(negated), pos + 2))
+                }
             }
             TokenKind::LBracket | TokenKind::LParen => self.parse_match_sequence_pattern(pos),
             TokenKind::LBrace => self.parse_match_mapping_pattern(pos),

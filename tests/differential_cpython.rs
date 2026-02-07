@@ -60,7 +60,8 @@ fn run_pyrs_json(source: &str) -> Result<String, String> {
     let wrapped = format!("{source}\nimport json\n__pyrs_json = json.dumps(result)\n");
     let module =
         parser::parse_module(&wrapped).map_err(|err| format!("parse error {}", err.message))?;
-    let code = compiler::compile_module(&module).map_err(|err| format!("compile {}", err.message))?;
+    let code =
+        compiler::compile_module(&module).map_err(|err| format!("compile {}", err.message))?;
     let mut vm = Vm::new();
     vm.execute(&code)
         .map_err(|err| format!("runtime {}", err.message))?;
@@ -71,7 +72,9 @@ fn run_pyrs_json(source: &str) -> Result<String, String> {
 }
 
 fn normalize_jsonish(text: &str) -> String {
-    text.chars().filter(|ch| !ch.is_ascii_whitespace()).collect()
+    text.chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect()
 }
 
 #[test]

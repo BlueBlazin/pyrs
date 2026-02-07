@@ -2171,7 +2171,27 @@ fn parses_match_pattern_families() {
             assert!(matches!(cases[0].pattern, Pattern::Sequence(_)));
             assert!(matches!(cases[1].pattern, Pattern::Mapping { .. }));
             assert!(matches!(cases[2].pattern, Pattern::Class { .. }));
-            assert!(matches!(cases[3].pattern, Pattern::Or(_)));
+            match &cases[3].pattern {
+                Pattern::As { pattern, name } => {
+                    assert_eq!(name, "z");
+                    assert!(matches!(pattern.as_ref(), Pattern::Or(_)));
+                }
+                other => panic!("unexpected match pattern shape: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_match_bytes_and_imaginary_value_patterns() {
+    let source = "match value:\n    case [b'x']:\n        out = 1\n    case 1j:\n        out = 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Match { cases, .. } => {
+            assert_eq!(cases.len(), 2);
+            assert!(matches!(cases[0].pattern, Pattern::Sequence(_)));
+            assert!(matches!(cases[1].pattern, Pattern::Value(_)));
         }
         other => panic!("unexpected stmt: {other:?}"),
     }

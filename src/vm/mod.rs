@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -1462,6 +1462,7 @@ impl Vm {
                 ("open", BuiltinFunction::OsOpen),
                 ("close", BuiltinFunction::OsClose),
                 ("isatty", BuiltinFunction::OsIsATty),
+                ("urandom", BuiltinFunction::OsURandom),
                 ("stat", BuiltinFunction::OsStat),
                 ("lstat", BuiltinFunction::OsLStat),
                 ("rmdir", BuiltinFunction::OsRmdir),
@@ -1579,6 +1580,7 @@ impl Vm {
                 ("open", BuiltinFunction::OsOpen),
                 ("close", BuiltinFunction::OsClose),
                 ("isatty", BuiltinFunction::OsIsATty),
+                ("urandom", BuiltinFunction::OsURandom),
                 ("listdir", BuiltinFunction::OsListDir),
                 (
                     "waitstatus_to_exitcode",
@@ -3525,6 +3527,7 @@ impl Vm {
                 ("gaierror", Value::ExceptionType("Exception".to_string())),
                 ("timeout", Value::ExceptionType("Exception".to_string())),
                 ("has_ipv6", Value::Bool(false)),
+                ("AF_UNSPEC", Value::Int(0)),
                 ("AF_UNIX", Value::Int(1)),
                 ("AF_INET", Value::Int(2)),
                 ("AF_INET6", Value::Int(10)),
@@ -8606,6 +8609,12 @@ impl Vm {
             "bit_length" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntBitLength))
             }
+            "from_bytes" if builtin == BuiltinFunction::Int => {
+                Ok(Value::Builtin(BuiltinFunction::IntFromBytes))
+            }
+            "maketrans" if builtin == BuiltinFunction::Bytes => {
+                Ok(Value::Builtin(BuiltinFunction::BytesMakeTrans))
+            }
             "fromkeys" if builtin == BuiltinFunction::Dict => {
                 Ok(Value::Builtin(BuiltinFunction::DictFromKeys))
             }
@@ -8674,9 +8683,15 @@ impl Vm {
             "removesuffix" => NativeMethodKind::StrRemoveSuffix,
             "format" => NativeMethodKind::StrFormat,
             "isupper" => NativeMethodKind::StrIsUpper,
+            "islower" => NativeMethodKind::StrIsLower,
+            "isascii" => NativeMethodKind::StrIsAscii,
+            "isdigit" => NativeMethodKind::StrIsDigit,
             "isspace" => NativeMethodKind::StrIsSpace,
             "join" => NativeMethodKind::StrJoin,
             "split" => NativeMethodKind::StrSplit,
+            "partition" => NativeMethodKind::StrPartition,
+            "rpartition" => NativeMethodKind::StrRPartition,
+            "rfind" => NativeMethodKind::StrRFind,
             "lstrip" => NativeMethodKind::StrLStrip,
             "rstrip" => NativeMethodKind::StrRStrip,
             "strip" => NativeMethodKind::StrStrip,
@@ -9219,6 +9234,19 @@ impl Vm {
         Ok((get, set, delete))
     }
 
+    fn unwrap_staticmethod_attr(&self, value: &Value) -> Option<Value> {
+        let Value::Module(module) = value else {
+            return None;
+        };
+        let Object::Module(module_data) = &*module.kind() else {
+            return None;
+        };
+        if module_data.name != "__staticmethod__" {
+            return None;
+        }
+        module_data.globals.get("__func__").cloned()
+    }
+
     fn call_internal(
         &mut self,
         callable: Value,
@@ -9436,6 +9464,10 @@ impl Vm {
             )));
         };
 
+        if let Some(unwrapped) = self.unwrap_staticmethod_attr(&attr) {
+            return Ok(AttrAccessOutcome::Value(unwrapped));
+        }
+
         if descriptor_owner.is_some() {
             if let Value::Function(func) = attr.clone() {
                 let bound = BoundMethod::new(func, class.clone());
@@ -9574,6 +9606,9 @@ impl Vm {
         }
 
         if let Some(attr) = class_attr {
+            if let Some(unwrapped) = self.unwrap_staticmethod_attr(&attr) {
+                return Ok(AttrAccessOutcome::Value(unwrapped));
+            }
             if let Value::Function(func) = attr.clone() {
                 let bound = BoundMethod::new(func, instance.clone());
                 return Ok(AttrAccessOutcome::Value(
@@ -9660,6 +9695,9 @@ impl Vm {
 
         for class in mro.into_iter().skip(start_idx) {
             if let Some(attr) = class_attr_lookup_direct(&class, attr_name) {
+                if let Some(unwrapped) = self.unwrap_staticmethod_attr(&attr) {
+                    return Ok(AttrAccessOutcome::Value(unwrapped));
+                }
                 if let Value::Function(func) = attr.clone() {
                     let bound = BoundMethod::new(func, receiver.clone());
                     return Ok(AttrAccessOutcome::Value(
@@ -9914,7 +9952,7 @@ impl Vm {
         &mut self,
         kind: NativeMethodKind,
         receiver: ObjRef,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<NativeCallResult, RuntimeError> {
         if !kwargs.is_empty()
@@ -9923,6 +9961,8 @@ impl Vm {
                 NativeMethodKind::FunctoolsPartialCall
                     | NativeMethodKind::DictUpdateMethod
                     | NativeMethodKind::StrFormat
+                    | NativeMethodKind::StrSplit
+                    | NativeMethodKind::StrRFind
                     | NativeMethodKind::Builtin(_)
             )
         {
@@ -10655,6 +10695,57 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Bool(has_upper)))
             }
+            NativeMethodKind::StrIsLower => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("islower() expects no arguments"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let mut has_lower = false;
+                for ch in text.chars() {
+                    if ch.is_uppercase() {
+                        return Ok(NativeCallResult::Value(Value::Bool(false)));
+                    }
+                    if ch.is_lowercase() {
+                        has_lower = true;
+                    }
+                }
+                Ok(NativeCallResult::Value(Value::Bool(has_lower)))
+            }
+            NativeMethodKind::StrIsAscii => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("isascii() expects no arguments"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                Ok(NativeCallResult::Value(Value::Bool(
+                    text.chars().all(|ch| ch.is_ascii()),
+                )))
+            }
+            NativeMethodKind::StrIsDigit => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("isdigit() expects no arguments"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let is_digit = !text.is_empty() && text.chars().all(|ch| ch.is_numeric());
+                Ok(NativeCallResult::Value(Value::Bool(is_digit)))
+            }
             NativeMethodKind::StrIsSpace => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("isspace() expects no arguments"));
@@ -10693,10 +10784,15 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Str(parts.join(&separator))))
             }
             NativeMethodKind::StrSplit => {
-                if args.len() > 2 {
+                let sep_kw = kwargs.remove("sep");
+                let maxsplit_kw = kwargs.remove("maxsplit");
+                if !kwargs.is_empty() {
                     return Err(RuntimeError::new(
-                        "split() expects at most sep and maxsplit",
+                        "split() got an unexpected keyword argument",
                     ));
+                }
+                if args.len() > 2 {
+                    return Err(RuntimeError::new("split() expects at most two arguments"));
                 }
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
@@ -10705,13 +10801,29 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::new("str receiver is invalid")),
                 };
-                let sep = match args.first() {
-                    Some(Value::Str(value)) => Some(value.clone()),
+                if sep_kw.is_some() && !args.is_empty() {
+                    return Err(RuntimeError::new("split() got multiple values for sep"));
+                }
+                if maxsplit_kw.is_some() && args.len() > 1 {
+                    return Err(RuntimeError::new("split() got multiple values for maxsplit"));
+                }
+                let sep_arg = if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    sep_kw
+                };
+                let maxsplit_arg = if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    maxsplit_kw
+                };
+                let sep = match sep_arg {
+                    Some(Value::Str(value)) => Some(value),
                     Some(Value::None) | None => None,
                     Some(_) => return Err(RuntimeError::new("split() separator must be str")),
                 };
-                let maxsplit = if let Some(value) = args.get(1) {
-                    value_to_int(value.clone())?
+                let maxsplit = if let Some(value) = maxsplit_arg {
+                    value_to_int(value)?
                 } else {
                     -1
                 };
@@ -10739,6 +10851,122 @@ impl Vm {
                         .collect()
                 };
                 Ok(NativeCallResult::Value(self.heap.alloc_list(parts)))
+            }
+            NativeMethodKind::StrPartition => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("partition() expects one argument"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let sep = match &args[0] {
+                    Value::Str(value) => value.clone(),
+                    _ => return Err(RuntimeError::new("partition() separator must be str")),
+                };
+                if sep.is_empty() {
+                    return Err(RuntimeError::new("empty separator"));
+                }
+                let parts = if let Some(index) = text.find(&sep) {
+                    vec![
+                        Value::Str(text[..index].to_string()),
+                        Value::Str(sep.clone()),
+                        Value::Str(text[index + sep.len()..].to_string()),
+                    ]
+                } else {
+                    vec![
+                        Value::Str(text),
+                        Value::Str(String::new()),
+                        Value::Str(String::new()),
+                    ]
+                };
+                Ok(NativeCallResult::Value(self.heap.alloc_tuple(parts)))
+            }
+            NativeMethodKind::StrRPartition => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("rpartition() expects one argument"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let sep = match &args[0] {
+                    Value::Str(value) => value.clone(),
+                    _ => return Err(RuntimeError::new("rpartition() separator must be str")),
+                };
+                if sep.is_empty() {
+                    return Err(RuntimeError::new("empty separator"));
+                }
+                let parts = if let Some(index) = text.rfind(&sep) {
+                    vec![
+                        Value::Str(text[..index].to_string()),
+                        Value::Str(sep.clone()),
+                        Value::Str(text[index + sep.len()..].to_string()),
+                    ]
+                } else {
+                    vec![
+                        Value::Str(String::new()),
+                        Value::Str(String::new()),
+                        Value::Str(text),
+                    ]
+                };
+                Ok(NativeCallResult::Value(self.heap.alloc_tuple(parts)))
+            }
+            NativeMethodKind::StrRFind => {
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "rfind() expects sub, optional start, optional end",
+                    ));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let needle = match &args[0] {
+                    Value::Str(value) => value.clone(),
+                    _ => return Err(RuntimeError::new("rfind() substring must be str")),
+                };
+                let len = text.len() as i64;
+                let mut start = if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let mut end = if let Some(value) = args.get(2) {
+                    value_to_int(value.clone())?
+                } else {
+                    len
+                };
+                if start < 0 {
+                    start += len;
+                }
+                if end < 0 {
+                    end += len;
+                }
+                start = start.clamp(0, len);
+                end = end.clamp(0, len);
+                if end < start {
+                    return Ok(NativeCallResult::Value(Value::Int(-1)));
+                }
+                let start_idx = start as usize;
+                let end_idx = end as usize;
+                let Some(slice) = text.get(start_idx..end_idx) else {
+                    return Ok(NativeCallResult::Value(Value::Int(-1)));
+                };
+                let found = slice
+                    .rfind(&needle)
+                    .map(|idx| (idx + start_idx) as i64)
+                    .unwrap_or(-1);
+                Ok(NativeCallResult::Value(Value::Int(found)))
             }
             NativeMethodKind::StrLStrip => {
                 if args.len() > 1 {
@@ -11902,9 +12130,13 @@ impl Vm {
             BuiltinFunction::SysStdinWrite => self.builtin_sys_stdin_write(args, kwargs),
             BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStreamIsATty => self.builtin_sys_stream_isatty(args, kwargs),
+            BuiltinFunction::Int => self.builtin_int(args, kwargs),
             BuiltinFunction::FloatFromHex => self.builtin_float_fromhex(args, kwargs),
             BuiltinFunction::FloatHex => self.builtin_float_hex(args, kwargs),
             BuiltinFunction::StrMakeTrans => self.builtin_str_maketrans(args, kwargs),
+            BuiltinFunction::BytesMakeTrans => self.builtin_bytes_maketrans(args, kwargs),
+            BuiltinFunction::IntFromBytes => self.builtin_int_from_bytes(args, kwargs),
+            BuiltinFunction::Compile => self.builtin_compile(args, kwargs),
             BuiltinFunction::PlatformLibcVer => self.builtin_platform_libc_ver(args, kwargs),
             BuiltinFunction::PlatformWin32IsIot => {
                 self.builtin_platform_win32_is_iot(args, kwargs)
@@ -12039,6 +12271,7 @@ impl Vm {
             BuiltinFunction::OsOpen => self.builtin_os_open(args, kwargs),
             BuiltinFunction::OsClose => self.builtin_os_close(args, kwargs),
             BuiltinFunction::OsIsATty => self.builtin_os_isatty(args, kwargs),
+            BuiltinFunction::OsURandom => self.builtin_os_urandom(args, kwargs),
             BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
             BuiltinFunction::OsLStat => self.builtin_os_lstat(args, kwargs),
             BuiltinFunction::OsRmdir => self.builtin_os_rmdir(args, kwargs),
@@ -13056,6 +13289,282 @@ impl Vm {
         };
 
         Ok(mapping)
+    }
+
+    fn builtin_int(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if kwargs.is_empty() {
+            if args.len() == 1 {
+                let arg = args[0].clone();
+                match BuiltinFunction::Int.call(&self.heap, args) {
+                    Ok(value) => return Ok(value),
+                    Err(err) if err.message == "int() unsupported type" => {
+                        if let Some(method) = self.lookup_bound_special_method(&arg, "__int__")? {
+                            return match self.call_internal(method, Vec::new(), HashMap::new())? {
+                                InternalCallOutcome::Value(value) => match value {
+                                    Value::Int(_) | Value::Bool(_) => {
+                                        BuiltinFunction::Int.call(&self.heap, vec![value])
+                                    }
+                                    _ => Err(RuntimeError::new("__int__ returned non-int")),
+                                },
+                                InternalCallOutcome::CallerExceptionHandled => {
+                                    Err(RuntimeError::new("int() unsupported type"))
+                                }
+                            };
+                        }
+                        return Err(err);
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            return BuiltinFunction::Int.call(&self.heap, args);
+        }
+
+        call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)
+    }
+
+    fn builtin_bytes_maketrans(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("bytes.maketrans() expects two arguments"));
+        }
+        let from = bytes_like_from_value(args.remove(0))?;
+        let to = bytes_like_from_value(args.remove(0))?;
+        if from.len() != to.len() {
+            return Err(RuntimeError::new(
+                "first two maketrans arguments must have equal length",
+            ));
+        }
+        let mut table = (0u16..=255).map(|value| value as u8).collect::<Vec<_>>();
+        for (src, dst) in from.into_iter().zip(to.into_iter()) {
+            table[src as usize] = dst;
+        }
+        Ok(self.heap.alloc_bytes(table))
+    }
+
+    fn builtin_int_from_bytes(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 3 {
+            return Err(RuntimeError::new(
+                "int.from_bytes() expects bytes, byteorder, optional signed",
+            ));
+        }
+        let bytes_kw = kwargs.remove("bytes");
+        let byteorder_kw = kwargs.remove("byteorder");
+        let signed_kw = kwargs.remove("signed");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "int.from_bytes() got an unexpected keyword argument",
+            ));
+        }
+        if !args.is_empty() && bytes_kw.is_some() {
+            return Err(RuntimeError::new(
+                "int.from_bytes() got multiple values for bytes",
+            ));
+        }
+        if args.len() > 1 && byteorder_kw.is_some() {
+            return Err(RuntimeError::new(
+                "int.from_bytes() got multiple values for byteorder",
+            ));
+        }
+        if args.len() > 2 && signed_kw.is_some() {
+            return Err(RuntimeError::new(
+                "int.from_bytes() got multiple values for signed",
+            ));
+        }
+
+        let bytes_arg = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = bytes_kw {
+            value
+        } else {
+            return Err(RuntimeError::new("int.from_bytes() missing bytes argument"));
+        };
+        let byteorder_arg = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = byteorder_kw {
+            value
+        } else {
+            return Err(RuntimeError::new(
+                "int.from_bytes() missing byteorder argument",
+            ));
+        };
+        let signed_arg = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            signed_kw.unwrap_or(Value::Bool(false))
+        };
+
+        let bytes = bytes_like_from_value(bytes_arg)?;
+        let byteorder = match byteorder_arg {
+            Value::Str(value) if value == "little" || value == "big" => value,
+            _ => {
+                return Err(RuntimeError::new(
+                    "byteorder must be either 'little' or 'big'",
+                ));
+            }
+        };
+        let signed = is_truthy(&signed_arg);
+        if bytes.len() > 8 {
+            return Err(RuntimeError::new("int.from_bytes() overflow for this runtime"));
+        }
+
+        let mut unsigned = 0i128;
+        if byteorder == "little" {
+            for (idx, byte) in bytes.iter().enumerate() {
+                unsigned |= (*byte as i128) << (idx * 8);
+            }
+        } else {
+            for byte in &bytes {
+                unsigned = (unsigned << 8) | (*byte as i128);
+            }
+        }
+        let bits = (bytes.len() * 8) as u32;
+        let value = if signed && bits > 0 && ((unsigned >> (bits - 1)) & 1) == 1 {
+            unsigned - (1i128 << bits)
+        } else {
+            unsigned
+        };
+        let value =
+            i64::try_from(value).map_err(|_| RuntimeError::new("int.from_bytes() overflow"))?;
+        Ok(Value::Int(value))
+    }
+
+    fn builtin_compile(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 6 {
+            return Err(RuntimeError::new("compile() expected at most 6 arguments"));
+        }
+        let source_kw = kwargs.remove("source");
+        let filename_kw = kwargs.remove("filename");
+        let mode_kw = kwargs.remove("mode");
+        let flags_kw = kwargs.remove("flags");
+        let dont_inherit_kw = kwargs.remove("dont_inherit");
+        let optimize_kw = kwargs.remove("optimize");
+        let feature_kw = kwargs.remove("_feature_version");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "compile() got an unexpected keyword argument",
+            ));
+        }
+
+        if !args.is_empty() && source_kw.is_some() {
+            return Err(RuntimeError::new("compile() got multiple values for source"));
+        }
+        if args.len() > 1 && filename_kw.is_some() {
+            return Err(RuntimeError::new(
+                "compile() got multiple values for filename",
+            ));
+        }
+        if args.len() > 2 && mode_kw.is_some() {
+            return Err(RuntimeError::new("compile() got multiple values for mode"));
+        }
+        if args.len() > 3 && flags_kw.is_some() {
+            return Err(RuntimeError::new("compile() got multiple values for flags"));
+        }
+        if args.len() > 4 && dont_inherit_kw.is_some() {
+            return Err(RuntimeError::new(
+                "compile() got multiple values for dont_inherit",
+            ));
+        }
+        if args.len() > 5 && optimize_kw.is_some() {
+            return Err(RuntimeError::new("compile() got multiple values for optimize"));
+        }
+
+        let source_arg = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = source_kw {
+            value
+        } else {
+            return Err(RuntimeError::new("compile() missing source argument"));
+        };
+        let filename_arg = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = filename_kw {
+            value
+        } else {
+            return Err(RuntimeError::new("compile() missing filename argument"));
+        };
+        let mode_arg = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = mode_kw {
+            value
+        } else {
+            return Err(RuntimeError::new("compile() missing mode argument"));
+        };
+
+        let flags_value = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            flags_kw.unwrap_or(Value::Int(0))
+        };
+        let dont_inherit_value = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            dont_inherit_kw.unwrap_or(Value::Bool(false))
+        };
+        let optimize_value = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            optimize_kw.unwrap_or(Value::Int(-1))
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new("compile() expected at most 6 arguments"));
+        }
+
+        let _ = value_to_int(flags_value)?;
+        let _ = is_truthy(&dont_inherit_value);
+        let _ = value_to_int(optimize_value)?;
+        if let Some(value) = feature_kw {
+            let _ = value_to_int(value)?;
+        }
+
+        let source_text = match source_arg {
+            Value::Str(value) => value,
+            other => {
+                let bytes = bytes_like_from_value(other)?;
+                String::from_utf8(bytes)
+                    .map_err(|_| RuntimeError::new("compile() source is not valid UTF-8"))?
+            }
+        };
+        let filename = match filename_arg {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("compile() filename must be str")),
+        };
+        let mode = match mode_arg {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("compile() mode must be str")),
+        };
+        if mode != "exec" && mode != "single" && mode != "eval" {
+            return Err(RuntimeError::new("compile() mode must be 'exec', 'eval', or 'single'"));
+        }
+        if mode == "eval" {
+            return Err(RuntimeError::new(
+                "compile() eval mode is not implemented yet",
+            ));
+        }
+
+        let module_ast = parser::parse_module(&source_text).map_err(|err| {
+            RuntimeError::new(format!(
+                "compile() parse error at {}: {}",
+                err.offset, err.message
+            ))
+        })?;
+        let code = compiler::compile_module_with_filename(&module_ast, &filename)
+            .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?;
+        Ok(Value::Code(Rc::new(code)))
     }
 
     fn builtin_platform_libc_ver(
@@ -16646,6 +17155,35 @@ impl Vm {
         Ok(Value::Bool(isatty))
     }
 
+    fn builtin_os_urandom(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("urandom() expects one argument"));
+        }
+        let size = value_to_int(args[0].clone())?;
+        if size < 0 {
+            return Err(RuntimeError::new("negative argument not allowed"));
+        }
+        let size = size as usize;
+        let mut out = vec![0u8; size];
+
+        // Use system entropy where available; fall back to VM RNG only if unavailable.
+        let os_fill_ok = fs::File::open("/dev/urandom")
+            .and_then(|mut file| file.read_exact(&mut out))
+            .is_ok();
+        if !os_fill_ok {
+            for chunk in out.chunks_mut(4) {
+                let bytes = self.random.next_u32().to_le_bytes();
+                let len = chunk.len();
+                chunk.copy_from_slice(&bytes[..len]);
+            }
+        }
+        Ok(self.heap.alloc_bytes(out))
+    }
+
     fn builtin_os_stat(
         &mut self,
         args: Vec<Value>,
@@ -19399,7 +19937,10 @@ impl Vm {
         if args.is_empty() {
             return Err(RuntimeError::new("partial() expects at least one argument"));
         }
-        let callable = args.remove(0);
+        let mut callable = args.remove(0);
+        if let Some(unwrapped) = self.unwrap_staticmethod_attr(&callable) {
+            callable = unwrapped;
+        }
         if !self.is_callable_value(&callable) {
             return Err(RuntimeError::new("first argument must be callable"));
         }
@@ -22369,6 +22910,10 @@ impl Vm {
             "__import__".to_string(),
             Value::Builtin(BuiltinFunction::Import),
         );
+        self.builtins.insert(
+            "compile".to_string(),
+            Value::Builtin(BuiltinFunction::Compile),
+        );
         self.builtins
             .insert("exec".to_string(), Value::Builtin(BuiltinFunction::Exec));
         self.builtins
@@ -22429,6 +22974,10 @@ impl Vm {
         self.builtins.insert(
             "OSError".to_string(),
             Value::ExceptionType("OSError".to_string()),
+        );
+        self.builtins.insert(
+            "FileNotFoundError".to_string(),
+            Value::ExceptionType("FileNotFoundError".to_string()),
         );
         self.builtins.insert(
             "BlockingIOError".to_string(),
@@ -24491,6 +25040,8 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "ModuleNotFoundError" => Some("ImportError"),
         "RuntimeError" => Some("Exception"),
         "OSError" => Some("Exception"),
+        "FileNotFoundError" => Some("OSError"),
+        "BlockingIOError" => Some("OSError"),
         "TypeError" => Some("Exception"),
         "ValueError" => Some("Exception"),
         "UnicodeError" => Some("ValueError"),
