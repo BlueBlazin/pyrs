@@ -1,8 +1,10 @@
 //! Bytecode virtual machine (minimal subset).
 
+mod containers;
+
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{IsTerminal, Read};
@@ -12,6 +14,9 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use self::containers::{
+    dedup_hashable_values, dict_get_value, dict_set_value, dict_set_value_checked, ensure_hashable,
+};
 use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
@@ -671,9 +676,10 @@ impl Vm {
                     stream_data
                         .globals
                         .insert("flush".to_string(), Value::Builtin(flush_builtin));
-                    stream_data
-                        .globals
-                        .insert("isatty".to_string(), Value::Builtin(BuiltinFunction::SysStreamIsATty));
+                    stream_data.globals.insert(
+                        "isatty".to_string(),
+                        Value::Builtin(BuiltinFunction::SysStreamIsATty),
+                    );
                     stream_data
                         .globals
                         .insert("encoding".to_string(), Value::Str("utf-8".to_string()));
@@ -1054,7 +1060,10 @@ impl Vm {
                     "_path_split",
                     BuiltinFunction::FrozenImportlibExternalPathSplit,
                 ),
-                ("_path_join", BuiltinFunction::FrozenImportlibExternalPathJoin),
+                (
+                    "_path_join",
+                    BuiltinFunction::FrozenImportlibExternalPathJoin,
+                ),
             ],
             vec![
                 (
@@ -1558,7 +1567,10 @@ impl Vm {
                 ("SEEK_SET", Value::Int(0)),
                 ("SEEK_CUR", Value::Int(1)),
                 ("SEEK_END", Value::Int(2)),
-                ("terminal_size", Value::Builtin(BuiltinFunction::OsTerminalSize)),
+                (
+                    "terminal_size",
+                    Value::Builtin(BuiltinFunction::OsTerminalSize),
+                ),
                 ("supports_dir_fd", self.heap.alloc_set(Vec::new())),
                 ("supports_fd", self.heap.alloc_set(Vec::new())),
                 ("supports_follow_symlinks", self.heap.alloc_set(Vec::new())),
@@ -3325,12 +3337,14 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadClassInit),
             );
-            class_data
-                .attrs
-                .insert("start".to_string(), Value::Builtin(BuiltinFunction::ThreadClassStart));
-            class_data
-                .attrs
-                .insert("join".to_string(), Value::Builtin(BuiltinFunction::ThreadClassJoin));
+            class_data.attrs.insert(
+                "start".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadClassStart),
+            );
+            class_data.attrs.insert(
+                "join".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadClassJoin),
+            );
             class_data.attrs.insert(
                 "is_alive".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadClassIsAlive),
@@ -3348,18 +3362,22 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadEventInit),
             );
-            class_data
-                .attrs
-                .insert("set".to_string(), Value::Builtin(BuiltinFunction::ThreadEventSet));
-            class_data
-                .attrs
-                .insert("clear".to_string(), Value::Builtin(BuiltinFunction::ThreadEventClear));
-            class_data
-                .attrs
-                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::ThreadEventWait));
-            class_data
-                .attrs
-                .insert("is_set".to_string(), Value::Builtin(BuiltinFunction::ThreadEventIsSet));
+            class_data.attrs.insert(
+                "set".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadEventSet),
+            );
+            class_data.attrs.insert(
+                "clear".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadEventClear),
+            );
+            class_data.attrs.insert(
+                "wait".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadEventWait),
+            );
+            class_data.attrs.insert(
+                "is_set".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadEventIsSet),
+            );
         }
         let condition_class = match self
             .heap
@@ -3373,18 +3391,22 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadConditionInit),
             );
-            class_data
-                .attrs
-                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::ThreadConditionAcquire));
-            class_data
-                .attrs
-                .insert("release".to_string(), Value::Builtin(BuiltinFunction::ThreadConditionRelease));
-            class_data
-                .attrs
-                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::ThreadConditionWait));
-            class_data
-                .attrs
-                .insert("notify".to_string(), Value::Builtin(BuiltinFunction::ThreadConditionNotify));
+            class_data.attrs.insert(
+                "acquire".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadConditionAcquire),
+            );
+            class_data.attrs.insert(
+                "release".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadConditionRelease),
+            );
+            class_data.attrs.insert(
+                "wait".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadConditionWait),
+            );
+            class_data.attrs.insert(
+                "notify".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadConditionNotify),
+            );
             class_data.attrs.insert(
                 "notify_all".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadConditionNotifyAll),
@@ -3402,12 +3424,14 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadSemaphoreInit),
             );
-            class_data
-                .attrs
-                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::ThreadSemaphoreAcquire));
-            class_data
-                .attrs
-                .insert("release".to_string(), Value::Builtin(BuiltinFunction::ThreadSemaphoreRelease));
+            class_data.attrs.insert(
+                "acquire".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadSemaphoreAcquire),
+            );
+            class_data.attrs.insert(
+                "release".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadSemaphoreRelease),
+            );
         }
         let bounded_semaphore_class = match self
             .heap
@@ -3421,12 +3445,14 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadBoundedSemaphoreInit),
             );
-            class_data
-                .attrs
-                .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::ThreadSemaphoreAcquire));
-            class_data
-                .attrs
-                .insert("release".to_string(), Value::Builtin(BuiltinFunction::ThreadSemaphoreRelease));
+            class_data.attrs.insert(
+                "acquire".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadSemaphoreAcquire),
+            );
+            class_data.attrs.insert(
+                "release".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadSemaphoreRelease),
+            );
         }
         let barrier_class = match self
             .heap
@@ -3440,15 +3466,18 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadBarrierInit),
             );
-            class_data
-                .attrs
-                .insert("wait".to_string(), Value::Builtin(BuiltinFunction::ThreadBarrierWait));
-            class_data
-                .attrs
-                .insert("reset".to_string(), Value::Builtin(BuiltinFunction::ThreadBarrierReset));
-            class_data
-                .attrs
-                .insert("abort".to_string(), Value::Builtin(BuiltinFunction::ThreadBarrierAbort));
+            class_data.attrs.insert(
+                "wait".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadBarrierWait),
+            );
+            class_data.attrs.insert(
+                "reset".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadBarrierReset),
+            );
+            class_data.attrs.insert(
+                "abort".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadBarrierAbort),
+            );
         }
         let thread_local_class = match self
             .heap
@@ -3510,15 +3539,18 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::SocketObjectInit),
             );
-            class_data
-                .attrs
-                .insert("close".to_string(), Value::Builtin(BuiltinFunction::SocketObjectClose));
-            class_data
-                .attrs
-                .insert("fileno".to_string(), Value::Builtin(BuiltinFunction::SocketObjectFileno));
-            class_data
-                .attrs
-                .insert("detach".to_string(), Value::Builtin(BuiltinFunction::SocketObjectDetach));
+            class_data.attrs.insert(
+                "close".to_string(),
+                Value::Builtin(BuiltinFunction::SocketObjectClose),
+            );
+            class_data.attrs.insert(
+                "fileno".to_string(),
+                Value::Builtin(BuiltinFunction::SocketObjectFileno),
+            );
+            class_data.attrs.insert(
+                "detach".to_string(),
+                Value::Builtin(BuiltinFunction::SocketObjectDetach),
+            );
         }
         self.install_builtin_module(
             "_socket",
@@ -3527,8 +3559,14 @@ impl Vm {
                 ("gethostbyname", BuiltinFunction::SocketGetHostByName),
                 ("getaddrinfo", BuiltinFunction::SocketGetAddrInfo),
                 ("fromfd", BuiltinFunction::SocketFromFd),
-                ("getdefaulttimeout", BuiltinFunction::SocketGetDefaultTimeout),
-                ("setdefaulttimeout", BuiltinFunction::SocketSetDefaultTimeout),
+                (
+                    "getdefaulttimeout",
+                    BuiltinFunction::SocketGetDefaultTimeout,
+                ),
+                (
+                    "setdefaulttimeout",
+                    BuiltinFunction::SocketSetDefaultTimeout,
+                ),
                 ("ntohs", BuiltinFunction::SocketNtoHs),
                 ("ntohl", BuiltinFunction::SocketNtoHl),
                 ("htons", BuiltinFunction::SocketHtoNs),
@@ -3749,8 +3787,9 @@ impl Vm {
                 })?;
                 let pyc = cpython::load_pyc(&bytes)
                     .map_err(|err| RuntimeError::new(format!("pyc load error: {}", err.message)))?;
-                let code = cpython::translate_code(&pyc, &mut self.heap)
-                    .map_err(|err| RuntimeError::new(format!("pyc translate error: {}", err.message)))?;
+                let code = cpython::translate_code(&pyc, &mut self.heap).map_err(|err| {
+                    RuntimeError::new(format!("pyc translate error: {}", err.message))
+                })?;
                 let code = Rc::new(code);
                 let cells = self.build_cells(&code, Vec::new());
                 let mut frame = Frame::new(code, module.clone(), true, false, cells);
@@ -3994,7 +4033,9 @@ impl Vm {
                 is_bytecode: false,
             });
         }
-        let package_init_pyc = package_dir.join("__pycache__").join("__init__.cpython-314.pyc");
+        let package_init_pyc = package_dir
+            .join("__pycache__")
+            .join("__init__.cpython-314.pyc");
         if package_init_pyc.exists() {
             return Some(ModuleSourceInfo {
                 path: package_init_pyc,
@@ -4226,14 +4267,19 @@ impl Vm {
             module_data
                 .globals
                 .insert("name".to_string(), Value::Str(name.to_string()));
-            module_data.globals.insert("origin".to_string(), origin_value);
-            module_data.globals.insert("loader".to_string(), loader_value);
+            module_data
+                .globals
+                .insert("origin".to_string(), origin_value);
+            module_data
+                .globals
+                .insert("loader".to_string(), loader_value);
             module_data
                 .globals
                 .insert("parent".to_string(), Value::Str(parent));
-            module_data
-                .globals
-                .insert("submodule_search_locations".to_string(), submodule_locations);
+            module_data.globals.insert(
+                "submodule_search_locations".to_string(),
+                submodule_locations,
+            );
             module_data
                 .globals
                 .insert("is_package".to_string(), Value::Bool(is_package));
@@ -4243,7 +4289,9 @@ impl Vm {
             module_data
                 .globals
                 .insert("has_location".to_string(), Value::Bool(origin.is_some()));
-            module_data.globals.insert("cached".to_string(), Value::None);
+            module_data
+                .globals
+                .insert("cached".to_string(), Value::None);
         }
         Value::Module(spec)
     }
@@ -5445,19 +5493,7 @@ impl Vm {
                         let dict = self.pop_value()?;
                         match dict {
                             Value::Dict(obj) => {
-                                if let Object::Dict(entries) = &mut *obj.kind_mut() {
-                                    let mut found = false;
-                                    for (stored_key, stored_value) in entries.iter_mut() {
-                                        if *stored_key == key {
-                                            *stored_value = value.clone();
-                                            found = true;
-                                            break;
-                                        }
-                                    }
-                                    if !found {
-                                        entries.push((key, value));
-                                    }
-                                }
+                                dict_set_value_checked(&obj, key, value)?;
                                 self.push_value(Value::Dict(obj));
                             }
                             _ => return Err(RuntimeError::new("dict set expects dict")),
@@ -5472,20 +5508,11 @@ impl Vm {
                                     Object::Dict(entries) => entries.clone(),
                                     _ => return Err(RuntimeError::new("dict update expects dict")),
                                 };
-                                if let Object::Dict(entries) = &mut *obj.kind_mut() {
-                                    for (key, value) in other_entries {
-                                        let mut found = false;
-                                        for (stored_key, stored_value) in entries.iter_mut() {
-                                            if *stored_key == key {
-                                                *stored_value = value.clone();
-                                                found = true;
-                                                break;
-                                            }
-                                        }
-                                        if !found {
-                                            entries.push((key, value));
-                                        }
-                                    }
+                                if !matches!(&*obj.kind(), Object::Dict(_)) {
+                                    return Err(RuntimeError::new("dict update expects dict"));
+                                }
+                                for (key, value) in other_entries {
+                                    dict_set_value_checked(&obj, key, value)?;
                                 }
                                 self.push_value(Value::Dict(obj));
                             }
@@ -5514,14 +5541,18 @@ impl Vm {
                         match target {
                             Value::List(obj) => match index {
                                 Value::Slice { lower, upper, step } => {
-                                    let replacement = self
-                                        .collect_iterable_values(value)
-                                        .map_err(|_| RuntimeError::new("can only assign an iterable"))?;
+                                    let replacement =
+                                        self.collect_iterable_values(value).map_err(|_| {
+                                            RuntimeError::new("can only assign an iterable")
+                                        })?;
                                     if let Object::List(values) = &mut *obj.kind_mut() {
                                         let step_value = step.unwrap_or(1);
                                         if step_value == 1 {
-                                            let (start, stop) =
-                                                slice_bounds_for_step_one(values.len(), lower, upper);
+                                            let (start, stop) = slice_bounds_for_step_one(
+                                                values.len(),
+                                                lower,
+                                                upper,
+                                            );
                                             values.splice(start..stop, replacement);
                                         } else {
                                             let indices =
@@ -5533,7 +5564,8 @@ impl Vm {
                                                     indices.len()
                                                 )));
                                             }
-                                            for (idx, item) in indices.into_iter().zip(replacement) {
+                                            for (idx, item) in indices.into_iter().zip(replacement)
+                                            {
                                                 values[idx] = item;
                                             }
                                         }
@@ -5558,55 +5590,17 @@ impl Vm {
                             },
                             target => match index {
                                 Value::Slice { .. } => {
-                                    return Err(RuntimeError::new("slice assignment not supported"));
+                                    return Err(RuntimeError::new(
+                                        "slice assignment not supported",
+                                    ));
                                 }
                                 index => match target {
-                                Value::Dict(obj) => {
-                                    if let Object::Dict(entries) = &mut *obj.kind_mut() {
-                                        let mut found = false;
-                                        for (key, stored) in entries.iter_mut() {
-                                            if *key == index {
-                                                *stored = value.clone();
-                                                found = true;
-                                                break;
-                                            }
-                                        }
-                                        if !found {
-                                            entries.push((index, value));
-                                        }
+                                    Value::Dict(obj) => {
+                                        dict_set_value_checked(&obj, index, value)?;
+                                        self.push_value(Value::Dict(obj));
                                     }
-                                    self.push_value(Value::Dict(obj));
-                                }
-                                Value::ByteArray(obj) => {
-                                    if let Object::ByteArray(values) = &mut *obj.kind_mut() {
-                                        let mut idx = value_to_int(index)? as isize;
-                                        if idx < 0 {
-                                            idx += values.len() as isize;
-                                        }
-                                        if idx < 0 || idx as usize >= values.len() {
-                                            return Err(RuntimeError::new("index out of range"));
-                                        }
-                                        let byte = value_to_int(value)?;
-                                        if !(0..=255).contains(&byte) {
-                                            return Err(RuntimeError::new(
-                                                "byte must be in range(0, 256)",
-                                            ));
-                                        }
-                                        values[idx as usize] = byte as u8;
-                                    }
-                                    self.push_value(Value::ByteArray(obj));
-                                }
-                                Value::MemoryView(obj) => {
-                                    let source = match &*obj.kind() {
-                                        Object::MemoryView(view) => view.source.clone(),
-                                        _ => {
-                                            return Err(RuntimeError::new(
-                                                "store subscript unsupported type",
-                                            ));
-                                        }
-                                    };
-                                    match &mut *source.kind_mut() {
-                                        Object::ByteArray(values) => {
+                                    Value::ByteArray(obj) => {
+                                        if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                             let mut idx = value_to_int(index)? as isize;
                                             if idx < 0 {
                                                 idx += values.len() as isize;
@@ -5624,25 +5618,55 @@ impl Vm {
                                             }
                                             values[idx as usize] = byte as u8;
                                         }
-                                        Object::Bytes(_) => {
-                                            return Err(RuntimeError::new(
-                                                "cannot modify read-only memory",
-                                            ));
-                                        }
-                                        _ => {
-                                            return Err(RuntimeError::new(
-                                                "store subscript unsupported type",
-                                            ));
-                                        }
+                                        self.push_value(Value::ByteArray(obj));
                                     }
-                                    self.push_value(Value::MemoryView(obj));
-                                }
-                                _ => {
-                                    return Err(RuntimeError::new(
-                                        "store subscript unsupported type",
-                                    ));
-                                }
-                            },
+                                    Value::MemoryView(obj) => {
+                                        let source = match &*obj.kind() {
+                                            Object::MemoryView(view) => view.source.clone(),
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "store subscript unsupported type",
+                                                ));
+                                            }
+                                        };
+                                        match &mut *source.kind_mut() {
+                                            Object::ByteArray(values) => {
+                                                let mut idx = value_to_int(index)? as isize;
+                                                if idx < 0 {
+                                                    idx += values.len() as isize;
+                                                }
+                                                if idx < 0 || idx as usize >= values.len() {
+                                                    return Err(RuntimeError::new(
+                                                        "index out of range",
+                                                    ));
+                                                }
+                                                let byte = value_to_int(value)?;
+                                                if !(0..=255).contains(&byte) {
+                                                    return Err(RuntimeError::new(
+                                                        "byte must be in range(0, 256)",
+                                                    ));
+                                                }
+                                                values[idx as usize] = byte as u8;
+                                            }
+                                            Object::Bytes(_) => {
+                                                return Err(RuntimeError::new(
+                                                    "cannot modify read-only memory",
+                                                ));
+                                            }
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "store subscript unsupported type",
+                                                ));
+                                            }
+                                        }
+                                        self.push_value(Value::MemoryView(obj));
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "store subscript unsupported type",
+                                        ));
+                                    }
+                                },
                             },
                         };
                     }
@@ -5669,6 +5693,7 @@ impl Vm {
                                     }
                                 }
                                 Value::Dict(obj) => {
+                                    ensure_hashable(&index)?;
                                     if let Object::Dict(entries) = &mut *obj.kind_mut() {
                                         let before = entries.len();
                                         entries.retain(|(key, _)| *key != index);
@@ -6099,8 +6124,10 @@ impl Vm {
                                             init_args,
                                             HashMap::new(),
                                         )?;
-                                        let cells = self
-                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let cells = self.build_cells(
+                                            &func_data.code,
+                                            func_data.closure.clone(),
+                                        );
                                         let mut frame = Frame::new(
                                             func_data.code.clone(),
                                             func_data.module.clone(),
@@ -6162,7 +6189,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                let value = self.instantiate_exception_type(&name, &args, &HashMap::new())?;
+                                let value =
+                                    self.instantiate_exception_type(&name, &args, &HashMap::new())?;
                                 self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
@@ -6328,13 +6356,12 @@ impl Vm {
                                         init_args.push(Value::Instance(instance.clone()));
                                         init_args.extend(args);
                                         let bindings = bind_arguments(
-                                            &func_data,
-                                            &self.heap,
-                                            init_args,
-                                            kwargs,
+                                            &func_data, &self.heap, init_args, kwargs,
                                         )?;
-                                        let cells = self
-                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let cells = self.build_cells(
+                                            &func_data.code,
+                                            func_data.closure.clone(),
+                                        );
                                         let mut frame = Frame::new(
                                             func_data.code.clone(),
                                             func_data.module.clone(),
@@ -6355,7 +6382,11 @@ impl Vm {
                                         let mut init_args = Vec::with_capacity(args.len() + 1);
                                         init_args.push(Value::Instance(instance.clone()));
                                         init_args.extend(args);
-                                        match self.call_internal(init_callable, init_args, kwargs)? {
+                                        match self.call_internal(
+                                            init_callable,
+                                            init_args,
+                                            kwargs,
+                                        )? {
                                             InternalCallOutcome::Value(Value::None) => {
                                                 self.push_value(Value::Instance(instance));
                                             }
@@ -6403,7 +6434,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                                let value =
+                                    self.instantiate_exception_type(&name, &args, &kwargs)?;
                                 self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
@@ -6540,13 +6572,12 @@ impl Vm {
                                         init_args.push(Value::Instance(instance.clone()));
                                         init_args.extend(args);
                                         let bindings = bind_arguments(
-                                            &func_data,
-                                            &self.heap,
-                                            init_args,
-                                            kwargs,
+                                            &func_data, &self.heap, init_args, kwargs,
                                         )?;
-                                        let cells = self
-                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let cells = self.build_cells(
+                                            &func_data.code,
+                                            func_data.closure.clone(),
+                                        );
                                         let mut frame = Frame::new(
                                             func_data.code.clone(),
                                             func_data.module.clone(),
@@ -6567,7 +6598,11 @@ impl Vm {
                                         let mut init_args = Vec::with_capacity(args.len() + 1);
                                         init_args.push(Value::Instance(instance.clone()));
                                         init_args.extend(args);
-                                        match self.call_internal(init_callable, init_args, kwargs)? {
+                                        match self.call_internal(
+                                            init_callable,
+                                            init_args,
+                                            kwargs,
+                                        )? {
                                             InternalCallOutcome::Value(Value::None) => {
                                                 self.push_value(Value::Instance(instance));
                                             }
@@ -6610,7 +6645,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                                let value =
+                                    self.instantiate_exception_type(&name, &args, &kwargs)?;
                                 self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
@@ -6714,13 +6750,12 @@ impl Vm {
                                         init_args.push(Value::Instance(instance.clone()));
                                         init_args.extend(args);
                                         let bindings = bind_arguments(
-                                            &func_data,
-                                            &self.heap,
-                                            init_args,
-                                            kwargs,
+                                            &func_data, &self.heap, init_args, kwargs,
                                         )?;
-                                        let cells = self
-                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let cells = self.build_cells(
+                                            &func_data.code,
+                                            func_data.closure.clone(),
+                                        );
                                         let mut frame = Frame::new(
                                             func_data.code.clone(),
                                             func_data.module.clone(),
@@ -6741,7 +6776,11 @@ impl Vm {
                                         let mut init_args = Vec::with_capacity(args.len() + 1);
                                         init_args.push(Value::Instance(instance.clone()));
                                         init_args.extend(args);
-                                        match self.call_internal(init_callable, init_args, kwargs)? {
+                                        match self.call_internal(
+                                            init_callable,
+                                            init_args,
+                                            kwargs,
+                                        )? {
                                             InternalCallOutcome::Value(Value::None) => {
                                                 self.push_value(Value::Instance(instance));
                                             }
@@ -6783,7 +6822,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                                let value =
+                                    self.instantiate_exception_type(&name, &args, &kwargs)?;
                                 self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
@@ -6901,13 +6941,12 @@ impl Vm {
                                         init_args.push(Value::Instance(instance.clone()));
                                         init_args.extend(args);
                                         let bindings = bind_arguments(
-                                            &func_data,
-                                            &self.heap,
-                                            init_args,
-                                            kwargs,
+                                            &func_data, &self.heap, init_args, kwargs,
                                         )?;
-                                        let cells = self
-                                            .build_cells(&func_data.code, func_data.closure.clone());
+                                        let cells = self.build_cells(
+                                            &func_data.code,
+                                            func_data.closure.clone(),
+                                        );
                                         let mut frame = Frame::new(
                                             func_data.code.clone(),
                                             func_data.module.clone(),
@@ -6928,7 +6967,11 @@ impl Vm {
                                         let mut init_args = Vec::with_capacity(args.len() + 1);
                                         init_args.push(Value::Instance(instance.clone()));
                                         init_args.extend(args);
-                                        match self.call_internal(init_callable, init_args, kwargs)? {
+                                        match self.call_internal(
+                                            init_callable,
+                                            init_args,
+                                            kwargs,
+                                        )? {
                                             InternalCallOutcome::Value(Value::None) => {
                                                 self.push_value(Value::Instance(instance));
                                             }
@@ -6970,7 +7013,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                                let value =
+                                    self.instantiate_exception_type(&name, &args, &kwargs)?;
                                 self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
@@ -7906,7 +7950,10 @@ impl Vm {
         }
 
         let message = exception_message_from_call_args(args);
-        Ok(Value::Exception(ExceptionObject::new(name.to_string(), message)))
+        Ok(Value::Exception(ExceptionObject::new(
+            name.to_string(),
+            message,
+        )))
     }
 
     fn exception_members_from_value(
@@ -7916,19 +7963,33 @@ impl Vm {
         let entries = match value {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(values) => values.clone(),
-                _ => return Err(RuntimeError::new("ExceptionGroup members must be a sequence")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ExceptionGroup members must be a sequence",
+                    ));
+                }
             },
             Value::List(obj) => match &*obj.kind() {
                 Object::List(values) => values.clone(),
-                _ => return Err(RuntimeError::new("ExceptionGroup members must be a sequence")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ExceptionGroup members must be a sequence",
+                    ));
+                }
             },
-            _ => return Err(RuntimeError::new("ExceptionGroup members must be a sequence")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ExceptionGroup members must be a sequence",
+                ));
+            }
         };
         let mut members = Vec::with_capacity(entries.len());
         for entry in entries {
             let normalized = self.normalize_exception_value(entry)?;
             let Value::Exception(exception) = normalized else {
-                return Err(RuntimeError::new("ExceptionGroup members must be exceptions"));
+                return Err(RuntimeError::new(
+                    "ExceptionGroup members must be exceptions",
+                ));
             };
             members.push(exception);
         }
@@ -8792,9 +8853,13 @@ impl Vm {
             "__contains__" => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetContains, set))
             }
-            "issuperset" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsSuperset, set)),
+            "issuperset" => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsSuperset, set))
+            }
             "issubset" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsSubset, set)),
-            "isdisjoint" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsDisjoint, set)),
+            "isdisjoint" => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsDisjoint, set))
+            }
             "add" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetAdd, set))
             }
@@ -9310,14 +9375,13 @@ impl Vm {
     fn bind_classmethod_attr(&self, owner_class: &ObjRef, value: &Value) -> Option<Value> {
         let unwrapped = self.unwrap_classmethod_attr(value)?;
         match unwrapped {
-            Value::Function(func) => Some(self.heap.alloc_bound_method(BoundMethod::new(
-                func,
-                owner_class.clone(),
-            ))),
-            Value::Builtin(builtin) => Some(self.alloc_builtin_bound_method(
-                builtin,
-                owner_class.clone(),
-            )),
+            Value::Function(func) => Some(
+                self.heap
+                    .alloc_bound_method(BoundMethod::new(func, owner_class.clone())),
+            ),
+            Value::Builtin(builtin) => {
+                Some(self.alloc_builtin_bound_method(builtin, owner_class.clone()))
+            }
             _ => Some(unwrapped),
         }
     }
@@ -10258,13 +10322,16 @@ impl Vm {
                             )
                             .ok();
                         if let Some(keys_callable) = keys_callable {
-                            let keys_value =
-                                match self.call_internal(keys_callable, Vec::new(), HashMap::new())? {
-                                    InternalCallOutcome::Value(value) => value,
-                                    InternalCallOutcome::CallerExceptionHandled => {
-                                        return Ok(NativeCallResult::PropagatedException);
-                                    }
-                                };
+                            let keys_value = match self.call_internal(
+                                keys_callable,
+                                Vec::new(),
+                                HashMap::new(),
+                            )? {
+                                InternalCallOutcome::Value(value) => value,
+                                InternalCallOutcome::CallerExceptionHandled => {
+                                    return Ok(NativeCallResult::PropagatedException);
+                                }
+                            };
                             for key in self.collect_iterable_values(keys_value)? {
                                 let value = self.getitem_value(source.clone(), key.clone())?;
                                 incoming.push((key, value));
@@ -10278,7 +10345,7 @@ impl Vm {
                                         _ => {
                                             return Err(RuntimeError::new(
                                                 "dict.update() expects mapping or iterable of pairs",
-                                            ))
+                                            ));
                                         }
                                     },
                                     Value::List(obj) => match &*obj.kind() {
@@ -10286,13 +10353,13 @@ impl Vm {
                                         _ => {
                                             return Err(RuntimeError::new(
                                                 "dict.update() expects mapping or iterable of pairs",
-                                            ))
+                                            ));
                                         }
                                     },
                                     _ => {
                                         return Err(RuntimeError::new(
                                             "dict.update() expects mapping or iterable of pairs",
-                                        ))
+                                        ));
                                     }
                                 };
                                 if values.len() != 2 {
@@ -10308,17 +10375,11 @@ impl Vm {
                 for (name, value) in kwargs.drain() {
                     incoming.push((Value::Str(name), value));
                 }
-                let mut receiver_kind = receiver.kind_mut();
-                let Object::Dict(entries) = &mut *receiver_kind else {
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
                     return Err(RuntimeError::new("dict.update() receiver must be dict"));
-                };
+                }
                 for (key, value) in incoming {
-                    if let Some((_, stored)) = entries.iter_mut().find(|(stored, _)| *stored == key)
-                    {
-                        *stored = value;
-                    } else {
-                        entries.push((key, value));
-                    }
+                    dict_set_value_checked(&receiver, key, value)?;
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -10327,6 +10388,7 @@ impl Vm {
                     return Err(RuntimeError::new("dict.setdefault() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
+                ensure_hashable(&key)?;
                 let default = args.get(1).cloned().unwrap_or(Value::None);
                 let mut receiver_kind = receiver.kind_mut();
                 let Object::Dict(entries) = &mut *receiver_kind else {
@@ -10343,6 +10405,7 @@ impl Vm {
                     return Err(RuntimeError::new("dict.get() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
+                ensure_hashable(&key)?;
                 let default = args.get(1).cloned().unwrap_or(Value::None);
                 let receiver_kind = receiver.kind();
                 let Object::Dict(entries) = &*receiver_kind else {
@@ -10358,6 +10421,7 @@ impl Vm {
                     return Err(RuntimeError::new("dict.pop() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
+                ensure_hashable(&key)?;
                 let default = args.get(1).cloned();
                 let mut receiver_kind = receiver.kind_mut();
                 let Object::Dict(entries) = &mut *receiver_kind else {
@@ -10970,7 +11034,9 @@ impl Vm {
                     return Err(RuntimeError::new("split() got multiple values for sep"));
                 }
                 if maxsplit_kw.is_some() && args.len() > 1 {
-                    return Err(RuntimeError::new("split() got multiple values for maxsplit"));
+                    return Err(RuntimeError::new(
+                        "split() got multiple values for maxsplit",
+                    ));
                 }
                 let sep_arg = if !args.is_empty() {
                     Some(args.remove(0))
@@ -11035,7 +11101,9 @@ impl Vm {
                     return Err(RuntimeError::new("rsplit() got multiple values for sep"));
                 }
                 if maxsplit_kw.is_some() && args.len() > 1 {
-                    return Err(RuntimeError::new("rsplit() got multiple values for maxsplit"));
+                    return Err(RuntimeError::new(
+                        "rsplit() got multiple values for maxsplit",
+                    ));
                 }
                 let sep_arg = if !args.is_empty() {
                     Some(args.remove(0))
@@ -11180,7 +11248,7 @@ impl Vm {
                         return Err(RuntimeError::new(format!(
                             "{}() substring must be str",
                             method_name
-                        )))
+                        )));
                     }
                 };
                 if start_kw.is_some() && args.len() > 1 {
@@ -11397,6 +11465,7 @@ impl Vm {
                     return Err(RuntimeError::new("__contains__() expects one argument"));
                 }
                 let target = args.first().cloned().expect("checked len");
+                ensure_hashable(&target)?;
                 let receiver_kind = receiver.kind();
                 let contains = match &*receiver_kind {
                     Object::Set(values) | Object::FrozenSet(values) => {
@@ -11411,6 +11480,7 @@ impl Vm {
                     return Err(RuntimeError::new("add() expects one argument"));
                 }
                 let item = args.first().cloned().expect("checked len");
+                ensure_hashable(&item)?;
                 let mut receiver_kind = receiver.kind_mut();
                 let Object::Set(values) = &mut *receiver_kind else {
                     return Err(RuntimeError::new("add() receiver must be set"));
@@ -11430,6 +11500,7 @@ impl Vm {
                     return Err(RuntimeError::new("update() receiver must be set"));
                 };
                 for item in items {
+                    ensure_hashable(&item)?;
                     if !values.iter().any(|value| *value == item) {
                         values.push(item);
                     }
@@ -12494,9 +12565,7 @@ impl Vm {
             BuiltinFunction::IntFromBytes => self.builtin_int_from_bytes(args, kwargs),
             BuiltinFunction::Compile => self.builtin_compile(args, kwargs),
             BuiltinFunction::PlatformLibcVer => self.builtin_platform_libc_ver(args, kwargs),
-            BuiltinFunction::PlatformWin32IsIot => {
-                self.builtin_platform_win32_is_iot(args, kwargs)
-            }
+            BuiltinFunction::PlatformWin32IsIot => self.builtin_platform_win32_is_iot(args, kwargs),
             BuiltinFunction::GetAttr => self.builtin_getattr(args, kwargs),
             BuiltinFunction::SetAttr => self.builtin_setattr(args, kwargs),
             BuiltinFunction::DelAttr => self.builtin_delattr(args, kwargs),
@@ -12591,9 +12660,7 @@ impl Vm {
             BuiltinFunction::RandomShuffle => self.builtin_random_shuffle(args, kwargs),
             BuiltinFunction::DecimalGetContext => self.builtin_decimal_getcontext(args, kwargs),
             BuiltinFunction::DecimalSetContext => self.builtin_decimal_setcontext(args, kwargs),
-            BuiltinFunction::DecimalLocalContext => {
-                self.builtin_decimal_localcontext(args, kwargs)
-            }
+            BuiltinFunction::DecimalLocalContext => self.builtin_decimal_localcontext(args, kwargs),
             BuiltinFunction::MathSqrt => self.builtin_math_sqrt(args, kwargs),
             BuiltinFunction::MathCopySign => self.builtin_math_copysign(args, kwargs),
             BuiltinFunction::MathFloor => self.builtin_math_floor(args, kwargs),
@@ -12626,9 +12693,7 @@ impl Vm {
             BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),
             BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),
-            BuiltinFunction::OsGetTerminalSize => {
-                self.builtin_os_get_terminal_size(args, kwargs)
-            }
+            BuiltinFunction::OsGetTerminalSize => self.builtin_os_get_terminal_size(args, kwargs),
             BuiltinFunction::OsTerminalSize => self.builtin_os_terminal_size(args, kwargs),
             BuiltinFunction::OsOpen => self.builtin_os_open(args, kwargs),
             BuiltinFunction::OsClose => self.builtin_os_close(args, kwargs),
@@ -12851,7 +12916,9 @@ impl Vm {
             BuiltinFunction::ThreadConditionRelease => {
                 self.builtin_thread_condition_release(args, kwargs)
             }
-            BuiltinFunction::ThreadConditionWait => self.builtin_thread_condition_wait(args, kwargs),
+            BuiltinFunction::ThreadConditionWait => {
+                self.builtin_thread_condition_wait(args, kwargs)
+            }
             BuiltinFunction::ThreadSemaphoreInit => {
                 self.builtin_thread_semaphore_init(args, kwargs)
             }
@@ -13136,9 +13203,7 @@ impl Vm {
 
         let globals_arg = if let Some(arg) = args.first().cloned() {
             if globals_kw.is_some() {
-                return Err(RuntimeError::new(
-                    "exec() got multiple values for globals",
-                ));
+                return Err(RuntimeError::new("exec() got multiple values for globals"));
             }
             Some(arg)
         } else {
@@ -13146,9 +13211,7 @@ impl Vm {
         };
         let locals_arg = if let Some(arg) = args.get(1).cloned() {
             if locals_kw.is_some() {
-                return Err(RuntimeError::new(
-                    "exec() got multiple values for locals",
-                ));
+                return Err(RuntimeError::new("exec() got multiple values for locals"));
             }
             Some(arg)
         } else {
@@ -13210,9 +13273,7 @@ impl Vm {
                         globals_module = module;
                     }
                     _ => {
-                        return Err(RuntimeError::new(
-                            "exec() globals must be a dict or module",
-                        ));
+                        return Err(RuntimeError::new("exec() globals must be a dict or module"));
                     }
                 }
             }
@@ -13249,9 +13310,7 @@ impl Vm {
                         }
                     }
                     _ => {
-                        return Err(RuntimeError::new(
-                            "exec() locals must be a dict or module",
-                        ));
+                        return Err(RuntimeError::new("exec() locals must be a dict or module"));
                     }
                 }
             } else if !globals_explicit {
@@ -13475,12 +13534,13 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() > 1 {
-            return Err(RuntimeError::new(
-                "sys.exit() expects at most one argument",
-            ));
+            return Err(RuntimeError::new("sys.exit() expects at most one argument"));
         }
         if let Some(value) = args.pop() {
-            Err(RuntimeError::new(format!("SystemExit: {}", format_value(&value))))
+            Err(RuntimeError::new(format!(
+                "SystemExit: {}",
+                format_value(&value)
+            )))
         } else {
             Err(RuntimeError::new("SystemExit"))
         }
@@ -13795,7 +13855,9 @@ impl Vm {
         };
         let signed = is_truthy(&signed_arg);
         if bytes.len() > 8 {
-            return Err(RuntimeError::new("int.from_bytes() overflow for this runtime"));
+            return Err(RuntimeError::new(
+                "int.from_bytes() overflow for this runtime",
+            ));
         }
 
         let mut unsigned = 0i128;
@@ -13841,7 +13903,9 @@ impl Vm {
         }
 
         if !args.is_empty() && source_kw.is_some() {
-            return Err(RuntimeError::new("compile() got multiple values for source"));
+            return Err(RuntimeError::new(
+                "compile() got multiple values for source",
+            ));
         }
         if args.len() > 1 && filename_kw.is_some() {
             return Err(RuntimeError::new(
@@ -13860,7 +13924,9 @@ impl Vm {
             ));
         }
         if args.len() > 5 && optimize_kw.is_some() {
-            return Err(RuntimeError::new("compile() got multiple values for optimize"));
+            return Err(RuntimeError::new(
+                "compile() got multiple values for optimize",
+            ));
         }
 
         let source_arg = if !args.is_empty() {
@@ -13928,7 +13994,9 @@ impl Vm {
             _ => return Err(RuntimeError::new("compile() mode must be str")),
         };
         if mode != "exec" && mode != "single" && mode != "eval" {
-            return Err(RuntimeError::new("compile() mode must be 'exec', 'eval', or 'single'"));
+            return Err(RuntimeError::new(
+                "compile() mode must be 'exec', 'eval', or 'single'",
+            ));
         }
         if mode == "eval" {
             return Err(RuntimeError::new(
@@ -14036,7 +14104,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new("platform.win32_is_iot() expects no arguments"));
+            return Err(RuntimeError::new(
+                "platform.win32_is_iot() expects no arguments",
+            ));
         }
         Ok(Value::Bool(false))
     }
@@ -14147,7 +14217,9 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() > 1 {
-            return Err(RuntimeError::new("field() accepts at most one positional argument"));
+            return Err(RuntimeError::new(
+                "field() accepts at most one positional argument",
+            ));
         }
         let default = if let Some(value) = args.first() {
             value.clone()
@@ -14159,11 +14231,15 @@ impl Vm {
         let repr = kwargs.remove("repr").unwrap_or(Value::Bool(true));
         let hash = kwargs.remove("hash").unwrap_or(Value::None);
         let compare = kwargs.remove("compare").unwrap_or(Value::Bool(true));
-        let metadata = kwargs.remove("metadata").unwrap_or_else(|| self.heap.alloc_dict(Vec::new()));
+        let metadata = kwargs
+            .remove("metadata")
+            .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()));
         let kw_only = kwargs.remove("kw_only").unwrap_or(Value::None);
         let doc = kwargs.remove("doc").unwrap_or(Value::None);
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("field() got an unexpected keyword argument"));
+            return Err(RuntimeError::new(
+                "field() got an unexpected keyword argument",
+            ));
         }
         Ok(self.heap.alloc_dict(vec![
             (Value::Str("default".to_string()), default),
@@ -14246,7 +14322,9 @@ impl Vm {
                 let mut names = Vec::new();
                 for (key, _) in entries {
                     let Value::Str(name) = key else {
-                        return Err(RuntimeError::new("__dataclass_fields__ keys must be strings"));
+                        return Err(RuntimeError::new(
+                            "__dataclass_fields__ keys must be strings",
+                        ));
                     };
                     names.push(name.clone());
                 }
@@ -14265,14 +14343,19 @@ impl Vm {
             return Err(RuntimeError::new("fields() expects one dataclass argument"));
         }
         let Some(fields) = self.dataclass_fields_value(&args[0]) else {
-            return Err(RuntimeError::new("fields() expects a dataclass or dataclass instance"));
+            return Err(RuntimeError::new(
+                "fields() expects a dataclass or dataclass instance",
+            ));
         };
         match fields {
             Value::Dict(dict) => {
                 let Object::Dict(entries) = &*dict.kind() else {
                     return Err(RuntimeError::new("__dataclass_fields__ must be a dict"));
                 };
-                let values = entries.iter().map(|(_, value)| value.clone()).collect::<Vec<_>>();
+                let values = entries
+                    .iter()
+                    .map(|(_, value)| value.clone())
+                    .collect::<Vec<_>>();
                 Ok(self.heap.alloc_tuple(values))
             }
             _ => Err(RuntimeError::new("__dataclass_fields__ must be a dict")),
@@ -14299,7 +14382,11 @@ impl Vm {
         for name in names {
             entries.push((
                 Value::Str(name.clone()),
-                instance_data.attrs.get(&name).cloned().unwrap_or(Value::None),
+                instance_data
+                    .attrs
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or(Value::None),
             ));
         }
         Ok(self.heap.alloc_dict(entries))
@@ -14311,7 +14398,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("astuple() expects one dataclass instance"));
+            return Err(RuntimeError::new(
+                "astuple() expects one dataclass instance",
+            ));
         }
         let instance = match &args[0] {
             Value::Instance(instance) => instance.clone(),
@@ -14323,7 +14412,13 @@ impl Vm {
         };
         let mut values = Vec::new();
         for name in names {
-            values.push(instance_data.attrs.get(&name).cloned().unwrap_or(Value::None));
+            values.push(
+                instance_data
+                    .attrs
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or(Value::None),
+            );
         }
         Ok(self.heap.alloc_tuple(values))
     }
@@ -14409,9 +14504,7 @@ impl Vm {
             match value {
                 Value::Tuple(tuple) => {
                     let Object::Tuple(values) = &*tuple.kind() else {
-                        return Err(RuntimeError::new(
-                            "make_dataclass() bases must be a tuple",
-                        ));
+                        return Err(RuntimeError::new("make_dataclass() bases must be a tuple"));
                     };
                     let mut out = Vec::new();
                     for value in values {
@@ -14436,9 +14529,10 @@ impl Vm {
         for name in field_names {
             entries.push((Value::Str(name), Value::None));
         }
-        class
-            .attrs
-            .insert("__dataclass_fields__".to_string(), self.heap.alloc_dict(entries));
+        class.attrs.insert(
+            "__dataclass_fields__".to_string(),
+            self.heap.alloc_dict(entries),
+        );
         if let Some(namespace) = kwargs.remove("namespace") {
             if let Value::Dict(dict) = namespace {
                 if let Object::Dict(entries) = &*dict.kind() {
@@ -14638,8 +14732,10 @@ impl Vm {
         if args.len() == 2 {
             let _ = value_to_int(args[1].clone())?;
         }
-        let class_value = self.class_of_value(&value).map(Value::Class).unwrap_or_else(|| {
-            match value {
+        let class_value = self
+            .class_of_value(&value)
+            .map(Value::Class)
+            .unwrap_or_else(|| match value {
                 Value::Bool(_) => Value::Builtin(BuiltinFunction::Bool),
                 Value::Int(_) => Value::Builtin(BuiltinFunction::Int),
                 Value::Float(_) => Value::Builtin(BuiltinFunction::Float),
@@ -14654,19 +14750,16 @@ impl Vm {
                 Value::ByteArray(_) => Value::Builtin(BuiltinFunction::ByteArray),
                 Value::MemoryView(_) => Value::Builtin(BuiltinFunction::MemoryView),
                 _ => Value::Builtin(BuiltinFunction::ObjectNew),
-            }
-        });
+            });
         let state = self.builtin_object_getstate(vec![value], HashMap::new())?;
         let constructor = if matches!(class_value, Value::Class(_) | Value::Builtin(_)) {
             class_value.clone()
         } else {
             Value::Builtin(BuiltinFunction::ObjectNew)
         };
-        Ok(self.heap.alloc_tuple(vec![
-            constructor,
-            self.heap.alloc_tuple(Vec::new()),
-            state,
-        ]))
+        Ok(self
+            .heap
+            .alloc_tuple(vec![constructor, self.heap.alloc_tuple(Vec::new()), state]))
     }
 
     fn builtin_object_getattribute(
@@ -14802,7 +14895,7 @@ impl Vm {
                 Value::Dict(obj) => {
                     if let Object::Dict(entries) = &*obj.kind() {
                         for (key, value) in entries {
-                            dict_set_value(&dict_obj, key.clone(), value.clone());
+                            dict_set_value_checked(&dict_obj, key.clone(), value.clone())?;
                         }
                     }
                 }
@@ -14811,7 +14904,11 @@ impl Vm {
                         match item {
                             Value::Tuple(pair) => match &*pair.kind() {
                                 Object::Tuple(parts) if parts.len() == 2 => {
-                                    dict_set_value(&dict_obj, parts[0].clone(), parts[1].clone());
+                                    dict_set_value_checked(
+                                        &dict_obj,
+                                        parts[0].clone(),
+                                        parts[1].clone(),
+                                    )?;
                                 }
                                 _ => {
                                     return Err(RuntimeError::new(
@@ -14821,7 +14918,11 @@ impl Vm {
                             },
                             Value::List(pair) => match &*pair.kind() {
                                 Object::List(parts) if parts.len() == 2 => {
-                                    dict_set_value(&dict_obj, parts[0].clone(), parts[1].clone());
+                                    dict_set_value_checked(
+                                        &dict_obj,
+                                        parts[0].clone(),
+                                        parts[1].clone(),
+                                    )?;
                                 }
                                 _ => {
                                     return Err(RuntimeError::new(
@@ -14841,7 +14942,7 @@ impl Vm {
         }
 
         for (name, value) in kwargs {
-            dict_set_value(&dict_obj, Value::Str(name), value);
+            dict_set_value_checked(&dict_obj, Value::Str(name), value)?;
         }
 
         Ok(Value::Dict(dict_obj))
@@ -14860,7 +14961,7 @@ impl Vm {
         } else {
             self.collect_iterable_values(args.remove(0))?
         };
-        Ok(self.heap.alloc_set(dedup_vm_values(values)))
+        Ok(self.heap.alloc_set(dedup_hashable_values(values)?))
     }
 
     fn builtin_frozenset(
@@ -14878,7 +14979,7 @@ impl Vm {
         } else {
             self.collect_iterable_values(args.remove(0))?
         };
-        Ok(self.heap.alloc_frozenset(dedup_vm_values(values)))
+        Ok(self.heap.alloc_frozenset(dedup_hashable_values(values)?))
     }
 
     fn builtin_min(
@@ -15470,7 +15571,10 @@ impl Vm {
             .map_err(|_| RuntimeError::new("enumerate() expects iterable"))?;
         let mut out = Vec::with_capacity(values.len());
         for (offset, value) in values.into_iter().enumerate() {
-            out.push(self.heap.alloc_tuple(vec![Value::Int(start + offset as i64), value]));
+            out.push(
+                self.heap
+                    .alloc_tuple(vec![Value::Int(start + offset as i64), value]),
+            );
         }
         Ok(self.heap.alloc_list(out))
     }
@@ -16192,7 +16296,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !args.is_empty() || !kwargs.is_empty() {
-            return Err(RuntimeError::new("invalidate_caches() expects no arguments"));
+            return Err(RuntimeError::new(
+                "invalidate_caches() expects no arguments",
+            ));
         }
         let Some(sys_module) = self.modules.get("sys").cloned() else {
             return Ok(Value::None);
@@ -16248,14 +16354,8 @@ impl Vm {
         };
         let is_package = !matches!(normalized_search_locations, Value::None);
         let location_path = PathBuf::from(&location);
-        let spec = self.build_module_spec_value(
-            &name,
-            Some(&location_path),
-            None,
-            is_package,
-            &[],
-            false,
-        );
+        let spec =
+            self.build_module_spec_value(&name, Some(&location_path), None, is_package, &[], false);
         self.set_module_spec_field(&spec, "loader", loader);
         self.set_module_spec_field(
             &spec,
@@ -16347,7 +16447,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("_path_join() got unexpected keyword argument"));
+            return Err(RuntimeError::new(
+                "_path_join() got unexpected keyword argument",
+            ));
         }
         let mut out = PathBuf::new();
         for part in args {
@@ -16423,7 +16525,9 @@ impl Vm {
         width: usize,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("_unpack_uint*() expects one bytes argument"));
+            return Err(RuntimeError::new(
+                "_unpack_uint*() expects one bytes argument",
+            ));
         }
         let bytes = bytes_like_from_value(args[0].clone())?;
         if bytes.len() < width {
@@ -16438,7 +16542,9 @@ impl Vm {
             _ => unreachable!(),
         };
         if value > i64::MAX as u64 {
-            return Err(RuntimeError::new("_unpack_uint*() value exceeds runtime int range"));
+            return Err(RuntimeError::new(
+                "_unpack_uint*() value exceeds runtime int range",
+            ));
         }
         Ok(Value::Int(value as i64))
     }
@@ -16558,7 +16664,9 @@ impl Vm {
     }
 
     fn opcode_metadata(&self) -> &OpcodeMetadata {
-        OPCODE_METADATA.get_or_init(|| OpcodeMetadata::load_default().unwrap_or_else(|_| OpcodeMetadata::empty()))
+        OPCODE_METADATA.get_or_init(|| {
+            OpcodeMetadata::load_default().unwrap_or_else(|_| OpcodeMetadata::empty())
+        })
     }
 
     fn opcode_info_by_number(&self, opcode: i64) -> Option<&crate::bytecode::metadata::OpcodeInfo> {
@@ -16925,7 +17033,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("setcontext() expects one context argument"));
+            return Err(RuntimeError::new(
+                "setcontext() expects one context argument",
+            ));
         }
         let context = args.remove(0);
         let module = self
@@ -16946,7 +17056,9 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() > 1 {
-            return Err(RuntimeError::new("localcontext() expects at most one argument"));
+            return Err(RuntimeError::new(
+                "localcontext() expects at most one argument",
+            ));
         }
         let context = if !args.is_empty() {
             args.remove(0)
@@ -17538,16 +17650,30 @@ impl Vm {
         let values = match &args[0] {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(values) => values.clone(),
-                _ => return Err(RuntimeError::new("terminal_size() expects a 2-item sequence")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "terminal_size() expects a 2-item sequence",
+                    ));
+                }
             },
             Value::List(obj) => match &*obj.kind() {
                 Object::List(values) => values.clone(),
-                _ => return Err(RuntimeError::new("terminal_size() expects a 2-item sequence")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "terminal_size() expects a 2-item sequence",
+                    ));
+                }
             },
-            _ => return Err(RuntimeError::new("terminal_size() expects a 2-item sequence")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "terminal_size() expects a 2-item sequence",
+                ));
+            }
         };
         if values.len() != 2 {
-            return Err(RuntimeError::new("terminal_size() expects a 2-item sequence"));
+            return Err(RuntimeError::new(
+                "terminal_size() expects a 2-item sequence",
+            ));
         }
         let columns = value_to_int(values[0].clone())?;
         let lines = value_to_int(values[1].clone())?;
@@ -17560,7 +17686,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() > 1 {
-            return Err(RuntimeError::new("get_terminal_size() expects at most one argument"));
+            return Err(RuntimeError::new(
+                "get_terminal_size() expects at most one argument",
+            ));
         }
         if let Some(fd) = args.first() {
             let _ = value_to_int(fd.clone())?;
@@ -18566,7 +18694,9 @@ impl Vm {
         let base = args.remove(0);
         let more_than = value_to_int(args.remove(0))?;
         if w < 0 || more_than < 0 {
-            return Err(RuntimeError::new("compute_powers() expects non-negative bounds"));
+            return Err(RuntimeError::new(
+                "compute_powers() expects non-negative bounds",
+            ));
         }
         if w <= more_than {
             return Ok(self.heap.alloc_dict(Vec::new()));
@@ -18633,7 +18763,11 @@ impl Vm {
         }
         let text = match args.remove(0) {
             Value::Str(text) => text,
-            _ => return Err(RuntimeError::new("_dec_str_to_int_inner() expects a string")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "_dec_str_to_int_inner() expects a string",
+                ));
+            }
         };
         let cleaned = text.trim_end().replace('_', "");
         if cleaned.is_empty() {
@@ -18999,11 +19133,15 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.is_empty() {
-            return Err(RuntimeError::new("register() expects at least one argument"));
+            return Err(RuntimeError::new(
+                "register() expects at least one argument",
+            ));
         }
         let callable = args[0].clone();
         if !self.is_callable_value(&callable) {
-            return Err(RuntimeError::new("register() first argument must be callable"));
+            return Err(RuntimeError::new(
+                "register() first argument must be callable",
+            ));
         }
         self.atexit_handlers.push(AtexitHandler {
             callable: callable.clone(),
@@ -20480,7 +20618,13 @@ impl Vm {
             wrapped.clone()
         };
 
-        for attr in ["__module__", "__name__", "__qualname__", "__doc__", "__annotations__"] {
+        for attr in [
+            "__module__",
+            "__name__",
+            "__qualname__",
+            "__doc__",
+            "__annotations__",
+        ] {
             if let Some(value) = self.maybe_get_attribute(metadata_source.clone(), attr)? {
                 self.builtin_setattr(
                     vec![wrapper.clone(), Value::Str(attr.to_string()), value],
@@ -20650,7 +20794,7 @@ impl Vm {
                 Value::Dict(obj) => {
                     if let Object::Dict(entries) = &*obj.kind() {
                         for (key, value) in entries {
-                            dict_set_value(&dict, key.clone(), value.clone());
+                            dict_set_value_checked(&dict, key.clone(), value.clone())?;
                         }
                     }
                 }
@@ -20660,7 +20804,11 @@ impl Vm {
                             if let Value::Tuple(tuple_obj) = item {
                                 if let Object::Tuple(parts) = &*tuple_obj.kind() {
                                     if parts.len() == 2 {
-                                        dict_set_value(&dict, parts[0].clone(), parts[1].clone());
+                                        dict_set_value_checked(
+                                            &dict,
+                                            parts[0].clone(),
+                                            parts[1].clone(),
+                                        )?;
                                         continue;
                                     }
                                 }
@@ -20696,7 +20844,7 @@ impl Vm {
         for item in self.collect_iterable_values(args[1].clone())? {
             let current = dict_get_value(&mapping, &item).unwrap_or(Value::Int(0));
             let next = add_values(current, Value::Int(1), &self.heap)?;
-            dict_set_value(&mapping, item, next);
+            dict_set_value_checked(&mapping, item, next)?;
         }
         Ok(Value::None)
     }
@@ -21422,7 +21570,9 @@ impl Vm {
         };
 
         match self.call_internal(callable, call_args, call_kwargs)? {
-            InternalCallOutcome::Value(_) => self.builtin_threading_get_ident(Vec::new(), HashMap::new()),
+            InternalCallOutcome::Value(_) => {
+                self.builtin_threading_get_ident(Vec::new(), HashMap::new())
+            }
             InternalCallOutcome::CallerExceptionHandled => {
                 Err(RuntimeError::new("start_new_thread() callable raised"))
             }
@@ -21547,7 +21697,10 @@ impl Vm {
             return Err(RuntimeError::new("Thread.start() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Thread.start")?;
-        if matches!(Self::instance_attr_get(&instance, "_started"), Some(Value::Bool(true))) {
+        if matches!(
+            Self::instance_attr_get(&instance, "_started"),
+            Some(Value::Bool(true))
+        ) {
             return Err(RuntimeError::new("threads can only be started once"));
         }
         Self::instance_attr_set(&instance, "_started", Value::Bool(true))?;
@@ -21593,9 +21746,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new(
-                "Thread.join() expects optional timeout",
-            ));
+            return Err(RuntimeError::new("Thread.join() expects optional timeout"));
         }
         let _instance = self.take_bound_instance_arg(&mut args, "Thread.join")?;
         if let Some(timeout) = args.first().cloned() {
@@ -21719,7 +21870,9 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if kwargs.keys().any(|key| key != "blocking" && key != "timeout")
+        if kwargs
+            .keys()
+            .any(|key| key != "blocking" && key != "timeout")
             || args.is_empty()
             || args.len() > 3
         {
@@ -21764,7 +21917,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("Condition.notify_all() expects no arguments"));
+            return Err(RuntimeError::new(
+                "Condition.notify_all() expects no arguments",
+            ));
         }
         let _instance = self.take_bound_instance_arg(&mut args, "Condition.notify_all")?;
         Ok(Value::None)
@@ -21776,7 +21931,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("Condition.release() expects no arguments"));
+            return Err(RuntimeError::new(
+                "Condition.release() expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Condition.release")?;
         Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
@@ -21833,7 +21990,9 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if kwargs.keys().any(|key| key != "blocking" && key != "timeout")
+        if kwargs
+            .keys()
+            .any(|key| key != "blocking" && key != "timeout")
             || args.is_empty()
             || args.len() > 3
         {
@@ -21924,11 +22083,23 @@ impl Vm {
         }
         let action = kwargs
             .remove("action")
-            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
             .unwrap_or(Value::None);
         let timeout = kwargs
             .remove("timeout")
-            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
             .unwrap_or(Value::None);
         if timeout != Value::None {
             let timeout = value_to_f64(timeout)?;
@@ -21937,7 +22108,9 @@ impl Vm {
             }
         }
         if !args.is_empty() || !kwargs.is_empty() {
-            return Err(RuntimeError::new("Barrier.__init__() got unexpected arguments"));
+            return Err(RuntimeError::new(
+                "Barrier.__init__() got unexpected arguments",
+            ));
         }
         Self::instance_attr_set(&instance, "_parties", Value::Int(parties))?;
         Self::instance_attr_set(&instance, "_action", action)?;
@@ -21979,9 +22152,7 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if kwargs.keys().any(|key| key != "timeout") || args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new(
-                "Barrier.wait() expects optional timeout",
-            ));
+            return Err(RuntimeError::new("Barrier.wait() expects optional timeout"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Barrier.wait")?;
         let timeout = kwargs.remove("timeout").or_else(|| args.pop());
@@ -21991,7 +22162,10 @@ impl Vm {
                 return Err(RuntimeError::new("timeout must be non-negative"));
             }
         }
-        if matches!(Self::instance_attr_get(&instance, "_broken"), Some(Value::Bool(true))) {
+        if matches!(
+            Self::instance_attr_get(&instance, "_broken"),
+            Some(Value::Bool(true))
+        ) {
             return Err(RuntimeError::new("barrier is broken"));
         }
         let parties = match Self::instance_attr_get(&instance, "_parties") {
@@ -22104,7 +22278,9 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-            instance_data.attrs.insert("_fd".to_string(), Value::Int(fd));
+            instance_data
+                .attrs
+                .insert("_fd".to_string(), Value::Int(fd));
             instance_data
                 .attrs
                 .insert("_closed".to_string(), Value::Bool(fd < 0));
@@ -22133,7 +22309,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("gethostbyname() expects one host argument"));
+            return Err(RuntimeError::new(
+                "gethostbyname() expects one host argument",
+            ));
         }
         let host = match args.remove(0) {
             Value::Str(value) => value,
@@ -22145,13 +22323,10 @@ impl Vm {
         let addrs = (host.as_str(), 0u16)
             .to_socket_addrs()
             .map_err(|err| RuntimeError::new(format!("name resolution failed: {err}")))?;
-        if let Some(ip) = addrs
-            .into_iter()
-            .find_map(|addr| match addr {
-                SocketAddr::V4(v4) => Some(v4.ip().to_string()),
-                SocketAddr::V6(_) => None,
-            })
-        {
+        if let Some(ip) = addrs.into_iter().find_map(|addr| match addr {
+            SocketAddr::V4(v4) => Some(v4.ip().to_string()),
+            SocketAddr::V6(_) => None,
+        }) {
             return Ok(Value::Str(ip));
         }
         Err(RuntimeError::new("name resolution failed"))
@@ -22369,19 +22544,43 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "socket.__init__")?;
         let family = kwargs
             .remove("family")
-            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
             .unwrap_or(Value::Int(2));
         let sock_type = kwargs
             .remove("type")
-            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
             .unwrap_or(Value::Int(1));
         let proto = kwargs
             .remove("proto")
-            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
             .unwrap_or(Value::Int(0));
         let fileno = kwargs
             .remove("fileno")
-            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None })
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
             .unwrap_or(Value::None);
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new(
@@ -22466,7 +22665,8 @@ impl Vm {
 
     fn uuid_value_to_bytes(&self, value: Value) -> Result<[u8; 16], RuntimeError> {
         match value {
-            Value::Instance(instance) => match Self::instance_attr_get(&instance, "__uuid_bytes__") {
+            Value::Instance(instance) => match Self::instance_attr_get(&instance, "__uuid_bytes__")
+            {
                 Some(Value::Bytes(bytes_obj)) => match &*bytes_obj.kind() {
                     Object::Bytes(bytes) if bytes.len() == 16 => {
                         let mut out = [0u8; 16];
@@ -22531,7 +22731,11 @@ impl Vm {
         Self::instance_attr_set(instance, "urn", Value::Str(format!("urn:uuid:{text}")))?;
         Self::instance_attr_set(instance, "__str__", Value::Str(text))?;
         Self::instance_attr_set(instance, "fields", fields)?;
-        Self::instance_attr_set(instance, "version", Value::Int(((bytes[6] >> 4) & 0x0f) as i64))?;
+        Self::instance_attr_set(
+            instance,
+            "version",
+            Value::Int(((bytes[6] >> 4) & 0x0f) as i64),
+        )?;
         Self::instance_attr_set(
             instance,
             "variant",
@@ -22554,12 +22758,24 @@ impl Vm {
             .remove("hex")
             .or_else(|| kwargs.remove("bytes"))
             .or_else(|| kwargs.remove("int"))
-            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None });
-        let version = kwargs
-            .remove("version")
-            .or_else(|| if !args.is_empty() { Some(args.remove(0)) } else { None });
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            });
+        let version = kwargs.remove("version").or_else(|| {
+            if !args.is_empty() {
+                Some(args.remove(0))
+            } else {
+                None
+            }
+        });
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new("UUID.__init__() got unexpected arguments"));
+            return Err(RuntimeError::new(
+                "UUID.__init__() got unexpected arguments",
+            ));
         }
         let mut bytes = if let Some(source) = source {
             match source {
@@ -22610,7 +22826,10 @@ impl Vm {
                 "uuid1() expects optional node and clock_seq",
             ));
         }
-        let node = if let Some(value) = kwargs.get("node").cloned().or_else(|| args.first().cloned())
+        let node = if let Some(value) = kwargs
+            .get("node")
+            .cloned()
+            .or_else(|| args.first().cloned())
         {
             value_to_int(value)?
         } else {
@@ -23148,6 +23367,7 @@ impl Vm {
                     Ok(Value::Str(chars[index_int as usize].to_string()))
                 }
                 Value::Dict(obj) => {
+                    ensure_hashable(&index)?;
                     let existing = {
                         let dict_kind = obj.kind();
                         let Object::Dict(entries) = &*dict_kind else {
@@ -23176,7 +23396,7 @@ impl Vm {
                                 return Err(RuntimeError::new("default factory raised"));
                             }
                         };
-                        dict_set_value(&obj, index, generated.clone());
+                        dict_set_value_checked(&obj, index, generated.clone())?;
                         Ok(generated)
                     } else {
                         Err(RuntimeError::new("key not found"))
@@ -23369,8 +23589,10 @@ impl Vm {
             .insert("any".to_string(), Value::Builtin(BuiltinFunction::Any));
         self.builtins
             .insert("map".to_string(), Value::Builtin(BuiltinFunction::Map));
-        self.builtins
-            .insert("filter".to_string(), Value::Builtin(BuiltinFunction::Filter));
+        self.builtins.insert(
+            "filter".to_string(),
+            Value::Builtin(BuiltinFunction::Filter),
+        );
         self.builtins
             .insert("pow".to_string(), Value::Builtin(BuiltinFunction::Pow));
         self.builtins
@@ -23891,16 +24113,6 @@ impl Vm {
     }
 }
 
-fn dedup_vm_values(values: Vec<Value>) -> Vec<Value> {
-    let mut out = Vec::new();
-    for value in values {
-        if !out.iter().any(|existing| *existing == value) {
-            out.push(value);
-        }
-    }
-    out
-}
-
 fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
     match value {
         Value::Int(value) => Ok(value),
@@ -24152,13 +24364,19 @@ fn parse_hex_float_literal(text: &str) -> Result<f64, RuntimeError> {
     };
 
     let Some(rest) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) else {
-        return Err(RuntimeError::new("fromhex() argument must be a hexadecimal string"));
+        return Err(RuntimeError::new(
+            "fromhex() argument must be a hexadecimal string",
+        ));
     };
     let Some((mantissa_text, exponent_text)) = rest.split_once(['p', 'P']) else {
-        return Err(RuntimeError::new("fromhex() argument must be a hexadecimal string"));
+        return Err(RuntimeError::new(
+            "fromhex() argument must be a hexadecimal string",
+        ));
     };
     if mantissa_text.is_empty() || exponent_text.is_empty() {
-        return Err(RuntimeError::new("fromhex() argument must be a hexadecimal string"));
+        return Err(RuntimeError::new(
+            "fromhex() argument must be a hexadecimal string",
+        ));
     }
     let exponent = exponent_text
         .parse::<i32>()
@@ -24170,7 +24388,9 @@ fn parse_hex_float_literal(text: &str) -> Result<f64, RuntimeError> {
         (mantissa_text, "")
     };
     if whole_text.is_empty() && frac_text.is_empty() {
-        return Err(RuntimeError::new("fromhex() argument must be a hexadecimal string"));
+        return Err(RuntimeError::new(
+            "fromhex() argument must be a hexadecimal string",
+        ));
     }
 
     let mut value = 0.0;
@@ -26190,7 +26410,12 @@ fn collect_noop_symbols_from_value(
                 let Some(attr_value) = class_data.attrs.get(&attr) else {
                     continue;
                 };
-                collect_noop_symbols_from_value(&format!("{path}.{attr}"), attr_value, out, visited);
+                collect_noop_symbols_from_value(
+                    &format!("{path}.{attr}"),
+                    attr_value,
+                    out,
+                    visited,
+                );
             }
         }
         Value::Instance(instance) => {
@@ -26312,31 +26537,6 @@ fn split_relative_import_name(name: &str) -> (usize, String) {
         }
     }
     (level, name.chars().skip(level).collect())
-}
-
-fn dict_get_value(dict: &ObjRef, key: &Value) -> Option<Value> {
-    let dict_kind = dict.kind();
-    let entries = match &*dict_kind {
-        Object::Dict(entries) => entries,
-        _ => return None,
-    };
-    entries
-        .iter()
-        .find(|(entry_key, _)| entry_key == key)
-        .map(|(_, value)| value.clone())
-}
-
-fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
-    let mut dict_kind = dict.kind_mut();
-    let entries = match &mut *dict_kind {
-        Object::Dict(entries) => entries,
-        _ => return,
-    };
-    if let Some((_, entry_value)) = entries.iter_mut().find(|(entry_key, _)| *entry_key == key) {
-        *entry_value = value;
-        return;
-    }
-    entries.push((key, value));
 }
 
 fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
@@ -26475,7 +26675,10 @@ fn last_whitespace_run(text: &str) -> Option<(usize, usize)> {
 
 fn py_split_whitespace(text: &str, maxsplit: i64) -> Vec<String> {
     if maxsplit < 0 {
-        return text.split_whitespace().map(|part| part.to_string()).collect();
+        return text
+            .split_whitespace()
+            .map(|part| part.to_string())
+            .collect();
     }
 
     if maxsplit == 0 {
@@ -26513,7 +26716,10 @@ fn py_split_whitespace(text: &str, maxsplit: i64) -> Vec<String> {
 
 fn py_rsplit_whitespace(text: &str, maxsplit: i64) -> Vec<String> {
     if maxsplit < 0 {
-        return text.split_whitespace().map(|part| part.to_string()).collect();
+        return text
+            .split_whitespace()
+            .map(|part| part.to_string())
+            .collect();
     }
 
     if maxsplit == 0 {
@@ -27299,15 +27505,24 @@ fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeError> {
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::Dict(obj) => match &*obj.kind() {
-            Object::Dict(entries) => Ok(entries.iter().any(|(key, _)| key == left)),
+            Object::Dict(entries) => {
+                ensure_hashable(left)?;
+                Ok(entries.iter().any(|(key, _)| key == left))
+            }
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::Set(obj) => match &*obj.kind() {
-            Object::Set(values) => Ok(values.iter().any(|value| value == left)),
+            Object::Set(values) => {
+                ensure_hashable(left)?;
+                Ok(values.iter().any(|value| value == left))
+            }
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::FrozenSet(obj) => match &*obj.kind() {
-            Object::FrozenSet(values) => Ok(values.iter().any(|value| value == left)),
+            Object::FrozenSet(values) => {
+                ensure_hashable(left)?;
+                Ok(values.iter().any(|value| value == left))
+            }
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::Str(haystack) => match left {

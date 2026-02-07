@@ -1292,6 +1292,46 @@ f_ok = frozenset({1, 2}).issuperset({2}) and frozenset({1, 2}).issubset({1, 2, 3
 }
 
 #[test]
+fn rejects_unhashable_dict_key_assignment() {
+    let source = "d = {}\nd[[1, 2]] = 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("unhashable type: 'list'"));
+}
+
+#[test]
+fn rejects_unhashable_dict_key_membership() {
+    let source = "d = {1: 2}\nok = [1] in d\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("unhashable type: 'list'"));
+}
+
+#[test]
+fn rejects_unhashable_set_item_add() {
+    let source = "s = set()\ns.add([1, 2])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("unhashable type: 'list'"));
+}
+
+#[test]
+fn rejects_unhashable_set_constructor_items() {
+    let source = "s = set([[1], [2]])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("unhashable type: 'list'"));
+}
+
+#[test]
 fn executes_iter_and_next_builtins() {
     let source = "it = iter([1, 2])\n\
 a = next(it)\n\
@@ -3969,7 +4009,8 @@ fn sys_module_exposes_argv_and_executable() {
 
 #[test]
 fn sys_exit_raises_systemexit() {
-    let source = "import sys\nok = False\ntry:\n    sys.exit(2)\nexcept SystemExit:\n    ok = True\n";
+    let source =
+        "import sys\nok = False\ntry:\n    sys.exit(2)\nexcept SystemExit:\n    ok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4342,7 +4383,8 @@ fn executes_uuid_and_reduce_ex_baseline() {
 
 #[test]
 fn executes_warnings_lock_helpers() {
-    let source = "import _warnings\n_warnings._acquire_lock()\n_warnings._release_lock()\nok = True\n";
+    let source =
+        "import _warnings\n_warnings._acquire_lock()\n_warnings._release_lock()\nok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4886,7 +4928,8 @@ fn pylong_basic_helpers_work() {
 
 #[test]
 fn pylong_decimal_inner_accepts_guard_keyword() {
-    let source = "import _pylong\nv = _pylong._dec_str_to_int_inner('99', GUARD=4)\nok = (v == 99)\n";
+    let source =
+        "import _pylong\nv = _pylong._dec_str_to_int_inner('99', GUARD=4)\nok = (v == 99)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -5075,7 +5118,8 @@ fn os_terminal_size_helpers_are_available() {
 
 #[test]
 fn colorize_decolor_strips_ansi_sequences() {
-    let source = "import _colorize\ns = _colorize.decolor('\\x1b[31mhello\\x1b[0m')\nok = (s == 'hello')\n";
+    let source =
+        "import _colorize\ns = _colorize.decolor('\\x1b[31mhello\\x1b[0m')\nok = (s == 'hello')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

@@ -302,6 +302,8 @@ Progress:
 - CPython harness breadth expanded with zero allowlist impact: `tests/cpython_suite_language.txt` now includes `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, and `test/test_configparser.py`.
 - CPython harness regression-closure batch landed: `_colorize.decolor`, `functools.wraps` metadata propagation for bound-method inputs, VM-native `enumerate`/`filter` iterable handling, list slice assignment semantics, and `sys.exit` baseline behavior are now implemented with dedicated regressions.
 - Expanded CPython probe runs outside the curated harness now carry forward remaining Milestone 13 blockers tracked in `docs/STUB_ACCOUNTING.md` (arbitrary-precision integer semantics for large shifts and `_testinternalcapi.hamt`).
+- Container semantics hardening batch landed: hashability guards now enforce `TypeError` for unhashable `dict` keys and `set`/`frozenset` items across core constructor/update/assignment/membership flows, with dedicated VM regressions.
+- VM refactor kickoff landed: container/hashability helpers are extracted into `src/vm/containers.rs` to begin decomposing `src/vm/mod.rs` without behavior regressions.
 - Container internals are still tracked as a remaining Milestone 13/14 blocker: runtime `dict`/`set`/`frozenset` remain `Vec`-backed and must move to hash-driven semantics for production parity/performance.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
