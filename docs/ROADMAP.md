@@ -275,6 +275,7 @@ Progress:
 - `operator`/`functools` parity batch landed for callable adapters: `operator.itemgetter`, `operator.attrgetter`, `operator.methodcaller`, and `functools.cmp_to_key` now execute non-`NoOp` logic (including `sorted`/`min`/`max` key-ordering interoperability), with dedicated VM regressions.
 - `itertools` parity batch landed for previously stubbed helpers: `accumulate`, `combinations`, `combinations_with_replacement`, `compress`, `dropwhile`, `filterfalse`, `groupby`, `islice`, `pairwise`, `starmap`, `takewhile`, `tee`, and `zip_longest` now execute non-`NoOp` logic with dedicated VM regressions.
 - `inspect` parity batch landed for core signature introspection: `inspect.signature` now executes a non-`NoOp` path and returns an `inspect.Signature` instance with baseline parameter-kind/default metadata and return-annotation capture.
+- `importlib` parity batch landed for cache/spec helpers: `importlib.invalidate_caches` and baseline `importlib.util.spec_from_file_location` now execute non-`NoOp` logic with dedicated VM regressions; full spec/loader object parity remains tracked in Milestone 13.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)

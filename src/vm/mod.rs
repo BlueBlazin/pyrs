@@ -934,7 +934,7 @@ impl Vm {
             );
             module_data.globals.insert(
                 "invalidate_caches".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ImportlibInvalidateCaches),
             );
         }
         self.register_module("importlib", importlib.clone());
@@ -967,7 +967,7 @@ impl Vm {
             );
             module_data.globals.insert(
                 "spec_from_file_location".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ImportlibSpecFromFileLocation),
             );
         }
         self.register_module("importlib.util", util.clone());
@@ -11494,11 +11494,17 @@ impl Vm {
             BuiltinFunction::Import => self.builtin_import(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
+            BuiltinFunction::ImportlibInvalidateCaches => {
+                self.builtin_importlib_invalidate_caches(args, kwargs)
+            }
             BuiltinFunction::ImportlibSourceFromCache => {
                 self.builtin_importlib_source_from_cache(args, kwargs)
             }
             BuiltinFunction::ImportlibCacheFromSource => {
                 self.builtin_importlib_cache_from_source(args, kwargs)
+            }
+            BuiltinFunction::ImportlibSpecFromFileLocation => {
+                self.builtin_importlib_spec_from_file_location(args, kwargs)
             }
             BuiltinFunction::RandomSeed => self.builtin_random_seed(args, kwargs),
             BuiltinFunction::RandomRandom => self.builtin_random_random(args, kwargs),
@@ -13719,6 +13725,89 @@ impl Vm {
             source_info.package_dirs.as_slice(),
             source_info.is_namespace,
         ))
+    }
+
+    fn builtin_importlib_invalidate_caches(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(RuntimeError::new("invalidate_caches() expects no arguments"));
+        }
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return Ok(Value::None);
+        };
+        let Object::Module(module_data) = &mut *sys_module.kind_mut() else {
+            return Ok(Value::None);
+        };
+        if let Some(Value::Dict(cache)) = module_data.globals.get("path_importer_cache").cloned() {
+            if let Object::Dict(entries) = &mut *cache.kind_mut() {
+                entries.clear();
+            }
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_importlib_spec_from_file_location(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "spec_from_file_location() expects name and location",
+            ));
+        }
+        let name = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("name must be string")),
+        };
+        let location = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("location must be string")),
+        };
+        let loader = kwargs
+            .remove("loader")
+            .unwrap_or(Value::Str(SOURCE_FILE_LOADER.to_string()));
+        let search_locations = kwargs.remove("submodule_search_locations");
+        kwargs.remove("target");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "spec_from_file_location() got an unexpected keyword argument",
+            ));
+        }
+
+        let mut entries = vec![
+            (Value::Str("name".to_string()), Value::Str(name)),
+            (Value::Str("loader".to_string()), loader),
+            (Value::Str("origin".to_string()), Value::Str(location.clone())),
+            (
+                Value::Str("cached".to_string()),
+                Value::Str(cache_path_from_source_path(&location)),
+            ),
+            (Value::Str("has_location".to_string()), Value::Bool(true)),
+            (Value::Str("__spec__".to_string()), Value::None),
+            (
+                Value::Str("submodule_search_locations".to_string()),
+                Value::None,
+            ),
+        ];
+        if let Some(value) = search_locations {
+            let normalized = if matches!(value, Value::None) {
+                Value::None
+            } else {
+                let locations = self.collect_iterable_values(value)?;
+                self.heap.alloc_list(locations)
+            };
+            if let Some((_, field)) = entries
+                .iter_mut()
+                .find(|(key, _)| matches!(key, Value::Str(name) if name == "submodule_search_locations"))
+            {
+                *field = normalized;
+            }
+        }
+        Ok(self.heap.alloc_dict(entries))
     }
 
     fn builtin_importlib_source_from_cache(

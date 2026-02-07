@@ -973,8 +973,10 @@ pub enum BuiltinFunction {
     Import,
     ImportModule,
     FindSpec,
+    ImportlibInvalidateCaches,
     ImportlibSourceFromCache,
     ImportlibCacheFromSource,
+    ImportlibSpecFromFileLocation,
     RandomSeed,
     RandomRandom,
     RandomRandRange,
@@ -2638,8 +2640,10 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
             | BuiltinFunction::PlatformLibcVer
+            | BuiltinFunction::ImportlibInvalidateCaches
             | BuiltinFunction::ImportlibSourceFromCache
             | BuiltinFunction::ImportlibCacheFromSource
+            | BuiltinFunction::ImportlibSpecFromFileLocation
             | BuiltinFunction::RandomSeed
             | BuiltinFunction::RandomRandom
             | BuiltinFunction::RandomRandRange

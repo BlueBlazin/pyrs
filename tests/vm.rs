@@ -2620,6 +2620,17 @@ fn exposes_importlib_cache_path_helpers() {
 }
 
 #[test]
+fn exposes_importlib_invalidate_caches_and_spec_from_file_location() {
+    let source = "import sys\nimport importlib\nimport importlib.util\nsys.path_importer_cache['/tmp/demo'] = 42\nbefore = '/tmp/demo' in sys.path_importer_cache\nimportlib.invalidate_caches()\nafter = '/tmp/demo' in sys.path_importer_cache\nspec = importlib.util.spec_from_file_location('demo', '/tmp/demo.py')\nok = before and (not after) and spec['name'] == 'demo' and spec['origin'] == '/tmp/demo.py' and spec['loader'] == 'pyrs.SourceFileLoader' and spec['has_location'] and spec['cached'][-4:] == '.pyc'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn imports_using_importlib_relative_package_resolution() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
