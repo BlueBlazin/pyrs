@@ -90,10 +90,11 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Standard Library Coverage**
 - [~] P0: Minimal builtins subset.
-- [~] P0: `random` module foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`).
+- [~] P0: `random` module foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `choices`, `shuffle`).
 - [~] P0: `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`).
 - [~] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
-- [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core; `os`/`posix` now include non-`NoOp` `open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` + wait-status helpers, and `datetime` now exports baseline `date`/`timedelta` symbols; full module parity pending).
+- [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core; `os`/`posix` now include non-`NoOp` `open`/`close`/`write`/`getenv`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` + wait-status helpers, and `datetime` now exports baseline `date`/`timedelta` symbols; full module parity pending).
+- [ ] P0: `_io.open` CPython file-object semantics (`opener`/buffering/newline/closefd path required by `tempfile` and `test_csv` execution).
 - [ ] P0: Full `json` parity and hardening (`test_json` closure, differential malformed-input coverage, performance baselines).
 - [ ] P0: Full `_csv`/`csv` parity and hardening (`test_csv` closure, malformed-input coverage, performance baselines).
 - [ ] P0: Full `pickle`/`pickletools`/`copyreg` parity and hardening (`test_pickle`, `test_pickletools`, `test_copyreg` closure, protocol coverage, performance baselines).
@@ -113,6 +114,8 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 **Testing & QA**
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
 - [~] P0: Current curated CPython language/import harness suites are near zero-allowlist and now include `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, `test/test_configparser.py`, `test/test_base64.py`, `test/test_binascii.py`, `test/test_bisect.py`, `test/test_copy.py`, `test/test_copyreg.py`, `test/test_csv.py`, `test/test_fnmatch.py`, `test/test_genericalias.py`, `test/test_heapq.py`, `test/test_pprint.py`, `test/test_reprlib.py`, `test/test_sched.py`, `test/test_statistics.py`, `test/test_textwrap.py`, `test/test_tokenize.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`; `tests/cpython_allowlist.txt` remains empty.
+- [x] P0: Remaining curated harness blocker (`test/test_enum.py`) is closed for the current curated suite gate.
+- [ ] P0: Strict standalone `test_csv` unittest execution still fails due `StopIteration` propagation under `unittest.runner`; `_io.open`/`tempfile`-path closure remains mandatory before release.
 - [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
 - [ ] P0: Full CPython module-suite closure for `json`/`csv`/`pickle` stack (`test_json`, `test_csv`, `test_pickle`, `test_pickletools`, `test_copyreg`) with owned allowlist policy.
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).

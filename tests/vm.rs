@@ -649,8 +649,41 @@ fn exposes_sys_filesystem_encoding_helpers() {
 }
 
 #[test]
+fn exposes_sys_exception_for_active_handler_context() {
+    let source = "import sys\nnone_before = (sys.exception() is None)\ndef probe():\n    return sys.exception() is not None\ninside = False\ntry:\n    raise ValueError('bad')\nexcept ValueError:\n    inside = probe()\nnone_after = (sys.exception() is None)\nok = none_before and inside and none_after\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn traceback_helpers_can_read_exception_traceback_attr() {
+    let source = "tb_visible = False\ntry:\n    raise ValueError('bad')\nexcept ValueError as exc:\n    tb_visible = hasattr(exc, '__traceback__')\nok = tb_visible\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exposes_time_perf_counter_helpers() {
+    let source = "import time\na = time.perf_counter()\nb = time.perf_counter()\nns = time.perf_counter_ns()\nok = isinstance(a, float) and isinstance(ns, int) and (b >= a)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1836,6 +1869,26 @@ m = time.monotonic()\n";
 }
 
 #[test]
+fn executes_datetime_date_constructor() {
+    let source = "import datetime\nitem = datetime.date(2024, 1, 2)\nok = item.year == 2024 and item.month == 1 and item.day == 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn imports_enum_module_and_handles_function_form() {
+    let source = "import enum\nvalue = enum.Enum('E', type=int)\nok = value is not None\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_extended_math_functions() {
     let source = "import math\n\
 ld = math.ldexp(0.5, 3)\n\
@@ -2192,6 +2245,19 @@ fn executes_class_attribute_lookup() {
 }
 
 #[test]
+fn supports_dunder_class_on_common_values() {
+    let source = "n = None.__class__.__name__\n\
+l = [1].__class__.__name__\n\
+b = True.__class__.__name__\n\
+ok = (n == 'NoneType' and l == 'list' and b == 'bool')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn class_body_can_access_module_globals() {
     let source = "x = 5\nclass Baz:\n    y = x\n    def get(self):\n        return x\n\nb = Baz()\nval = b.get()\nattr = Baz.y\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -2212,6 +2278,16 @@ fn executes_class_inheritance() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("val"), Some(Value::Int(7)));
+}
+
+#[test]
+fn class_without_explicit_base_inherits_object() {
+    let source = "class C:\n    pass\nok = (C.__bases__[0].__name__ == 'object')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -2297,6 +2373,16 @@ fn class_objects_are_instances_of_declared_metaclass() {
 #[test]
 fn class_attribute_falls_back_to_metaclass_method() {
     let source = "class Meta(type):\n    def tag(cls):\n        return cls.__name__\nclass Sample(metaclass=Meta):\n    pass\nok = Sample.tag() == 'Sample'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn class_invocation_uses_metaclass_call_when_present() {
+    let source = "class Meta(type):\n    def __call__(cls, *args, **kwargs):\n        return ('meta', cls.__name__, args[0], kwargs.get('x', 0))\nclass Sample(metaclass=Meta):\n    pass\nresult = Sample(7, x=9)\nok = result[0] == 'meta' and result[1] == 'Sample' and result[2] == 7 and result[3] == 9\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -2832,6 +2918,7 @@ d1 = random.getrandbits(12)\n\
 x = [1, 2, 3, 4]\n\
 random.shuffle(x)\n\
 e1 = random.choice(x)\n\
+f1 = random.choices([10, 20, 30], k=4)\n\
 random.seed(123)\n\
 a2 = random.random()\n\
 b2 = random.randrange(100)\n\
@@ -2840,7 +2927,8 @@ d2 = random.getrandbits(12)\n\
 y = [1, 2, 3, 4]\n\
 random.shuffle(y)\n\
 e2 = random.choice(y)\n\
-same = (a1 == a2) and (b1 == b2) and (c1 == c2) and (d1 == d2) and (x == y) and (e1 == e2)\n";
+f2 = random.choices([10, 20, 30], k=4)\n\
+same = (a1 == a2) and (b1 == b2) and (c1 == c2) and (d1 == d2) and (x == y) and (e1 == e2) and (f1 == f2)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3649,7 +3737,11 @@ fn executes_modulo() {
 
 #[test]
 fn executes_string_percent_formatting() {
-    let source = "a = '(%s+)' % 'x'\nb = '%(name)s' % {'name': 'ok'}\nc = '%d' % 7\n";
+    let source = "a = '(%s+)' % 'x'\n\
+b = '%(name)s' % {'name': 'ok'}\n\
+c = '%d' % 7\n\
+d = '%.3f' % 1.23456\n\
+e = '%6.2f' % 1.5\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3658,6 +3750,23 @@ fn executes_string_percent_formatting() {
     assert_eq!(vm.get_global("a"), Some(Value::Str("(x+)".to_string())));
     assert_eq!(vm.get_global("b"), Some(Value::Str("ok".to_string())));
     assert_eq!(vm.get_global("c"), Some(Value::Str("7".to_string())));
+    assert_eq!(vm.get_global("d"), Some(Value::Str("1.235".to_string())));
+    assert_eq!(vm.get_global("e"), Some(Value::Str("  1.50".to_string())));
+}
+
+#[test]
+fn iter_on_non_iterable_raises_type_error() {
+    let source = r#"ok = False
+try:
+    iter(1)
+except TypeError:
+    ok = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -3971,8 +4080,7 @@ fn executes_list_comprehension_with_scope_isolation() {
 
 #[test]
 fn list_comprehension_evaluates_first_iterable_in_outer_scope() {
-    let source =
-        "A = 1\nB = 2\nnames = [x for x in dir() if x.isupper() and not x.startswith('_')]\nok = ('A' in names) and ('B' in names)\n";
+    let source = "A = 1\nB = 2\nnames = [x for x in dir() if x.isupper() and not x.startswith('_')]\nok = ('A' in names) and ('B' in names)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4337,6 +4445,46 @@ fn executes_list_attribute_methods() {
 }
 
 #[test]
+fn positional_only_binding_does_not_conflict_with_named_positionals() {
+    let source = "def f(a, /, b=2, c=3):\n    return a + b + c\nok = (f(1, b=4, c=5) == 10)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_subclass_inherits_basic_list_behavior() {
+    let source = "class L(list):\n    pass\nx = L()\nx.append(1)\nx.append(2)\nvals = []\nfor value in x:\n    vals.append(value)\nok = (len(x) == 2 and vals == [1, 2] and x[1] == 2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_remove_misses_raise_value_error() {
+    let source = "caught = False\ntry:\n    [1].remove(2)\nexcept ValueError:\n    caught = True\nok = caught\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_pop_supports_default_and_index() {
+    let source = "values = [1, 2, 3]\na = values.pop()\nb = values.pop(0)\nok = (a == 3 and b == 1 and values == [2])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_getframe_locals() {
     let source = "import sys\ndef f():\n    local_value = 1\n    frame = sys._getframe()\n    return isinstance(frame.f_locals, dict)\nok = f()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -4639,18 +4787,27 @@ fn executes_os_fd_stat_and_wait_status_helpers() {
         "import os\nimport posix\n\
 path = '{path}'\n\
 root = '{root}'\n\
+out = '{out}'\n\
 fd = os.open(path, os.O_RDONLY)\n\
 is_tty = os.isatty(fd)\n\
 os.close(fd)\n\
+fdw = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)\n\
+written = os.write(fdw, b'xyz')\n\
+os.close(fdw)\n\
+written_ok = (written == 3 and open(out, 'rb') == b'xyz')\n\
 st = os.stat(path)\n\
 lst = os.lstat(path)\n\
 pst = posix.stat(path)\n\
 items = os.scandir(root)\n\
 name_ok = any(item[0] == 'sample.txt' for item in items)\n\
 wait_ok = os.WIFEXITED(5 << 8) and os.WEXITSTATUS(5 << 8) == 5 and not os.WIFSIGNALED(5 << 8)\n\
-ok = (not is_tty) and st.st_size == 5 and lst.st_size == 5 and pst.st_size == 5 and name_ok and wait_ok\n",
+ok = (not is_tty) and written_ok and st.st_size == 5 and lst.st_size == 5 and pst.st_size == 5 and name_ok and wait_ok\n",
         path = file.to_string_lossy().replace('\\', "\\\\"),
         root = temp_dir.to_string_lossy().replace('\\', "\\\\"),
+        out = temp_dir
+            .join("written.txt")
+            .to_string_lossy()
+            .replace('\\', "\\\\"),
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -4659,6 +4816,7 @@ ok = (not is_tty) and st.st_size == 5 and lst.st_size == 5 and pst.st_size == 5 
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 
     let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_file(temp_dir.join("written.txt"));
     let _ = std::fs::remove_dir(temp_dir);
 }
 
@@ -5461,6 +5619,19 @@ ok = (a == ['a:b', 'c'] and b == ['foo   '] and c == ['   foo'])\n";
 }
 
 #[test]
+fn string_splitlines_supports_keepends_and_crlf() {
+    let source = "a = 'x\\ny\\r\\nz'.splitlines()\n\
+b = 'x\\ny\\r\\nz'.splitlines(True)\n\
+c = ''.splitlines()\n\
+ok = (a == ['x', 'y', 'z'] and b == ['x\\n', 'y\\r\\n', 'z'] and c == [])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn string_find_accepts_optional_bounds_and_keywords() {
     let source = "a = 'abcabc'.find('bc')\n\
 b = 'abcabc'.find('bc', 2)\n\
@@ -5529,6 +5700,69 @@ fn builtin_type_descriptor_attrs_exist_for_reduction_paths() {
 #[test]
 fn super_uses_owner_class_for_classmethod_descriptors() {
     let source = "class A:\n    @classmethod\n    def who(cls):\n        return cls.__name__\nclass B(A):\n    @classmethod\n    def who(cls):\n        return super(B, cls).who()\nok = (B.who() == 'B')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn init_subclass_zero_arg_super_runs_for_subclasses() {
+    let source = r#"class Base:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        cls.flag = True
+
+class Child(Base):
+    pass
+
+ok = Child.flag
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn user_classes_expose_qualname_for_unittest_loader_paths() {
+    let source = "class KeyOrderingTest:\n    pass\nok = (KeyOrderingTest.__qualname__ == 'KeyOrderingTest')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_sort_supports_key_and_reverse_keywords() {
+    let source = "values = ['bbb', 'a', 'cc']\nvalues.sort(key=len, reverse=True)\nok = (values == ['bbb', 'cc', 'a'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_sort_accepts_cmp_to_key_wrappers() {
+    let source = "import functools\n\
+names = ['test_c', 'test_a', 'test_b']\n\
+cmpf = lambda a, b: (a > b) - (a < b)\n\
+names.sort(key=functools.cmp_to_key(cmpf))\n\
+ok = (names == ['test_a', 'test_b', 'test_c'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bound_method_doc_lookup_is_supported() {
+    let source = "class T:\n    def test_one(self):\n        'doc'\n        return 1\nm = T().test_one\nok = (m.__doc__ == None)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -5740,6 +5974,32 @@ ok = (rows == [['a', 'b', 'c']] and rows2 == [['a,b', 'c']] and ''.join(sink.par
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_encoding_handles_none_and_strings() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import io
+ok = (io.text_encoding(None) == 'utf-8' and io.text_encoding('latin-1') == 'latin-1' and io.text_encoding(encoding='utf-8', stacklevel=3) == 'utf-8')
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_getenv_handles_default_and_none() {
+    let source = "import os\nmissing = os.getenv('__PYRS_ENV_MISSING__')\nwith_default = os.getenv('__PYRS_ENV_MISSING__', 'fallback')\npath_value = os.getenv('PATH', '')\nok = (missing is None and with_default == 'fallback' and isinstance(path_value, str))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }

@@ -36,6 +36,7 @@ pub struct FunctionObject {
     pub kwonly_defaults: HashMap<String, Value>,
     pub closure: Vec<ObjRef>,
     pub annotations: Option<ObjRef>,
+    pub owner_class: Option<ObjRef>,
     pub dict: Option<ObjRef>,
 }
 
@@ -55,6 +56,7 @@ impl FunctionObject {
             kwonly_defaults,
             closure,
             annotations,
+            owner_class: None,
             dict: None,
         }
     }
@@ -148,6 +150,17 @@ impl GeneratorObject {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct DictKeysView {
+    pub dict: ObjRef,
+}
+
+impl DictKeysView {
+    pub fn new(dict: ObjRef) -> Self {
+        Self { dict }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NativeMethodKind {
     Builtin(BuiltinFunction),
@@ -170,8 +183,10 @@ pub enum NativeMethodKind {
     ListExtend,
     ListInsert,
     ListRemove,
+    ListPop,
     ListCount,
     ListReverse,
+    ListSort,
     IntToBytes,
     IntBitLengthMethod,
     StrStartsWith,
@@ -192,6 +207,7 @@ pub enum NativeMethodKind {
     StrIsSpace,
     StrJoin,
     StrSplit,
+    StrSplitLines,
     StrRSplit,
     StrPartition,
     StrRPartition,
@@ -818,6 +834,7 @@ fn value_hash_key(value: &Value) -> Option<u64> {
         }
         Value::List(_)
         | Value::Dict(_)
+        | Value::DictKeys(_)
         | Value::Set(_)
         | Value::ByteArray(_)
         | Value::MemoryView(_)
@@ -846,6 +863,7 @@ pub enum Object {
     NativeMethod(NativeMethodObject),
     Function(FunctionObject),
     Cell(CellObject),
+    DictKeysView(DictKeysView),
 }
 
 #[derive(Debug)]
@@ -875,7 +893,10 @@ pub enum IteratorKind {
     Bytes(ObjRef),
     ByteArray(ObjRef),
     MemoryView(ObjRef),
-    Count { current: i64, step: i64 },
+    Count {
+        current: i64,
+        step: i64,
+    },
     Range {
         current: BigInt,
         stop: BigInt,
@@ -946,6 +967,10 @@ impl Heap {
 
     pub fn alloc_dict(&self, values: Vec<(Value, Value)>) -> Value {
         Value::Dict(self.alloc(Object::Dict(DictObject::new(values))))
+    }
+
+    pub fn alloc_dict_keys_view(&self, dict: ObjRef) -> Value {
+        Value::DictKeys(self.alloc(Object::DictKeysView(DictKeysView::new(dict))))
     }
 
     pub fn alloc_set(&self, values: Vec<Value>) -> Value {
@@ -1026,6 +1051,7 @@ impl Heap {
             Value::List(obj)
             | Value::Tuple(obj)
             | Value::Dict(obj)
+            | Value::DictKeys(obj)
             | Value::Set(obj)
             | Value::FrozenSet(obj)
             | Value::Bytes(obj)
@@ -1110,6 +1136,7 @@ fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         Value::List(obj)
         | Value::Tuple(obj)
         | Value::Dict(obj)
+        | Value::DictKeys(obj)
         | Value::Set(obj)
         | Value::FrozenSet(obj)
         | Value::Bytes(obj)
@@ -1148,6 +1175,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 }
             }
         }
+        Object::DictKeysView(view) => {
+            stack.push(view.dict.clone());
+        }
         Object::Set(values) | Object::FrozenSet(values) => {
             for value in values {
                 trace_value(value, stack, marked);
@@ -1165,9 +1195,7 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             | IteratorKind::Bytes(list)
             | IteratorKind::ByteArray(list)
             | IteratorKind::MemoryView(list) => stack.push(list.clone()),
-            IteratorKind::Str(_)
-            | IteratorKind::Count { .. }
-            | IteratorKind::Range { .. } => {}
+            IteratorKind::Str(_) | IteratorKind::Count { .. } | IteratorKind::Range { .. } => {}
         },
         Object::Generator(_) => {}
         Object::Module(module) => {
@@ -1242,6 +1270,7 @@ fn clear_object_refs(obj: &ObjRef) {
         Object::Dict(entries) => {
             entries.clear();
         }
+        Object::DictKeysView(_) => {}
         Object::Set(values) | Object::FrozenSet(values) => {
             values.clear();
         }
@@ -1322,6 +1351,7 @@ pub enum Value {
     List(ObjRef),
     Tuple(ObjRef),
     Dict(ObjRef),
+    DictKeys(ObjRef),
     Set(ObjRef),
     FrozenSet(ObjRef),
     Bytes(ObjRef),
@@ -1599,6 +1629,7 @@ pub enum BuiltinFunction {
     Locals,
     Globals,
     SysGetFrame,
+    SysException,
     SysExit,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
@@ -1642,6 +1673,7 @@ pub enum BuiltinFunction {
     RandomRandInt,
     RandomGetRandBits,
     RandomChoice,
+    RandomChoices,
     RandomShuffle,
     DecimalGetContext,
     DecimalSetContext,
@@ -1688,9 +1720,11 @@ pub enum BuiltinFunction {
     TimeSleep,
     OsGetPid,
     OsGetCwd,
+    OsGetEnv,
     OsGetTerminalSize,
     OsTerminalSize,
     OsOpen,
+    OsWrite,
     OsClose,
     OsIsATty,
     OsURandom,
@@ -1856,8 +1890,19 @@ pub enum BuiltinFunction {
     IoOpen,
     IoReadText,
     IoWriteText,
+    IoTextEncoding,
+    StringIOInit,
+    StringIOWrite,
+    StringIORead,
+    StringIOReadLine,
+    StringIOGetValue,
+    StringIOSeek,
+    StringIOTell,
+    StringIOIter,
+    StringIONext,
     DateTimeNow,
     DateToday,
+    DateInit,
     AsyncioRun,
     AsyncioSleep,
     AsyncioCreateTask,
@@ -1926,6 +1971,8 @@ pub enum BuiltinFunction {
     CsvListDialects,
     CsvFieldSizeLimit,
     CsvDialectValidate,
+    CsvReaderIter,
+    CsvReaderNext,
     CollectionsCountElements,
     AtexitRegister,
     AtexitUnregister,
@@ -1971,6 +2018,19 @@ impl BuiltinFunction {
                 Ok(Value::Str(format_value(&args[0])))
             }
             BuiltinFunction::NoOp => Ok(Value::None),
+            BuiltinFunction::StringIOInit
+            | BuiltinFunction::StringIOWrite
+            | BuiltinFunction::StringIORead
+            | BuiltinFunction::StringIOReadLine
+            | BuiltinFunction::StringIOGetValue
+            | BuiltinFunction::StringIOSeek
+            | BuiltinFunction::StringIOTell
+            | BuiltinFunction::StringIOIter
+            | BuiltinFunction::StringIONext
+            | BuiltinFunction::CsvReaderIter
+            | BuiltinFunction::CsvReaderNext => Err(RuntimeError::new(
+                "StringIO builtin not available in runtime-only call path",
+            )),
             BuiltinFunction::Len => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("len() expects one argument"));
@@ -1987,6 +2047,13 @@ impl BuiltinFunction {
                     },
                     Value::Dict(obj) => match &*obj.kind() {
                         Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
+                        _ => Err(RuntimeError::new("len() unsupported type")),
+                    },
+                    Value::DictKeys(obj) => match &*obj.kind() {
+                        Object::DictKeysView(view) => match &*view.dict.kind() {
+                            Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
+                            _ => Err(RuntimeError::new("len() unsupported type")),
+                        },
                         _ => Err(RuntimeError::new("len() unsupported type")),
                     },
                     Value::Set(obj) => match &*obj.kind() {
@@ -2222,9 +2289,7 @@ impl BuiltinFunction {
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
                     Value::Float(value) => {
                         if value.is_nan() {
-                            return Err(RuntimeError::new(
-                                "cannot convert float NaN to integer",
-                            ));
+                            return Err(RuntimeError::new("cannot convert float NaN to integer"));
                         }
                         if value.is_infinite() {
                             return Err(RuntimeError::new(
@@ -2273,8 +2338,11 @@ impl BuiltinFunction {
                 Err(RuntimeError::new("int.from_bytes() requires VM context"))
             }
             BuiltinFunction::Float => {
+                if args.is_empty() {
+                    return Ok(Value::Float(0.0));
+                }
                 if args.len() != 1 {
-                    return Err(RuntimeError::new("float() expects one argument"));
+                    return Err(RuntimeError::new("float() expects at most one argument"));
                 }
                 match &args[0] {
                     Value::Float(value) => Ok(Value::Float(*value)),
@@ -2291,8 +2359,11 @@ impl BuiltinFunction {
                 }
             }
             BuiltinFunction::Str => {
+                if args.is_empty() {
+                    return Ok(Value::Str(String::new()));
+                }
                 if args.len() != 1 {
-                    return Err(RuntimeError::new("str() expects one argument"));
+                    return Err(RuntimeError::new("str() expects at most one argument"));
                 }
                 Ok(Value::Str(format_value(&args[0])))
             }
@@ -2915,9 +2986,9 @@ impl BuiltinFunction {
                     Ok(Value::Builtin(BuiltinFunction::FunctoolsLruCache))
                 }
             }
-            BuiltinFunction::FunctoolsCachedProperty => Err(RuntimeError::new(
-                "cached_property() requires VM context",
-            )),
+            BuiltinFunction::FunctoolsCachedProperty => {
+                Err(RuntimeError::new("cached_property() requires VM context"))
+            }
             BuiltinFunction::TokenizeTokenizerIter => {
                 if args.is_empty() {
                     return Err(RuntimeError::new("TokenizerIter() expects source"));
@@ -3532,6 +3603,7 @@ impl BuiltinFunction {
             | BuiltinFunction::Globals
             | BuiltinFunction::Exec
             | BuiltinFunction::SysGetFrame
+            | BuiltinFunction::SysException
             | BuiltinFunction::SysExit
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
@@ -3571,6 +3643,7 @@ impl BuiltinFunction {
             | BuiltinFunction::RandomRandInt
             | BuiltinFunction::RandomGetRandBits
             | BuiltinFunction::RandomChoice
+            | BuiltinFunction::RandomChoices
             | BuiltinFunction::RandomShuffle
             | BuiltinFunction::DecimalGetContext
             | BuiltinFunction::DecimalSetContext
@@ -3607,9 +3680,11 @@ impl BuiltinFunction {
             | BuiltinFunction::TimeSleep
             | BuiltinFunction::OsGetPid
             | BuiltinFunction::OsGetCwd
+            | BuiltinFunction::OsGetEnv
             | BuiltinFunction::OsGetTerminalSize
             | BuiltinFunction::OsTerminalSize
             | BuiltinFunction::OsOpen
+            | BuiltinFunction::OsWrite
             | BuiltinFunction::OsClose
             | BuiltinFunction::OsIsATty
             | BuiltinFunction::OsURandom
@@ -3736,8 +3811,10 @@ impl BuiltinFunction {
             | BuiltinFunction::IoOpen
             | BuiltinFunction::IoReadText
             | BuiltinFunction::IoWriteText
+            | BuiltinFunction::IoTextEncoding
             | BuiltinFunction::DateTimeNow
             | BuiltinFunction::DateToday
+            | BuiltinFunction::DateInit
             | BuiltinFunction::AsyncioRun
             | BuiltinFunction::AsyncioSleep
             | BuiltinFunction::AsyncioCreateTask
@@ -4030,7 +4107,11 @@ fn dedup_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     Ok(out)
 }
 
-fn normalize_int_digits_for_base(digits: &str, radix: u32, allow_prefix_underscore: bool) -> Option<String> {
+fn normalize_int_digits_for_base(
+    digits: &str,
+    radix: u32,
+    allow_prefix_underscore: bool,
+) -> Option<String> {
     if !(2..=36).contains(&radix) {
         return None;
     }
@@ -4089,6 +4170,13 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
             Object::Dict(values) => Ok(values.iter().map(|(key, _)| key.clone()).collect()),
             _ => Err(RuntimeError::new("expected iterable")),
         },
+        Value::DictKeys(obj) => match &*obj.kind() {
+            Object::DictKeysView(view) => match &*view.dict.kind() {
+                Object::Dict(values) => Ok(values.iter().map(|(key, _)| key.clone()).collect()),
+                _ => Err(RuntimeError::new("expected iterable")),
+            },
+            _ => Err(RuntimeError::new("expected iterable")),
+        },
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(values) => {
                 Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
@@ -4138,6 +4226,7 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::List(_) => "list",
         Value::Tuple(_) => "tuple",
         Value::Dict(_) => "dict",
+        Value::DictKeys(_) => "dict_keys",
         Value::Set(_) => "set",
         Value::FrozenSet(_) => "frozenset",
         Value::Bytes(_) => "bytes",
@@ -4411,6 +4500,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::List(_) => Value::Builtin(BuiltinFunction::List),
         Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
         Value::Dict(_) => Value::Builtin(BuiltinFunction::Dict),
+        Value::DictKeys(_) => Value::Str("dict_keys".to_string()),
         Value::Set(_) => Value::Builtin(BuiltinFunction::Set),
         Value::FrozenSet(_) => Value::Builtin(BuiltinFunction::FrozenSet),
         Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
@@ -4543,6 +4633,19 @@ pub fn format_value(value: &Value) -> String {
             }
             _ => "<dict>".to_string(),
         },
+        Value::DictKeys(obj) => match &*obj.kind() {
+            Object::DictKeysView(view) => match &*view.dict.kind() {
+                Object::Dict(values) => {
+                    let mut parts = Vec::new();
+                    for (key, _) in values {
+                        parts.push(format_value(key));
+                    }
+                    format!("dict_keys([{}])", parts.join(", "))
+                }
+                _ => "dict_keys([])".to_string(),
+            },
+            _ => "<dict_keys>".to_string(),
+        },
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => {
                 if values.is_empty() {
@@ -4632,8 +4735,10 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ListExtend => "<bound method list.extend>".to_string(),
                     NativeMethodKind::ListInsert => "<bound method list.insert>".to_string(),
                     NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
+                    NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
                     NativeMethodKind::ListReverse => "<bound method list.reverse>".to_string(),
+                    NativeMethodKind::ListSort => "<bound method list.sort>".to_string(),
                     NativeMethodKind::IntToBytes => "<bound method int.to_bytes>".to_string(),
                     NativeMethodKind::IntBitLengthMethod => {
                         "<bound method int.bit_length>".to_string()
@@ -4660,6 +4765,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrIsSpace => "<bound method str.isspace>".to_string(),
                     NativeMethodKind::StrJoin => "<bound method str.join>".to_string(),
                     NativeMethodKind::StrSplit => "<bound method str.split>".to_string(),
+                    NativeMethodKind::StrSplitLines => "<bound method str.splitlines>".to_string(),
                     NativeMethodKind::StrRSplit => "<bound method str.rsplit>".to_string(),
                     NativeMethodKind::StrPartition => "<bound method str.partition>".to_string(),
                     NativeMethodKind::StrRPartition => "<bound method str.rpartition>".to_string(),
@@ -4761,6 +4867,13 @@ fn is_truthy_value(value: &Value) -> bool {
         },
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(values) => !values.is_empty(),
+            _ => true,
+        },
+        Value::DictKeys(obj) => match &*obj.kind() {
+            Object::DictKeysView(view) => match &*view.dict.kind() {
+                Object::Dict(values) => !values.is_empty(),
+                _ => true,
+            },
             _ => true,
         },
         Value::Set(obj) => match &*obj.kind() {
