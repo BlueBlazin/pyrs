@@ -196,8 +196,12 @@ pub enum NativeMethodKind {
     PropertyGetter,
     PropertySetter,
     PropertyDeleter,
+    OperatorItemGetterCall,
+    OperatorAttrGetterCall,
+    OperatorMethodCallerCall,
     FunctoolsWrapsDecorator,
     FunctoolsPartialCall,
+    FunctoolsCmpToKeyCall,
 }
 
 #[derive(Debug, Clone)]
@@ -720,7 +724,10 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Complex { real: f64, imag: f64 },
+    Complex {
+        real: f64,
+        imag: f64,
+    },
     Str(String),
     List(ObjRef),
     Tuple(ObjRef),
@@ -846,12 +853,13 @@ impl PartialEq for Value {
                     _ => false,
                 }
             }
-            (Value::Bytes(a), Value::Bytes(b))
-            | (Value::ByteArray(a), Value::ByteArray(b)) => match (&*a.kind(), &*b.kind()) {
-                (Object::Bytes(left), Object::Bytes(right))
-                | (Object::ByteArray(left), Object::ByteArray(right)) => left == right,
-                _ => false,
-            },
+            (Value::Bytes(a), Value::Bytes(b)) | (Value::ByteArray(a), Value::ByteArray(b)) => {
+                match (&*a.kind(), &*b.kind()) {
+                    (Object::Bytes(left), Object::Bytes(right))
+                    | (Object::ByteArray(left), Object::ByteArray(right)) => left == right,
+                    _ => false,
+                }
+            }
             (Value::MemoryView(a), Value::MemoryView(b)) => a.id() == b.id(),
             (Value::Iterator(a), Value::Iterator(b)) => a.id() == b.id(),
             (Value::Generator(a), Value::Generator(b)) => a.id() == b.id(),
@@ -1079,6 +1087,9 @@ pub enum BuiltinFunction {
     OperatorGe,
     OperatorContains,
     OperatorGetItem,
+    OperatorItemGetter,
+    OperatorAttrGetter,
+    OperatorMethodCaller,
     ItertoolsChain,
     ItertoolsCount,
     ItertoolsCycle,
@@ -1092,6 +1103,7 @@ pub enum BuiltinFunction {
     FunctoolsSingleDispatchRegister,
     FunctoolsWraps,
     FunctoolsPartial,
+    FunctoolsCmpToKey,
     FunctoolsLruCache,
     CollectionsCounter,
     CollectionsDeque,
@@ -1319,7 +1331,9 @@ impl BuiltinFunction {
                 if args.len() > 2 {
                     return Err(RuntimeError::new("int() expects at most two arguments"));
                 }
-                let parse_with_base = |text: &str, explicit_base: Option<i64>| -> Result<i64, RuntimeError> {
+                let parse_with_base = |text: &str,
+                                       explicit_base: Option<i64>|
+                 -> Result<i64, RuntimeError> {
                     let trimmed = text.trim();
                     if trimmed.is_empty() {
                         return Err(RuntimeError::new("int() invalid literal"));
@@ -1342,28 +1356,46 @@ impl BuiltinFunction {
 
                     let mut digits = body;
                     if base == 0 {
-                        if let Some(rest) = digits.strip_prefix("0x").or_else(|| digits.strip_prefix("0X")) {
+                        if let Some(rest) = digits
+                            .strip_prefix("0x")
+                            .or_else(|| digits.strip_prefix("0X"))
+                        {
                             base = 16;
                             digits = rest;
-                        } else if let Some(rest) = digits.strip_prefix("0o").or_else(|| digits.strip_prefix("0O")) {
+                        } else if let Some(rest) = digits
+                            .strip_prefix("0o")
+                            .or_else(|| digits.strip_prefix("0O"))
+                        {
                             base = 8;
                             digits = rest;
-                        } else if let Some(rest) = digits.strip_prefix("0b").or_else(|| digits.strip_prefix("0B")) {
+                        } else if let Some(rest) = digits
+                            .strip_prefix("0b")
+                            .or_else(|| digits.strip_prefix("0B"))
+                        {
                             base = 2;
                             digits = rest;
                         } else {
                             base = 10;
                         }
                     } else if base == 16 {
-                        if let Some(rest) = digits.strip_prefix("0x").or_else(|| digits.strip_prefix("0X")) {
+                        if let Some(rest) = digits
+                            .strip_prefix("0x")
+                            .or_else(|| digits.strip_prefix("0X"))
+                        {
                             digits = rest;
                         }
                     } else if base == 8 {
-                        if let Some(rest) = digits.strip_prefix("0o").or_else(|| digits.strip_prefix("0O")) {
+                        if let Some(rest) = digits
+                            .strip_prefix("0o")
+                            .or_else(|| digits.strip_prefix("0O"))
+                        {
                             digits = rest;
                         }
                     } else if base == 2 {
-                        if let Some(rest) = digits.strip_prefix("0b").or_else(|| digits.strip_prefix("0B")) {
+                        if let Some(rest) = digits
+                            .strip_prefix("0b")
+                            .or_else(|| digits.strip_prefix("0B"))
+                        {
                             digits = rest;
                         }
                     }
@@ -1385,7 +1417,10 @@ impl BuiltinFunction {
                     None
                 };
                 if explicit_base.is_some()
-                    && !matches!(args[0], Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_))
+                    && !matches!(
+                        args[0],
+                        Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_)
+                    )
                 {
                     return Err(RuntimeError::new(
                         "int() can't convert non-string with explicit base",
@@ -1411,7 +1446,9 @@ impl BuiltinFunction {
                     return Err(RuntimeError::new("int.bit_length() expects one argument"));
                 }
                 let value = value_to_int(args[0].clone())?;
-                Ok(Value::Int((i64::BITS - value.unsigned_abs().leading_zeros()) as i64))
+                Ok(Value::Int(
+                    (i64::BITS - value.unsigned_abs().leading_zeros()) as i64,
+                ))
             }
             BuiltinFunction::Float => {
                 if args.len() != 1 {
@@ -1453,7 +1490,9 @@ impl BuiltinFunction {
                         Ok(Value::Int(ch as i64))
                     }
                     Value::Bytes(obj) => match &*obj.kind() {
-                        Object::Bytes(values) if values.len() == 1 => Ok(Value::Int(values[0] as i64)),
+                        Object::Bytes(values) if values.len() == 1 => {
+                            Ok(Value::Int(values[0] as i64))
+                        }
                         Object::Bytes(_) => Err(RuntimeError::new("ord() expected a character")),
                         _ => Err(RuntimeError::new("ord() unsupported type")),
                     },
@@ -1461,7 +1500,9 @@ impl BuiltinFunction {
                         Object::ByteArray(values) if values.len() == 1 => {
                             Ok(Value::Int(values[0] as i64))
                         }
-                        Object::ByteArray(_) => Err(RuntimeError::new("ord() expected a character")),
+                        Object::ByteArray(_) => {
+                            Err(RuntimeError::new("ord() expected a character"))
+                        }
                         _ => Err(RuntimeError::new("ord() unsupported type")),
                     },
                     _ => Err(RuntimeError::new("ord() expected string of length 1")),
@@ -1588,9 +1629,10 @@ impl BuiltinFunction {
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => match &*view.source.kind() {
-                            Object::Bytes(values) | Object::ByteArray(values) => Ok(heap.alloc_list(
-                                values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
-                            )),
+                            Object::Bytes(values) | Object::ByteArray(values) => Ok(heap
+                                .alloc_list(
+                                    values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                                )),
                             _ => Err(RuntimeError::new("list() unsupported type")),
                         },
                         _ => Err(RuntimeError::new("list() unsupported type")),
@@ -1638,9 +1680,10 @@ impl BuiltinFunction {
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => match &*view.source.kind() {
-                            Object::Bytes(values) | Object::ByteArray(values) => Ok(heap.alloc_tuple(
-                                values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
-                            )),
+                            Object::Bytes(values) | Object::ByteArray(values) => Ok(heap
+                                .alloc_tuple(
+                                    values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                                )),
                             _ => Err(RuntimeError::new("tuple() unsupported type")),
                         },
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
@@ -1703,7 +1746,8 @@ impl BuiltinFunction {
                 let default = args.get(1).cloned().unwrap_or(Value::None);
                 let mut entries: Vec<(Value, Value)> = Vec::new();
                 for key in keys {
-                    if let Some((_, value)) = entries.iter_mut().find(|(existing, _)| *existing == key)
+                    if let Some((_, value)) =
+                        entries.iter_mut().find(|(existing, _)| *existing == key)
                     {
                         *value = default.clone();
                     } else {
@@ -1725,7 +1769,9 @@ impl BuiltinFunction {
             }
             BuiltinFunction::FrozenSet => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::new("frozenset() expects at most one argument"));
+                    return Err(RuntimeError::new(
+                        "frozenset() expects at most one argument",
+                    ));
                 }
                 let values = if let Some(source) = args.into_iter().next() {
                     iterable_values(source)?
@@ -1848,13 +1894,10 @@ impl BuiltinFunction {
                 };
                 let mut class = ClassObject::new(name.clone(), bases);
                 class.attrs = attrs;
-                class.metaclass = class
-                    .bases
-                    .iter()
-                    .find_map(|base| match &*base.kind() {
-                        Object::Class(class_data) => class_data.metaclass.clone(),
-                        _ => None,
-                    });
+                class.metaclass = class.bases.iter().find_map(|base| match &*base.kind() {
+                    Object::Class(class_data) => class_data.metaclass.clone(),
+                    _ => None,
+                });
                 class
                     .attrs
                     .entry("__name__".to_string())
@@ -1890,11 +1933,11 @@ impl BuiltinFunction {
                     _ => return Err(RuntimeError::new("ContextVar() name must be string")),
                 };
                 let default = args.get(1).cloned().unwrap_or(Value::None);
-                let module = match heap.alloc_module(ModuleObject::new(format!("<ContextVar {name}>")))
-                {
-                    Value::Module(obj) => obj,
-                    _ => unreachable!(),
-                };
+                let module =
+                    match heap.alloc_module(ModuleObject::new(format!("<ContextVar {name}>"))) {
+                        Value::Module(obj) => obj,
+                        _ => unreachable!(),
+                    };
                 if let Object::Module(module_data) = &mut *module.kind_mut() {
                     module_data
                         .globals
@@ -1915,7 +1958,9 @@ impl BuiltinFunction {
             }
             BuiltinFunction::ContextVarGet => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::new("ContextVar.get() expects at most one argument"));
+                    return Err(RuntimeError::new(
+                        "ContextVar.get() expects at most one argument",
+                    ));
                 }
                 if let Some(default) = args.into_iter().next() {
                     Ok(default)
@@ -1979,7 +2024,9 @@ impl BuiltinFunction {
             BuiltinFunction::ThreadLockRelease => Ok(Value::None),
             BuiltinFunction::FunctoolsLruCache => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::new("lru_cache() expects at most one argument"));
+                    return Err(RuntimeError::new(
+                        "lru_cache() expects at most one argument",
+                    ));
                 }
                 if let Some(callable) = args.into_iter().next() {
                     Ok(callable)
@@ -1995,12 +2042,12 @@ impl BuiltinFunction {
                     Value::List(obj) => obj,
                     _ => unreachable!(),
                 };
-                Ok(Value::Iterator(
-                    heap.alloc(Object::Iterator(IteratorObject {
+                Ok(Value::Iterator(heap.alloc(Object::Iterator(
+                    IteratorObject {
                         kind: IteratorKind::List(empty),
                         index: 0,
-                    })),
-                ))
+                    },
+                ))))
             }
             BuiltinFunction::StructCalcSize => {
                 if args.len() != 1 {
@@ -2028,16 +2075,18 @@ impl BuiltinFunction {
                     Value::List(obj) => obj,
                     _ => unreachable!(),
                 };
-                Ok(Value::Iterator(
-                    heap.alloc(Object::Iterator(IteratorObject {
+                Ok(Value::Iterator(heap.alloc(Object::Iterator(
+                    IteratorObject {
                         kind: IteratorKind::List(empty),
                         index: 0,
-                    })),
-                ))
+                    },
+                ))))
             }
             BuiltinFunction::StructPackInto => {
                 if args.len() < 3 {
-                    return Err(RuntimeError::new("pack_into() expects format, buffer, offset"));
+                    return Err(RuntimeError::new(
+                        "pack_into() expects format, buffer, offset",
+                    ));
                 }
                 Ok(Value::None)
             }
@@ -2170,7 +2219,9 @@ impl BuiltinFunction {
             }
             BuiltinFunction::ImpFixCoFilename => {
                 if args.len() != 2 {
-                    return Err(RuntimeError::new("_fix_co_filename() expects code and path"));
+                    return Err(RuntimeError::new(
+                        "_fix_co_filename() expects code and path",
+                    ));
                 }
                 Ok(Value::None)
             }
@@ -2183,7 +2234,9 @@ impl BuiltinFunction {
             }
             BuiltinFunction::ImpFrozenModuleNames => {
                 if !args.is_empty() {
-                    return Err(RuntimeError::new("_frozen_module_names() expects no arguments"));
+                    return Err(RuntimeError::new(
+                        "_frozen_module_names() expects no arguments",
+                    ));
                 }
                 Ok(heap.alloc_tuple(Vec::new()))
             }
@@ -2205,7 +2258,8 @@ impl BuiltinFunction {
                     Value::Str(value) => value.clone(),
                     _ => return Err(RuntimeError::new("typing helper name must be string")),
                 };
-                let marker = match heap.alloc_module(ModuleObject::new(format!("<typing {name}>"))) {
+                let marker = match heap.alloc_module(ModuleObject::new(format!("<typing {name}>")))
+                {
                     Value::Module(obj) => obj,
                     _ => unreachable!(),
                 };
@@ -2350,12 +2404,14 @@ impl BuiltinFunction {
                     heap.alloc_tuple(fields.iter().cloned().map(Value::Str).collect()),
                 );
                 for field in &fields {
-                    let descriptor = match heap.alloc_module(ModuleObject::new(format!(
-                        "__namedtuple_field_{field}"
-                    ))) {
+                    let descriptor = match heap
+                        .alloc_module(ModuleObject::new(format!("__namedtuple_field_{field}")))
+                    {
                         Value::Module(module) => {
                             if let Object::Module(module_data) = &mut *module.kind_mut() {
-                                module_data.globals.insert("__doc__".to_string(), Value::None);
+                                module_data
+                                    .globals
+                                    .insert("__doc__".to_string(), Value::None);
                             }
                             Value::Module(module)
                         }
@@ -2396,9 +2452,7 @@ impl BuiltinFunction {
             BuiltinFunction::AbcResetRegistry | BuiltinFunction::AbcResetCaches => Ok(Value::None),
             BuiltinFunction::AbcAbstractMethod | BuiltinFunction::AbcUpdateAbstractMethods => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::new(
-                        "abc helper expects exactly one argument",
-                    ));
+                    return Err(RuntimeError::new("abc helper expects exactly one argument"));
                 }
                 Ok(args[0].clone())
             }
@@ -2468,13 +2522,13 @@ impl BuiltinFunction {
             }
             BuiltinFunction::WeakRefRemoveDead => {
                 if args.len() != 2 {
-                    return Err(RuntimeError::new("_remove_dead_weakref() expects two arguments"));
+                    return Err(RuntimeError::new(
+                        "_remove_dead_weakref() expects two arguments",
+                    ));
                 }
                 if let Value::Dict(obj) = &args[0] {
                     if let Object::Dict(entries) = &mut *obj.kind_mut() {
-                        if let Some(index) =
-                            entries.iter().position(|(key, _)| *key == args[1])
-                        {
+                        if let Some(index) = entries.iter().position(|(key, _)| *key == args[1]) {
                             entries.remove(index);
                         }
                     }
@@ -2497,17 +2551,29 @@ impl BuiltinFunction {
                     match initializer {
                         Value::List(obj) => match &*obj.kind() {
                             Object::List(items) => values.extend(items.clone()),
-                            _ => return Err(RuntimeError::new("array() initializer must be iterable")),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "array() initializer must be iterable",
+                                ));
+                            }
                         },
                         Value::Tuple(obj) => match &*obj.kind() {
                             Object::Tuple(items) => values.extend(items.clone()),
-                            _ => return Err(RuntimeError::new("array() initializer must be iterable")),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "array() initializer must be iterable",
+                                ));
+                            }
                         },
                         Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
                             Object::Bytes(bytes) | Object::ByteArray(bytes) => {
                                 values.extend(bytes.iter().map(|value| Value::Int(*value as i64)));
                             }
-                            _ => return Err(RuntimeError::new("array() initializer must be iterable")),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "array() initializer must be iterable",
+                                ));
+                            }
                         },
                         Value::Str(text) => {
                             values.extend(text.chars().map(|ch| Value::Int(ch as i64)));
@@ -2520,7 +2586,9 @@ impl BuiltinFunction {
             }
             BuiltinFunction::GcCollect => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::new("gc.collect() expects at most one argument"));
+                    return Err(RuntimeError::new(
+                        "gc.collect() expects at most one argument",
+                    ));
                 }
                 Ok(Value::Int(0))
             }
@@ -2659,6 +2727,9 @@ impl BuiltinFunction {
             | BuiltinFunction::OperatorGe
             | BuiltinFunction::OperatorContains
             | BuiltinFunction::OperatorGetItem
+            | BuiltinFunction::OperatorItemGetter
+            | BuiltinFunction::OperatorAttrGetter
+            | BuiltinFunction::OperatorMethodCaller
             | BuiltinFunction::ItertoolsChain
             | BuiltinFunction::ItertoolsCount
             | BuiltinFunction::ItertoolsCycle
@@ -2672,6 +2743,7 @@ impl BuiltinFunction {
             | BuiltinFunction::FunctoolsSingleDispatchRegister
             | BuiltinFunction::FunctoolsWraps
             | BuiltinFunction::FunctoolsPartial
+            | BuiltinFunction::FunctoolsCmpToKey
             | BuiltinFunction::CollectionsCounter
             | BuiltinFunction::CollectionsDeque
             | BuiltinFunction::CollectionsDefaultDict
@@ -2937,7 +3009,9 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
             _ => Err(RuntimeError::new("expected iterable")),
         },
         Value::Bytes(obj) => match &*obj.kind() {
-            Object::Bytes(values) => Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect()),
+            Object::Bytes(values) => {
+                Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
+            }
             _ => Err(RuntimeError::new("expected iterable")),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
@@ -2970,7 +3044,10 @@ fn value_to_bytes_with_encoding(
         None => "utf-8".to_string(),
     };
 
-    if !matches!(encoding_name.as_str(), "utf-8" | "utf8" | "ascii" | "latin-1" | "latin1") {
+    if !matches!(
+        encoding_name.as_str(),
+        "utf-8" | "utf8" | "ascii" | "latin-1" | "latin1"
+    ) {
         return Err(RuntimeError::new("unsupported encoding"));
     }
 
@@ -3430,7 +3507,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
-                    NativeMethodKind::RePatternSearch => "<bound method Pattern.search>".to_string(),
+                    NativeMethodKind::RePatternSearch => {
+                        "<bound method Pattern.search>".to_string()
+                    }
                     NativeMethodKind::RePatternMatch => "<bound method Pattern.match>".to_string(),
                     NativeMethodKind::RePatternFullMatch => {
                         "<bound method Pattern.fullmatch>".to_string()
@@ -3442,16 +3521,32 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::PropertyDelete => {
                         "<bound method property.__delete__>".to_string()
                     }
-                    NativeMethodKind::PropertyGetter => "<bound method property.getter>".to_string(),
-                    NativeMethodKind::PropertySetter => "<bound method property.setter>".to_string(),
+                    NativeMethodKind::PropertyGetter => {
+                        "<bound method property.getter>".to_string()
+                    }
+                    NativeMethodKind::PropertySetter => {
+                        "<bound method property.setter>".to_string()
+                    }
                     NativeMethodKind::PropertyDeleter => {
                         "<bound method property.deleter>".to_string()
+                    }
+                    NativeMethodKind::OperatorItemGetterCall => {
+                        "<bound method operator.itemgetter-call>".to_string()
+                    }
+                    NativeMethodKind::OperatorAttrGetterCall => {
+                        "<bound method operator.attrgetter-call>".to_string()
+                    }
+                    NativeMethodKind::OperatorMethodCallerCall => {
+                        "<bound method operator.methodcaller-call>".to_string()
                     }
                     NativeMethodKind::FunctoolsWrapsDecorator => {
                         "<bound method functools.wraps-decorator>".to_string()
                     }
                     NativeMethodKind::FunctoolsPartialCall => {
                         "<bound method functools.partial-call>".to_string()
+                    }
+                    NativeMethodKind::FunctoolsCmpToKeyCall => {
+                        "<bound method functools.cmp_to_key-call>".to_string()
                     }
                 },
                 _ => "<bound method ?>".to_string(),

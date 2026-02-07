@@ -341,8 +341,7 @@ fn exposes_sys_warnoptions() {
 
 #[test]
 fn exposes_sys_abiflags_and_platlibdir() {
-    let source =
-        "import sys\nok = isinstance(sys.abiflags, str) and sys.abiflags == '' and sys.platlibdir == 'lib'\n";
+    let source = "import sys\nok = isinstance(sys.abiflags, str) and sys.abiflags == '' and sys.platlibdir == 'lib'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -375,8 +374,7 @@ fn exposes_sys_standard_streams() {
 
 #[test]
 fn exposes_sys_jit_probe_flags() {
-    let source =
-        "import sys\nok = hasattr(sys, '_jit') and (not sys._jit.is_enabled()) and (not sys._jit.is_available())\n";
+    let source = "import sys\nok = hasattr(sys, '_jit') and (not sys._jit.is_enabled()) and (not sys._jit.is_available())\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -420,8 +418,7 @@ fn exposes_inspect_private_mro_helpers() {
 
 #[test]
 fn exposes_osx_support_customize_config_vars() {
-    let source =
-        "import _osx_support\ncfg = {'x': 1}\nout = _osx_support.customize_config_vars(cfg)\nok = out is cfg\n";
+    let source = "import _osx_support\ncfg = {'x': 1}\nout = _osx_support.customize_config_vars(cfg)\nok = out is cfg\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -451,7 +448,10 @@ fn executes_dict_attribute_methods() {
     assert_eq!(value, Value::None);
     assert_eq!(
         list_values(vm.get_global("ks")),
-        Some(vec![Value::Str("a".to_string()), Value::Str("b".to_string())])
+        Some(vec![
+            Value::Str("a".to_string()),
+            Value::Str("b".to_string())
+        ])
     );
     assert_eq!(
         list_values(vm.get_global("vs")),
@@ -460,7 +460,10 @@ fn executes_dict_attribute_methods() {
     let items = list_values(vm.get_global("is_")).expect("items should be a list");
     assert_eq!(items.len(), 2);
     assert_eq!(
-        items.iter().filter(|value| matches!(value, Value::Tuple(_))).count(),
+        items
+            .iter()
+            .filter(|value| matches!(value, Value::Tuple(_)))
+            .count(),
         2
     );
 }
@@ -1100,9 +1103,10 @@ fn rejects_min_default_with_multiple_positional_args() {
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let err = vm.execute(&code).expect_err("execution should fail");
-    assert!(err
-        .message
-        .contains("Cannot specify a default for min() with multiple positional arguments"));
+    assert!(
+        err.message
+            .contains("Cannot specify a default for min() with multiple positional arguments")
+    );
 }
 
 #[test]
@@ -1324,7 +1328,10 @@ m = time.monotonic()\n";
         Some(Value::Str(text)) => assert!(text.contains("\"a\":1")),
         other => panic!("expected encoded JSON string, got {other:?}"),
     }
-    assert_eq!(bytes_values(vm.get_global("encoded_ascii")), Some(vec![65, 90]));
+    assert_eq!(
+        bytes_values(vm.get_global("encoded_ascii")),
+        Some(vec![65, 90])
+    );
     assert_eq!(
         vm.get_global("decoded_ascii"),
         Some(Value::Str("AZ".to_string()))
@@ -3075,7 +3082,10 @@ fn executes_re_escape_builtin() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(Value::Str("\\\t\\ a\\+".to_string())));
+    assert_eq!(
+        vm.get_global("x"),
+        Some(Value::Str("\\\t\\ a\\+".to_string()))
+    );
 }
 
 #[test]
@@ -3635,7 +3645,8 @@ fn imports_gc_errno_weakref_and_array_modules() {
 
 #[test]
 fn sys_module_exposes_argv_and_executable() {
-    let source = "import sys\nok = isinstance(sys.argv, list) and isinstance(sys.executable, str)\n";
+    let source =
+        "import sys\nok = isinstance(sys.argv, list) and isinstance(sys.executable, str)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3657,8 +3668,7 @@ fn time_module_localtime_and_strftime_work() {
 
 #[test]
 fn itertools_count_iterates() {
-    let source =
-        "import itertools\nit = itertools.count(3, 2)\na = next(it)\nb = next(it)\nok = a == 3 and b == 5\n";
+    let source = "import itertools\nit = itertools.count(3, 2)\na = next(it)\nb = next(it)\nok = a == 3 and b == 5\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3701,7 +3711,8 @@ fn exposes_functools_wraps_decorator_callable() {
 
 #[test]
 fn exposes_functools_total_ordering_decorator() {
-    let source = "import functools\n@functools.total_ordering\nclass C:\n    pass\nok = C is not None\n";
+    let source =
+        "import functools\n@functools.total_ordering\nclass C:\n    pass\nok = C is not None\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3878,8 +3889,7 @@ fn exposes_types_markers_and_functools_partial() {
 
 #[test]
 fn exposes_types_coroutine_decorator() {
-    let source =
-        "import types\ndef f():\n    return 1\ng = types.coroutine(f)\nok = (g is f) and callable(g)\n";
+    let source = "import types\ndef f():\n    return 1\ng = types.coroutine(f)\nok = (g is f) and callable(g)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3909,8 +3919,7 @@ fn exposes_binascii_crc32_stub() {
 
 #[test]
 fn executes_string_startswith_and_replace_methods() {
-    let source =
-        "name = 'token'\na = name.startswith('to')\nb = name.replace('to', 'bro')\nok = a and b == 'broken'\n";
+    let source = "name = 'token'\na = name.startswith('to')\nb = name.replace('to', 'bro')\nok = a and b == 'broken'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3941,7 +3950,8 @@ fn executes_set_and_frozenset_union_operator() {
 
 #[test]
 fn executes_sorted_on_tuple_items() {
-    let source = "items = {'b': 2, 'a': 1}.items()\nout = sorted(items)\nok = out == [('a', 1), ('b', 2)]\n";
+    let source =
+        "items = {'b': 2, 'a': 1}.items()\nout = sorted(items)\nok = out == [('a', 1), ('b', 2)]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3971,8 +3981,7 @@ fn executes_list_extend_dict_update_and_function_dict_paths() {
 
 #[test]
 fn exposes_types_codetype_and_arithmeticerror() {
-    let source =
-        "import types\nok = hasattr(types, 'CodeType') and issubclass(ArithmeticError, Exception)\n";
+    let source = "import types\nok = hasattr(types, 'CodeType') and issubclass(ArithmeticError, Exception)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4211,6 +4220,59 @@ ok = (sys.byteorder in ('little', 'big') and hasattr(functools, 'cmp_to_key') an
 #[test]
 fn supports_subclassing_enumerate_builtin() {
     let source = "class MyEnum(enumerate):\n    pass\nok = isinstance(MyEnum, type)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn operator_getter_and_methodcaller_helpers_work() {
+    let source = r#"import operator
+class Inner:
+    def __init__(self):
+        self.b = 20
+class X:
+    def __init__(self):
+        self.a = 10
+        self.inner = Inner()
+    def mul(self, x, scale=1):
+        return (self.a + x) * scale
+x = X()
+item_single = operator.itemgetter(1)([7, 8, 9])
+item_multi = operator.itemgetter(2, 0)('abc')
+attr_single = operator.attrgetter('a')(x)
+attr_multi = operator.attrgetter('a', 'inner.b')(x)
+call_val = operator.methodcaller('mul', 5, scale=2)(x)
+ok = item_single == 8 and item_multi == ('c', 'a') and attr_single == 10 and attr_multi == (10, 20) and call_val == 30
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn functools_cmp_to_key_orders_sorted_min_max() {
+    let source = r#"import functools
+def cmp_len_desc(a, b):
+    if len(a) < len(b):
+        return 1
+    if len(a) > len(b):
+        return -1
+    if a < b:
+        return -1
+    if a > b:
+        return 1
+    return 0
+values = ['bbb', 'a', 'cc', 'aa']
+ordered = sorted(values, key=functools.cmp_to_key(cmp_len_desc))
+smallest = min(values, key=functools.cmp_to_key(cmp_len_desc))
+largest = max(values, key=functools.cmp_to_key(cmp_len_desc))
+ok = ordered == ['bbb', 'aa', 'cc', 'a'] and smallest == 'bbb' and largest == 'a'
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

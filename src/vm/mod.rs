@@ -1,8 +1,8 @@
 //! Bytecode virtual machine (minimal subset).
 
 use std::cmp::Ordering;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::IsTerminal;
@@ -491,10 +491,9 @@ impl Vm {
                 _ => unreachable!(),
             };
             if let Object::Module(flags_data) = &mut *flags.kind_mut() {
-                flags_data.globals.insert(
-                    "context_aware_warnings".to_string(),
-                    Value::Bool(false),
-                );
+                flags_data
+                    .globals
+                    .insert("context_aware_warnings".to_string(), Value::Bool(false));
                 flags_data
                     .globals
                     .insert("optimize".to_string(), Value::Int(0));
@@ -563,9 +562,7 @@ impl Vm {
             module_data
                 .globals
                 .insert("implementation".to_string(), Value::Module(implementation));
-            let argv = std::env::args()
-                .map(Value::Str)
-                .collect::<Vec<_>>();
+            let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();
             module_data
                 .globals
                 .insert("argv".to_string(), self.heap.alloc_list(argv));
@@ -725,7 +722,9 @@ impl Vm {
                 _ => unreachable!(),
             };
             if let Object::Module(hash_data) = &mut *hash_info.kind_mut() {
-                hash_data.globals.insert("width".to_string(), Value::Int(64));
+                hash_data
+                    .globals
+                    .insert("width".to_string(), Value::Int(64));
                 hash_data
                     .globals
                     .insert("modulus".to_string(), Value::Int(2_305_843_009_213_693_951));
@@ -755,10 +754,7 @@ impl Vm {
             module_data
                 .globals
                 .insert("warnoptions".to_string(), self.heap.alloc_list(Vec::new()));
-            let monitoring = match self
-                .heap
-                .alloc_module(ModuleObject::new("sys.monitoring"))
-            {
+            let monitoring = match self.heap.alloc_module(ModuleObject::new("sys.monitoring")) {
                 Value::Module(obj) => obj,
                 _ => unreachable!(),
             };
@@ -771,15 +767,21 @@ impl Vm {
                     _ => unreachable!(),
                 };
                 if let Object::Module(events_data) = &mut *events.kind_mut() {
-                    events_data.globals.insert("PY_START".to_string(), Value::Int(1 << 0));
+                    events_data
+                        .globals
+                        .insert("PY_START".to_string(), Value::Int(1 << 0));
                     events_data
                         .globals
                         .insert("PY_RESUME".to_string(), Value::Int(1 << 1));
                     events_data
                         .globals
                         .insert("PY_THROW".to_string(), Value::Int(1 << 2));
-                    events_data.globals.insert("LINE".to_string(), Value::Int(1 << 3));
-                    events_data.globals.insert("JUMP".to_string(), Value::Int(1 << 4));
+                    events_data
+                        .globals
+                        .insert("LINE".to_string(), Value::Int(1 << 3));
+                    events_data
+                        .globals
+                        .insert("JUMP".to_string(), Value::Int(1 << 4));
                     events_data
                         .globals
                         .insert("PY_RETURN".to_string(), Value::Int(1 << 5));
@@ -789,7 +791,9 @@ impl Vm {
                     events_data
                         .globals
                         .insert("PY_UNWIND".to_string(), Value::Int(1 << 7));
-                    events_data.globals.insert("RAISE".to_string(), Value::Int(1 << 8));
+                    events_data
+                        .globals
+                        .insert("RAISE".to_string(), Value::Int(1 << 8));
                     events_data
                         .globals
                         .insert("STOP_ITERATION".to_string(), Value::Int(1 << 9));
@@ -806,25 +810,30 @@ impl Vm {
                 monitoring_data
                     .globals
                     .insert("DISABLE".to_string(), Value::Int(-1));
-                monitoring_data
-                    .globals
-                    .insert("get_tool".to_string(), Value::Builtin(BuiltinFunction::NoOp));
-                monitoring_data
-                    .globals
-                    .insert("use_tool_id".to_string(), Value::Builtin(BuiltinFunction::NoOp));
-                monitoring_data
-                    .globals
-                    .insert("clear_tool_id".to_string(), Value::Builtin(BuiltinFunction::NoOp));
-                monitoring_data
-                    .globals
-                    .insert("free_tool_id".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                monitoring_data.globals.insert(
+                    "get_tool".to_string(),
+                    Value::Builtin(BuiltinFunction::NoOp),
+                );
+                monitoring_data.globals.insert(
+                    "use_tool_id".to_string(),
+                    Value::Builtin(BuiltinFunction::NoOp),
+                );
+                monitoring_data.globals.insert(
+                    "clear_tool_id".to_string(),
+                    Value::Builtin(BuiltinFunction::NoOp),
+                );
+                monitoring_data.globals.insert(
+                    "free_tool_id".to_string(),
+                    Value::Builtin(BuiltinFunction::NoOp),
+                );
                 monitoring_data.globals.insert(
                     "register_callback".to_string(),
                     Value::Builtin(BuiltinFunction::NoOp),
                 );
-                monitoring_data
-                    .globals
-                    .insert("set_events".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                monitoring_data.globals.insert(
+                    "set_events".to_string(),
+                    Value::Builtin(BuiltinFunction::NoOp),
+                );
                 monitoring_data.globals.insert(
                     "set_local_events".to_string(),
                     Value::Builtin(BuiltinFunction::NoOp),
@@ -842,12 +851,14 @@ impl Vm {
                 _ => unreachable!(),
             };
             if let Object::Module(jit_data) = &mut *jit_module.kind_mut() {
-                jit_data
-                    .globals
-                    .insert("is_enabled".to_string(), Value::Builtin(BuiltinFunction::NoOp));
-                jit_data
-                    .globals
-                    .insert("is_available".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                jit_data.globals.insert(
+                    "is_enabled".to_string(),
+                    Value::Builtin(BuiltinFunction::NoOp),
+                );
+                jit_data.globals.insert(
+                    "is_available".to_string(),
+                    Value::Builtin(BuiltinFunction::NoOp),
+                );
             }
             module_data
                 .globals
@@ -921,9 +932,10 @@ impl Vm {
                 "find_spec".to_string(),
                 Value::Builtin(BuiltinFunction::FindSpec),
             );
-            module_data
-                .globals
-                .insert("invalidate_caches".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            module_data.globals.insert(
+                "invalidate_caches".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
         }
         self.register_module("importlib", importlib.clone());
 
@@ -975,10 +987,17 @@ impl Vm {
                 ("_path_join", BuiltinFunction::NoOp),
             ],
             vec![
-                ("path_sep", Value::Str(std::path::MAIN_SEPARATOR.to_string())),
+                (
+                    "path_sep",
+                    Value::Str(std::path::MAIN_SEPARATOR.to_string()),
+                ),
                 (
                     "path_separators",
-                    Value::Str(if cfg!(windows) { "\\/".to_string() } else { "/".to_string() }),
+                    Value::Str(if cfg!(windows) {
+                        "\\/".to_string()
+                    } else {
+                        "/".to_string()
+                    }),
                 ),
                 ("_LoaderBasics", loader_basics_class),
             ],
@@ -1003,11 +1022,7 @@ impl Vm {
             ],
             Vec::new(),
         );
-        self.install_builtin_module(
-            "_testlimitedcapi",
-            &[],
-            Vec::new(),
-        );
+        self.install_builtin_module("_testlimitedcapi", &[], Vec::new());
         let meth_instance_class = match self
             .heap
             .alloc_class(ClassObject::new("MethInstance".to_string(), Vec::new()))
@@ -1106,9 +1121,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *random_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("seed".to_string(), Value::Builtin(BuiltinFunction::RandomSeed));
+            class_data.attrs.insert(
+                "seed".to_string(),
+                Value::Builtin(BuiltinFunction::RandomSeed),
+            );
             class_data.attrs.insert(
                 "random".to_string(),
                 Value::Builtin(BuiltinFunction::RandomRandom),
@@ -1384,7 +1400,10 @@ impl Vm {
             ],
             vec![
                 ("sep", Value::Str(std::path::MAIN_SEPARATOR.to_string())),
-                ("pathsep", Value::Str(if cfg!(windows) { ";" } else { ":" }.to_string())),
+                (
+                    "pathsep",
+                    Value::Str(if cfg!(windows) { ";" } else { ":" }.to_string()),
+                ),
                 (
                     "altsep",
                     if cfg!(windows) {
@@ -1398,7 +1417,14 @@ impl Vm {
                 ("extsep", Value::Str(".".to_string())),
                 (
                     "defpath",
-                    Value::Str(if cfg!(windows) { ".;C:\\\\" } else { "/bin:/usr/bin" }.to_string()),
+                    Value::Str(
+                        if cfg!(windows) {
+                            ".;C:\\\\"
+                        } else {
+                            "/bin:/usr/bin"
+                        }
+                        .to_string(),
+                    ),
                 ),
                 (
                     "devnull",
@@ -1449,10 +1475,16 @@ impl Vm {
                 ("WNOHANG", Value::Int(1)),
                 ("WIFSTOPPED", Value::Builtin(BuiltinFunction::OsWIfStopped)),
                 ("WSTOPSIG", Value::Builtin(BuiltinFunction::OsWStopSig)),
-                ("WIFSIGNALED", Value::Builtin(BuiltinFunction::OsWIfSignaled)),
+                (
+                    "WIFSIGNALED",
+                    Value::Builtin(BuiltinFunction::OsWIfSignaled),
+                ),
                 ("WTERMSIG", Value::Builtin(BuiltinFunction::OsWTermSig)),
                 ("WIFEXITED", Value::Builtin(BuiltinFunction::OsWIfExited)),
-                ("WEXITSTATUS", Value::Builtin(BuiltinFunction::OsWExitStatus)),
+                (
+                    "WEXITSTATUS",
+                    Value::Builtin(BuiltinFunction::OsWExitStatus),
+                ),
             ],
         );
         self.install_builtin_module(
@@ -1485,10 +1517,16 @@ impl Vm {
                 ("WNOHANG", Value::Int(1)),
                 ("WIFSTOPPED", Value::Builtin(BuiltinFunction::OsWIfStopped)),
                 ("WSTOPSIG", Value::Builtin(BuiltinFunction::OsWStopSig)),
-                ("WIFSIGNALED", Value::Builtin(BuiltinFunction::OsWIfSignaled)),
+                (
+                    "WIFSIGNALED",
+                    Value::Builtin(BuiltinFunction::OsWIfSignaled),
+                ),
                 ("WTERMSIG", Value::Builtin(BuiltinFunction::OsWTermSig)),
                 ("WIFEXITED", Value::Builtin(BuiltinFunction::OsWIfExited)),
-                ("WEXITSTATUS", Value::Builtin(BuiltinFunction::OsWExitStatus)),
+                (
+                    "WEXITSTATUS",
+                    Value::Builtin(BuiltinFunction::OsWExitStatus),
+                ),
                 (
                     "stat_result",
                     self.heap
@@ -1498,16 +1536,28 @@ impl Vm {
         );
         let build_time_vars = vec![
             (Value::Str("prefix".to_string()), Value::Str(String::new())),
-            (Value::Str("exec_prefix".to_string()), Value::Str(String::new())),
-            (Value::Str("ABIFLAGS".to_string()), Value::Str(String::new())),
-            (Value::Str("MULTIARCH".to_string()), Value::Str(String::new())),
+            (
+                Value::Str("exec_prefix".to_string()),
+                Value::Str(String::new()),
+            ),
+            (
+                Value::Str("ABIFLAGS".to_string()),
+                Value::Str(String::new()),
+            ),
+            (
+                Value::Str("MULTIARCH".to_string()),
+                Value::Str(String::new()),
+            ),
             (Value::Str("Py_GIL_DISABLED".to_string()), Value::Int(0)),
         ];
         let sysconfigdata_name = format!("_sysconfigdata__{platform}_");
         self.install_builtin_module(
             &sysconfigdata_name,
             &[],
-            vec![("build_time_vars", self.heap.alloc_dict(build_time_vars.clone()))],
+            vec![(
+                "build_time_vars",
+                self.heap.alloc_dict(build_time_vars.clone()),
+            )],
         );
         let legacy_sysconfigdata_name = format!("_sysconfigdata__{platform}");
         self.install_builtin_module(
@@ -1589,21 +1639,23 @@ impl Vm {
             ],
             vec![("version", Value::Int(5))],
         );
-        let codec_info_class =
-            self.heap
-                .alloc_class(ClassObject::new("CodecInfo".to_string(), Vec::new()));
-        let incremental_decoder_class = self
+        let codec_info_class = self
             .heap
-            .alloc_class(ClassObject::new("IncrementalDecoder".to_string(), Vec::new()));
-        let incremental_encoder_class = self
+            .alloc_class(ClassObject::new("CodecInfo".to_string(), Vec::new()));
+        let incremental_decoder_class = self.heap.alloc_class(ClassObject::new(
+            "IncrementalDecoder".to_string(),
+            Vec::new(),
+        ));
+        let incremental_encoder_class = self.heap.alloc_class(ClassObject::new(
+            "IncrementalEncoder".to_string(),
+            Vec::new(),
+        ));
+        let stream_reader_class = self
             .heap
-            .alloc_class(ClassObject::new("IncrementalEncoder".to_string(), Vec::new()));
-        let stream_reader_class =
-            self.heap
-                .alloc_class(ClassObject::new("StreamReader".to_string(), Vec::new()));
-        let stream_writer_class =
-            self.heap
-                .alloc_class(ClassObject::new("StreamWriter".to_string(), Vec::new()));
+            .alloc_class(ClassObject::new("StreamReader".to_string(), Vec::new()));
+        let stream_writer_class = self
+            .heap
+            .alloc_class(ClassObject::new("StreamWriter".to_string(), Vec::new()));
         self.install_builtin_module(
             "codecs",
             &[
@@ -1696,9 +1748,9 @@ impl Vm {
                 ("ge", BuiltinFunction::OperatorGe),
                 ("contains", BuiltinFunction::OperatorContains),
                 ("getitem", BuiltinFunction::OperatorGetItem),
-                ("itemgetter", BuiltinFunction::NoOp),
-                ("attrgetter", BuiltinFunction::NoOp),
-                ("methodcaller", BuiltinFunction::NoOp),
+                ("itemgetter", BuiltinFunction::OperatorItemGetter),
+                ("attrgetter", BuiltinFunction::OperatorAttrGetter),
+                ("methodcaller", BuiltinFunction::OperatorMethodCaller),
             ],
             Vec::new(),
         );
@@ -1906,15 +1958,12 @@ impl Vm {
                 ("wraps", BuiltinFunction::FunctoolsWraps),
                 ("partial", BuiltinFunction::FunctoolsPartial),
                 ("partialmethod", BuiltinFunction::FunctoolsPartial),
-                ("cmp_to_key", BuiltinFunction::NoOp),
+                ("cmp_to_key", BuiltinFunction::FunctoolsCmpToKey),
                 ("lru_cache", BuiltinFunction::FunctoolsLruCache),
                 ("cache", BuiltinFunction::FunctoolsLruCache),
                 ("cached_property", BuiltinFunction::TypingIdFunc),
                 ("total_ordering", BuiltinFunction::TypingIdFunc),
-                (
-                    "singledispatch",
-                    BuiltinFunction::FunctoolsSingleDispatch,
-                ),
+                ("singledispatch", BuiltinFunction::FunctoolsSingleDispatch),
                 (
                     "singledispatchmethod",
                     BuiltinFunction::FunctoolsSingleDispatchMethod,
@@ -1938,9 +1987,10 @@ impl Vm {
                 ),
             ],
         );
-        let typing_placeholder = self
-            .heap
-            .alloc_class(ClassObject::new("typing.placeholder".to_string(), Vec::new()));
+        let typing_placeholder = self.heap.alloc_class(ClassObject::new(
+            "typing.placeholder".to_string(),
+            Vec::new(),
+        ));
         self.install_builtin_module(
             "typing",
             &[
@@ -2087,189 +2137,140 @@ impl Vm {
             vec![
                 (
                     "Awaitable",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Awaitable".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Awaitable".to_string(), Vec::new())),
                 ),
                 (
                     "Coroutine",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Coroutine".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Coroutine".to_string(), Vec::new())),
                 ),
                 (
                     "AsyncIterator",
-                    self.heap.alloc_class(ClassObject::new(
-                        "AsyncIterator".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("AsyncIterator".to_string(), Vec::new())),
                 ),
                 (
                     "AsyncIterable",
-                    self.heap.alloc_class(ClassObject::new(
-                        "AsyncIterable".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("AsyncIterable".to_string(), Vec::new())),
                 ),
                 (
                     "AsyncGenerator",
-                    self.heap.alloc_class(ClassObject::new(
-                        "AsyncGenerator".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("AsyncGenerator".to_string(), Vec::new())),
                 ),
                 (
                     "Iterable",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Iterable".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Iterable".to_string(), Vec::new())),
                 ),
                 (
                     "Iterator",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Iterator".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Iterator".to_string(), Vec::new())),
                 ),
                 (
                     "Generator",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Generator".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Generator".to_string(), Vec::new())),
                 ),
                 (
                     "Reversible",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Reversible".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Reversible".to_string(), Vec::new())),
                 ),
                 (
                     "Mapping",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Mapping".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Mapping".to_string(), Vec::new())),
                 ),
                 (
                     "MutableMapping",
-                    self.heap.alloc_class(ClassObject::new(
-                        "MutableMapping".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("MutableMapping".to_string(), Vec::new())),
                 ),
                 (
                     "KeysView",
-                    self.heap.alloc_class(ClassObject::new(
-                        "KeysView".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("KeysView".to_string(), Vec::new())),
                 ),
                 (
                     "ItemsView",
-                    self.heap.alloc_class(ClassObject::new(
-                        "ItemsView".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("ItemsView".to_string(), Vec::new())),
                 ),
                 (
                     "ValuesView",
-                    self.heap.alloc_class(ClassObject::new(
-                        "ValuesView".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("ValuesView".to_string(), Vec::new())),
                 ),
                 (
                     "Sequence",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Sequence".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Sequence".to_string(), Vec::new())),
                 ),
                 (
                     "MutableSequence",
-                    self.heap.alloc_class(ClassObject::new(
-                        "MutableSequence".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("MutableSequence".to_string(), Vec::new())),
                 ),
                 (
                     "Set",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Set".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Set".to_string(), Vec::new())),
                 ),
                 (
                     "MutableSet",
-                    self.heap.alloc_class(ClassObject::new(
-                        "MutableSet".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("MutableSet".to_string(), Vec::new())),
                 ),
                 (
                     "Callable",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Callable".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Callable".to_string(), Vec::new())),
                 ),
                 (
                     "Collection",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Collection".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Collection".to_string(), Vec::new())),
                 ),
                 (
                     "Hashable",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Hashable".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Hashable".to_string(), Vec::new())),
                 ),
                 (
                     "Container",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Container".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Container".to_string(), Vec::new())),
                 ),
                 (
                     "Sized",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Sized".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Sized".to_string(), Vec::new())),
                 ),
                 (
                     "ByteString",
-                    self.heap.alloc_class(ClassObject::new(
-                        "ByteString".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("ByteString".to_string(), Vec::new())),
                 ),
                 (
                     "Buffer",
-                    self.heap.alloc_class(ClassObject::new(
-                        "Buffer".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("Buffer".to_string(), Vec::new())),
                 ),
             ],
         );
-        let simple_namespace_class =
-            self.heap
-                .alloc_class(ClassObject::new("SimpleNamespace".to_string(), Vec::new()));
+        let simple_namespace_class = self
+            .heap
+            .alloc_class(ClassObject::new("SimpleNamespace".to_string(), Vec::new()));
         if let Value::Class(class_obj) = &simple_namespace_class {
             if let Object::Class(class_data) = &mut *class_obj.kind_mut() {
-                class_data
-                    .attrs
-                    .insert("__repr__".to_string(), Value::Builtin(BuiltinFunction::Repr));
+                class_data.attrs.insert(
+                    "__repr__".to_string(),
+                    Value::Builtin(BuiltinFunction::Repr),
+                );
                 class_data
                     .attrs
                     .insert("__str__".to_string(), Value::Builtin(BuiltinFunction::Repr));
@@ -2323,10 +2324,7 @@ impl Vm {
                         Vec::new(),
                     )),
                 ),
-                (
-                    "SimpleNamespace",
-                    simple_namespace_class,
-                ),
+                ("SimpleNamespace", simple_namespace_class),
                 (
                     "GenericAlias",
                     self.heap
@@ -2430,7 +2428,10 @@ impl Vm {
                     "_override_multi_interp_extensions_check",
                     BuiltinFunction::ImpOverrideMultiInterpExtensionsCheck,
                 ),
-                ("_frozen_module_names", BuiltinFunction::ImpFrozenModuleNames),
+                (
+                    "_frozen_module_names",
+                    BuiltinFunction::ImpFrozenModuleNames,
+                ),
             ],
             vec![
                 ("pyc_magic_number_token", Value::Int(3600)),
@@ -2856,19 +2857,22 @@ impl Vm {
                     "abstractstaticmethod",
                     Value::Builtin(BuiltinFunction::StaticMethod),
                 ),
-                ("abstractproperty", Value::Builtin(BuiltinFunction::Property)),
+                (
+                    "abstractproperty",
+                    Value::Builtin(BuiltinFunction::Property),
+                ),
             ],
         );
         let inspect_sentinel = {
-            let sentinel_class =
-                match self
-                    .heap
-                    .alloc_class(ClassObject::new("_inspect_sentinel".to_string(), Vec::new()))
-                {
-                    Value::Class(obj) => obj,
-                    _ => unreachable!(),
-                };
-            self.heap.alloc_instance(InstanceObject::new(sentinel_class))
+            let sentinel_class = match self.heap.alloc_class(ClassObject::new(
+                "_inspect_sentinel".to_string(),
+                Vec::new(),
+            )) {
+                Value::Class(obj) => obj,
+                _ => unreachable!(),
+            };
+            self.heap
+                .alloc_instance(InstanceObject::new(sentinel_class))
         };
         self.install_builtin_module(
             "inspect",
@@ -2929,31 +2933,23 @@ impl Vm {
                 ),
                 (
                     "BufferedReader",
-                    self.heap.alloc_class(ClassObject::new(
-                        "BufferedReader".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new())),
                 ),
                 (
                     "BufferedWriter",
-                    self.heap.alloc_class(ClassObject::new(
-                        "BufferedWriter".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new())),
                 ),
                 (
                     "BufferedRandom",
-                    self.heap.alloc_class(ClassObject::new(
-                        "BufferedRandom".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new())),
                 ),
                 (
                     "BufferedRWPair",
-                    self.heap.alloc_class(ClassObject::new(
-                        "BufferedRWPair".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("BufferedRWPair".to_string(), Vec::new())),
                 ),
                 (
                     "IOBase",
@@ -3047,31 +3043,23 @@ impl Vm {
                 ),
                 (
                     "BufferedReader",
-                    self.heap.alloc_class(ClassObject::new(
-                        "BufferedReader".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new())),
                 ),
                 (
                     "BufferedWriter",
-                    self.heap.alloc_class(ClassObject::new(
-                        "BufferedWriter".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new())),
                 ),
                 (
                     "BufferedRandom",
-                    self.heap.alloc_class(ClassObject::new(
-                        "BufferedRandom".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new())),
                 ),
                 (
                     "BufferedRWPair",
-                    self.heap.alloc_class(ClassObject::new(
-                        "BufferedRWPair".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("BufferedRWPair".to_string(), Vec::new())),
                 ),
                 (
                     "StringIO",
@@ -3167,22 +3155,36 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *uuid_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             class_data
                 .attrs
                 .insert("__str__".to_string(), Value::Builtin(BuiltinFunction::Repr));
-            class_data
-                .attrs
-                .insert("__repr__".to_string(), Value::Builtin(BuiltinFunction::Repr));
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::Repr),
+            );
         }
-        let uuid_namespace_dns = self.heap.alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_namespace_url = self.heap.alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_namespace_oid = self.heap.alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_namespace_x500 = self.heap.alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_nil = self.heap.alloc_instance(InstanceObject::new(uuid_class.clone()));
-        let uuid_max = self.heap.alloc_instance(InstanceObject::new(uuid_class.clone()));
+        let uuid_namespace_dns = self
+            .heap
+            .alloc_instance(InstanceObject::new(uuid_class.clone()));
+        let uuid_namespace_url = self
+            .heap
+            .alloc_instance(InstanceObject::new(uuid_class.clone()));
+        let uuid_namespace_oid = self
+            .heap
+            .alloc_instance(InstanceObject::new(uuid_class.clone()));
+        let uuid_namespace_x500 = self
+            .heap
+            .alloc_instance(InstanceObject::new(uuid_class.clone()));
+        let uuid_nil = self
+            .heap
+            .alloc_instance(InstanceObject::new(uuid_class.clone()));
+        let uuid_max = self
+            .heap
+            .alloc_instance(InstanceObject::new(uuid_class.clone()));
         self.install_builtin_module(
             "uuid",
             &[
@@ -3223,18 +3225,20 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *thread_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             class_data
                 .attrs
                 .insert("start".to_string(), Value::Builtin(BuiltinFunction::NoOp));
             class_data
                 .attrs
                 .insert("join".to_string(), Value::Builtin(BuiltinFunction::NoOp));
-            class_data
-                .attrs
-                .insert("is_alive".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "is_alive".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
         }
         let event_class = match self
             .heap
@@ -3244,9 +3248,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *event_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             class_data
                 .attrs
                 .insert("set".to_string(), Value::Builtin(BuiltinFunction::NoOp));
@@ -3268,9 +3273,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *condition_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             class_data
                 .attrs
                 .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::NoOp));
@@ -3283,9 +3289,10 @@ impl Vm {
             class_data
                 .attrs
                 .insert("notify".to_string(), Value::Builtin(BuiltinFunction::NoOp));
-            class_data
-                .attrs
-                .insert("notify_all".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "notify_all".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
         }
         let semaphore_class = match self
             .heap
@@ -3295,9 +3302,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *semaphore_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             class_data
                 .attrs
                 .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::NoOp));
@@ -3313,9 +3321,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *bounded_semaphore_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             class_data
                 .attrs
                 .insert("acquire".to_string(), Value::Builtin(BuiltinFunction::NoOp));
@@ -3331,9 +3340,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *barrier_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             class_data
                 .attrs
                 .insert("wait".to_string(), Value::Builtin(BuiltinFunction::NoOp));
@@ -3364,7 +3374,10 @@ impl Vm {
                 ("Semaphore", Value::Class(semaphore_class)),
                 ("BoundedSemaphore", Value::Class(bounded_semaphore_class)),
                 ("Barrier", Value::Class(barrier_class)),
-                ("ThreadError", Value::ExceptionType("RuntimeError".to_string())),
+                (
+                    "ThreadError",
+                    Value::ExceptionType("RuntimeError".to_string()),
+                ),
             ],
         );
         self.install_builtin_module(
@@ -3389,9 +3402,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *socket_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             class_data
                 .attrs
                 .insert("close".to_string(), Value::Builtin(BuiltinFunction::NoOp));
@@ -3445,7 +3459,10 @@ impl Vm {
                 ("warn", BuiltinFunction::WarningsWarn),
                 ("warn_explicit", BuiltinFunction::WarningsWarnExplicit),
                 ("_filters_mutated", BuiltinFunction::WarningsFiltersMutated),
-                ("_filters_mutated_lock_held", BuiltinFunction::WarningsFiltersMutated),
+                (
+                    "_filters_mutated_lock_held",
+                    BuiltinFunction::WarningsFiltersMutated,
+                ),
                 ("_acquire_lock", BuiltinFunction::NoOp),
                 ("_release_lock", BuiltinFunction::NoOp),
             ],
@@ -4549,11 +4566,11 @@ impl Vm {
                                 }
                             },
                             Value::Set(set) => self.load_attr_set_method(set, &attr_name)?,
-                            Value::FrozenSet(set) => {
-                                self.load_attr_set_method(set, &attr_name)?
-                            }
+                            Value::FrozenSet(set) => self.load_attr_set_method(set, &attr_name)?,
                             Value::Dict(dict) => self.load_attr_dict_method(dict, &attr_name)?,
-                            Value::Builtin(builtin) => self.load_attr_builtin(builtin, &attr_name)?,
+                            Value::Builtin(builtin) => {
+                                self.load_attr_builtin(builtin, &attr_name)?
+                            }
                             Value::Function(func) => self.load_attr_function(&func, &attr_name)?,
                             Value::Code(code) => self.load_attr_code(&code, &attr_name)?,
                             Value::Generator(generator) => {
@@ -5204,9 +5221,9 @@ impl Vm {
                         let list = self.pop_value()?;
                         match list {
                             Value::List(obj) => {
-                                let extra = self
-                                    .collect_iterable_values(other)
-                                    .map_err(|_| RuntimeError::new("list extend expects iterable"))?;
+                                let extra = self.collect_iterable_values(other).map_err(|_| {
+                                    RuntimeError::new("list extend expects iterable")
+                                })?;
                                 if let Object::List(values) = &mut *obj.kind_mut() {
                                     values.extend(extra);
                                 }
@@ -6709,13 +6726,17 @@ impl Vm {
                                 if attr_name == "*" {
                                     let exports = match &*module_obj.kind() {
                                         Object::Module(module_data) => {
-                                            if let Some(all_names) = module_data.globals.get("__all__") {
+                                            if let Some(all_names) =
+                                                module_data.globals.get("__all__")
+                                            {
                                                 match all_names {
                                                     Value::List(obj) => match &*obj.kind() {
                                                         Object::List(values) => values
                                                             .iter()
                                                             .filter_map(|value| match value {
-                                                                Value::Str(name) => Some(name.clone()),
+                                                                Value::Str(name) => {
+                                                                    Some(name.clone())
+                                                                }
                                                                 _ => None,
                                                             })
                                                             .collect::<Vec<_>>(),
@@ -6725,7 +6746,9 @@ impl Vm {
                                                         Object::Tuple(values) => values
                                                             .iter()
                                                             .filter_map(|value| match value {
-                                                                Value::Str(name) => Some(name.clone()),
+                                                                Value::Str(name) => {
+                                                                    Some(name.clone())
+                                                                }
                                                                 _ => None,
                                                             })
                                                             .collect::<Vec<_>>(),
@@ -6761,9 +6784,10 @@ impl Vm {
                                             .collect::<Vec<_>>(),
                                         _ => Vec::new(),
                                     };
-                                    let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
-                                        RuntimeError::new("import caller frame missing")
-                                    })?;
+                                    let frame =
+                                        self.frames.get_mut(caller_idx).ok_or_else(|| {
+                                            RuntimeError::new("import caller frame missing")
+                                        })?;
                                     for (name, value) in values {
                                         frame.locals.insert(name.clone(), value.clone());
                                         if let Object::Module(module_data) =
@@ -7349,7 +7373,11 @@ impl Vm {
         }
     }
 
-    fn exception_matches(&self, exception: &Value, handler_type: &Value) -> Result<bool, RuntimeError> {
+    fn exception_matches(
+        &self,
+        exception: &Value,
+        handler_type: &Value,
+    ) -> Result<bool, RuntimeError> {
         let exception_name = match exception {
             Value::Exception(exc) => exc.name.as_str(),
             _ => return Err(RuntimeError::new("expected exception instance")),
@@ -7418,12 +7446,14 @@ impl Vm {
     }
 
     fn class_is_exception_class(&self, class: &ObjRef) -> bool {
-        self.class_mro_entries(class).iter().any(|entry| match &*entry.kind() {
-            Object::Class(class_data) => {
-                class_data.name == "BaseException" || class_data.name == "Exception"
-            }
-            _ => false,
-        })
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => {
+                    class_data.name == "BaseException" || class_data.name == "Exception"
+                }
+                _ => false,
+            })
     }
 
     fn exception_class_name_for_instance(&self, instance: &ObjRef) -> Option<String> {
@@ -7451,7 +7481,9 @@ impl Vm {
 
         for base in bases {
             let (base_name, is_exception) = match &*base.kind() {
-                Object::Class(base_data) => (base_data.name.clone(), self.class_is_exception_class(&base)),
+                Object::Class(base_data) => {
+                    (base_data.name.clone(), self.class_is_exception_class(&base))
+                }
                 _ => continue,
             };
             if is_exception {
@@ -7540,7 +7572,10 @@ impl Vm {
 
         let resolved_metaclass = self.resolve_class_metaclass(&bases, metaclass.as_ref())?;
         if let Some(meta) = metaclass {
-            if matches!(meta, Value::Builtin(BuiltinFunction::Type) | Value::Class(_)) {
+            if matches!(
+                meta,
+                Value::Builtin(BuiltinFunction::Type) | Value::Class(_)
+            ) {
                 return Ok(ClassBuildOutcome::Value(self.build_default_class_value(
                     name,
                     attrs,
@@ -7552,16 +7587,14 @@ impl Vm {
                 return Err(RuntimeError::new("metaclass call requires active frame"));
             }
             let namespace = self.heap.alloc_dict(
-                attrs.iter()
+                attrs
+                    .iter()
                     .map(|(key, value)| (Value::Str(key.clone()), value.clone()))
                     .collect::<Vec<_>>(),
             );
-            let bases_tuple = self.heap.alloc_tuple(
-                bases.iter()
-                    .cloned()
-                    .map(Value::Class)
-                    .collect::<Vec<_>>(),
-            );
+            let bases_tuple = self
+                .heap
+                .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>());
             return match self.call_internal(
                 meta,
                 vec![Value::Str(name), bases_tuple, namespace],
@@ -7669,12 +7702,7 @@ impl Vm {
                 class_data.metaclass = metaclass;
                 if matches!(
                     class_data.name.as_str(),
-                    "Enum"
-                        | "IntEnum"
-                        | "StrEnum"
-                        | "Flag"
-                        | "IntFlag"
-                        | "ReprEnum"
+                    "Enum" | "IntEnum" | "StrEnum" | "Flag" | "IntFlag" | "ReprEnum"
                 ) {
                     class_data
                         .attrs
@@ -7683,11 +7711,7 @@ impl Vm {
                     let member_type = match class_data.name.as_str() {
                         "IntEnum" | "IntFlag" => Value::Builtin(BuiltinFunction::Int),
                         "StrEnum" => Value::Builtin(BuiltinFunction::Str),
-                        _ => self
-                            .builtins
-                            .get("object")
-                            .cloned()
-                            .unwrap_or(Value::None),
+                        _ => self.builtins.get("object").cloned().unwrap_or(Value::None),
                     };
                     class_data
                         .attrs
@@ -7705,10 +7729,7 @@ impl Vm {
                     class_data.attrs.insert(
                         "__slots__".to_string(),
                         self.heap.alloc_tuple(
-                            slot_names
-                                .into_iter()
-                                .map(Value::Str)
-                                .collect::<Vec<_>>(),
+                            slot_names.into_iter().map(Value::Str).collect::<Vec<_>>(),
                         ),
                     );
                 }
@@ -7980,7 +8001,10 @@ impl Vm {
         self.heap.alloc_bound_method(bound)
     }
 
-    fn property_descriptor_parts(&self, descriptor: &ObjRef) -> Option<(Value, Value, Value, Value)> {
+    fn property_descriptor_parts(
+        &self,
+        descriptor: &ObjRef,
+    ) -> Option<(Value, Value, Value, Value)> {
         let descriptor_kind = descriptor.kind();
         let instance_data = match &*descriptor_kind {
             Object::Instance(instance_data) => instance_data,
@@ -8013,7 +8037,13 @@ impl Vm {
         Some((fget, fset, fdel, doc))
     }
 
-    fn build_property_descriptor(&self, fget: Value, fset: Value, fdel: Value, doc: Value) -> Value {
+    fn build_property_descriptor(
+        &self,
+        fget: Value,
+        fset: Value,
+        fdel: Value,
+        doc: Value,
+    ) -> Value {
         let class = match self
             .heap
             .alloc_class(ClassObject::new("property".to_string(), Vec::new()))
@@ -8043,7 +8073,9 @@ impl Vm {
         let Some((current_get, current_set, current_del, current_doc)) =
             self.property_descriptor_parts(descriptor)
         else {
-            return Err(RuntimeError::new("property method receiver must be property"));
+            return Err(RuntimeError::new(
+                "property method receiver must be property",
+            ));
         };
         Ok(self.build_property_descriptor(
             fget.unwrap_or(current_get),
@@ -8063,30 +8095,24 @@ impl Vm {
             "fdel" => Some(fdel),
             "__doc__" => Some(doc),
             "__isabstractmethod__" => Some(Value::Bool(false)),
-            "__get__" => Some(self.alloc_native_bound_method(
-                NativeMethodKind::PropertyGet,
-                instance.clone(),
-            )),
-            "__set__" => Some(self.alloc_native_bound_method(
-                NativeMethodKind::PropertySet,
-                instance.clone(),
-            )),
-            "__delete__" => Some(self.alloc_native_bound_method(
-                NativeMethodKind::PropertyDelete,
-                instance.clone(),
-            )),
-            "getter" => Some(self.alloc_native_bound_method(
-                NativeMethodKind::PropertyGetter,
-                instance.clone(),
-            )),
-            "setter" => Some(self.alloc_native_bound_method(
-                NativeMethodKind::PropertySetter,
-                instance.clone(),
-            )),
-            "deleter" => Some(self.alloc_native_bound_method(
-                NativeMethodKind::PropertyDeleter,
-                instance.clone(),
-            )),
+            "__get__" => Some(
+                self.alloc_native_bound_method(NativeMethodKind::PropertyGet, instance.clone()),
+            ),
+            "__set__" => Some(
+                self.alloc_native_bound_method(NativeMethodKind::PropertySet, instance.clone()),
+            ),
+            "__delete__" => Some(
+                self.alloc_native_bound_method(NativeMethodKind::PropertyDelete, instance.clone()),
+            ),
+            "getter" => Some(
+                self.alloc_native_bound_method(NativeMethodKind::PropertyGetter, instance.clone()),
+            ),
+            "setter" => Some(
+                self.alloc_native_bound_method(NativeMethodKind::PropertySetter, instance.clone()),
+            ),
+            "deleter" => Some(
+                self.alloc_native_bound_method(NativeMethodKind::PropertyDeleter, instance.clone()),
+            ),
             _ => None,
         }
     }
@@ -8123,10 +8149,9 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DictFromKeys),
             ));
         } else if builtin == BuiltinFunction::Type {
-            let descriptor = match self
-                .heap
-                .alloc_module(ModuleObject::new("__type_annotations_descriptor__".to_string()))
-            {
+            let descriptor = match self.heap.alloc_module(ModuleObject::new(
+                "__type_annotations_descriptor__".to_string(),
+            )) {
                 Value::Module(obj) => obj,
                 _ => unreachable!(),
             };
@@ -8150,7 +8175,9 @@ impl Vm {
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
         match attr_name {
-            "__dict__" => Ok(self.heap.alloc_dict(self.builtin_type_dict_entries(builtin))),
+            "__dict__" => Ok(self
+                .heap
+                .alloc_dict(self.builtin_type_dict_entries(builtin))),
             "__name__" | "__qualname__" => {
                 Ok(Value::Str(self.builtin_type_name(builtin).to_string()))
             }
@@ -8173,9 +8200,7 @@ impl Vm {
             "fromhex" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::NoOp))
             }
-            "hex" if builtin == BuiltinFunction::Float => {
-                Ok(Value::Builtin(BuiltinFunction::NoOp))
-            }
+            "hex" if builtin == BuiltinFunction::Float => Ok(Value::Builtin(BuiltinFunction::NoOp)),
             "__repr__" | "__str__" | "__format__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
             "__reduce_ex__" => Ok(Value::Builtin(BuiltinFunction::NoOp)),
             "bit_length" if builtin == BuiltinFunction::Int => {
@@ -8230,7 +8255,9 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-            module_data.globals.insert("value".to_string(), Value::Int(value));
+            module_data
+                .globals
+                .insert("value".to_string(), Value::Int(value));
         }
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
@@ -8268,12 +8295,18 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-            module_data.globals.insert("value".to_string(), Value::Str(text));
+            module_data
+                .globals
+                .insert("value".to_string(), Value::Str(text));
         }
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
 
-    fn load_attr_bytes_method(&self, bytes: Vec<u8>, attr_name: &str) -> Result<Value, RuntimeError> {
+    fn load_attr_bytes_method(
+        &self,
+        bytes: Vec<u8>,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
         let kind = match attr_name {
             "decode" => NativeMethodKind::BytesDecode,
             _ => {
@@ -8300,7 +8333,9 @@ impl Vm {
 
     fn load_attr_set_method(&self, set: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
         match attr_name {
-            "__contains__" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetContains, set)),
+            "__contains__" => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::SetContains, set))
+            }
             "add" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetAdd, set)),
             "update" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetUpdate, set)),
             _ => Err(RuntimeError::new(format!(
@@ -8339,7 +8374,12 @@ impl Vm {
             .map(|(_, value)| value.clone()))
     }
 
-    fn dict_set_str_key(&self, dict: &ObjRef, key: String, value: Value) -> Result<(), RuntimeError> {
+    fn dict_set_str_key(
+        &self,
+        dict: &ObjRef,
+        key: String,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
         let Object::Dict(entries) = &mut *dict.kind_mut() else {
             return Err(RuntimeError::new("function attribute dict is invalid"));
         };
@@ -8416,7 +8456,11 @@ impl Vm {
         }
     }
 
-    fn load_attr_function(&mut self, func: &ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
+    fn load_attr_function(
+        &mut self,
+        func: &ObjRef,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
         let function_dict = {
             let func_ref = func.kind();
             let Object::Function(func_data) = &*func_ref else {
@@ -8536,7 +8580,11 @@ impl Vm {
         }
     }
 
-    fn load_attr_code(&self, code: &Rc<CodeObject>, attr_name: &str) -> Result<Value, RuntimeError> {
+    fn load_attr_code(
+        &self,
+        code: &Rc<CodeObject>,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
         let mut varnames = Vec::new();
         varnames.extend(code.posonly_params.iter().cloned());
         varnames.extend(code.params.iter().cloned());
@@ -8565,12 +8613,18 @@ impl Vm {
             flags |= 0x0200;
         }
 
-        let first_line = code.locations.first().map(|loc| loc.line as i64).unwrap_or(1);
+        let first_line = code
+            .locations
+            .first()
+            .map(|loc| loc.line as i64)
+            .unwrap_or(1);
 
         match attr_name {
             "co_name" | "co_qualname" => Ok(Value::Str(code.name.clone())),
             "co_filename" => Ok(Value::Str(code.filename.clone())),
-            "co_argcount" => Ok(Value::Int((code.posonly_params.len() + code.params.len()) as i64)),
+            "co_argcount" => Ok(Value::Int(
+                (code.posonly_params.len() + code.params.len()) as i64,
+            )),
             "co_posonlyargcount" => Ok(Value::Int(code.posonly_params.len() as i64)),
             "co_kwonlyargcount" => Ok(Value::Int(code.kwonly_params.len() as i64)),
             "co_nlocals" => Ok(Value::Int(varnames.len() as i64)),
@@ -8584,12 +8638,9 @@ impl Vm {
                     .map(|name| Value::Str(name.clone()))
                     .collect::<Vec<_>>(),
             )),
-            "co_varnames" => Ok(self.heap.alloc_tuple(
-                varnames
-                    .into_iter()
-                    .map(Value::Str)
-                    .collect::<Vec<_>>(),
-            )),
+            "co_varnames" => Ok(self
+                .heap
+                .alloc_tuple(varnames.into_iter().map(Value::Str).collect::<Vec<_>>())),
             "co_cellvars" => Ok(self.heap.alloc_tuple(
                 code.cellvars
                     .iter()
@@ -8867,9 +8918,7 @@ impl Vm {
                     self.frames.len() > depth_before
                 } else {
                     if !kwargs.is_empty() || !args.is_empty() {
-                        return Err(RuntimeError::new(
-                            "class constructor takes no arguments",
-                        ));
+                        return Err(RuntimeError::new("class constructor takes no arguments"));
                     }
                     self.push_value(Value::Instance(instance));
                     false
@@ -8981,11 +9030,7 @@ impl Vm {
                 vec![Value::None, Value::Class(class.clone())]
             };
             return Ok(
-                match self.call_internal(
-                    getter,
-                    getter_args,
-                    HashMap::new(),
-                )? {
+                match self.call_internal(getter, getter_args, HashMap::new())? {
                     InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
                     InternalCallOutcome::CallerExceptionHandled => {
                         AttrAccessOutcome::ExceptionHandled
@@ -9026,15 +9071,21 @@ impl Vm {
                 }
             }
 
-            if let Some(getattr_method) = self.lookup_bound_special_method(&receiver, "__getattr__")? {
-                return Ok(match self.call_internal(
-                    getattr_method,
-                    vec![Value::Str(attr_name.to_string())],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
-                    InternalCallOutcome::CallerExceptionHandled => AttrAccessOutcome::ExceptionHandled,
-                });
+            if let Some(getattr_method) =
+                self.lookup_bound_special_method(&receiver, "__getattr__")?
+            {
+                return Ok(
+                    match self.call_internal(
+                        getattr_method,
+                        vec![Value::Str(attr_name.to_string())],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            AttrAccessOutcome::ExceptionHandled
+                        }
+                    },
+                );
             }
 
             let class_name = match &*instance.kind() {
@@ -9236,10 +9287,13 @@ impl Vm {
             return Ok(attr);
         }
         if module_name == "unittest" && attr_name == "IsolatedAsyncioTestCase" {
-            if let Some(test_case) = globals_snapshot.iter().find_map(|(name, value)| match name {
-                Value::Str(name) if name == "TestCase" || name == "Case" => Some(value.clone()),
-                _ => None,
-            }) {
+            if let Some(test_case) = globals_snapshot
+                .iter()
+                .find_map(|(name, value)| match name {
+                    Value::Str(name) if name == "TestCase" || name == "Case" => Some(value.clone()),
+                    _ => None,
+                })
+            {
                 return Ok(test_case);
             }
             return Ok(Value::Class(
@@ -9335,9 +9389,7 @@ impl Vm {
         }
 
         if let Some(allowed_slots) = collect_slot_names(&class_ref) {
-            let has_dynamic_dict = allowed_slots
-                .iter()
-                .any(|name| name == "__dict__");
+            let has_dynamic_dict = allowed_slots.iter().any(|name| name == "__dict__");
             if has_dynamic_dict {
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                     instance_data.attrs.insert(attr_name.to_string(), value);
@@ -9618,7 +9670,9 @@ impl Vm {
             }
             NativeMethodKind::DictUpdateMethod => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::new("dict.update() expects at most one argument"));
+                    return Err(RuntimeError::new(
+                        "dict.update() expects at most one argument",
+                    ));
                 }
                 let mut incoming = Vec::new();
                 if let Some(source) = args.first() {
@@ -9649,9 +9703,7 @@ impl Vm {
             }
             NativeMethodKind::DictSetDefault => {
                 if args.is_empty() || args.len() > 2 {
-                    return Err(RuntimeError::new(
-                        "dict.setdefault() expects 1-2 arguments",
-                    ));
+                    return Err(RuntimeError::new("dict.setdefault() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
                 let default = args.get(1).cloned().unwrap_or(Value::None);
@@ -9968,9 +10020,9 @@ impl Vm {
                         .cloned()
                         .unwrap_or(Value::Str("strict".to_string())),
                 )?;
-                Ok(NativeCallResult::Value(
-                    self.heap.alloc_bytes(encode_text_bytes(&text, &encoding, &errors)?),
-                ))
+                Ok(NativeCallResult::Value(self.heap.alloc_bytes(
+                    encode_text_bytes(&text, &encoding, &errors)?,
+                )))
             }
             NativeMethodKind::StrDecode => {
                 if args.len() > 2 {
@@ -10112,10 +10164,8 @@ impl Vm {
                                 FormatterFieldKey::Int(idx) => idx.to_string(),
                                 FormatterFieldKey::Str(name) => name,
                             };
-                            value = self.builtin_getattr(
-                                vec![value, Value::Str(name)],
-                                HashMap::new(),
-                            )?;
+                            value = self
+                                .builtin_getattr(vec![value, Value::Str(name)], HashMap::new())?;
                         } else {
                             let index = match key {
                                 FormatterFieldKey::Int(idx) => Value::Int(idx),
@@ -10195,9 +10245,7 @@ impl Vm {
                     match value {
                         Value::Str(text) => parts.push(text),
                         _ => {
-                            return Err(RuntimeError::new(
-                                "sequence item is not str for join()",
-                            ));
+                            return Err(RuntimeError::new("sequence item is not str for join()"));
                         }
                     }
                 }
@@ -10231,7 +10279,9 @@ impl Vm {
                         return Err(RuntimeError::new("empty separator"));
                     }
                     if maxsplit < 0 {
-                        text.split(&sep).map(|part| Value::Str(part.to_string())).collect()
+                        text.split(&sep)
+                            .map(|part| Value::Str(part.to_string()))
+                            .collect()
                     } else {
                         text.splitn((maxsplit + 1) as usize, &sep)
                             .map(|part| Value::Str(part.to_string()))
@@ -10336,10 +10386,10 @@ impl Vm {
                 };
                 let found = re_match_bounds(&pattern, &args[0], mode)?;
                 if let Some((start, end)) = found {
-                    Ok(NativeCallResult::Value(
-                        self.heap
-                            .alloc_tuple(vec![Value::Int(start as i64), Value::Int(end as i64)]),
-                    ))
+                    Ok(NativeCallResult::Value(self.heap.alloc_tuple(vec![
+                        Value::Int(start as i64),
+                        Value::Int(end as i64),
+                    ])))
                 } else {
                     Ok(NativeCallResult::Value(Value::None))
                 }
@@ -10455,7 +10505,9 @@ impl Vm {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("register() expects one argument"));
                 }
-                Ok(NativeCallResult::Value(args.first().cloned().expect("checked len")))
+                Ok(NativeCallResult::Value(
+                    args.first().cloned().expect("checked len"),
+                ))
             }
             NativeMethodKind::PropertyGet => {
                 if args.len() != 2 {
@@ -10523,13 +10575,8 @@ impl Vm {
                 if !matches!(getter, Value::None) && !self.is_callable_value(&getter) {
                     return Err(RuntimeError::new("getter() argument must be callable"));
                 }
-                let updated = self.clone_property_descriptor_with(
-                    &receiver,
-                    Some(getter),
-                    None,
-                    None,
-                    None,
-                )?;
+                let updated =
+                    self.clone_property_descriptor_with(&receiver, Some(getter), None, None, None)?;
                 Ok(NativeCallResult::Value(updated))
             }
             NativeMethodKind::PropertySetter => {
@@ -10540,13 +10587,8 @@ impl Vm {
                 if !matches!(setter, Value::None) && !self.is_callable_value(&setter) {
                     return Err(RuntimeError::new("setter() argument must be callable"));
                 }
-                let updated = self.clone_property_descriptor_with(
-                    &receiver,
-                    None,
-                    Some(setter),
-                    None,
-                    None,
-                )?;
+                let updated =
+                    self.clone_property_descriptor_with(&receiver, None, Some(setter), None, None)?;
                 Ok(NativeCallResult::Value(updated))
             }
             NativeMethodKind::PropertyDeleter => {
@@ -10565,6 +10607,117 @@ impl Vm {
                     None,
                 )?;
                 Ok(NativeCallResult::Value(updated))
+            }
+            NativeMethodKind::OperatorItemGetterCall => {
+                if !kwargs.is_empty() || args.len() != 1 {
+                    return Err(RuntimeError::new("itemgetter expected 1 argument"));
+                }
+                let items = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("items") {
+                        Some(Value::List(obj)) => match &*obj.kind() {
+                            Object::List(values) => values.clone(),
+                            _ => Vec::new(),
+                        },
+                        _ => Vec::new(),
+                    },
+                    _ => return Err(RuntimeError::new("itemgetter receiver is invalid")),
+                };
+                if items.is_empty() {
+                    return Err(RuntimeError::new("itemgetter receiver is invalid"));
+                }
+                let target = args.first().cloned().expect("checked len");
+                if items.len() == 1 {
+                    let value = self.getitem_value(target, items[0].clone())?;
+                    return Ok(NativeCallResult::Value(value));
+                }
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(self.getitem_value(target.clone(), item)?);
+                }
+                Ok(NativeCallResult::Value(self.heap.alloc_tuple(out)))
+            }
+            NativeMethodKind::OperatorAttrGetterCall => {
+                if !kwargs.is_empty() || args.len() != 1 {
+                    return Err(RuntimeError::new("attrgetter expected 1 argument"));
+                }
+                let attrs = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("attrs") {
+                        Some(Value::List(obj)) => match &*obj.kind() {
+                            Object::List(values) => values.clone(),
+                            _ => Vec::new(),
+                        },
+                        _ => Vec::new(),
+                    },
+                    _ => return Err(RuntimeError::new("attrgetter receiver is invalid")),
+                };
+                if attrs.is_empty() {
+                    return Err(RuntimeError::new("attrgetter receiver is invalid"));
+                }
+                let target = args.first().cloned().expect("checked len");
+                let mut out = Vec::with_capacity(attrs.len());
+                for attr in attrs {
+                    let Value::Str(path) = attr else {
+                        return Err(RuntimeError::new("attribute name must be a string"));
+                    };
+                    let mut current = target.clone();
+                    for part in path.split('.') {
+                        current = self.builtin_getattr(
+                            vec![current, Value::Str(part.to_string())],
+                            HashMap::new(),
+                        )?;
+                    }
+                    out.push(current);
+                }
+                if out.len() == 1 {
+                    Ok(NativeCallResult::Value(out.remove(0)))
+                } else {
+                    Ok(NativeCallResult::Value(self.heap.alloc_tuple(out)))
+                }
+            }
+            NativeMethodKind::OperatorMethodCallerCall => {
+                if !kwargs.is_empty() || args.len() != 1 {
+                    return Err(RuntimeError::new("methodcaller expected 1 argument"));
+                }
+                let (method_name, call_args, call_kwargs) = match &*receiver.kind() {
+                    Object::Module(module_data) => {
+                        let method_name = match module_data.globals.get("name") {
+                            Some(Value::Str(name)) => name.clone(),
+                            _ => return Err(RuntimeError::new("methodcaller receiver is invalid")),
+                        };
+                        let call_args = match module_data.globals.get("args") {
+                            Some(Value::List(obj)) => match &*obj.kind() {
+                                Object::List(values) => values.clone(),
+                                _ => Vec::new(),
+                            },
+                            _ => Vec::new(),
+                        };
+                        let mut call_kwargs = HashMap::new();
+                        if let Some(Value::Dict(obj)) = module_data.globals.get("kwargs") {
+                            if let Object::Dict(entries) = &*obj.kind() {
+                                for (key, value) in entries {
+                                    if let Value::Str(name) = key {
+                                        call_kwargs.insert(name.clone(), value.clone());
+                                    }
+                                }
+                            }
+                        }
+                        (method_name, call_args, call_kwargs)
+                    }
+                    _ => return Err(RuntimeError::new("methodcaller receiver is invalid")),
+                };
+                let method = self.builtin_getattr(
+                    vec![
+                        args.first().cloned().expect("checked len"),
+                        Value::Str(method_name),
+                    ],
+                    HashMap::new(),
+                )?;
+                match self.call_internal(method, call_args, call_kwargs)? {
+                    InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Ok(NativeCallResult::PropagatedException)
+                    }
+                }
             }
             NativeMethodKind::FunctoolsWrapsDecorator => {
                 if args.len() != 1 {
@@ -10615,6 +10768,36 @@ impl Vm {
                         Ok(NativeCallResult::PropagatedException)
                     }
                 }
+            }
+            NativeMethodKind::FunctoolsCmpToKeyCall => {
+                if !kwargs.is_empty() || args.len() != 1 {
+                    return Err(RuntimeError::new(
+                        "cmp_to_key() callable expects one argument",
+                    ));
+                }
+                let comparator = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("cmp")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("cmp_to_key receiver is invalid"))?,
+                    _ => return Err(RuntimeError::new("cmp_to_key receiver is invalid")),
+                };
+                let key_obj = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__functools_cmp_key_item__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *key_obj.kind_mut() {
+                    module_data.globals.insert("cmp".to_string(), comparator);
+                    module_data.globals.insert(
+                        "obj".to_string(),
+                        args.first().cloned().expect("checked len"),
+                    );
+                }
+                Ok(NativeCallResult::Value(Value::Module(key_obj)))
             }
         }
     }
@@ -10768,10 +10951,12 @@ impl Vm {
                 })),
                 _ => Err(RuntimeError::new("yield from expects iterable")),
             },
-            Value::Set(obj) | Value::FrozenSet(obj) => Ok(self.heap.alloc_iterator(IteratorObject {
-                kind: IteratorKind::Set(obj),
-                index: 0,
-            })),
+            Value::Set(obj) | Value::FrozenSet(obj) => {
+                Ok(self.heap.alloc_iterator(IteratorObject {
+                    kind: IteratorKind::Set(obj),
+                    index: 0,
+                }))
+            }
             Value::Bytes(obj) => Ok(self.heap.alloc_iterator(IteratorObject {
                 kind: IteratorKind::Bytes(obj),
                 index: 0,
@@ -10791,8 +10976,7 @@ impl Vm {
                     }
                 }
 
-                let Some(iter_method) =
-                    self.lookup_bound_special_method(&other, "__iter__")?
+                let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
                 else {
                     return Err(RuntimeError::new("yield from expects iterable"));
                 };
@@ -10850,13 +11034,19 @@ impl Vm {
                     }
                     let rank = match value {
                         Value::Instance(instance) => match &*instance.kind() {
-                            Object::Instance(instance_data) => match instance_data.attrs.get("_value_") {
-                                Some(Value::Int(value)) => *value,
-                                Some(Value::Bool(value)) => {
-                                    if *value { 1 } else { 0 }
+                            Object::Instance(instance_data) => {
+                                match instance_data.attrs.get("_value_") {
+                                    Some(Value::Int(value)) => *value,
+                                    Some(Value::Bool(value)) => {
+                                        if *value {
+                                            1
+                                        } else {
+                                            0
+                                        }
+                                    }
+                                    _ => i64::MAX,
                                 }
-                                _ => i64::MAX,
-                            },
+                            }
                             _ => i64::MAX,
                         },
                         _ => i64::MAX,
@@ -10866,11 +11056,8 @@ impl Vm {
                 if values.is_empty() {
                     return None;
                 }
-                values.sort_by(|left, right| {
-                    left.0
-                        .cmp(&right.0)
-                        .then_with(|| left.1.cmp(&right.1))
-                });
+                values
+                    .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
                 values.into_iter().map(|(_, _, value)| value).collect()
             }
         };
@@ -11384,9 +11571,7 @@ impl Vm {
             BuiltinFunction::OsPathAbsPath => self.builtin_os_path_abspath(args, kwargs),
             BuiltinFunction::OsPathExpandUser => self.builtin_os_path_expanduser(args, kwargs),
             BuiltinFunction::OsPathRealPath => self.builtin_os_path_realpath(args, kwargs),
-            BuiltinFunction::OsPathCommonPrefix => {
-                self.builtin_os_path_commonprefix(args, kwargs)
-            }
+            BuiltinFunction::OsPathCommonPrefix => self.builtin_os_path_commonprefix(args, kwargs),
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
             BuiltinFunction::CodecsEncode => self.builtin_codecs_encode(args, kwargs),
@@ -11417,6 +11602,11 @@ impl Vm {
             BuiltinFunction::OperatorGe => self.builtin_operator_ge(args, kwargs),
             BuiltinFunction::OperatorContains => self.builtin_operator_contains(args, kwargs),
             BuiltinFunction::OperatorGetItem => self.builtin_operator_getitem(args, kwargs),
+            BuiltinFunction::OperatorItemGetter => self.builtin_operator_itemgetter(args, kwargs),
+            BuiltinFunction::OperatorAttrGetter => self.builtin_operator_attrgetter(args, kwargs),
+            BuiltinFunction::OperatorMethodCaller => {
+                self.builtin_operator_methodcaller(args, kwargs)
+            }
             BuiltinFunction::ItertoolsChain => self.builtin_itertools_chain(args, kwargs),
             BuiltinFunction::ItertoolsCount => self.builtin_itertools_count(args, kwargs),
             BuiltinFunction::ItertoolsCycle => self.builtin_itertools_cycle(args, kwargs),
@@ -11438,9 +11628,12 @@ impl Vm {
             }
             BuiltinFunction::FunctoolsWraps => self.builtin_functools_wraps(args, kwargs),
             BuiltinFunction::FunctoolsPartial => self.builtin_functools_partial(args, kwargs),
+            BuiltinFunction::FunctoolsCmpToKey => self.builtin_functools_cmp_to_key(args, kwargs),
             BuiltinFunction::CollectionsCounter => self.builtin_collections_counter(args, kwargs),
             BuiltinFunction::CollectionsDeque => self.builtin_collections_deque(args, kwargs),
-            BuiltinFunction::CollectionsDefaultDict => self.builtin_collections_defaultdict(args, kwargs),
+            BuiltinFunction::CollectionsDefaultDict => {
+                self.builtin_collections_defaultdict(args, kwargs)
+            }
             BuiltinFunction::InspectIsFunction => self.builtin_inspect_isfunction(args, kwargs),
             BuiltinFunction::InspectIsClass => self.builtin_inspect_isclass(args, kwargs),
             BuiltinFunction::InspectIsModule => self.builtin_inspect_ismodule(args, kwargs),
@@ -11458,9 +11651,7 @@ impl Vm {
             BuiltinFunction::TypesMethodType => self.builtin_types_methodtype(args, kwargs),
             BuiltinFunction::TypesNewClass => self.builtin_types_new_class(args, kwargs),
             BuiltinFunction::EnumConvert => self.builtin_enum_convert(args, kwargs),
-            BuiltinFunction::TypeAnnotationsGet => {
-                self.builtin_type_annotations_get(args, kwargs)
-            }
+            BuiltinFunction::TypeAnnotationsGet => self.builtin_type_annotations_get(args, kwargs),
             BuiltinFunction::IoOpen => self.builtin_io_open(args, kwargs),
             BuiltinFunction::IoReadText => self.builtin_io_read_text(args, kwargs),
             BuiltinFunction::IoWriteText => self.builtin_io_write_text(args, kwargs),
@@ -11480,19 +11671,25 @@ impl Vm {
             BuiltinFunction::ThreadingCurrentThread => {
                 self.builtin_threading_current_thread(args, kwargs)
             }
-            BuiltinFunction::ThreadingMainThread => self.builtin_threading_main_thread(args, kwargs),
+            BuiltinFunction::ThreadingMainThread => {
+                self.builtin_threading_main_thread(args, kwargs)
+            }
             BuiltinFunction::ThreadingActiveCount => {
                 self.builtin_threading_active_count(args, kwargs)
             }
             BuiltinFunction::SignalSignal => self.builtin_signal_signal(args, kwargs),
             BuiltinFunction::SignalGetSignal => self.builtin_signal_getsignal(args, kwargs),
             BuiltinFunction::SignalRaiseSignal => self.builtin_signal_raise_signal(args, kwargs),
-            BuiltinFunction::ColorizeCanColorize => self.builtin_colorize_can_colorize(args, kwargs),
+            BuiltinFunction::ColorizeCanColorize => {
+                self.builtin_colorize_can_colorize(args, kwargs)
+            }
             BuiltinFunction::ColorizeGetTheme => self.builtin_colorize_get_theme(args, kwargs),
             BuiltinFunction::ColorizeGetColors => self.builtin_colorize_get_colors(args, kwargs),
             BuiltinFunction::ColorizeSetTheme => self.builtin_colorize_set_theme(args, kwargs),
             BuiltinFunction::WarningsWarn => self.builtin_warnings_warn(args, kwargs),
-            BuiltinFunction::WarningsWarnExplicit => self.builtin_warnings_warn_explicit(args, kwargs),
+            BuiltinFunction::WarningsWarnExplicit => {
+                self.builtin_warnings_warn_explicit(args, kwargs)
+            }
             BuiltinFunction::WarningsFiltersMutated => {
                 self.builtin_warnings_filters_mutated(args, kwargs)
             }
@@ -11649,7 +11846,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() > 1 {
-            return Err(RuntimeError::new("sys._getframe() expects at most one argument"));
+            return Err(RuntimeError::new(
+                "sys._getframe() expects at most one argument",
+            ));
         }
         let depth = if args.is_empty() {
             0
@@ -11682,7 +11881,10 @@ impl Vm {
                 if !map.contains_key(name) {
                     if let Some(cell) = frame.cells.get(idx) {
                         if let Object::Cell(cell_data) = &*cell.kind() {
-                            map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
+                            map.insert(
+                                name.clone(),
+                                cell_data.value.clone().unwrap_or(Value::None),
+                            );
                         }
                     }
                 }
@@ -11692,7 +11894,10 @@ impl Vm {
                 if !map.contains_key(name) {
                     if let Some(cell) = frame.cells.get(cell_offset + idx) {
                         if let Object::Cell(cell_data) = &*cell.kind() {
-                            map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
+                            map.insert(
+                                name.clone(),
+                                cell_data.value.clone().unwrap_or(Value::None),
+                            );
                         }
                     }
                 }
@@ -11714,7 +11919,10 @@ impl Vm {
             self.heap.alloc_dict(Vec::new())
         };
 
-        let frame_obj = match self.heap.alloc_module(ModuleObject::new("<frame>".to_string())) {
+        let frame_obj = match self
+            .heap
+            .alloc_module(ModuleObject::new("<frame>".to_string()))
+        {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
@@ -11833,10 +12041,9 @@ impl Vm {
             default_lib
         };
 
-        Ok(self.heap.alloc_tuple(vec![
-            Value::Str(detected_lib),
-            Value::Str(default_version),
-        ]))
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(detected_lib), Value::Str(default_version)]))
     }
 
     fn builtin_callable(
@@ -11910,7 +12117,7 @@ impl Vm {
             _ => {
                 return Err(RuntimeError::new(
                     "__annotations__ descriptor requires a type object",
-                ))
+                ));
             }
         };
 
@@ -11932,9 +12139,10 @@ impl Vm {
             Value::Dict(dict) => dict,
             _ => unreachable!(),
         };
-        class_data
-            .attrs
-            .insert("__annotations__".to_string(), Value::Dict(annotations.clone()));
+        class_data.attrs.insert(
+            "__annotations__".to_string(),
+            Value::Dict(annotations.clone()),
+        );
         Ok(Value::Dict(annotations))
     }
 
@@ -11992,7 +12200,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() {
-            return Err(RuntimeError::new("object.__new__() expects a class argument"));
+            return Err(RuntimeError::new(
+                "object.__new__() expects a class argument",
+            ));
         }
         let class_value = args.remove(0);
         let class_ref = match class_value {
@@ -12000,7 +12210,7 @@ impl Vm {
             _ => {
                 return Err(RuntimeError::new(
                     "object.__new__(X): X is not a type object",
-                ))
+                ));
             }
         };
         match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
@@ -12017,7 +12227,9 @@ impl Vm {
         // `object.__init__` is exposed as a plain builtin in this VM, so
         // super() calls can reach it without an implicit `self` bind.
         if !kwargs.is_empty() || args.len() > 1 {
-            return Err(RuntimeError::new("object.__init__() takes exactly one argument"));
+            return Err(RuntimeError::new(
+                "object.__init__() takes exactly one argument",
+            ));
         }
         Ok(Value::None)
     }
@@ -12028,7 +12240,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("object.__getstate__() takes exactly one argument"));
+            return Err(RuntimeError::new(
+                "object.__getstate__() takes exactly one argument",
+            ));
         }
         let Some(value) = args.first() else {
             return Ok(Value::None);
@@ -12070,12 +12284,12 @@ impl Vm {
         };
 
         match target {
-            Value::Instance(instance) => match self
-                .load_attr_instance_default(&instance, &name, false)?
-            {
-                AttrAccessOutcome::Value(value) => Ok(value),
-                AttrAccessOutcome::ExceptionHandled => Ok(Value::None),
-            },
+            Value::Instance(instance) => {
+                match self.load_attr_instance_default(&instance, &name, false)? {
+                    AttrAccessOutcome::Value(value) => Ok(value),
+                    AttrAccessOutcome::ExceptionHandled => Ok(Value::None),
+                }
+            }
             other => self.builtin_getattr(vec![other, Value::Str(name)], HashMap::new()),
         }
     }
@@ -12086,7 +12300,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 3 {
-            return Err(RuntimeError::new("object.__setattr__() expects three arguments"));
+            return Err(RuntimeError::new(
+                "object.__setattr__() expects three arguments",
+            ));
         }
         let target = args.remove(0);
         let name = match args.remove(0) {
@@ -12112,7 +12328,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("object.__delattr__() expects two arguments"));
+            return Err(RuntimeError::new(
+                "object.__delattr__() expects two arguments",
+            ));
         }
         let target = args.remove(0);
         let name = match args.remove(0) {
@@ -12249,7 +12467,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() > 1 {
-            return Err(RuntimeError::new("frozenset() expects at most one argument"));
+            return Err(RuntimeError::new(
+                "frozenset() expects at most one argument",
+            ));
         }
         let values = if args.is_empty() {
             Vec::new()
@@ -12310,7 +12530,9 @@ impl Vm {
             if let Some(default_value) = default {
                 return Ok(default_value);
             }
-            return Err(RuntimeError::new(&format!("{name}() arg is an empty sequence")));
+            return Err(RuntimeError::new(&format!(
+                "{name}() arg is an empty sequence"
+            )));
         }
 
         let mut iter = values.into_iter();
@@ -12321,7 +12543,7 @@ impl Vm {
             match self.call_internal(key_func.clone(), vec![best_value.clone()], HashMap::new())? {
                 InternalCallOutcome::Value(key) => key,
                 InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(RuntimeError::new("key function raised"))
+                    return Err(RuntimeError::new("key function raised"));
                 }
             }
         };
@@ -12333,11 +12555,11 @@ impl Vm {
                 match self.call_internal(key_func.clone(), vec![value.clone()], HashMap::new())? {
                     InternalCallOutcome::Value(key) => key,
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("key function raised"))
+                        return Err(RuntimeError::new("key function raised"));
                     }
                 }
             };
-            if compare_order(key.clone(), best_key.clone())? == preferred {
+            if self.compare_sort_keys(key.clone(), best_key.clone())? == preferred {
                 best_value = value;
                 best_key = key;
             }
@@ -12376,17 +12598,19 @@ impl Vm {
                 )? {
                     InternalCallOutcome::Value(key) => key,
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("key function raised"))
+                        return Err(RuntimeError::new("key function raised"));
                     }
                 };
                 keyed.push((value, key));
             }
             let mut compare_error: Option<RuntimeError> = None;
-            keyed.sort_by(|left, right| match compare_order(left.1.clone(), right.1.clone()) {
-                Ok(ordering) => ordering,
-                Err(err) => {
-                    compare_error = Some(err);
-                    Ordering::Equal
+            keyed.sort_by(|left, right| {
+                match self.compare_sort_keys(left.1.clone(), right.1.clone()) {
+                    Ok(ordering) => ordering,
+                    Err(err) => {
+                        compare_error = Some(err);
+                        Ordering::Equal
+                    }
                 }
             });
             if let Some(err) = compare_error {
@@ -12398,13 +12622,15 @@ impl Vm {
             values = keyed.into_iter().map(|(value, _)| value).collect();
         } else {
             let mut compare_error: Option<RuntimeError> = None;
-            values.sort_by(|left, right| match compare_order(left.clone(), right.clone()) {
-                Ok(ordering) => ordering,
-                Err(err) => {
-                    compare_error = Some(err);
-                    Ordering::Equal
-                }
-            });
+            values.sort_by(
+                |left, right| match compare_order(left.clone(), right.clone()) {
+                    Ok(ordering) => ordering,
+                    Err(err) => {
+                        compare_error = Some(err);
+                        Ordering::Equal
+                    }
+                },
+            );
             if let Some(err) = compare_error {
                 return Err(err);
             }
@@ -12413,6 +12639,48 @@ impl Vm {
             }
         }
         Ok(self.heap.alloc_list(values))
+    }
+
+    fn compare_sort_keys(&mut self, left: Value, right: Value) -> Result<Ordering, RuntimeError> {
+        if let Some(ordering) = self.compare_cmp_to_key_wrappers(&left, &right)? {
+            return Ok(ordering);
+        }
+        compare_order(left, right)
+    }
+
+    fn compare_cmp_to_key_wrappers(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<Ordering>, RuntimeError> {
+        let Some((comparator, left_obj)) = self.cmp_to_key_wrapper_parts(left) else {
+            return Ok(None);
+        };
+        let Some((_, right_obj)) = self.cmp_to_key_wrapper_parts(right) else {
+            return Ok(None);
+        };
+        let result =
+            match self.call_internal(comparator, vec![left_obj, right_obj], HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(RuntimeError::new("cmp_to_key comparator raised"));
+                }
+            };
+        Ok(Some(ordering_from_cmp_value(result)?))
+    }
+
+    fn cmp_to_key_wrapper_parts(&self, value: &Value) -> Option<(Value, Value)> {
+        let Value::Module(module) = value else {
+            return None;
+        };
+        match &*module.kind() {
+            Object::Module(module_data) if module_data.name == "__functools_cmp_key_item__" => {
+                let comparator = module_data.globals.get("cmp")?.clone();
+                let object = module_data.globals.get("obj")?.clone();
+                Some((comparator, object))
+            }
+            _ => None,
+        }
     }
 
     fn builtin_all(
@@ -12530,7 +12798,9 @@ impl Vm {
 
     fn is_callable_value(&self, value: &Value) -> bool {
         match value {
-            Value::Function(_) | Value::Builtin(_) | Value::BoundMethod(_) | Value::Class(_) => true,
+            Value::Function(_) | Value::Builtin(_) | Value::BoundMethod(_) | Value::Class(_) => {
+                true
+            }
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
                     class_attr_lookup(&instance_data.class, "__call__").is_some()
@@ -12607,7 +12877,9 @@ impl Vm {
             },
             Value::Builtin(builtin) => Ok(self.matches_builtin_type_marker(value, *builtin)),
             Value::ExceptionType(name) => match value {
-                Value::Exception(exception) => Ok(exception_type_is_subclass(&exception.name, name)),
+                Value::Exception(exception) => {
+                    Ok(exception_type_is_subclass(&exception.name, name))
+                }
                 Value::ExceptionType(candidate) => Ok(exception_type_is_subclass(candidate, name)),
                 _ => Ok(false),
             },
@@ -12660,25 +12932,19 @@ impl Vm {
                     };
                     Ok(class_data.name == "object")
                 }
-                _ => Err(RuntimeError::new(
-                    "issubclass() arg 1 must be a class",
-                )),
+                _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
             },
             Value::Builtin(expected_builtin) => match candidate {
                 Value::Builtin(candidate_builtin) => Ok(candidate_builtin == expected_builtin),
                 Value::Class(_) => Ok(matches!(expected_builtin, BuiltinFunction::Type)),
                 Value::ExceptionType(_) => Ok(matches!(expected_builtin, BuiltinFunction::Type)),
-                _ => Err(RuntimeError::new(
-                    "issubclass() arg 1 must be a class",
-                )),
+                _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
             },
             Value::ExceptionType(expected_name) => match candidate {
                 Value::ExceptionType(candidate_name) => {
                     Ok(exception_type_is_subclass(candidate_name, expected_name))
                 }
-                _ => Err(RuntimeError::new(
-                    "issubclass() arg 1 must be a class",
-                )),
+                _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
             },
             _ => Err(RuntimeError::new(
                 "issubclass() arg 2 must be a type or tuple of types",
@@ -12689,7 +12955,10 @@ impl Vm {
     fn matches_builtin_type_marker(&self, value: &Value, builtin: BuiltinFunction) -> bool {
         match builtin {
             BuiltinFunction::Type => {
-                matches!(value, Value::Class(_) | Value::ExceptionType(_) | Value::Builtin(_))
+                matches!(
+                    value,
+                    Value::Class(_) | Value::ExceptionType(_) | Value::Builtin(_)
+                )
             }
             BuiltinFunction::Bool => matches!(value, Value::Bool(_)),
             BuiltinFunction::Int => matches!(value, Value::Int(_) | Value::Bool(_)),
@@ -12833,9 +13102,7 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("object is not async iterable"))?;
         match self.call_internal(method, Vec::new(), HashMap::new())? {
             InternalCallOutcome::Value(value) => Ok(value),
-            InternalCallOutcome::CallerExceptionHandled => {
-                Err(RuntimeError::new("aiter() failed"))
-            }
+            InternalCallOutcome::CallerExceptionHandled => Err(RuntimeError::new("aiter() failed")),
         }
     }
 
@@ -12878,7 +13145,7 @@ impl Vm {
                     self.propagate_pending_generator_exception()?;
                     Err(RuntimeError::new("StopAsyncIteration"))
                 }
-            }
+            };
         }
 
         let method = self
@@ -13863,7 +14130,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("hypot() does not accept keyword arguments"));
+            return Err(RuntimeError::new(
+                "hypot() does not accept keyword arguments",
+            ));
         }
         if args.is_empty() {
             return Ok(Value::Float(0.0));
@@ -13976,12 +14245,16 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("sumprod() expects two iterable arguments"));
+            return Err(RuntimeError::new(
+                "sumprod() expects two iterable arguments",
+            ));
         }
         let left = self.collect_iterable_values(args[0].clone())?;
         let right = self.collect_iterable_values(args[1].clone())?;
         if left.len() != right.len() {
-            return Err(RuntimeError::new("sumprod() inputs are not the same length"));
+            return Err(RuntimeError::new(
+                "sumprod() inputs are not the same length",
+            ));
         }
         let mut sum = 0.0f64;
         let mut c = 0.0f64;
@@ -14086,7 +14359,9 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() != 2 {
-            return Err(RuntimeError::new("isclose() expects two positional arguments"));
+            return Err(RuntimeError::new(
+                "isclose() expects two positional arguments",
+            ));
         }
         let a = value_to_f64(args.remove(0))?;
         let b = value_to_f64(args.remove(0))?;
@@ -14174,7 +14449,9 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() > 1 {
-            return Err(RuntimeError::new("time tuple function expects at most one argument"));
+            return Err(RuntimeError::new(
+                "time tuple function expects at most one argument",
+            ));
         }
         let kw_secs = kwargs.remove("secs");
         if !kwargs.is_empty() {
@@ -14183,7 +14460,9 @@ impl Vm {
             ));
         }
         if kw_secs.is_some() && !args.is_empty() {
-            return Err(RuntimeError::new("time tuple function got multiple values for 'secs'"));
+            return Err(RuntimeError::new(
+                "time tuple function got multiple values for 'secs'",
+            ));
         }
         let secs = if let Some(value) = kw_secs {
             if matches!(value, Value::None) {
@@ -14218,7 +14497,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new("strftime() expects format and optional tuple"));
+            return Err(RuntimeError::new(
+                "strftime() expects format and optional tuple",
+            ));
         }
         let format = match args.remove(0) {
             Value::Str(format) => format,
@@ -14460,15 +14741,17 @@ impl Vm {
         let (atime, mtime) = if let Some(spec) = times {
             match spec {
                 Value::Tuple(obj) => match &*obj.kind() {
-                    Object::Tuple(values) if values.len() == 2 => {
-                        (value_to_f64(values[0].clone())?, value_to_f64(values[1].clone())?)
-                    }
+                    Object::Tuple(values) if values.len() == 2 => (
+                        value_to_f64(values[0].clone())?,
+                        value_to_f64(values[1].clone())?,
+                    ),
                     _ => return Err(RuntimeError::new("utime() times must be a 2-tuple")),
                 },
                 Value::List(obj) => match &*obj.kind() {
-                    Object::List(values) if values.len() == 2 => {
-                        (value_to_f64(values[0].clone())?, value_to_f64(values[1].clone())?)
-                    }
+                    Object::List(values) if values.len() == 2 => (
+                        value_to_f64(values[0].clone())?,
+                        value_to_f64(values[1].clone())?,
+                    ),
                     _ => return Err(RuntimeError::new("utime() times must be a 2-sequence")),
                 },
                 _ => return Err(RuntimeError::new("utime() times must be a 2-sequence")),
@@ -14503,8 +14786,8 @@ impl Vm {
             value_to_path(&args[0])?
         };
         let mut rows = Vec::new();
-        let entries =
-            fs::read_dir(&path).map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+        let entries = fs::read_dir(&path)
+            .map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
         for entry in entries {
             let entry = entry.map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
             let name = entry.file_name().to_string_lossy().to_string();
@@ -14535,8 +14818,8 @@ impl Vm {
             value_to_path(&args[0])?
         };
         let mut names = Vec::new();
-        let entries =
-            fs::read_dir(&path).map_err(|err| RuntimeError::new(format!("listdir failed: {err}")))?;
+        let entries = fs::read_dir(&path)
+            .map_err(|err| RuntimeError::new(format!("listdir failed: {err}")))?;
         for entry in entries {
             let entry = entry.map_err(|err| RuntimeError::new(format!("listdir failed: {err}")))?;
             let name = entry.file_name().to_string_lossy().to_string();
@@ -14558,13 +14841,19 @@ impl Vm {
             Value::Str(value) => Ok(self.heap.alloc_bytes(value.as_bytes().to_vec())),
             Value::Bytes(obj) => match &*obj.kind() {
                 Object::Bytes(bytes) => Ok(self.heap.alloc_bytes(bytes.clone())),
-                _ => Err(RuntimeError::new("fsencode() expects str, bytes or bytearray")),
+                _ => Err(RuntimeError::new(
+                    "fsencode() expects str, bytes or bytearray",
+                )),
             },
             Value::ByteArray(obj) => match &*obj.kind() {
                 Object::ByteArray(bytes) => Ok(self.heap.alloc_bytes(bytes.clone())),
-                _ => Err(RuntimeError::new("fsencode() expects str, bytes or bytearray")),
+                _ => Err(RuntimeError::new(
+                    "fsencode() expects str, bytes or bytearray",
+                )),
             },
-            _ => Err(RuntimeError::new("fsencode() expects str, bytes or bytearray")),
+            _ => Err(RuntimeError::new(
+                "fsencode() expects str, bytes or bytearray",
+            )),
         }
     }
 
@@ -14580,15 +14869,21 @@ impl Vm {
             Value::Str(value) => Ok(Value::Str(value.clone())),
             Value::Bytes(obj) => match &*obj.kind() {
                 Object::Bytes(bytes) => Ok(Value::Str(String::from_utf8_lossy(bytes).to_string())),
-                _ => Err(RuntimeError::new("fsdecode() expects str, bytes or bytearray")),
+                _ => Err(RuntimeError::new(
+                    "fsdecode() expects str, bytes or bytearray",
+                )),
             },
             Value::ByteArray(obj) => match &*obj.kind() {
                 Object::ByteArray(bytes) => {
                     Ok(Value::Str(String::from_utf8_lossy(bytes).to_string()))
                 }
-                _ => Err(RuntimeError::new("fsdecode() expects str, bytes or bytearray")),
+                _ => Err(RuntimeError::new(
+                    "fsdecode() expects str, bytes or bytearray",
+                )),
             },
-            _ => Err(RuntimeError::new("fsdecode() expects str, bytes or bytearray")),
+            _ => Err(RuntimeError::new(
+                "fsdecode() expects str, bytes or bytearray",
+            )),
         }
     }
 
@@ -14724,7 +15019,10 @@ impl Vm {
             })
             .ok_or_else(|| RuntimeError::new("os.stat_result missing"))?;
 
-        let instance = match self.heap.alloc_instance(InstanceObject::new(stat_result_class)) {
+        let instance = match self
+            .heap
+            .alloc_instance(InstanceObject::new(stat_result_class))
+        {
             Value::Instance(obj) => obj,
             _ => unreachable!(),
         };
@@ -14837,7 +15135,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("path_join() does not accept keyword arguments"));
+            return Err(RuntimeError::new(
+                "path_join() does not accept keyword arguments",
+            ));
         }
         if args.is_empty() {
             return Ok(Value::Str(".".to_string()));
@@ -14920,7 +15220,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("_path_splitroot_ex() expects one argument"));
+            return Err(RuntimeError::new(
+                "_path_splitroot_ex() expects one argument",
+            ));
         }
         let path = value_to_path(&args[0])?;
         let bytes = path.as_bytes();
@@ -14931,11 +15233,9 @@ impl Vm {
         } else {
             ("".to_string(), path[..2].to_string(), path[2..].to_string())
         };
-        Ok(self.heap.alloc_tuple(vec![
-            Value::Str(drive),
-            Value::Str(root),
-            Value::Str(tail),
-        ]))
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(drive), Value::Str(root), Value::Str(tail)]))
     }
 
     fn builtin_os_path_dirname(
@@ -15086,7 +15386,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("commonprefix() expects one iterable argument"));
+            return Err(RuntimeError::new(
+                "commonprefix() expects one iterable argument",
+            ));
         }
         let values = self.collect_iterable_values(args.remove(0))?;
         if values.is_empty() {
@@ -15096,7 +15398,11 @@ impl Vm {
         for value in values {
             match value {
                 Value::Str(text) => parts.push(text),
-                _ => return Err(RuntimeError::new("commonprefix() expects iterable of strings")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "commonprefix() expects iterable of strings",
+                    ));
+                }
             }
         }
         let mut prefix = parts[0].clone();
@@ -15154,7 +15460,11 @@ impl Vm {
         }
         let format_string = match &args[0] {
             Value::Str(text) => text.as_str(),
-            _ => return Err(RuntimeError::new("formatter_parser() expects string argument")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "formatter_parser() expects string argument",
+                ));
+            }
         };
         let parsed = parse_string_formatter(format_string)?;
         let mut rows = Vec::with_capacity(parsed.len());
@@ -15237,7 +15547,9 @@ impl Vm {
         };
         if let Some(value) = kwargs.remove("encoding") {
             if encoding.is_some() {
-                return Err(RuntimeError::new("encode() got multiple values for encoding"));
+                return Err(RuntimeError::new(
+                    "encode() got multiple values for encoding",
+                ));
             }
             encoding = Some(value);
         }
@@ -15257,7 +15569,8 @@ impl Vm {
             Value::Str(text) => text,
             _ => return Err(RuntimeError::new("encode() argument must be str")),
         };
-        let encoding = normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
+        let encoding =
+            normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
         let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
         let encoded = encode_text_bytes(&text, &encoding, &errors)?;
         Ok(self.heap.alloc_bytes(encoded))
@@ -15285,7 +15598,9 @@ impl Vm {
         };
         if let Some(value) = kwargs.remove("encoding") {
             if encoding.is_some() {
-                return Err(RuntimeError::new("decode() got multiple values for encoding"));
+                return Err(RuntimeError::new(
+                    "decode() got multiple values for encoding",
+                ));
             }
             encoding = Some(value);
         }
@@ -15302,7 +15617,8 @@ impl Vm {
         }
         let source = args.remove(0);
         let bytes = bytes_like_from_value(source)?;
-        let encoding = normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
+        let encoding =
+            normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
         let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
         let decoded = decode_text_bytes(&bytes, &encoding, &errors)?;
         Ok(Value::Str(decoded))
@@ -15329,7 +15645,10 @@ impl Vm {
             },
             _ => return Err(RuntimeError::new("invalid codecs module")),
         };
-        let instance = match self.heap.alloc_instance(InstanceObject::new(codec_info_class)) {
+        let instance = match self
+            .heap
+            .alloc_instance(InstanceObject::new(codec_info_class))
+        {
             Value::Instance(obj) => obj,
             _ => unreachable!(),
         };
@@ -15416,7 +15735,8 @@ impl Vm {
                 "normalize() got an unexpected keyword argument",
             ));
         }
-        let form = form.ok_or_else(|| RuntimeError::new("normalize() missing required argument"))?;
+        let form =
+            form.ok_or_else(|| RuntimeError::new("normalize() missing required argument"))?;
         let unistr =
             unistr.ok_or_else(|| RuntimeError::new("normalize() missing required argument"))?;
         let _form = match form {
@@ -15475,7 +15795,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new("re.compile() expects pattern and optional flags"));
+            return Err(RuntimeError::new(
+                "re.compile() expects pattern and optional flags",
+            ));
         }
         if args.len() == 2 {
             // Flags are currently accepted for compatibility but not interpreted.
@@ -15490,18 +15812,32 @@ impl Vm {
                 if compiled_pattern {
                     return Ok(Value::Module(module));
                 }
-                return Err(RuntimeError::new("re.compile() expects string or bytes pattern"));
+                return Err(RuntimeError::new(
+                    "re.compile() expects string or bytes pattern",
+                ));
             }
             Value::Str(pattern) => Value::Str(pattern),
             Value::Bytes(obj) => match &*obj.kind() {
                 Object::Bytes(values) => self.heap.alloc_bytes(values.clone()),
-                _ => return Err(RuntimeError::new("re.compile() expects string or bytes pattern")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "re.compile() expects string or bytes pattern",
+                    ));
+                }
             },
             Value::ByteArray(obj) => match &*obj.kind() {
                 Object::ByteArray(values) => self.heap.alloc_bytes(values.clone()),
-                _ => return Err(RuntimeError::new("re.compile() expects string or bytes pattern")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "re.compile() expects string or bytes pattern",
+                    ));
+                }
             },
-            _ => return Err(RuntimeError::new("re.compile() expects string or bytes pattern")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "re.compile() expects string or bytes pattern",
+                ));
+            }
         };
         let compiled = match self
             .heap
@@ -15581,7 +15917,9 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, |left, right| add_values(left, right, &self.heap))
+        binary_operator(args, kwargs, |left, right| {
+            add_values(left, right, &self.heap)
+        })
     }
 
     fn builtin_operator_sub(
@@ -15597,7 +15935,9 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, |left, right| mul_values(left, right, &self.heap))
+        binary_operator(args, kwargs, |left, right| {
+            mul_values(left, right, &self.heap)
+        })
     }
 
     fn builtin_operator_mod(
@@ -15711,13 +16051,111 @@ impl Vm {
         self.getitem_value(args[0].clone(), args[1].clone())
     }
 
+    fn builtin_operator_itemgetter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() {
+            return Err(RuntimeError::new(
+                "operator.itemgetter expects at least one argument",
+            ));
+        }
+        let receiver = match self
+            .heap
+            .alloc_module(ModuleObject::new("__operator_itemgetter__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+            module_data
+                .globals
+                .insert("items".to_string(), self.heap.alloc_list(args));
+        }
+        Ok(self.alloc_native_bound_method(NativeMethodKind::OperatorItemGetterCall, receiver))
+    }
+
+    fn builtin_operator_attrgetter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() {
+            return Err(RuntimeError::new(
+                "operator.attrgetter expects at least one argument",
+            ));
+        }
+        let mut attrs = Vec::with_capacity(args.len());
+        for attr in args {
+            match attr {
+                Value::Str(value) => attrs.push(Value::Str(value)),
+                _ => return Err(RuntimeError::new("attribute name must be a string")),
+            }
+        }
+        let receiver = match self
+            .heap
+            .alloc_module(ModuleObject::new("__operator_attrgetter__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+            module_data
+                .globals
+                .insert("attrs".to_string(), self.heap.alloc_list(attrs));
+        }
+        Ok(self.alloc_native_bound_method(NativeMethodKind::OperatorAttrGetterCall, receiver))
+    }
+
+    fn builtin_operator_methodcaller(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new(
+                "operator.methodcaller expects at least one argument",
+            ));
+        }
+        let method_name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("method name must be a string")),
+        };
+        let receiver = match self
+            .heap
+            .alloc_module(ModuleObject::new("__operator_methodcaller__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        let frozen_kwargs = kwargs
+            .into_iter()
+            .map(|(name, value)| (Value::Str(name), value))
+            .collect::<Vec<_>>();
+        if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+            module_data
+                .globals
+                .insert("name".to_string(), Value::Str(method_name));
+            module_data
+                .globals
+                .insert("args".to_string(), self.heap.alloc_list(args));
+            module_data
+                .globals
+                .insert("kwargs".to_string(), self.heap.alloc_dict(frozen_kwargs));
+        }
+        Ok(self.alloc_native_bound_method(NativeMethodKind::OperatorMethodCallerCall, receiver))
+    }
+
     fn builtin_itertools_chain(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("chain() does not accept keyword arguments"));
+            return Err(RuntimeError::new(
+                "chain() does not accept keyword arguments",
+            ));
         }
         let mut out = Vec::new();
         for source in args {
@@ -15966,8 +16404,9 @@ impl Vm {
         let mut accumulator = if args.len() == 3 {
             args[2].clone()
         } else {
-            iter.next()
-                .ok_or_else(|| RuntimeError::new("reduce() of empty iterable with no initial value"))?
+            iter.next().ok_or_else(|| {
+                RuntimeError::new("reduce() of empty iterable with no initial value")
+            })?
         };
 
         for item in iter {
@@ -16180,14 +16619,9 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-            module_data
-                .globals
-                .insert("wrapped".to_string(), wrapped);
+            module_data.globals.insert("wrapped".to_string(), wrapped);
         }
-        Ok(self.alloc_native_bound_method(
-            NativeMethodKind::FunctoolsWrapsDecorator,
-            receiver,
-        ))
+        Ok(self.alloc_native_bound_method(NativeMethodKind::FunctoolsWrapsDecorator, receiver))
     }
 
     fn builtin_functools_partial(
@@ -16214,9 +16648,7 @@ impl Vm {
             .map(|(name, value)| (Value::Str(name), value))
             .collect::<Vec<_>>();
         if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-            module_data
-                .globals
-                .insert("callable".to_string(), callable);
+            module_data.globals.insert("callable".to_string(), callable);
             module_data
                 .globals
                 .insert("args".to_string(), self.heap.alloc_list(args));
@@ -16224,10 +16656,32 @@ impl Vm {
                 .globals
                 .insert("kwargs".to_string(), self.heap.alloc_dict(frozen_kwargs));
         }
-        Ok(self.alloc_native_bound_method(
-            NativeMethodKind::FunctoolsPartialCall,
-            receiver,
-        ))
+        Ok(self.alloc_native_bound_method(NativeMethodKind::FunctoolsPartialCall, receiver))
+    }
+
+    fn builtin_functools_cmp_to_key(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("cmp_to_key() expects one callable"));
+        }
+        let comparator = args[0].clone();
+        if !self.is_callable_value(&comparator) {
+            return Err(RuntimeError::new("cmp_to_key() expects callable"));
+        }
+        let receiver = match self
+            .heap
+            .alloc_module(ModuleObject::new("__functools_cmp_to_key__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+            module_data.globals.insert("cmp".to_string(), comparator);
+        }
+        Ok(self.alloc_native_bound_method(NativeMethodKind::FunctoolsCmpToKeyCall, receiver))
     }
 
     fn builtin_collections_counter(
@@ -16304,11 +16758,7 @@ impl Vm {
                             if let Value::Tuple(tuple_obj) = item {
                                 if let Object::Tuple(parts) = &*tuple_obj.kind() {
                                     if parts.len() == 2 {
-                                        dict_set_value(
-                                            &dict,
-                                            parts[0].clone(),
-                                            parts[1].clone(),
-                                        );
+                                        dict_set_value(&dict, parts[0].clone(), parts[1].clone());
                                         continue;
                                     }
                                 }
@@ -16438,7 +16888,7 @@ impl Vm {
             _ => {
                 return Err(RuntimeError::new(
                     "_static_getmro() expects a class-like argument",
-                ))
+                ));
             }
         };
         Ok(self.heap.alloc_tuple(values))
@@ -16467,9 +16917,9 @@ impl Vm {
                     "_get_dunder_dict_of_class() expects a class-like argument",
                 )),
             },
-            Some(Value::Builtin(builtin)) => {
-                Ok(self.heap.alloc_dict(self.builtin_type_dict_entries(*builtin)))
-            }
+            Some(Value::Builtin(builtin)) => Ok(self
+                .heap
+                .alloc_dict(self.builtin_type_dict_entries(*builtin))),
             Some(Value::ExceptionType(name)) => Ok(self.heap.alloc_dict(vec![
                 (Value::Str("__name__".to_string()), Value::Str(name.clone())),
                 (
@@ -16504,7 +16954,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("MethodType() expects function and instance"));
+            return Err(RuntimeError::new(
+                "MethodType() expects function and instance",
+            ));
         }
         let function = args.remove(0);
         let instance = args.remove(0);
@@ -16514,7 +16966,9 @@ impl Vm {
                 .heap
                 .alloc_bound_method(BoundMethod::new(func, receiver))),
             Value::BoundMethod(method) => Ok(Value::BoundMethod(method)),
-            _ => Err(RuntimeError::new("first argument must be a Python function")),
+            _ => Err(RuntimeError::new(
+                "first argument must be a Python function",
+            )),
         }
     }
 
@@ -16554,7 +17008,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
-            return Err(RuntimeError::new("open() expects path, optional mode, optional payload"));
+            return Err(RuntimeError::new(
+                "open() expects path, optional mode, optional payload",
+            ));
         }
         let path = value_to_path(&args[0])?;
         let mode = if args.len() >= 2 {
@@ -16649,7 +17105,8 @@ impl Vm {
             Value::Str(text) => text.clone(),
             other => format_value(other),
         };
-        fs::write(path, text).map_err(|err| RuntimeError::new(format!("write_text failed: {err}")))?;
+        fs::write(path, text)
+            .map_err(|err| RuntimeError::new(format!("write_text failed: {err}")))?;
         Ok(Value::None)
     }
 
@@ -16698,7 +17155,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new("sleep() expects delay and optional result"));
+            return Err(RuntimeError::new(
+                "sleep() expects delay and optional result",
+            ));
         }
         let seconds = value_to_f64(args.remove(0))?;
         if seconds < 0.0 {
@@ -16718,7 +17177,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("create_task() expects one awaitable argument"));
+            return Err(RuntimeError::new(
+                "create_task() expects one awaitable argument",
+            ));
         }
         self.awaitable_from_value(args.remove(0))
     }
@@ -16825,7 +17286,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("raise_signal() expects one signum argument"));
+            return Err(RuntimeError::new(
+                "raise_signal() expects one signum argument",
+            ));
         }
         let signum = value_to_int(args.remove(0))?;
         let handler = self
@@ -16927,7 +17390,9 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let theme = if let Some(value) = kwargs.remove("theme") {
             if !args.is_empty() {
-                return Err(RuntimeError::new("set_theme() got multiple values for theme"));
+                return Err(RuntimeError::new(
+                    "set_theme() got multiple values for theme",
+                ));
             }
             value
         } else if args.len() == 1 {
@@ -16936,7 +17401,9 @@ impl Vm {
             return Err(RuntimeError::new("set_theme() expects one theme argument"));
         };
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("set_theme() got unexpected keyword arguments"));
+            return Err(RuntimeError::new(
+                "set_theme() got unexpected keyword arguments",
+            ));
         }
         let Some(module) = self.modules.get("_colorize").cloned() else {
             return Err(RuntimeError::new("module '_colorize' not found"));
@@ -16953,10 +17420,12 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if kwargs
-            .keys()
-            .any(|key| !matches!(key.as_str(), "message" | "category" | "stacklevel" | "source"))
-        {
+        if kwargs.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "message" | "category" | "stacklevel" | "source"
+            )
+        }) {
             return Err(RuntimeError::new(
                 "warn() got an unexpected keyword argument",
             ));
@@ -17138,13 +17607,16 @@ impl Vm {
                         if matches!(default_factory, Value::None) {
                             return Err(RuntimeError::new("key not found"));
                         }
-                        let generated =
-                            match self.call_internal(default_factory, Vec::new(), HashMap::new())? {
-                                InternalCallOutcome::Value(value) => value,
-                                InternalCallOutcome::CallerExceptionHandled => {
-                                    return Err(RuntimeError::new("default factory raised"))
-                                }
-                            };
+                        let generated = match self.call_internal(
+                            default_factory,
+                            Vec::new(),
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(RuntimeError::new("default factory raised"));
+                            }
+                        };
                         dict_set_value(&obj, index, generated.clone());
                         Ok(generated)
                     } else {
@@ -17386,19 +17858,17 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__name__".to_string(), Value::Str("object".to_string()));
-            class_data.attrs.insert(
-                "__bases__".to_string(),
-                self.heap.alloc_tuple(Vec::new()),
-            );
+            class_data
+                .attrs
+                .insert("__bases__".to_string(), self.heap.alloc_tuple(Vec::new()));
             class_data.attrs.insert(
                 "__mro__".to_string(),
                 self.heap
                     .alloc_tuple(vec![Value::Class(object_class.clone())]),
             );
-            class_data.attrs.insert(
-                "__flags__".to_string(),
-                Value::Int(0),
-            );
+            class_data
+                .attrs
+                .insert("__flags__".to_string(), Value::Int(0));
             class_data.attrs.insert(
                 "__new__".to_string(),
                 Value::Builtin(BuiltinFunction::ObjectNew),
@@ -17423,24 +17893,28 @@ impl Vm {
                 "__getstate__".to_string(),
                 Value::Builtin(BuiltinFunction::ObjectGetState),
             );
-            class_data
-                .attrs
-                .insert("__eq__".to_string(), Value::Builtin(BuiltinFunction::OperatorEq));
-            class_data
-                .attrs
-                .insert("__ne__".to_string(), Value::Builtin(BuiltinFunction::OperatorNe));
+            class_data.attrs.insert(
+                "__eq__".to_string(),
+                Value::Builtin(BuiltinFunction::OperatorEq),
+            );
+            class_data.attrs.insert(
+                "__ne__".to_string(),
+                Value::Builtin(BuiltinFunction::OperatorNe),
+            );
             class_data
                 .attrs
                 .insert("__hash__".to_string(), Value::Builtin(BuiltinFunction::Id));
-            class_data
-                .attrs
-                .insert("__repr__".to_string(), Value::Builtin(BuiltinFunction::Repr));
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::Repr),
+            );
             class_data
                 .attrs
                 .insert("__str__".to_string(), Value::Builtin(BuiltinFunction::Repr));
-            class_data
-                .attrs
-                .insert("__format__".to_string(), Value::Builtin(BuiltinFunction::Repr));
+            class_data.attrs.insert(
+                "__format__".to_string(),
+                Value::Builtin(BuiltinFunction::Repr),
+            );
             class_data.attrs.insert(
                 "__reduce_ex__".to_string(),
                 Value::Builtin(BuiltinFunction::NoOp),
@@ -17476,10 +17950,10 @@ impl Vm {
         };
         self.builtins.insert("Ellipsis".to_string(), ellipsis);
         let not_implemented = {
-            let class = match self
-                .heap
-                .alloc_class(ClassObject::new("NotImplementedType".to_string(), Vec::new()))
-            {
+            let class = match self.heap.alloc_class(ClassObject::new(
+                "NotImplementedType".to_string(),
+                Vec::new(),
+            )) {
                 Value::Class(obj) => obj,
                 _ => unreachable!(),
             };
@@ -17789,7 +18263,9 @@ impl Vm {
             Value::Builtin(BuiltinFunction::FrozenSet) => {
                 Ok(self.alloc_synthetic_class("frozenset"))
             }
-            Value::Builtin(BuiltinFunction::Enumerate) => Ok(self.alloc_synthetic_class("enumerate")),
+            Value::Builtin(BuiltinFunction::Enumerate) => {
+                Ok(self.alloc_synthetic_class("enumerate"))
+            }
             Value::Builtin(BuiltinFunction::Bytes) => Ok(self.alloc_synthetic_class("bytes")),
             Value::Builtin(BuiltinFunction::ByteArray) => {
                 Ok(self.alloc_synthetic_class("bytearray"))
@@ -18006,8 +18482,7 @@ fn erfc_approx(x: f64) -> f64 {
                     + t * (-0.186_288_06
                         + t * (0.278_868_07
                             + t * (-1.135_203_98
-                                + t * (1.488_515_87
-                                    + t * (-0.822_152_23 + t * 0.170_872_77))))))));
+                                + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
     let ans = t * poly.exp();
     if x >= 0.0 { ans } else { 2.0 - ans }
 }
@@ -18070,7 +18545,9 @@ fn system_time_to_secs_f64(value: SystemTime) -> Option<f64> {
 
 fn seconds_to_system_time(value: f64) -> Result<SystemTime, RuntimeError> {
     if !value.is_finite() || value.is_sign_negative() {
-        return Err(RuntimeError::new("timestamp must be a non-negative finite number"));
+        return Err(RuntimeError::new(
+            "timestamp must be a non-negative finite number",
+        ));
     }
     Ok(UNIX_EPOCH + Duration::from_secs_f64(value))
 }
@@ -18359,7 +18836,9 @@ fn find_bytes_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
     }
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn re_match_bounds(
@@ -18423,9 +18902,8 @@ fn re_match_bounds(
                 _ => return Err(RuntimeError::new("string must be bytes-like")),
             };
             let found = match mode {
-                ReMode::Search => {
-                    find_bytes_subslice(&text, pattern_bytes).map(|start| (start, start + pattern_bytes.len()))
-                }
+                ReMode::Search => find_bytes_subslice(&text, pattern_bytes)
+                    .map(|start| (start, start + pattern_bytes.len())),
                 ReMode::Match => text
                     .starts_with(pattern_bytes)
                     .then_some((0, pattern_bytes.len())),
@@ -18534,7 +19012,9 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
                     continue;
                 }
                 match errors {
-                    "strict" => return Err(RuntimeError::new("ascii codec can't encode character")),
+                    "strict" => {
+                        return Err(RuntimeError::new("ascii codec can't encode character"));
+                    }
                     "ignore" => {}
                     "replace" | "surrogateescape" => out.push(b'?'),
                     _ => return Err(RuntimeError::new("unsupported error handler")),
@@ -18617,7 +19097,11 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
     }
 }
 
-fn decode_utf16_bytes(bytes: &[u8], errors: &str, big_endian: bool) -> Result<String, RuntimeError> {
+fn decode_utf16_bytes(
+    bytes: &[u8],
+    errors: &str,
+    big_endian: bool,
+) -> Result<String, RuntimeError> {
     let mut units = Vec::new();
     let mut pos = 0usize;
     while pos + 1 < bytes.len() {
@@ -18654,7 +19138,11 @@ fn decode_utf16_bytes(bytes: &[u8], errors: &str, big_endian: bool) -> Result<St
     Ok(out)
 }
 
-fn decode_utf32_bytes(bytes: &[u8], errors: &str, big_endian: bool) -> Result<String, RuntimeError> {
+fn decode_utf32_bytes(
+    bytes: &[u8],
+    errors: &str,
+    big_endian: bool,
+) -> Result<String, RuntimeError> {
     let mut out = String::new();
     let mut pos = 0usize;
     while pos + 4 <= bytes.len() {
@@ -18703,9 +19191,8 @@ fn decode_utf8_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError>
             Err(err) => {
                 let valid = err.valid_up_to();
                 if valid > 0 {
-                    let fragment = std::str::from_utf8(&bytes[pos..pos + valid]).map_err(|_| {
-                        RuntimeError::new("utf-8 codec can't decode bytes")
-                    })?;
+                    let fragment = std::str::from_utf8(&bytes[pos..pos + valid])
+                        .map_err(|_| RuntimeError::new("utf-8 codec can't decode bytes"))?;
                     out.push_str(fragment);
                     pos += valid;
                 }
@@ -19138,7 +19625,21 @@ fn find_logging_percent_style_match(text: &str) -> Option<(usize, usize)> {
             continue;
         }
         let spec = bytes[j].to_ascii_lowercase();
-        if matches!(spec, b'd' | b'i' | b'o' | b'u' | b'x' | b'e' | b'f' | b'g' | b'c' | b'r' | b's' | b'a' | b'%') {
+        if matches!(
+            spec,
+            b'd' | b'i'
+                | b'o'
+                | b'u'
+                | b'x'
+                | b'e'
+                | b'f'
+                | b'g'
+                | b'c'
+                | b'r'
+                | b's'
+                | b'a'
+                | b'%'
+        ) {
             return Some((i, j + 1));
         }
         i += 1;
@@ -20316,8 +20817,9 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
 
         let value = if let Some(key) = mapping_key {
             used_mapping = true;
-            let entries =
-                mapping.as_ref().ok_or_else(|| RuntimeError::new("format requires a mapping"))?;
+            let entries = mapping
+                .as_ref()
+                .ok_or_else(|| RuntimeError::new("format requires a mapping"))?;
             entries
                 .iter()
                 .find_map(|(entry_key, entry_value)| match entry_key {
@@ -20360,8 +20862,10 @@ fn format_percent_value(value: Value, conversion: char) -> Result<String, Runtim
         'o' => Ok(format!("{:o}", value_to_int(value)?)),
         'c' => match value {
             Value::Int(code) => {
-                let code = u32::try_from(code).map_err(|_| RuntimeError::new("%c arg not in range"))?;
-                let ch = char::from_u32(code).ok_or_else(|| RuntimeError::new("%c arg not in range"))?;
+                let code =
+                    u32::try_from(code).map_err(|_| RuntimeError::new("%c arg not in range"))?;
+                let ch =
+                    char::from_u32(code).ok_or_else(|| RuntimeError::new("%c arg not in range"))?;
                 Ok(ch.to_string())
             }
             Value::Str(text) => {
@@ -20426,7 +20930,8 @@ fn pos_value(value: Value) -> Result<Value, RuntimeError> {
 }
 
 fn invert_value(value: Value) -> Result<Value, RuntimeError> {
-    let value = value_to_int(value).map_err(|_| RuntimeError::new("unsupported operand type for ~"))?;
+    let value =
+        value_to_int(value).map_err(|_| RuntimeError::new("unsupported operand type for ~"))?;
     Ok(Value::Int(!value))
 }
 
@@ -20609,6 +21114,32 @@ fn matmul_values(_left: Value, _right: Value) -> Result<Value, RuntimeError> {
     Err(RuntimeError::new("unsupported operand type for @"))
 }
 
+fn ordering_from_cmp_value(value: Value) -> Result<Ordering, RuntimeError> {
+    let numeric = match value {
+        Value::Int(value) => value as f64,
+        Value::Bool(value) => {
+            if value {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        Value::Float(value) => value,
+        _ => {
+            return Err(RuntimeError::new(
+                "cmp_to_key comparator must return a number",
+            ));
+        }
+    };
+    if numeric.is_nan() || numeric == 0.0 {
+        Ok(Ordering::Equal)
+    } else if numeric < 0.0 {
+        Ok(Ordering::Less)
+    } else {
+        Ok(Ordering::Greater)
+    }
+}
+
 fn compare_order(left: Value, right: Value) -> Result<Ordering, RuntimeError> {
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return Ok(match (left, right) {
@@ -20656,7 +21187,8 @@ fn as_set_values(value: &Value) -> Option<Vec<Value>> {
 }
 
 fn set_is_subset(left: &[Value], right: &[Value]) -> bool {
-    left.iter().all(|needle| right.iter().any(|value| value == needle))
+    left.iter()
+        .all(|needle| right.iter().any(|value| value == needle))
 }
 
 fn compare_lt(left: Value, right: Value) -> Result<Value, RuntimeError> {

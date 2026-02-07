@@ -51,6 +51,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] `os`, `pathlib`, `io` (`open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` and wait-status helpers now execute non-`NoOp` paths; broader module parity still pending)
 - [~] `random` foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`)
 - [~] `math`, `itertools` (`math` core transcendentals/aggregates now execute non-`NoOp` paths; long-tail API parity still pending)
+- [~] `operator`, `functools` (`operator.itemgetter`/`attrgetter`/`methodcaller` and `functools.cmp_to_key` now execute non-`NoOp` paths with `sorted`/`min`/`max` key interoperability; long-tail API parity still pending)
 - [~] `json`, `re`, `datetime`
 - [~] `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`)
 - [~] `asyncio` foundations (`run`, `sleep`, `create_task`, `gather`)

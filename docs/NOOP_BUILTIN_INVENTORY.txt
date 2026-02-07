@@ -82,7 +82,6 @@ dataclasses.replace
 decimal.getcontext
 decimal.localcontext
 decimal.setcontext
-functools.cmp_to_key
 importlib.invalidate_caches
 importlib.util.spec_from_file_location
 inspect.signature
@@ -99,9 +98,6 @@ itertools.starmap
 itertools.takewhile
 itertools.tee
 itertools.zip_longest
-operator.attrgetter
-operator.itemgetter
-operator.methodcaller
 platform.win32_is_iot
 threading.Barrier.__init__
 threading.Barrier.abort
