@@ -36,14 +36,14 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [x] P0: Comprehensions + generator expressions with correct scoping.
 - [~] P0: f‑strings + format spec mini‑language (PEP 701 compatible) (baseline interpolation lowering implemented; full spec pending).
 - [x] P1: Type annotations (`x: T`, `def f(x: T) -> U`, class/instance annotations).
-- [ ] P1: Annotation evaluation semantics matching 3.14 (deferred vs eager).
+- [~] P1: Annotation evaluation semantics matching 3.14 (baseline `from __future__ import annotations` deferral-to-string behavior implemented; full parity still pending).
 - [~] P1: Type parameter syntax / `type` statements (PEP 695 family) (`def`/`class` header type params and baseline `type` statement lowering are implemented; full runtime semantics pending).
 
 **Semantic Analysis & Compilation**
 - [~] P0: Scope analysis (locals/globals/nonlocals/freevars/cellvars).
 - [x] P0: Correct comprehension scope isolation.
 - [ ] P0: `exec`/`eval` semantics and dynamic scope effects.
-- [~] P0: `__future__` flags and compiler feature gating (placement + unknown-feature validation implemented; full flag semantics pending).
+- [~] P0: `__future__` flags and compiler feature gating (placement + unknown-feature validation implemented; future-import statements are compile-time-only, and baseline stdlib `__future__.all_feature_names` compatibility is wired; full flag/object parity pending).
 - [x] P1: Annotation capture into `__annotations__` (module/class/function, eager evaluation path currently implemented).
 - [ ] P1: Constant folding and peephole optimizations (no semantic changes).
 - [~] P2: Bytecode verification pass (jump-target + stack-shape checks implemented for supported translation paths; full verifier coverage pending).
@@ -90,7 +90,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [~] P0: `random` module foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`).
 - [~] P0: `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`).
 - [~] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
-- [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core; `os`/`posix` now include non-`NoOp` `open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` + wait-status helpers).
+- [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core; `os`/`posix` now include non-`NoOp` `open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` + wait-status helpers, and `datetime` now exports baseline `date`/`timedelta` symbols; full module parity pending).
 - [~] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator` (`math` core stub surface removed; long-tail parity still pending).
 - [~] P1: `threading`, `multiprocessing`, `asyncio`, `concurrent.futures` (`asyncio`/`threading` foundations implemented; broader module parity pending).
 - [ ] P1: `subprocess`, `socket`, `ssl`, `http`, `urllib`.
@@ -106,7 +106,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Testing & QA**
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
-- [~] P0: Current curated CPython language/import harness suites are near zero-allowlist and now include `test/test_list.py`; `tests/cpython_allowlist.txt` remains empty.
+- [~] P0: Current curated CPython language/import harness suites are near zero-allowlist and now include `test/test_list.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`; `tests/cpython_allowlist.txt` remains empty.
 - [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).

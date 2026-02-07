@@ -4,8 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ast::{
-    AssignTarget, CallArg, ComprehensionClause, Constant, DictEntry, ExceptHandler, Expr, ExprKind,
-    MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
+    AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, DictEntry,
+    ExceptHandler, Expr, ExprKind, MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
+    UnaryOp,
 };
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
@@ -1187,6 +1188,7 @@ struct Compiler {
     scope: ScopeInfo,
     current_span: Span,
     cell_index: HashMap<String, u32>,
+    future_annotations: bool,
 }
 
 struct LoopContext {
@@ -1212,6 +1214,7 @@ impl Compiler {
             scope,
             current_span: Span::unknown(),
             cell_index,
+            future_annotations: false,
         }
     }
 
@@ -1222,7 +1225,7 @@ impl Compiler {
     }
 
     fn compile_module(&mut self, module: &Module) -> Result<(), CompileError> {
-        self.validate_future_imports(&module.body)?;
+        self.future_annotations = self.validate_future_imports(&module.body)?;
         if body_has_ann_assign(&module.body) {
             self.init_annotations()?;
         }
@@ -1232,7 +1235,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn validate_future_imports(&self, body: &[Stmt]) -> Result<(), CompileError> {
+    fn validate_future_imports(&self, body: &[Stmt]) -> Result<bool, CompileError> {
         let mut idx = 0usize;
         if let Some(first) = body.first() {
             if matches!(
@@ -1247,6 +1250,7 @@ impl Compiler {
         }
 
         let mut seen_non_future = false;
+        let mut future_annotations = false;
         for stmt in body.iter().skip(idx) {
             match &stmt.node {
                 StmtKind::ImportFrom {
@@ -1262,6 +1266,9 @@ impl Compiler {
                         }
                         for alias in names {
                             let name = alias.name.as_str();
+                            if name == "annotations" {
+                                future_annotations = true;
+                            }
                             let known = matches!(
                                 name,
                                 "annotations"
@@ -1291,7 +1298,7 @@ impl Compiler {
                 }
             }
         }
-        Ok(())
+        Ok(future_annotations)
     }
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompileError> {
@@ -1446,6 +1453,12 @@ impl Compiler {
                 names,
                 level,
             } => {
+                if *level == 0 && module.as_deref() == Some("__future__") {
+                    // __future__ imports are compile-time directives and should
+                    // not execute runtime import side effects.
+                    compiler.emit(Opcode::Nop, None);
+                    return Ok(());
+                }
                 let module_name = module.clone().unwrap_or_default();
                 let import_name_idx = compiler.code.add_name(module_name);
                 compiler.emit_const(Value::Int(*level as i64));
@@ -1919,10 +1932,105 @@ impl Compiler {
         let count = items.len();
         for (name, expr) in items {
             self.emit_const(Value::Str(name));
-            self.compile_expr(expr)?;
+            self.emit_annotation_expr(expr)?;
         }
         self.emit(Opcode::BuildDict, Some(count as u32));
         Ok(true)
+    }
+
+    fn emit_annotation_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
+        if self.future_annotations {
+            self.emit_const(Value::Str(self.annotation_expr_to_string(expr)));
+            Ok(())
+        } else {
+            self.compile_expr(expr)
+        }
+    }
+
+    fn annotation_expr_to_string(&self, expr: &Expr) -> String {
+        match &expr.node {
+            ExprKind::Name(name) => name.clone(),
+            ExprKind::Constant(Constant::None) => "None".to_string(),
+            ExprKind::Constant(Constant::Bool(value)) => value.to_string(),
+            ExprKind::Constant(Constant::Int(value)) => value.to_string(),
+            ExprKind::Constant(Constant::Float(value)) => value.value().to_string(),
+            ExprKind::Constant(Constant::Str(value)) => format!("{value:?}"),
+            ExprKind::Attribute { value, name } => {
+                format!("{}.{}", self.annotation_expr_to_string(value), name)
+            }
+            ExprKind::Subscript { value, index } => format!(
+                "{}[{}]",
+                self.annotation_expr_to_string(value),
+                self.annotation_expr_to_string(index)
+            ),
+            ExprKind::Tuple(items) => items
+                .iter()
+                .map(|item| self.annotation_expr_to_string(item))
+                .collect::<Vec<_>>()
+                .join(", "),
+            ExprKind::List(items) => format!(
+                "[{}]",
+                items
+                    .iter()
+                    .map(|item| self.annotation_expr_to_string(item))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            ExprKind::Call { func, args } => {
+                let rendered = args
+                    .iter()
+                    .map(|arg| match arg {
+                        CallArg::Positional(value) => self.annotation_expr_to_string(value),
+                        CallArg::Keyword { name, value } => {
+                            format!("{name}={}", self.annotation_expr_to_string(value))
+                        }
+                        CallArg::Star(value) => {
+                            format!("*{}", self.annotation_expr_to_string(value))
+                        }
+                        CallArg::DoubleStar(value) => {
+                            format!("**{}", self.annotation_expr_to_string(value))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}({rendered})", self.annotation_expr_to_string(func))
+            }
+            ExprKind::Binary { left, op, right } => format!(
+                "{} {} {}",
+                self.annotation_expr_to_string(left),
+                annotation_binary_op_symbol(op),
+                self.annotation_expr_to_string(right)
+            ),
+            ExprKind::Unary { op, operand } => {
+                format!(
+                    "{}{}",
+                    annotation_unary_op_symbol(op),
+                    self.annotation_expr_to_string(operand)
+                )
+            }
+            ExprKind::BoolOp { op, left, right } => format!(
+                "{} {} {}",
+                self.annotation_expr_to_string(left),
+                annotation_bool_op_symbol(op),
+                self.annotation_expr_to_string(right)
+            ),
+            ExprKind::Slice { lower, upper, step } => {
+                let mut text = String::new();
+                if let Some(lower) = lower {
+                    text.push_str(&self.annotation_expr_to_string(lower));
+                }
+                text.push(':');
+                if let Some(upper) = upper {
+                    text.push_str(&self.annotation_expr_to_string(upper));
+                }
+                if let Some(step) = step {
+                    text.push(':');
+                    text.push_str(&self.annotation_expr_to_string(step));
+                }
+                text
+            }
+            _ => format!("<expr {:?}>", expr.node),
+        }
     }
 
     fn name_kind(&self, name: &str) -> NameKind {
@@ -2925,7 +3033,7 @@ impl Compiler {
                 self.ensure_local_name("__annotations__");
                 self.emit_load_name("__annotations__")?;
                 self.emit_const(Value::Str(name.clone()));
-                self.compile_expr(annotation)?;
+                self.emit_annotation_expr(annotation)?;
                 self.emit(Opcode::DictSet, None);
                 self.emit_store_name_scoped("__annotations__")?;
                 if let Some(expr) = value {
@@ -2933,7 +3041,7 @@ impl Compiler {
                 }
             }
             _ => {
-                self.compile_expr(annotation)?;
+                self.emit_annotation_expr(annotation)?;
                 self.emit(Opcode::PopTop, None);
                 if let Some(expr) = value {
                     self.compile_assign_target(target, expr)?;
@@ -3763,6 +3871,50 @@ impl Compiler {
             self.patch_jump(jump, continue_target)?;
         }
         Ok(())
+    }
+}
+
+fn annotation_binary_op_symbol(op: &BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::MatMul => "@",
+        BinaryOp::Div => "/",
+        BinaryOp::Pow => "**",
+        BinaryOp::FloorDiv => "//",
+        BinaryOp::Mod => "%",
+        BinaryOp::LShift => "<<",
+        BinaryOp::RShift => ">>",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitXor => "^",
+        BinaryOp::BitOr => "|",
+        BinaryOp::Eq => "==",
+        BinaryOp::Ne => "!=",
+        BinaryOp::Lt => "<",
+        BinaryOp::Le => "<=",
+        BinaryOp::Gt => ">",
+        BinaryOp::Ge => ">=",
+        BinaryOp::In => "in",
+        BinaryOp::NotIn => "not in",
+        BinaryOp::Is => "is",
+        BinaryOp::IsNot => "is not",
+    }
+}
+
+fn annotation_unary_op_symbol(op: &UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Not => "not ",
+        UnaryOp::Pos => "+",
+        UnaryOp::Neg => "-",
+        UnaryOp::Invert => "~",
+    }
+}
+
+fn annotation_bool_op_symbol(op: &BoolOp) -> &'static str {
+    match op {
+        BoolOp::And => "and",
+        BoolOp::Or => "or",
     }
 }
 

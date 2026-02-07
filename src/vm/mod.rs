@@ -1741,8 +1741,33 @@ impl Vm {
                 ("dumps", BuiltinFunction::JsonDumps),
                 ("loads", BuiltinFunction::JsonLoads),
             ],
-            Vec::new(),
+            vec![("JSONDecodeError", Value::ExceptionType("ValueError".to_string()))],
         );
+        // Presence of _json lets stdlib import helpers detect accelerator availability.
+        // Individual speedup symbols intentionally remain absent so pure-Python fallbacks run.
+        self.install_builtin_module("_json", &[], Vec::new());
+        if let (Some(json_module), Value::Module(decoder_module), Value::Module(scanner_module)) = (
+            self.modules.get("json").cloned(),
+            self.heap
+                .alloc_module(ModuleObject::new("json.decoder".to_string())),
+            self.heap
+                .alloc_module(ModuleObject::new("json.scanner".to_string())),
+        ) {
+            if let Object::Module(module_data) = &mut *decoder_module.kind_mut() {
+                module_data.globals.insert(
+                    "JSONDecodeError".to_string(),
+                    Value::ExceptionType("ValueError".to_string()),
+                );
+            }
+            if let Object::Module(module_data) = &mut *json_module.kind_mut() {
+                module_data
+                    .globals
+                    .insert("decoder".to_string(), Value::Module(decoder_module));
+                module_data
+                    .globals
+                    .insert("scanner".to_string(), Value::Module(scanner_module));
+            }
+        }
         self.install_builtin_module(
             "marshal",
             &[
@@ -2152,6 +2177,7 @@ impl Vm {
                 ("Tuple", typing_placeholder.clone()),
                 ("List", typing_placeholder.clone()),
                 ("Dict", typing_placeholder.clone()),
+                ("DefaultDict", typing_placeholder.clone()),
                 ("MutableMapping", typing_placeholder.clone()),
                 ("Callable", typing_placeholder.clone()),
                 ("Iterable", typing_placeholder.clone()),
@@ -2462,6 +2488,28 @@ impl Vm {
                 ("start_new_thread", BuiltinFunction::ThreadStartNewThread),
             ],
             vec![("TIMEOUT_MAX", Value::Float(f64::MAX))],
+        );
+        self.install_builtin_module(
+            "__future__",
+            &[],
+            vec![
+                ("all_feature_names", self.heap.alloc_list(Vec::new())),
+                (
+                    "__all__",
+                    self.heap
+                        .alloc_list(vec![Value::Str("all_feature_names".to_string())]),
+                ),
+                ("annotations", Value::None),
+                ("nested_scopes", Value::None),
+                ("generators", Value::None),
+                ("division", Value::None),
+                ("absolute_import", Value::None),
+                ("with_statement", Value::None),
+                ("print_function", Value::None),
+                ("unicode_literals", Value::None),
+                ("generator_stop", Value::None),
+                ("barry_as_FLUFL", Value::None),
+            ],
         );
         self.install_builtin_module(
             "_contextvars",
@@ -3255,13 +3303,51 @@ impl Vm {
                 Value::Str("pyrs _testmultiphase stub".to_string()),
             )],
         );
+        let datetime_class = match self
+            .heap
+            .alloc_class(ClassObject::new("datetime".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *datetime_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("now".to_string(), Value::Builtin(BuiltinFunction::DateTimeNow));
+            class_data
+                .attrs
+                .insert("today".to_string(), Value::Builtin(BuiltinFunction::DateToday));
+        }
+        let date_class = match self
+            .heap
+            .alloc_class(ClassObject::new("date".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *date_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("today".to_string(), Value::Builtin(BuiltinFunction::DateToday));
+        }
+        let timedelta_class = match self
+            .heap
+            .alloc_class(ClassObject::new("timedelta".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
         self.install_builtin_module(
             "datetime",
             &[
                 ("now", BuiltinFunction::DateTimeNow),
                 ("today", BuiltinFunction::DateToday),
             ],
-            Vec::new(),
+            vec![
+                ("datetime", Value::Class(datetime_class)),
+                ("date", Value::Class(date_class)),
+                ("timedelta", Value::Class(timedelta_class)),
+            ],
         );
         let uuid_class = match self
             .heap
@@ -6412,11 +6498,10 @@ impl Vm {
                                         }
                                     }
                                 } else {
-                                    if !kwargs.is_empty() {
-                                        return Err(RuntimeError::new(
-                                            "unexpected keyword arguments",
-                                        ));
-                                    }
+                                    // Some stdlib metaclass-heavy constructors (for example
+                                    // enum functional syntax) pass keyword arguments even when
+                                    // the class itself has no __init__ hook.
+                                    let _ = kwargs;
                                     self.push_value(Value::Instance(instance));
                                 }
                             }
@@ -6806,11 +6891,10 @@ impl Vm {
                                         }
                                     }
                                 } else {
-                                    if !kwargs.is_empty() {
-                                        return Err(RuntimeError::new(
-                                            "unexpected keyword arguments",
-                                        ));
-                                    }
+                                    // Some stdlib metaclass-heavy constructors (for example
+                                    // enum functional syntax) pass keyword arguments even when
+                                    // the class itself has no __init__ hook.
+                                    let _ = kwargs;
                                     self.push_value(Value::Instance(instance));
                                 }
                             }
@@ -6997,11 +7081,10 @@ impl Vm {
                                         }
                                     }
                                 } else {
-                                    if !kwargs.is_empty() {
-                                        return Err(RuntimeError::new(
-                                            "unexpected keyword arguments",
-                                        ));
-                                    }
+                                    // Some stdlib metaclass-heavy constructors (for example
+                                    // enum functional syntax) pass keyword arguments even when
+                                    // the class itself has no __init__ hook.
+                                    let _ = kwargs;
                                     self.push_value(Value::Instance(instance));
                                 }
                             }
@@ -14690,6 +14773,16 @@ impl Vm {
                         }
                     }
                 }
+            }
+        }
+        if let Some(module_name) = kwargs.remove("module") {
+            match module_name {
+                Value::Str(name) => {
+                    class
+                        .attrs
+                        .insert("__module__".to_string(), Value::Str(name));
+                }
+                _ => return Err(RuntimeError::new("make_dataclass() module must be str")),
             }
         }
         let class_value = self.heap.alloc_class(class);
@@ -24292,6 +24385,12 @@ impl Vm {
             Value::Builtin(BuiltinFunction::CollectionsCounter) => {
                 Ok(self.alloc_synthetic_class("Counter"))
             }
+            Value::Builtin(BuiltinFunction::CollectionsDeque) => {
+                Ok(self.alloc_synthetic_class("deque"))
+            }
+            Value::Builtin(BuiltinFunction::CollectionsDefaultDict) => {
+                Ok(self.alloc_synthetic_class("defaultdict"))
+            }
             _ => Err(RuntimeError::new("class base must be a class object")),
         }
     }
@@ -26624,8 +26723,13 @@ fn call_builtin_with_kwargs(
             builtin.call(heap, args)
         }
         BuiltinFunction::TypingIdFunc => {
-            kwargs.clear();
-            builtin.call(heap, args)
+            if args.is_empty() && !kwargs.is_empty() {
+                kwargs.clear();
+                Ok(Value::Builtin(BuiltinFunction::TypingIdFunc))
+            } else {
+                kwargs.clear();
+                builtin.call(heap, args)
+            }
         }
         _ => {
             if !kwargs.is_empty() {

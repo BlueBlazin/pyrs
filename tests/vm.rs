@@ -4052,6 +4052,53 @@ fn rejects_unknown_future_feature() {
 }
 
 #[test]
+fn future_annotations_defer_name_resolution() {
+    let source = r#"from __future__ import annotations
+def get_pager() -> Pager:
+    return None
+ann = get_pager.__annotations__
+ok = ann['return'] == 'Pager'
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dataclass_decorator_accepts_keyword_only_form() {
+    let source = r#"import dataclasses
+@dataclasses.dataclass(frozen=True, slots=True)
+class Point:
+    x: int
+ok = Point.__name__ == 'Point'
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn import_fresh_module_json_with_accelerator_present() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "from test.support import import_helper\n\
+cjson = import_helper.import_fresh_module('json', fresh=['_json'])\n\
+ok = cjson is not None and hasattr(cjson, 'decoder') and hasattr(cjson, 'JSONDecodeError')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code =
+        compiler::compile_module_with_filename(&module, "<import_fresh_json>").expect("compile");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_property_descriptor_getter() {
     let source = "class C:\n    @property\n    def value(self):\n        return 42\nc = C()\nout = c.value\nclass_attr = C.value\n";
     let module = parser::parse_module(source).expect("parse should succeed");

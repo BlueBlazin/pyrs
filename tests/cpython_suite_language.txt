@@ -50,3 +50,6 @@ test/test_os.py
 test/test_io.py
 test/test_threading.py
 test/test_signal.py
+test/test_json/__init__.py
+test/test_dataclasses/__init__.py
+test/test_enum.py

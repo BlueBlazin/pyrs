@@ -182,7 +182,7 @@ Status: complete
 ### Milestone 7 — Language Surface Foundations (P0)
 DoD:
 - Tokenizer/grammar/compiler surface expanded for milestone targets: decorators, assignment expressions (`:=`), list/dict comprehensions and generator expressions (with scope isolation), `match`/`case` (core literal/capture/guard subset), async syntax (`async def`/`await`/`async for`/`async with`), `except*` parsing, type parameters on functions/classes, and f-string lowering.
-- `__future__` import placement/unknown-feature gating checks are enforced at compile time.
+- `__future__` import placement/unknown-feature gating checks are enforced at compile time, and future-import statements are now treated as compile-time directives (no runtime import side effects).
 - Targeted parser/VM regression tests cover all newly added language-surface features.
 Status: complete
 Notes:
@@ -307,6 +307,8 @@ Progress:
 - Expanded CPython probe runs outside the curated harness now carry forward remaining Milestone 13 blockers tracked in `docs/STUB_ACCOUNTING.md` (`_testinternalcapi.hamt` remains outstanding).
 - Class-statement inheritance hang closure landed: exception-parent ancestry traversal now has cycle guards, unblocking `class X(Base): ...` over `seq_tests`-style bases and re-enabling `test/test_list.py` in curated harness runs.
 - Bigint long-tail parity slice landed: VM/runtime now use arbitrary-precision floor-division semantics for `//`, `%`, and `divmod`, `%x`/`%X`/`%o` formatting now supports large integers, and `_pylong` conversion/division helpers execute bigint-capable paths (`int_to_decimal_string`, `int_divmod`, `int_from_string`, `compute_powers`, `_dec_str_to_int_inner`) with dedicated regressions.
+- Future-annotation/stdlib bootstrap parity batch landed: baseline `from __future__ import annotations` now defers function/variable annotation evaluation to strings, `__future__.all_feature_names` compatibility is wired for stdlib `codeop` import paths, and curated CPython harness expansion now includes `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py` with empty allowlist.
+- Dataclasses/datetime import-path closure landed for harness expansion: `make_dataclass(..., module=...)` is supported, `dataclass(...)` keyword-only decorator form no longer fails baseline call paths, and `datetime` now exports baseline `date`/`timedelta` symbols required by stdlib imports.
 - Container semantics hardening batch landed: hashability guards now enforce `TypeError` for unhashable `dict` keys and `set`/`frozenset` items across core constructor/update/assignment/membership flows, with dedicated VM regressions.
 - VM refactor kickoff landed: container/hashability helpers are extracted into `src/vm/containers.rs` to begin decomposing `src/vm/mod.rs` without behavior regressions.
 - Runtime container upgrade landed: `dict`/`set`/`frozenset` now use dedicated hash-indexed runtime container objects with insertion-order backing vectors.

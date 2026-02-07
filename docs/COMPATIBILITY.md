@@ -9,9 +9,9 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] Tokenizer parity for current curated CPython suites (additional long-tail lexical parity still pending)
 - [x] Statements subset: pass, expr, assign/augassign (incl chained assignment, tuple/list destructuring targets, and generalized attribute/subscript targets), `del`, if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with (including multi-item forms), class (bases + `metaclass=` keyword path supported), decorators, `match`/`case` (literal/capture/guard plus sequence/mapping/class/or/as/star families, class-pattern positional-after-keyword rejection, duplicate-capture and OR-binding parity checks, and irrefutable reachability checks), `except*` parsing, and core async statement semantics (`async def`/`async for`/`async with`)
 - [x] Expressions subset: arithmetic (incl `**`, `/`, `//`, `%`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls (including generator-expression argument form), literals (including implicit adjacent string concatenation and imaginary-number literal lowering), attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await semantics, list/dict comprehensions, generator expressions, starred tuple/list displays, and f-string lowering
-- [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
+- [~] Type annotations / hints (variable annotations, function parameter + return annotations; baseline `from __future__ import annotations` defers annotation evaluation to strings, but full 3.14 annotation-evaluation parity remains pending)
 - [~] Type-parameter/type-alias syntax baseline (`def`/`class` type params plus `type Name = ...` parsing/lowering; full PEP 695 runtime semantics pending)
-- [x] `__future__` import placement + unknown-feature compile-time validation
+- [x] `__future__` import placement + unknown-feature compile-time validation (future imports treated as compile-time directives; no runtime import side effects)
 - [~] Advanced grammar/runtime parity gaps remain (remaining pattern edge/form semantics, full exception-group edge semantics, full f-string/PEP 701 coverage)
 
 ## Bytecode
@@ -61,23 +61,23 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [~] `random` foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`)
 - [~] `math`, `itertools` (`math` core transcendentals/aggregates now execute non-`NoOp` paths; `itertools` long-tail helpers now execute non-`NoOp` paths (`accumulate`, `combinations*`, `compress`, `dropwhile`, `filterfalse`, `groupby`, `islice`, `pairwise`, `starmap`, `takewhile`, `tee`, `zip_longest`); full iterator/laziness edge parity still pending)
 - [~] `operator`, `functools` (`operator.itemgetter`/`attrgetter`/`methodcaller` and `functools.cmp_to_key` now execute non-`NoOp` paths with `sorted`/`min`/`max` key interoperability; `functools.partial` unwraps `staticmethod(...)` and `classmethod(...)` wrappers for partial/partialmethod class-body compatibility; `functools.wraps` now copies wrapper metadata (`__dict__`, `__wrapped__`) for function and bound-method inputs; `functools.cached_property` now executes descriptor-backed cache semantics used by stdlib paths like `ipaddress`; long-tail API parity still pending)
-- [~] `json`, `re`, `datetime`
+- [~] `json`, `re`, `datetime` (`datetime` now exports baseline `date`/`timedelta` class symbols for stdlib import paths; full runtime parity still pending)
 - [~] `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`)
 - [~] `asyncio` foundations (`run`, `sleep`, `create_task`, `gather`)
 - [~] `threading` foundations (`get_ident`, `current_thread`, `main_thread`, `active_count`, `local`, plus baseline class methods for `Thread`, `Event`, `Condition`, `Semaphore`, `BoundedSemaphore`, `Barrier`)
 - [~] `signal` foundations (`signal`, `getsignal`, `raise_signal`, core constants)
 - [~] `socket` / `_socket` foundations (`gethostname`, `gethostbyname`, `getaddrinfo`, `fromfd`, `getdefaulttimeout`/`setdefaulttimeout`, and `hton*`/`ntoh*` module-level paths plus baseline `socket.__init__`/`close`/`detach`/`fileno`; full socket API parity still pending)
 - [~] `uuid` foundations (`UUID.__init__`, `uuid1/3/4/5/6/7/8`, `getnode`, and namespace constants with baseline object attributes; full CPython algorithm/edge parity pending)
-- [~] `dataclasses` foundations (`field`, `is_dataclass`, `fields`, `asdict`, `astuple`, `replace`, `make_dataclass` baseline non-`NoOp` paths implemented; full decorator/Field/default-factory semantics pending)
+- [~] `dataclasses` foundations (`field`, `is_dataclass`, `fields`, `asdict`, `astuple`, `replace`, `make_dataclass` baseline non-`NoOp` paths implemented, including keyword-only decorator form and `make_dataclass(..., module=...)`; full decorator/Field/default-factory semantics pending)
 - [~] `subprocess` / `_posixsubprocess` foundations (`_posixsubprocess.fork_exec` now fails explicitly as unsupported instead of silent `NoOp`; full process-spawn parity pending)
 
 ## CPython Tests
 - [x] First-class CPython harness with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`)
 - [x] Owned allowlist tracking (`tests/cpython_allowlist.txt`) with stale-entry detection in harness
-- [~] Current curated language/import harness suites are near-empty-allowlist; latest expansion includes `test/test_list.py` after class-statement inheritance hang closure
+- [~] Current curated language/import harness suites are near-empty-allowlist; latest expansion includes `test/test_list.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`
 - [x] Differential tests vs CPython (`tests/differential_cpython.rs`)
 - [x] Parser/compiler/VM fuzzing (`tests/fuzz_parser_vm.rs` + existing arithmetic fuzz)
-- [~] Incremental `Lib/test` coverage expansion (broader suite growth and allowlist reduction ongoing; latest language-suite expansion adds `test_set`, `test_list`, `test_tuple`, `test_slice`, `test_format`, and `test_configparser`)
+- [~] Incremental `Lib/test` coverage expansion (broader suite growth and allowlist reduction ongoing; latest language-suite expansion adds `test_set`, `test_list`, `test_tuple`, `test_slice`, `test_format`, `test_configparser`, `test_json/__init__`, `test_dataclasses/__init__`, and `test_enum`)
 
 ## Real-world Apps
 - [x] Curated pure-Python smoke/regression suite (`tests/realworld_smoke.rs`)
