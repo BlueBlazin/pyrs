@@ -1335,17 +1335,22 @@ impl Vm {
         let decimal_context_class = self
             .heap
             .alloc_class(ClassObject::new("Context".to_string(), Vec::new()));
+        let decimal_default_context = match &decimal_context_class {
+            Value::Class(class) => self.heap.alloc_instance(InstanceObject::new(class.clone())),
+            _ => Value::None,
+        };
         self.install_builtin_module(
             "decimal",
             &[
-                ("getcontext", BuiltinFunction::NoOp),
-                ("setcontext", BuiltinFunction::NoOp),
-                ("localcontext", BuiltinFunction::NoOp),
+                ("getcontext", BuiltinFunction::DecimalGetContext),
+                ("setcontext", BuiltinFunction::DecimalSetContext),
+                ("localcontext", BuiltinFunction::DecimalLocalContext),
             ],
             vec![
                 ("Decimal", decimal_class),
                 ("Context", decimal_context_class),
                 ("ROUND_HALF_EVEN", Value::Str("ROUND_HALF_EVEN".to_string())),
+                ("_context", decimal_default_context),
             ],
         );
         self.install_builtin_module(
@@ -2378,7 +2383,7 @@ impl Vm {
                 ("RLock", BuiltinFunction::ThreadRLock),
                 ("allocate_lock", BuiltinFunction::ThreadRLock),
                 ("get_ident", BuiltinFunction::ThreadingGetIdent),
-                ("start_new_thread", BuiltinFunction::NoOp),
+                ("start_new_thread", BuiltinFunction::ThreadStartNewThread),
             ],
             vec![("TIMEOUT_MAX", Value::Float(f64::MAX))],
         );
@@ -3498,8 +3503,8 @@ impl Vm {
                     "_filters_mutated_lock_held",
                     BuiltinFunction::WarningsFiltersMutated,
                 ),
-                ("_acquire_lock", BuiltinFunction::NoOp),
-                ("_release_lock", BuiltinFunction::NoOp),
+                ("_acquire_lock", BuiltinFunction::WarningsAcquireLock),
+                ("_release_lock", BuiltinFunction::WarningsReleaseLock),
             ],
             vec![
                 ("_defaultaction", Value::Str("default".to_string())),
@@ -11581,6 +11586,11 @@ impl Vm {
             BuiltinFunction::RandomGetRandBits => self.builtin_random_getrandbits(args, kwargs),
             BuiltinFunction::RandomChoice => self.builtin_random_choice(args, kwargs),
             BuiltinFunction::RandomShuffle => self.builtin_random_shuffle(args, kwargs),
+            BuiltinFunction::DecimalGetContext => self.builtin_decimal_getcontext(args, kwargs),
+            BuiltinFunction::DecimalSetContext => self.builtin_decimal_setcontext(args, kwargs),
+            BuiltinFunction::DecimalLocalContext => {
+                self.builtin_decimal_localcontext(args, kwargs)
+            }
             BuiltinFunction::MathSqrt => self.builtin_math_sqrt(args, kwargs),
             BuiltinFunction::MathCopySign => self.builtin_math_copysign(args, kwargs),
             BuiltinFunction::MathFloor => self.builtin_math_floor(args, kwargs),
@@ -11770,6 +11780,9 @@ impl Vm {
             BuiltinFunction::AsyncioCreateTask => self.builtin_asyncio_create_task(args, kwargs),
             BuiltinFunction::AsyncioGather => self.builtin_asyncio_gather(args, kwargs),
             BuiltinFunction::ThreadingGetIdent => self.builtin_threading_get_ident(args, kwargs),
+            BuiltinFunction::ThreadStartNewThread => {
+                self.builtin_thread_start_new_thread(args, kwargs)
+            }
             BuiltinFunction::ThreadingCurrentThread => {
                 self.builtin_threading_current_thread(args, kwargs)
             }
@@ -11799,6 +11812,12 @@ impl Vm {
             }
             BuiltinFunction::WarningsFiltersMutated => {
                 self.builtin_warnings_filters_mutated(args, kwargs)
+            }
+            BuiltinFunction::WarningsAcquireLock => {
+                self.builtin_warnings_acquire_lock(args, kwargs)
+            }
+            BuiltinFunction::WarningsReleaseLock => {
+                self.builtin_warnings_release_lock(args, kwargs)
             }
             _ => {
                 if kwargs.is_empty() {
@@ -14522,6 +14541,73 @@ impl Vm {
             }
             _ => Err(RuntimeError::new("shuffle() expects list")),
         }
+    }
+
+    fn builtin_decimal_getcontext(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("getcontext() expects no arguments"));
+        }
+        let module = self
+            .modules
+            .get("decimal")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("decimal module unavailable"))?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("invalid decimal module"));
+        };
+        Ok(module_data
+            .globals
+            .get("_context")
+            .cloned()
+            .unwrap_or(Value::None))
+    }
+
+    fn builtin_decimal_setcontext(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("setcontext() expects one context argument"));
+        }
+        let context = args.remove(0);
+        let module = self
+            .modules
+            .get("decimal")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("decimal module unavailable"))?;
+        let Object::Module(module_data) = &mut *module.kind_mut() else {
+            return Err(RuntimeError::new("invalid decimal module"));
+        };
+        module_data.globals.insert("_context".to_string(), context);
+        Ok(Value::None)
+    }
+
+    fn builtin_decimal_localcontext(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("localcontext() expects at most one argument"));
+        }
+        let context = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("ctx") {
+            value
+        } else {
+            self.builtin_decimal_getcontext(Vec::new(), HashMap::new())?
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "localcontext() got an unexpected keyword argument",
+            ));
+        }
+        Ok(context)
     }
 
     fn builtin_math_sqrt(
@@ -18563,6 +18649,68 @@ impl Vm {
         Ok(Value::Int((hasher.finish() & i64::MAX as u64) as i64))
     }
 
+    fn builtin_thread_start_new_thread(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "start_new_thread() expects callable, args tuple, and optional kwargs dict",
+            ));
+        }
+        let callable = args.remove(0);
+        if !self.is_callable_value(&callable) {
+            return Err(RuntimeError::new(
+                "start_new_thread() first argument must be callable",
+            ));
+        }
+        let call_args = match args.remove(0) {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("start_new_thread() args must be tuple")),
+            },
+            _ => return Err(RuntimeError::new("start_new_thread() args must be tuple")),
+        };
+        let call_kwargs = if !args.is_empty() {
+            match args.remove(0) {
+                Value::Dict(obj) => match &*obj.kind() {
+                    Object::Dict(entries) => {
+                        let mut out = HashMap::new();
+                        for (key, value) in entries {
+                            let Value::Str(name) = key else {
+                                return Err(RuntimeError::new(
+                                    "start_new_thread() kwargs keys must be strings",
+                                ));
+                            };
+                            out.insert(name.clone(), value.clone());
+                        }
+                        out
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "start_new_thread() kwargs must be a dict",
+                        ));
+                    }
+                },
+                _ => {
+                    return Err(RuntimeError::new(
+                        "start_new_thread() kwargs must be a dict",
+                    ));
+                }
+            }
+        } else {
+            HashMap::new()
+        };
+
+        match self.call_internal(callable, call_args, call_kwargs)? {
+            InternalCallOutcome::Value(_) => self.builtin_threading_get_ident(Vec::new(), HashMap::new()),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(RuntimeError::new("start_new_thread() callable raised"))
+            }
+        }
+    }
+
     fn builtin_threading_current_thread(
         &mut self,
         args: Vec<Value>,
@@ -18813,6 +18961,28 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("_filters_mutated() expects no arguments"));
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_warnings_acquire_lock(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_acquire_lock() expects no arguments"));
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_warnings_release_lock(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_release_lock() expects no arguments"));
         }
         Ok(Value::None)
     }

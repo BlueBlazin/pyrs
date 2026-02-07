@@ -3919,6 +3919,36 @@ fn executes_atexit_register_unregister_run_and_clear() {
 }
 
 #[test]
+fn executes_decimal_context_helpers() {
+    let source = "import decimal\nctx = decimal.getcontext()\ndecimal.setcontext(ctx)\nctx2 = decimal.localcontext()\nok = (ctx is ctx2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_thread_start_new_thread_baseline() {
+    let source = "import _thread\nout = []\ndef fn(x, y=0):\n    out.append(x + y)\ntid = _thread.start_new_thread(fn, (2,), {'y': 3})\nok = isinstance(tid, int) and out == [5]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_warnings_lock_helpers() {
+    let source = "import _warnings\n_warnings._acquire_lock()\n_warnings._release_lock()\nok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_types_markers_and_functools_partial() {
     let source = "import functools\nimport types\ndef add(a, b, c=0):\n    return a + b + c\npart = functools.partial(add, 1, c=3)\nok = part(2) == 6 and hasattr(types, 'BuiltinFunctionType') and hasattr(types, 'EllipsisType')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

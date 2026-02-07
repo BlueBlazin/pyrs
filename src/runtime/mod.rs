@@ -948,6 +948,7 @@ pub enum BuiltinFunction {
     ContextVarSet,
     ContextCopyContext,
     ThreadRLock,
+    ThreadStartNewThread,
     ThreadLockEnter,
     ThreadLockExit,
     ThreadLockAcquire,
@@ -1002,6 +1003,9 @@ pub enum BuiltinFunction {
     RandomGetRandBits,
     RandomChoice,
     RandomShuffle,
+    DecimalGetContext,
+    DecimalSetContext,
+    DecimalLocalContext,
     WeakRefRef,
     WeakRefProxy,
     WeakRefGetWeakRefCount,
@@ -1221,6 +1225,8 @@ pub enum BuiltinFunction {
     WarningsWarn,
     WarningsWarnExplicit,
     WarningsFiltersMutated,
+    WarningsAcquireLock,
+    WarningsReleaseLock,
     AbcGetCacheToken,
     AbcInit,
     AbcRegister,
@@ -2693,6 +2699,9 @@ impl BuiltinFunction {
             | BuiltinFunction::RandomGetRandBits
             | BuiltinFunction::RandomChoice
             | BuiltinFunction::RandomShuffle
+            | BuiltinFunction::DecimalGetContext
+            | BuiltinFunction::DecimalSetContext
+            | BuiltinFunction::DecimalLocalContext
             | BuiltinFunction::MathSqrt
             | BuiltinFunction::MathCopySign
             | BuiltinFunction::MathFloor
@@ -2845,6 +2854,7 @@ impl BuiltinFunction {
             | BuiltinFunction::AsyncioCreateTask
             | BuiltinFunction::AsyncioGather
             | BuiltinFunction::ThreadingGetIdent
+            | BuiltinFunction::ThreadStartNewThread
             | BuiltinFunction::ThreadingCurrentThread
             | BuiltinFunction::ThreadingMainThread
             | BuiltinFunction::ThreadingActiveCount
@@ -2864,6 +2874,8 @@ impl BuiltinFunction {
             | BuiltinFunction::WarningsWarn
             | BuiltinFunction::WarningsWarnExplicit
             | BuiltinFunction::WarningsFiltersMutated
+            | BuiltinFunction::WarningsAcquireLock
+            | BuiltinFunction::WarningsReleaseLock
             | BuiltinFunction::ObjectNew
             | BuiltinFunction::ObjectInit
             | BuiltinFunction::ObjectGetAttribute

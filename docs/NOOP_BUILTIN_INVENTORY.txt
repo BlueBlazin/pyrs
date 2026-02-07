@@ -44,9 +44,6 @@ _testcapi.meth_varargs
 _testcapi.meth_varargs_keywords
 _testinternalcapi.has_inline_values
 _testinternalcapi.set_eval_frame_default
-_thread.start_new_thread
-_warnings._acquire_lock
-_warnings._release_lock
 builtins.exec
 builtins.object.__reduce_ex__
 dataclasses.asdict
@@ -56,9 +53,6 @@ dataclasses.fields
 dataclasses.is_dataclass
 dataclasses.make_dataclass
 dataclasses.replace
-decimal.getcontext
-decimal.localcontext
-decimal.setcontext
 threading.Barrier.__init__
 threading.Barrier.abort
 threading.Barrier.reset
