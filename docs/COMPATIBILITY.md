@@ -32,6 +32,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Generators (lazy suspended-frame protocol: `__next__`, `send`, `throw`, `close`)
 - [x] Coroutines + async generators (core `__await__` / `__aiter__` / `__anext__`, `aiter`/`anext`, `StopAsyncIteration`)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
+- [x] `except` matching supports builtin and user-defined exception classes (including tuple handlers and subclass matching)
 - [x] Tracebacks with filename/line/col + frame names
 - [x] Exception chaining/context metadata (`__cause__`, `__context__`, `__suppress_context__`; `raise ... from ...` and implicit chaining)
 - [x] `__annotations__` storage for modules/classes/functions

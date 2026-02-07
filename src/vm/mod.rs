@@ -256,6 +256,7 @@ pub struct Vm {
     run_stop_depth: Option<usize>,
     signal_handlers: HashMap<i64, Value>,
     defaultdict_factories: HashMap<u64, Value>,
+    exception_parents: HashMap<String, String>,
 }
 
 impl Vm {
@@ -288,6 +289,7 @@ impl Vm {
             run_stop_depth: None,
             signal_handlers: HashMap::new(),
             defaultdict_factories: HashMap::new(),
+            exception_parents: HashMap::new(),
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -7121,7 +7123,7 @@ impl Vm {
                     Opcode::MatchException => {
                         let handler_type = self.pop_value()?;
                         let exception = self.pop_value()?;
-                        let matches = exception_matches(&exception, &handler_type)?;
+                        let matches = self.exception_matches(&exception, &handler_type)?;
                         self.push_value(Value::Bool(matches));
                     }
                     Opcode::ClearException => {
@@ -7336,6 +7338,74 @@ impl Vm {
         }
     }
 
+    fn exception_matches(&self, exception: &Value, handler_type: &Value) -> Result<bool, RuntimeError> {
+        let exception_name = match exception {
+            Value::Exception(exc) => exc.name.as_str(),
+            _ => return Err(RuntimeError::new("expected exception instance")),
+        };
+
+        let handler_name = match handler_type {
+            Value::Tuple(obj) => {
+                let Object::Tuple(items) = &*obj.kind() else {
+                    return Err(RuntimeError::new("except expects exception type"));
+                };
+                for item in items {
+                    if self.exception_matches(exception, item)? {
+                        return Ok(true);
+                    }
+                }
+                return Ok(false);
+            }
+            Value::List(obj) => {
+                let Object::List(items) = &*obj.kind() else {
+                    return Err(RuntimeError::new("except expects exception type"));
+                };
+                for item in items {
+                    if self.exception_matches(exception, item)? {
+                        return Ok(true);
+                    }
+                }
+                return Ok(false);
+            }
+            Value::ExceptionType(name) => name.as_str(),
+            Value::Exception(exc) => exc.name.as_str(),
+            Value::Class(class) => {
+                if !self.class_is_exception_class(class) {
+                    return Err(RuntimeError::new("except expects exception type"));
+                }
+                let class_kind = class.kind();
+                let Object::Class(class_data) = &*class_kind else {
+                    return Err(RuntimeError::new("except expects exception type"));
+                };
+                return Ok(self.exception_inherits(exception_name, &class_data.name));
+            }
+            _ => return Err(RuntimeError::new("except expects exception type")),
+        };
+
+        Ok(self.exception_inherits(exception_name, handler_name))
+    }
+
+    fn exception_inherits(&self, exception_name: &str, handler_name: &str) -> bool {
+        if exception_name == handler_name {
+            return true;
+        }
+        let mut current = self.exception_parent_name(exception_name);
+        while let Some(name) = current {
+            if name == handler_name {
+                return true;
+            }
+            current = self.exception_parent_name(&name);
+        }
+        false
+    }
+
+    fn exception_parent_name(&self, name: &str) -> Option<String> {
+        if let Some(parent) = self.exception_parents.get(name) {
+            return Some(parent.clone());
+        }
+        builtin_exception_parent(name).map(ToOwned::to_owned)
+    }
+
     fn class_is_exception_class(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class).iter().any(|entry| match &*entry.kind() {
             Object::Class(class_data) => {
@@ -7356,6 +7426,27 @@ impl Vm {
         match &*class.kind() {
             Object::Class(class_data) => Some(class_data.name.clone()),
             _ => None,
+        }
+    }
+
+    fn record_exception_parent_for_class(&mut self, class: &ObjRef) {
+        let (class_name, bases) = match &*class.kind() {
+            Object::Class(class_data) => (class_data.name.clone(), class_data.bases.clone()),
+            _ => return,
+        };
+        if class_name == "BaseException" {
+            return;
+        }
+
+        for base in bases {
+            let (base_name, is_exception) = match &*base.kind() {
+                Object::Class(base_data) => (base_data.name.clone(), self.class_is_exception_class(&base)),
+                _ => continue,
+            };
+            if is_exception {
+                self.exception_parents.insert(class_name.clone(), base_name);
+                return;
+            }
         }
     }
 
@@ -7472,6 +7563,7 @@ impl Vm {
                                 class_data.metaclass = Some(meta_class);
                             }
                         }
+                        self.record_exception_parent_for_class(class);
                         Ok(ClassBuildOutcome::Value(value))
                     } else {
                         Err(RuntimeError::new("metaclass must return a class object"))
@@ -7640,6 +7732,7 @@ impl Vm {
                         .insert("__mro__".to_string(), self.heap.alloc_tuple(mro_values));
                 }
             }
+            self.record_exception_parent_for_class(class_ref);
         }
         class_value
     }
@@ -18501,43 +18594,6 @@ fn is_truthy(value: &Value) -> bool {
     }
 }
 
-fn exception_matches(exception: &Value, handler_type: &Value) -> Result<bool, RuntimeError> {
-    let exception_name = match exception {
-        Value::Exception(exc) => exc.name.as_str(),
-        _ => return Err(RuntimeError::new("expected exception instance")),
-    };
-
-    let handler_name = match handler_type {
-        Value::Tuple(obj) => {
-            let Object::Tuple(items) = &*obj.kind() else {
-                return Err(RuntimeError::new("except expects exception type"));
-            };
-            for item in items {
-                if exception_matches(exception, item)? {
-                    return Ok(true);
-                }
-            }
-            return Ok(false);
-        }
-        Value::List(obj) => {
-            let Object::List(items) = &*obj.kind() else {
-                return Err(RuntimeError::new("except expects exception type"));
-            };
-            for item in items {
-                if exception_matches(exception, item)? {
-                    return Ok(true);
-                }
-            }
-            return Ok(false);
-        }
-        Value::ExceptionType(name) => name.as_str(),
-        Value::Exception(exc) => exc.name.as_str(),
-        _ => return Err(RuntimeError::new("except expects exception type")),
-    };
-
-    Ok(exception_inherits(exception_name, handler_name))
-}
-
 fn exception_is_named(exception: &Value, name: &str) -> bool {
     match exception {
         Value::Exception(exc) => exc.name == name,
@@ -18546,21 +18602,7 @@ fn exception_is_named(exception: &Value, name: &str) -> bool {
     }
 }
 
-fn exception_inherits(exception_name: &str, handler_name: &str) -> bool {
-    if exception_name == handler_name {
-        return true;
-    }
-    let mut current = exception_parent(exception_name);
-    while let Some(name) = current {
-        if name == handler_name {
-            return true;
-        }
-        current = exception_parent(name);
-    }
-    false
-}
-
-fn exception_parent(name: &str) -> Option<&'static str> {
+fn builtin_exception_parent(name: &str) -> Option<&'static str> {
     match name {
         "BaseException" => None,
         "Exception" => Some("BaseException"),

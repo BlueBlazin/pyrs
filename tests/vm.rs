@@ -3869,6 +3869,16 @@ fn raises_exception_instances_and_classes() {
 }
 
 #[test]
+fn catches_user_defined_exception_classes_in_except_handlers() {
+    let source = "class BaseErr(Exception):\n    pass\nclass ChildErr(BaseErr):\n    pass\nexact = False\ntry:\n    raise ChildErr('boom')\nexcept ChildErr:\n    exact = True\nbase = False\ntry:\n    raise ChildErr('boom')\nexcept BaseErr:\n    base = True\ntuple_ok = False\ntry:\n    raise ChildErr('boom')\nexcept (ValueError, BaseErr):\n    tuple_ok = True\nok = exact and base and tuple_ok\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_os_seek_constants() {
     let source = "import os\nok = os.SEEK_SET == 0 and os.SEEK_CUR == 1 and os.SEEK_END == 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");
