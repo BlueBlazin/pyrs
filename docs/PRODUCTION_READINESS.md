@@ -31,8 +31,8 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [x] P0: Assignment expressions (`:=`).
 - [x] P0: `yield`, `yield from` (lazy suspension/resume with delegation semantics).
 - [~] P0: `async`/`await`, async comprehensions, async generators (core coroutine/runtime semantics implemented; async comprehensions and deep parity edge cases pending).
-- [~] P0: `try/except*` (exception groups) and `ExceptionGroup` semantics (syntax/lowering in place; group-splitting semantics pending).
-- [~] P0: Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full pattern families pending.
+- [~] P0: `try/except*` (exception groups) and `ExceptionGroup` semantics (group splitting, per-handler subgroup execution, and remainder reraising implemented; full edge/API parity pending).
+- [~] P0: Pattern matching (`match`/`case`) broad families implemented (literal/capture/guard/sequence/mapping/class/or/as/star); full edge parity and remaining pattern forms pending.
 - [x] P0: Comprehensions + generator expressions with correct scoping.
 - [~] P0: f‑strings + format spec mini‑language (PEP 701 compatible) (baseline interpolation lowering implemented; full spec pending).
 - [x] P1: Type annotations (`x: T`, `def f(x: T) -> U`, class/instance annotations).
@@ -81,8 +81,8 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [x] P0: File‑based imports + module cache + basic packages (including relative `from .` resolution, `sys.path` lookup, `sys.modules` exposure, package `__path__` lookup for submodules, `sys.meta_path`/`sys.path_hooks`/`sys.path_importer_cache` contracts, and module metadata/spec population).
 - [~] P0: Full importlib machinery (`ModuleSpec`, `__loader__`, `__package__`, `__path__`) for supported pure-Python loaders (`pyrs.SourceFileLoader`, `pyrs.NamespaceLoader`) and `importlib` helper APIs (`import_module`, `find_spec`, `importlib.util.find_spec`).
 - [x] P0: Namespace packages (filesystem directory namespace package loading with aggregated `__path__`).
-- [ ] P0: Zip/bytecode imports.
-- [ ] P1: `importlib.resources`, `pkgutil`, entry points.
+- [~] P0: Zip/bytecode imports (sourceless `.pyc` module/package imports implemented; zip-import parity pending).
+- [~] P1: `importlib.resources`, `pkgutil`, entry points (fallback shim workflows implemented for stdlib-less environments; full CPython parity pending).
 
 **Standard Library Coverage**
 - [~] P0: Minimal builtins subset.

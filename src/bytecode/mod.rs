@@ -89,6 +89,7 @@ pub enum Opcode {
     PopBlock,
     Raise,
     MatchException,
+    MatchExceptionStar,
     ClearException,
     PopTop,
     EndFor,

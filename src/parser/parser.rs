@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, ExceptHandler, Expr,
-    DictEntry, ExprKind, FloatLiteral, ImportAlias, MatchCase, Module, Parameter, Pattern, Span,
-    Stmt,
-    StmtKind, UnaryOp,
+    AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, DictEntry,
+    ExceptHandler, Expr, ExprKind, FloatLiteral, ImportAlias, MatchCase, Module, Parameter,
+    Pattern, Span, Stmt, StmtKind, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -268,7 +267,8 @@ impl Parser {
             if kind == TokenKind::Equal {
                 let mut targets = vec![target_expr];
                 let mut value_pos = next_pos + 1;
-                while let Some((next_target, next_after)) = self.parse_assignment_target_list(value_pos)
+                while let Some((next_target, next_after)) =
+                    self.parse_assignment_target_list(value_pos)
                 {
                     if !matches!(self.token_at(next_after).kind, TokenKind::Equal) {
                         break;
@@ -278,13 +278,7 @@ impl Parser {
                 }
                 let (value, next) = self.parse_expr_with_tuple_tail(value_pos)?;
                 return Ok((
-                    self.make_stmt(
-                        start,
-                        StmtKind::Assign {
-                            targets,
-                            value,
-                        },
-                    ),
+                    self.make_stmt(start, StmtKind::Assign { targets, value }),
                     next,
                 ));
             }
@@ -466,19 +460,64 @@ impl Parser {
     }
 
     fn parse_match_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
+        self.parse_match_or_pattern(pos)
+    }
+
+    fn parse_match_or_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
+        let (first, mut pos) = self.parse_match_as_pattern(pos)?;
+        let mut options = vec![first];
+        while matches!(self.token_at(pos).kind, TokenKind::Pipe) {
+            let (next, after) = self.parse_match_as_pattern(pos + 1)?;
+            options.push(next);
+            pos = after;
+        }
+        if options.len() == 1 {
+            Ok((options.remove(0), pos))
+        } else {
+            Ok((Pattern::Or(options), pos))
+        }
+    }
+
+    fn parse_match_as_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
+        let (pattern, mut pos) = self.parse_match_closed_pattern(pos)?;
+        if self.match_keyword(pos, Keyword::As) {
+            pos += 1;
+            let token = self.token_at(pos);
+            if token.kind != TokenKind::Name {
+                return Err(self.error_at(pos, "expected capture name after 'as'"));
+            }
+            if token.lexeme == "_" {
+                return Err(self.error_at(pos, "cannot use '_' as a capture target"));
+            }
+            return Ok((
+                Pattern::As {
+                    pattern: Box::new(pattern),
+                    name: token.lexeme.clone(),
+                },
+                pos + 1,
+            ));
+        }
+        Ok((pattern, pos))
+    }
+
+    fn parse_match_closed_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
         let token = self.token_at(pos);
         match &token.kind {
             TokenKind::Name => {
-                if token.lexeme == "_" {
-                    Ok((Pattern::Wildcard, pos + 1))
-                } else if matches!(
-                    self.token_at(pos + 1).kind,
-                    TokenKind::Colon | TokenKind::Newline | TokenKind::EndMarker
-                ) || self.match_keyword(pos + 1, Keyword::If)
+                let name_lexeme = token.lexeme.clone();
+                if name_lexeme == "_" {
+                    return Ok((Pattern::Wildcard, pos + 1));
+                }
+                let (expr, next) = self.parse_match_value_expr(pos)?;
+                if matches!(self.token_at(next).kind, TokenKind::LParen) {
+                    return self.parse_match_class_pattern_from_expr(expr, next);
+                }
+                if matches!(&expr.node, ExprKind::Name(name) if name == &name_lexeme)
+                    && self.is_capture_pattern_terminator(next)
                 {
-                    Ok((Pattern::Capture(token.lexeme.clone()), pos + 1))
+                    Ok((Pattern::Capture(name_lexeme), next))
                 } else {
-                    Ok((Pattern::Wildcard, self.skip_match_pattern(pos)))
+                    Ok((Pattern::Value(expr), next))
                 }
             }
             TokenKind::Number => {
@@ -511,8 +550,176 @@ impl Parser {
                 };
                 Ok((Pattern::Constant(negated), pos + 2))
             }
+            TokenKind::LBracket | TokenKind::LParen => self.parse_match_sequence_pattern(pos),
+            TokenKind::LBrace => self.parse_match_mapping_pattern(pos),
             _ => Ok((Pattern::Wildcard, self.skip_match_pattern(pos))),
         }
+    }
+
+    fn parse_match_class_pattern_from_expr(
+        &mut self,
+        class: Expr,
+        mut pos: usize,
+    ) -> Result<(Pattern, usize), ParseError> {
+        pos = self.expect_kind(pos, TokenKind::LParen)?;
+        let mut positional = Vec::new();
+        let mut keywords = Vec::new();
+        while !matches!(self.token_at(pos).kind, TokenKind::RParen | TokenKind::EndMarker) {
+            if self.token_at(pos).kind == TokenKind::Name
+                && matches!(self.token_at(pos + 1).kind, TokenKind::Equal)
+            {
+                let key = self.token_at(pos).lexeme.clone();
+                let (pattern, next) = self.parse_match_pattern(pos + 2)?;
+                keywords.push((key, pattern));
+                pos = next;
+            } else {
+                let (pattern, next) = self.parse_match_pattern(pos)?;
+                positional.push(pattern);
+                pos = next;
+            }
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+        pos = self.expect_kind(pos, TokenKind::RParen)?;
+        Ok((
+            Pattern::Class {
+                class,
+                positional,
+                keywords,
+            },
+            pos,
+        ))
+    }
+
+    fn parse_match_sequence_pattern(
+        &mut self,
+        pos: usize,
+    ) -> Result<(Pattern, usize), ParseError> {
+        let (open, close) = match self.token_at(pos).kind {
+            TokenKind::LBracket => (TokenKind::LBracket, TokenKind::RBracket),
+            TokenKind::LParen => (TokenKind::LParen, TokenKind::RParen),
+            _ => return Err(self.error_at(pos, "expected sequence pattern")),
+        };
+        let mut pos = self.expect_kind(pos, open.clone())?;
+        let mut elements = Vec::new();
+        let mut saw_comma = false;
+        while self.token_at(pos).kind != close
+            && !matches!(self.token_at(pos).kind, TokenKind::EndMarker)
+        {
+            let element = if matches!(self.token_at(pos).kind, TokenKind::Star) {
+                pos += 1;
+                match self.token_at(pos).kind {
+                    TokenKind::Name => {
+                        let name = self.token_at(pos).lexeme.clone();
+                        pos += 1;
+                        if name == "_" {
+                            Pattern::Star(None)
+                        } else {
+                            Pattern::Star(Some(name))
+                        }
+                    }
+                    _ => return Err(self.error_at(pos, "expected name after '*' in pattern")),
+                }
+            } else {
+                let (pattern, next) = self.parse_match_pattern(pos)?;
+                pos = next;
+                pattern
+            };
+            elements.push(element);
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                saw_comma = true;
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+        pos = self.expect_kind(pos, close)?;
+        if open == TokenKind::LParen && elements.len() == 1 && !saw_comma {
+            return Ok((elements.remove(0), pos));
+        }
+        Ok((Pattern::Sequence(elements), pos))
+    }
+
+    fn parse_match_mapping_pattern(
+        &mut self,
+        pos: usize,
+    ) -> Result<(Pattern, usize), ParseError> {
+        let mut pos = self.expect_kind(pos, TokenKind::LBrace)?;
+        let mut entries = Vec::new();
+        let mut rest = None;
+        while !matches!(self.token_at(pos).kind, TokenKind::RBrace | TokenKind::EndMarker) {
+            if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
+                pos += 1;
+                let token = self.token_at(pos);
+                if token.kind != TokenKind::Name {
+                    return Err(self.error_at(pos, "expected name after '**' in mapping pattern"));
+                }
+                if token.lexeme == "_" {
+                    return Err(self.error_at(pos, "'**_' is not allowed in mapping pattern"));
+                }
+                if rest.is_some() {
+                    return Err(self.error_at(pos, "multiple '**name' captures in mapping pattern"));
+                }
+                rest = Some(token.lexeme.clone());
+                pos += 1;
+            } else {
+                let (key, next) = self.parse_expr_at(pos)?;
+                pos = self.expect_kind(next, TokenKind::Colon)?;
+                let (value_pattern, next) = self.parse_match_pattern(pos)?;
+                pos = next;
+                entries.push((key, value_pattern));
+            }
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+        pos = self.expect_kind(pos, TokenKind::RBrace)?;
+        Ok((Pattern::Mapping { entries, rest }, pos))
+    }
+
+    fn parse_match_value_expr(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        let token = self.token_at(pos);
+        if token.kind != TokenKind::Name {
+            return Err(self.error_at(pos, "expected value pattern"));
+        }
+        let mut expr = self.make_expr(pos, ExprKind::Name(token.lexeme.clone()));
+        let mut pos = pos + 1;
+        while matches!(self.token_at(pos).kind, TokenKind::Dot) {
+            let attr = self.token_at(pos + 1);
+            if attr.kind != TokenKind::Name {
+                return Err(self.error_at(pos + 1, "expected attribute name"));
+            }
+            let span = expr.span;
+            expr = Expr {
+                node: ExprKind::Attribute {
+                    value: Box::new(expr),
+                    name: attr.lexeme.clone(),
+                },
+                span,
+            };
+            pos += 2;
+        }
+        Ok((expr, pos))
+    }
+
+    fn is_capture_pattern_terminator(&self, pos: usize) -> bool {
+        matches!(
+            self.token_at(pos).kind,
+            TokenKind::Colon
+                | TokenKind::Comma
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::RBrace
+                | TokenKind::Newline
+                | TokenKind::EndMarker
+        ) || self.match_keyword(pos, Keyword::If)
+            || self.match_keyword(pos, Keyword::As)
+            || matches!(self.token_at(pos).kind, TokenKind::Pipe)
     }
 
     fn skip_match_pattern(&self, mut pos: usize) -> usize {
@@ -1101,8 +1308,8 @@ impl Parser {
                 if let Some(imag) = self.parse_imag_literal(&token.lexeme, pos)? {
                     let complex_ctor = self.make_expr(pos, ExprKind::Name("complex".to_string()));
                     let zero = self.make_expr(pos, ExprKind::Constant(Constant::Int(0)));
-                    let imag_part =
-                        self.make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(imag))));
+                    let imag_part = self
+                        .make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(imag))));
                     (
                         self.make_expr(
                             pos,
@@ -1429,10 +1636,7 @@ impl Parser {
             .into_iter()
             .next()
             .ok_or_else(|| self.error_at(start, "empty with statement"))?;
-        Ok((
-            stmt,
-            pos,
-        ))
+        Ok((stmt, pos))
     }
 
     fn parse_try_stmt(&mut self, pos: usize) -> ParseResult<Stmt> {
@@ -1445,6 +1649,8 @@ impl Parser {
         let mut handlers = Vec::new();
         let mut orelse = Vec::new();
         let mut finalbody = Vec::new();
+        let mut saw_star_handler = false;
+        let mut saw_plain_handler = false;
 
         loop {
             let except_pos = self.skip_newlines(pos);
@@ -1456,6 +1662,14 @@ impl Parser {
             if matches!(self.token_at(pos).kind, TokenKind::Star) {
                 is_star = true;
                 pos += 1;
+                saw_star_handler = true;
+            } else {
+                saw_plain_handler = true;
+            }
+            if saw_star_handler && saw_plain_handler {
+                return Err(
+                    self.error_at(pos.saturating_sub(1), "cannot mix 'except' and 'except*'")
+                );
             }
 
             let mut type_expr = None;
@@ -1473,6 +1687,9 @@ impl Parser {
                     name = Some(token.lexeme.clone());
                     pos += 1;
                 }
+            }
+            if is_star && type_expr.is_none() {
+                return Err(self.error_at(pos, "except* requires an exception type"));
             }
 
             pos = self.expect_kind(pos, TokenKind::Colon)?;
@@ -2135,7 +2352,10 @@ impl Parser {
             return Err(self.error_at(pos, "type parameter list cannot be empty"));
         }
         loop {
-            if matches!(self.token_at(pos).kind, TokenKind::Star | TokenKind::DoubleStar) {
+            if matches!(
+                self.token_at(pos).kind,
+                TokenKind::Star | TokenKind::DoubleStar
+            ) {
                 pos += 1;
             }
             let token = self.token_at(pos);
@@ -2467,7 +2687,9 @@ impl Parser {
         };
         let _conversion = parts.conversion;
         let _format_spec = parts.format_spec.as_deref();
-        let parsed = self.parse_embedded_expr(&parts.expr).map_err(|_| fallback.clone())?;
+        let parsed = self
+            .parse_embedded_expr(&parts.expr)
+            .map_err(|_| fallback.clone())?;
         let mut value_expr = self.wrap_fstring_value(span, parsed);
         if parts.debug {
             let prefix = Expr {
@@ -3058,7 +3280,10 @@ impl Parser {
         let mut step = None;
         if matches!(self.token_at(pos).kind, TokenKind::Colon) {
             pos += 1;
-            if !matches!(self.token_at(pos).kind, TokenKind::Comma | TokenKind::RBracket) {
+            if !matches!(
+                self.token_at(pos).kind,
+                TokenKind::Comma | TokenKind::RBracket
+            ) {
                 let (expr, next) = self.parse_expr_at(pos)?;
                 step = Some(expr);
                 pos = next;

@@ -7,12 +7,12 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
 - [x] Indentation + baseline tokenization (names with Unicode identifier support, explicit line-join backslashes, ints/floats with underscores/base prefixes/exponents, strings with prefixes, operators, and soft-keyword handling for `match`/`case`/`type`)
 - [~] Tokenizer parity for current curated CPython suites (additional long-tail lexical parity still pending)
-- [x] Statements subset: pass, expr, assign/augassign (incl chained assignment, tuple/list destructuring targets, and generalized attribute/subscript targets), `del`, if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with (including multi-item forms), class (bases + `metaclass=` keyword path supported), decorators, `match`/`case` (core subset), `except*` parsing, and core async statement semantics (`async def`/`async for`/`async with`)
+- [x] Statements subset: pass, expr, assign/augassign (incl chained assignment, tuple/list destructuring targets, and generalized attribute/subscript targets), `del`, if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with (including multi-item forms), class (bases + `metaclass=` keyword path supported), decorators, `match`/`case` (literal/capture/guard plus sequence/mapping/class/or/as/star families), `except*` parsing, and core async statement semantics (`async def`/`async for`/`async with`)
 - [x] Expressions subset: arithmetic (incl `**`, `/`, `//`, `%`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls (including generator-expression argument form), literals (including implicit adjacent string concatenation and imaginary-number literal lowering), attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await semantics, list/dict comprehensions, generator expressions, starred tuple/list displays, and f-string lowering
 - [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
 - [~] Type-parameter/type-alias syntax baseline (`def`/`class` type params plus `type Name = ...` parsing/lowering; full PEP 695 runtime semantics pending)
 - [x] `__future__` import placement + unknown-feature compile-time validation
-- [~] Advanced grammar/runtime parity gaps remain (full pattern variants, full exception-group semantics, full f-string/PEP 701 coverage)
+- [~] Advanced grammar/runtime parity gaps remain (pattern edge semantics, full exception-group edge semantics, full f-string/PEP 701 coverage)
 
 ## Bytecode
 - [x] Opcode source files synced (`opcode.py`, `bytecodes.c`, `opcode.h`)
@@ -33,10 +33,12 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Coroutines + async generators (core `__await__` / `__aiter__` / `__anext__`, `aiter`/`anext`, `StopAsyncIteration`)
 - [x] Exceptions subset (raise/try/except/else; simple exception types)
 - [x] `except` matching supports builtin and user-defined exception classes (including tuple handlers and subclass matching)
+- [x] `except*` runtime split semantics (matching subgroup delivery, multi-handler accumulation, and unmatched remainder reraising)
 - [x] Tracebacks with filename/line/col + frame names
 - [x] Exception chaining/context metadata (`__cause__`, `__context__`, `__suppress_context__`; `raise ... from ...` and implicit chaining)
 - [x] `__annotations__` storage for modules/classes/functions
 - [x] Module/import system parity for supported pure-Python scenarios (file-based imports, dotted modules, lazy submodule loading on attribute access, relative `from .` imports, `sys.path`-driven source lookup, `sys.modules` exposure, filesystem namespace-package loading, submodule lookup via package `__path__`, `sys.meta_path` default path-finder control, `sys.path_hooks` + `sys.path_importer_cache` contracts)
+- [x] Sourceless `.pyc` import fallback (module and package `__init__` paths under `__pycache__` or direct `.pyc`)
 - [x] Module metadata/spec fields for supported loaders (`__package__`, `__spec__`, `__loader__`, `__path__`, `has_location`, `cached`)
 - [x] Classes subset (multiple inheritance with C3 MRO metadata, instance attrs + bound methods, descriptor-aware attribute load/store paths, explicit `super(type, obj)` support, `__slots__` restrictions including empty-slot and `__dict__` slot behavior, class-header `metaclass=` keyword path, metaclass conflict detection, and metaclass method lookup fallback)
 - [~] Attribute-hook parity (`__getattribute__` custom override path + `object.__getattribute__` baseline are implemented; full CPython fallback/error-edge semantics remain pending)
@@ -47,6 +49,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/float/str (including `float.fromhex`, `float.hex`, `str.maketrans` baseline behavior), abs/sum/min/max/all/any/pow, list/tuple/set/frozenset, bytes/bytearray/memoryview, complex, divmod, iter/next/`aiter`/`anext`, `type` (1-arg + 3-arg), locals, globals, `exec` (source/code with explicit globals/locals handling), `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, baseline `object.__reduce_ex__`, basic `__import__` name/fromlist/level semantics)
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
 - [~] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`, `importlib.invalidate_caches`, baseline `importlib.util.spec_from_file_location`, `_frozen_importlib.spec_from_loader`/`_verbose_message`, and `_frozen_importlib_external` `_path_*` + `_unpack_uint*`; full spec/loader object parity still pending)
+- [~] `pkgutil` / `importlib.resources` foundations (fallback shim workflows for stdlib-less environments: `pkgutil.get_data`, `importlib.resources.files/read_text/read_binary/open_*`; full CPython parity still pending)
 - [~] `site` startup behavior foundations (CLI baseline startup import when stdlib paths are discoverable plus `-S`/`--no-site` opt-out; full CPython startup/site initialization parity still pending)
 - [~] `types`, `inspect` (`inspect.signature` now executes a non-`NoOp` path returning a `Signature` instance with baseline parameter-kind/default metadata; full CPython object/method parity still pending)
 - [~] `os`, `pathlib`, `io` (`open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` and wait-status helpers now execute non-`NoOp` paths; broader module parity still pending)

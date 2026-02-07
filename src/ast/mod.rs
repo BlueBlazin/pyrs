@@ -279,6 +279,23 @@ pub enum Pattern {
     Wildcard,
     Capture(String),
     Constant(Constant),
+    Value(Expr),
+    Sequence(Vec<Pattern>),
+    Mapping {
+        entries: Vec<(Expr, Pattern)>,
+        rest: Option<String>,
+    },
+    Class {
+        class: Expr,
+        positional: Vec<Pattern>,
+        keywords: Vec<(String, Pattern)>,
+    },
+    Or(Vec<Pattern>),
+    As {
+        pattern: Box<Pattern>,
+        name: String,
+    },
+    Star(Option<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

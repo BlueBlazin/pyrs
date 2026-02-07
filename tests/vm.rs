@@ -3,6 +3,8 @@ use pyrs::{
     runtime::{BuiltinFunction, ExceptionObject, Object, Value},
     vm::Vm,
 };
+use std::path::PathBuf;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn list_values(value: Option<Value>) -> Option<Vec<Value>> {
@@ -55,6 +57,53 @@ fn assert_float_global(vm: &Vm, name: &str, expected: f64) {
         }
         other => panic!("expected float global {name}, got {other:?}"),
     }
+}
+
+fn python314_path() -> Option<PathBuf> {
+    let candidate = PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/bin/python3");
+    if candidate.exists() {
+        return Some(candidate);
+    }
+    None
+}
+
+fn compile_cpython_pyc(source: &str, module_name: &str) -> Option<PathBuf> {
+    let python = python314_path()?;
+    let base = std::env::temp_dir().join(format!(
+        "pyrs_vm_import_pyc_{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time works")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&base).expect("create temp dir");
+    let py_path = base.join(format!("{module_name}.py"));
+    std::fs::write(&py_path, source).expect("write source");
+
+    let status = Command::new(python)
+        .arg("-m")
+        .arg("py_compile")
+        .arg(&py_path)
+        .status()
+        .expect("run py_compile");
+    assert!(status.success(), "py_compile failed");
+
+    let cache_dir = base.join("__pycache__");
+    let entries = std::fs::read_dir(&cache_dir).expect("read __pycache__");
+    for entry in entries {
+        let entry = entry.expect("read dir entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("pyc")
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .starts_with(module_name)
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 #[test]
@@ -2860,6 +2909,106 @@ fn resolves_submodule_using_package_dunder_path() {
 }
 
 #[test]
+fn imports_module_from_cached_pyc_without_source_file() {
+    let Some(pyc_path) = compile_cpython_pyc("value = 173\n", "mod") else {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    };
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let root_dir = std::env::temp_dir().join(format!("pyrs_import_pyc_module_{unique}"));
+    let pycache = root_dir.join("__pycache__");
+    std::fs::create_dir_all(&pycache).expect("create __pycache__");
+    let target = pycache.join("mod.cpython-314.pyc");
+    std::fs::copy(&pyc_path, &target).expect("copy pyc");
+
+    let source = "import mod\nx = mod.value\nloader = mod.__loader__\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&root_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(173)));
+    assert_eq!(
+        vm.get_global("loader"),
+        Some(Value::Str("pyrs.SourcelessFileLoader".to_string()))
+    );
+
+    let _ = std::fs::remove_file(target);
+    let _ = std::fs::remove_dir(pycache);
+    let _ = std::fs::remove_dir(root_dir);
+}
+
+#[test]
+fn imports_package_from_cached_pyc_without_source_file() {
+    let Some(pyc_path) = compile_cpython_pyc("value = 191\n", "__init__") else {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    };
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let root_dir = std::env::temp_dir().join(format!("pyrs_import_pyc_package_{unique}"));
+    let pkg_dir = root_dir.join("pkg");
+    let pycache = pkg_dir.join("__pycache__");
+    std::fs::create_dir_all(&pycache).expect("create package __pycache__");
+    let target = pycache.join("__init__.cpython-314.pyc");
+    std::fs::copy(&pyc_path, &target).expect("copy pyc");
+
+    let source = "import pkg\nx = pkg.value\nloader = pkg.__loader__\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&root_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(191)));
+    assert_eq!(
+        vm.get_global("loader"),
+        Some(Value::Str("pyrs.SourcelessFileLoader".to_string()))
+    );
+
+    let _ = std::fs::remove_file(target);
+    let _ = std::fs::remove_dir(pycache);
+    let _ = std::fs::remove_dir(pkg_dir);
+    let _ = std::fs::remove_dir(root_dir);
+}
+
+#[test]
+fn pkgutil_and_importlib_resources_shims_support_basic_resource_reads() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let root_dir = std::env::temp_dir().join(format!("pyrs_resource_shim_{unique}"));
+    let pkg_dir = root_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp package");
+    std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
+    std::fs::write(pkg_dir.join("data.txt"), "hello").expect("write package data");
+    let path_literal = root_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nimport pkgutil\nimport importlib.resources as resources\nraw = pkgutil.get_data('pkg', 'data.txt')\ntext = resources.files('pkg').joinpath('data.txt').read_text()\nok = raw == b'hello' and text == 'hello'\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(pkg_dir.join("data.txt"));
+    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
+    let _ = std::fs::remove_dir(pkg_dir);
+    let _ = std::fs::remove_dir(root_dir);
+}
+
+#[test]
 fn executes_len_on_list() {
     let source = "x = len([1, 2, 3])";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3436,6 +3585,31 @@ fn executes_match_case_statement() {
 }
 
 #[test]
+fn executes_match_sequence_or_and_as_patterns() {
+    let source = "subject = [1, 2, 3, 4]\nmatch subject:\n    case [1, *middle, 4]:\n        seq_ok = len(middle) == 2 and middle[0] == 2 and middle[1] == 3\n    case _:\n        seq_ok = False\nvalue = 2\nmatch value:\n    case 1 | (2 as captured):\n        or_ok = captured == 2\n    case _:\n        or_ok = False\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("seq_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("or_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("captured"), Some(Value::Int(2)));
+}
+
+#[test]
+fn executes_match_mapping_and_class_patterns() {
+    let source = "class Point:\n    __match_args__ = ('x', 'y')\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\ndata = {'kind': 'pt', 'x': 3, 'y': 4, 'extra': 9}\nmatch data:\n    case {'kind': 'pt', 'x': x, 'y': y, **rest}:\n        map_ok = x == 3 and y == 4 and len(rest) == 1 and ('extra' in rest)\n    case _:\n        map_ok = False\npt = Point(3, 4)\nmatch pt:\n    case Point(3, y=yy):\n        class_ok = yy == 4\n    case _:\n        class_ok = False\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("map_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("class_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("y"), Some(Value::Int(4)));
+}
+
+#[test]
 fn executes_asyncio_run_with_await() {
     let source = "import asyncio\nasync def inner(x):\n    return x + 1\nasync def outer(x):\n    y = await inner(x)\n    return y * 2\nresult = asyncio.run(outer(10))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3498,14 +3672,26 @@ fn executes_threading_and_signal_foundations() {
 }
 
 #[test]
-fn executes_except_star_as_except() {
-    let source =
-        "caught = False\ntry:\n    raise ValueError\nexcept* ValueError:\n    caught = True\n";
+fn executes_except_star_with_exceptiongroup_split_semantics() {
+    let source = "value_count = 0\ntype_count = 0\nruntime_count = 0\ntry:\n    raise ExceptionGroup('outer', [ValueError('a'), TypeError('b'), ExceptionGroup('inner', [ValueError('c'), RuntimeError('d')])])\nexcept* ValueError as eg:\n    value_count = len(eg.exceptions)\nexcept* TypeError as eg:\n    type_count = len(eg.exceptions)\nexcept* RuntimeError as eg:\n    runtime_count = len(eg.exceptions)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("value_count"), Some(Value::Int(2)));
+    assert_eq!(vm.get_global("type_count"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("runtime_count"), Some(Value::Int(1)));
+}
+
+#[test]
+fn reraises_except_star_remainder() {
+    let source = "caught = False\nremaining = 0\ntry:\n    try:\n        raise ExceptionGroup('outer', [ValueError('a'), RuntimeError('b')])\n    except* ValueError:\n        pass\nexcept ExceptionGroup as eg:\n    caught = True\n    remaining = len(eg.exceptions)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("caught"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("remaining"), Some(Value::Int(1)));
 }
 
 #[test]

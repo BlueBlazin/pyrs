@@ -214,7 +214,9 @@ fn strip_expr(expr: &Expr) -> Expr {
             entries
                 .iter()
                 .map(|entry| match entry {
-                    DictEntry::Pair(key, value) => DictEntry::Pair(strip_expr(key), strip_expr(value)),
+                    DictEntry::Pair(key, value) => {
+                        DictEntry::Pair(strip_expr(key), strip_expr(value))
+                    }
                     DictEntry::Unpack(value) => DictEntry::Unpack(strip_expr(value)),
                 })
                 .collect(),
@@ -327,6 +329,33 @@ fn strip_pattern(pattern: &Pattern) -> Pattern {
         Pattern::Wildcard => Pattern::Wildcard,
         Pattern::Capture(name) => Pattern::Capture(name.clone()),
         Pattern::Constant(value) => Pattern::Constant(value.clone()),
+        Pattern::Value(expr) => Pattern::Value(strip_expr(expr)),
+        Pattern::Sequence(items) => Pattern::Sequence(items.iter().map(strip_pattern).collect()),
+        Pattern::Mapping { entries, rest } => Pattern::Mapping {
+            entries: entries
+                .iter()
+                .map(|(key, value)| (strip_expr(key), strip_pattern(value)))
+                .collect(),
+            rest: rest.clone(),
+        },
+        Pattern::Class {
+            class,
+            positional,
+            keywords,
+        } => Pattern::Class {
+            class: strip_expr(class),
+            positional: positional.iter().map(strip_pattern).collect(),
+            keywords: keywords
+                .iter()
+                .map(|(name, value)| (name.clone(), strip_pattern(value)))
+                .collect(),
+        },
+        Pattern::Or(options) => Pattern::Or(options.iter().map(strip_pattern).collect()),
+        Pattern::As { pattern, name } => Pattern::As {
+            pattern: Box::new(strip_pattern(pattern)),
+            name: name.clone(),
+        },
+        Pattern::Star(name) => Pattern::Star(name.clone()),
     }
 }
 
@@ -403,10 +432,7 @@ fn parses_chained_assignment_statement() {
 fn parses_destructuring_assignment_statement() {
     let module = parser::parse_module("a, b = (1, 2)").expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::Assign {
-            targets,
-            ..
-        } => {
+        StmtKind::Assign { targets, .. } => {
             assert_eq!(targets.len(), 1);
             let AssignTarget::Tuple(items) = &targets[0] else {
                 panic!("unexpected target: {:?}", targets[0]);
@@ -423,10 +449,8 @@ fn parses_destructuring_assignment_statement() {
 fn parses_subscript_assignment_statement() {
     let module = parser::parse_module("x[0] = 1").expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::Assign {
-            targets,
-            ..
-        } if matches!(targets.as_slice(), [AssignTarget::Subscript { .. }]) => {}
+        StmtKind::Assign { targets, .. }
+            if matches!(targets.as_slice(), [AssignTarget::Subscript { .. }]) => {}
         other => panic!("unexpected stmt: {other:?}"),
     }
 }
@@ -435,10 +459,7 @@ fn parses_subscript_assignment_statement() {
 fn parses_attribute_assignment_statement() {
     let module = parser::parse_module("mod.x = 1").expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::Assign {
-            targets,
-            ..
-        } => match targets.as_slice() {
+        StmtKind::Assign { targets, .. } => match targets.as_slice() {
             [AssignTarget::Attribute { name, .. }] => assert_eq!(name, "x"),
             _ => panic!("unexpected targets: {targets:?}"),
         },
@@ -1698,8 +1719,7 @@ fn parses_slice_with_step() {
 
 #[test]
 fn parses_multi_item_subscript_with_slices() {
-    let module =
-        parser::parse_module("x[:42, ..., :24:, 24, 100]").expect("parse should succeed");
+    let module = parser::parse_module("x[:42, ..., :24:, 24, 100]").expect("parse should succeed");
     match &strip_module(&module)[0].node {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Subscript { index, .. } => match &index.node {
@@ -1738,8 +1758,7 @@ fn parses_multi_item_subscript_with_slices() {
 
 #[test]
 fn parses_dict_unpack_literal() {
-    let module =
-        parser::parse_module("{'a': 1, **mapping, 'b': 2}").expect("parse should succeed");
+    let module = parser::parse_module("{'a': 1, **mapping, 'b': 2}").expect("parse should succeed");
     match &strip_module(&module)[0].node {
         StmtKind::Expr(expr) => match &expr.node {
             ExprKind::Dict(entries) => {
@@ -2143,6 +2162,22 @@ fn parses_match_case_statement() {
 }
 
 #[test]
+fn parses_match_pattern_families() {
+    let source = "match value:\n    case [1, *rest, 3]:\n        a = rest\n    case {'kind': kind, **tail}:\n        b = kind\n    case Point(x=1, y=y):\n        c = y\n    case 1 | 2 as z:\n        d = z\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Match { cases, .. } => {
+            assert_eq!(cases.len(), 4);
+            assert!(matches!(cases[0].pattern, Pattern::Sequence(_)));
+            assert!(matches!(cases[1].pattern, Pattern::Mapping { .. }));
+            assert!(matches!(cases[2].pattern, Pattern::Class { .. }));
+            assert!(matches!(cases[3].pattern, Pattern::Or(_)));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_async_statements_and_await() {
     let source = "async def f(x):\n    return await x\nasync for i in [1]:\n    pass\nasync with ctx:\n    pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -2181,6 +2216,28 @@ fn parses_except_star_handler() {
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
+}
+
+#[test]
+fn rejects_except_star_without_type() {
+    let source = "try:\n    pass\nexcept*:\n    pass\n";
+    let err = parser::parse_module(source).expect_err("parse should fail");
+    assert!(
+        err.message.contains("except* requires an exception type"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn rejects_mixing_except_and_except_star() {
+    let source = "try:\n    pass\nexcept ValueError:\n    pass\nexcept* TypeError:\n    pass\n";
+    let err = parser::parse_module(source).expect_err("parse should fail");
+    assert!(
+        err.message.contains("cannot mix 'except' and 'except*'"),
+        "unexpected message: {}",
+        err.message
+    );
 }
 
 #[test]

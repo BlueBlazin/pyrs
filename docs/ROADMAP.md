@@ -105,7 +105,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 ### P1 (Major Ecosystem Enablers)
 - [x] Async/await + async generators (core coroutine protocol/runtime + async iteration/context-manager semantics implemented).
 - [x] Comprehensions with correct scoping.
-- [~] Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full families pending.
+- [~] Pattern matching (`match`/`case`) broad families implemented (literal/capture/guard/sequence/mapping/class/or/as/star); remaining edge/form parity pending.
 - [x] Type annotations (parse + `__annotations__` on modules/classes/functions; eager evaluation only).
 - [x] Exception chaining (`__cause__`, `__context__`, suppression metadata) for explicit/implicit raises.
 - [~] Descriptor protocol + attribute lookup parity (descriptor hooks plus `__getattribute__` override baseline and `__getattr__`/`__setattr__`/`__delattr__` implemented; full `__getattribute__` fallback-edge and metaclass parity pending).
@@ -288,6 +288,9 @@ Progress:
 - `object.__reduce_ex__` no-op removal landed with baseline tuple-return semantics and regression coverage; full pickling protocol parity remains tracked in Milestone 13.
 - Dataclasses/runtime helper batch landed: `dataclasses.field`/`is_dataclass`/`fields`/`asdict`/`astuple`/`replace`/`make_dataclass` now execute baseline non-`NoOp` paths, stdio stream `write`/`flush`/`isatty` paths execute real behavior, `float.fromhex`/`float.hex` and `str.maketrans` execute non-`NoOp` helper logic, and `_posixsubprocess.fork_exec` now fails explicitly as unsupported instead of silently succeeding.
 - CLI startup/import usability batch landed: CLI now supports baseline `site` startup import behavior when stdlib paths are discoverable, including `-S`/`--no-site` opt-out and explicit strict failure when `PYRS_CPYTHON_LIB` is user-configured but `site` import fails; script-directory module path precedence is now maintained via `Vm::add_module_path_front`.
+- Exception-group parity batch landed: `except*` now performs subgroup splitting, executes all matching handlers with subgroup values, and reraises unmatched remainder groups.
+- Pattern-family parity batch landed: parser/compiler/VM support now covers sequence (`*rest`), mapping (`**rest`), class, `or`, and `as` patterns with dedicated parser/VM regressions.
+- Import packaging parity batch landed: module/package import now supports sourceless `.pyc` fallback (`__pycache__` and direct `.pyc` forms), and stdlib-less fallback shims now provide baseline `pkgutil.get_data` and `importlib.resources` (`files`/`read_text`/`read_binary`/`open_*`) workflows.
 - No-op accounting hardening landed: inventory walk is recursive across module/class/instance/container graphs so stub drift cannot hide outside top-level module globals.
 - Super/MRO parity fix landed: `super(...).__attr__` now checks direct attrs at each MRO step (instead of recursively re-walking parent MROs), eliminating incorrect early fallback to `object.__init__` in cooperative multiple-inheritance paths.
 - CPython harness breadth expanded with zero allowlist impact: `tests/cpython_suite_language.txt` now includes `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, and `test/test_configparser.py`.

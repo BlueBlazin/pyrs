@@ -42,6 +42,7 @@ struct ModuleSourceInfo {
     is_package: bool,
     package_dirs: Vec<PathBuf>,
     is_namespace: bool,
+    is_bytecode: bool,
 }
 
 #[derive(Clone)]
@@ -54,6 +55,7 @@ struct AtexitHandler {
 const DEFAULT_META_PATH_FINDER: &str = "pyrs.PathFinder";
 const DEFAULT_PATH_HOOK: &str = "pyrs.FileFinder";
 const SOURCE_FILE_LOADER: &str = "pyrs.SourceFileLoader";
+const SOURCELESS_FILE_LOADER: &str = "pyrs.SourcelessFileLoader";
 const NAMESPACE_LOADER: &str = "pyrs.NamespaceLoader";
 const BUILTIN_MODULE_LOADER: &str = "pyrs.BuiltinLoader";
 const MT_N: usize = 624;
@@ -180,7 +182,7 @@ enum RePatternValue {
 
 const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
-const LOCAL_SHIM_MODULES: &[&str] = &["enum"];
+const LOCAL_SHIM_MODULES: &[&str] = &["enum", "pkgutil", "importlib.resources"];
 
 struct Frame {
     code: Rc<CodeObject>,
@@ -3644,6 +3646,8 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new(format!("module '{name}' not found")))?;
         let loader_name = if source_info.is_namespace {
             NAMESPACE_LOADER
+        } else if source_info.is_bytecode {
+            SOURCELESS_FILE_LOADER
         } else {
             SOURCE_FILE_LOADER
         };
@@ -3676,7 +3680,7 @@ impl Vm {
         loader_name: &str,
     ) -> Result<ObjRef, RuntimeError> {
         match loader_name {
-            SOURCE_FILE_LOADER | NAMESPACE_LOADER => {
+            SOURCE_FILE_LOADER | SOURCELESS_FILE_LOADER | NAMESPACE_LOADER => {
                 match self.heap.alloc_module(ModuleObject::new(name)) {
                     Value::Module(obj) => Ok(obj),
                     _ => unreachable!(),
@@ -3722,6 +3726,21 @@ impl Vm {
                 self.frames.push(frame);
                 Ok(())
             }
+            SOURCELESS_FILE_LOADER => {
+                let bytes = std::fs::read(&source_info.path).map_err(|err| {
+                    RuntimeError::new(format!("failed to read module '{name}': {err}"))
+                })?;
+                let pyc = cpython::load_pyc(&bytes)
+                    .map_err(|err| RuntimeError::new(format!("pyc load error: {}", err.message)))?;
+                let code = cpython::translate_code(&pyc, &mut self.heap)
+                    .map_err(|err| RuntimeError::new(format!("pyc translate error: {}", err.message)))?;
+                let code = Rc::new(code);
+                let cells = self.build_cells(&code, Vec::new());
+                let mut frame = Frame::new(code, module.clone(), true, false, cells);
+                frame.discard_result = true;
+                self.frames.push(frame);
+                Ok(())
+            }
             _ => Err(RuntimeError::new(format!(
                 "unsupported loader for module execution: {loader_name}"
             ))),
@@ -3751,8 +3770,10 @@ impl Vm {
     }
 
     fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
-        if let Some(source) = self.preferred_local_shim_source(name) {
-            return Some(source);
+        if name == "enum" {
+            if let Some(source) = self.preferred_local_shim_source(name) {
+                return Some(source);
+            }
         }
         if let Some((parent_name, child_name)) = name.rsplit_once('.') {
             if let Some(parent_paths) = self.package_search_paths(parent_name) {
@@ -3762,7 +3783,15 @@ impl Vm {
             }
         }
         let roots = self.module_paths.clone();
-        self.find_module_source_in_roots(name, &roots)
+        if let Some(source) = self.find_module_source_in_roots(name, &roots) {
+            return Some(source);
+        }
+        // Only fall back to local shims when normal path resolution fails.
+        if name == "enum" {
+            None
+        } else {
+            self.preferred_local_shim_source(name)
+        }
     }
 
     fn preferred_local_shim_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
@@ -3825,6 +3854,7 @@ impl Vm {
                 is_package: true,
                 package_dirs: namespace_dirs,
                 is_namespace: true,
+                is_bytecode: false,
             });
         }
         None
@@ -3913,6 +3943,27 @@ impl Vm {
                 is_package: false,
                 package_dirs: Vec::new(),
                 is_namespace: false,
+                is_bytecode: false,
+            });
+        }
+        let pyc_candidate = cached_module_path(root, &rel_name);
+        if pyc_candidate.exists() {
+            return Some(ModuleSourceInfo {
+                path: pyc_candidate,
+                is_package: false,
+                package_dirs: Vec::new(),
+                is_namespace: false,
+                is_bytecode: true,
+            });
+        }
+        let direct_pyc = root.join(format!("{rel_name}.pyc"));
+        if direct_pyc.exists() {
+            return Some(ModuleSourceInfo {
+                path: direct_pyc,
+                is_package: false,
+                package_dirs: Vec::new(),
+                is_namespace: false,
+                is_bytecode: true,
             });
         }
         let package_dir = root.join(&rel_name);
@@ -3923,6 +3974,27 @@ impl Vm {
                 is_package: true,
                 package_dirs: vec![package_dir],
                 is_namespace: false,
+                is_bytecode: false,
+            });
+        }
+        let package_init_pyc = package_dir.join("__pycache__").join("__init__.cpython-314.pyc");
+        if package_init_pyc.exists() {
+            return Some(ModuleSourceInfo {
+                path: package_init_pyc,
+                is_package: true,
+                package_dirs: vec![package_dir],
+                is_namespace: false,
+                is_bytecode: true,
+            });
+        }
+        let direct_package_init_pyc = package_dir.join("__init__.pyc");
+        if direct_package_init_pyc.exists() {
+            return Some(ModuleSourceInfo {
+                path: direct_package_init_pyc,
+                is_package: true,
+                package_dirs: vec![package_dir],
+                is_namespace: false,
+                is_bytecode: true,
             });
         }
         if package_dir.is_dir() {
@@ -3931,6 +4003,7 @@ impl Vm {
                 is_package: true,
                 package_dirs: vec![package_dir],
                 is_namespace: true,
+                is_bytecode: false,
             });
         }
         None
@@ -4728,6 +4801,15 @@ impl Vm {
                                     .map(|context| Value::Exception((**context).clone()))
                                     .unwrap_or(Value::None),
                                 "__suppress_context__" => Value::Bool(exception.suppress_context),
+                                "exceptions" => {
+                                    let members = exception
+                                        .exceptions
+                                        .iter()
+                                        .cloned()
+                                        .map(Value::Exception)
+                                        .collect::<Vec<_>>();
+                                    self.heap.alloc_tuple(members)
+                                }
                                 _ => {
                                     return Err(RuntimeError::new(format!(
                                         "exception has no attribute '{}'",
@@ -6010,10 +6092,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                let message = exception_message_from_call_args(&args);
-                                self.push_value(Value::Exception(ExceptionObject::new(
-                                    name, message,
-                                )));
+                                let value = self.instantiate_exception_type(&name, &args, &HashMap::new())?;
+                                self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -6253,10 +6333,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                let message = exception_message_from_call_args(&args);
-                                self.push_value(Value::Exception(ExceptionObject::new(
-                                    name, message,
-                                )));
+                                let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                                self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -6462,10 +6540,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                let message = exception_message_from_call_args(&args);
-                                self.push_value(Value::Exception(ExceptionObject::new(
-                                    name, message,
-                                )));
+                                let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                                self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -6637,15 +6713,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                if !kwargs.is_empty() {
-                                    return Err(RuntimeError::new(
-                                        "keyword arguments not supported for exceptions",
-                                    ));
-                                }
-                                let message = exception_message_from_call_args(&args);
-                                self.push_value(Value::Exception(ExceptionObject::new(
-                                    name, message,
-                                )));
+                                let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                                self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -6831,15 +6900,8 @@ impl Vm {
                                 }
                             }
                             Value::ExceptionType(name) => {
-                                if !kwargs.is_empty() {
-                                    return Err(RuntimeError::new(
-                                        "keyword arguments not supported for exceptions",
-                                    ));
-                                }
-                                let message = exception_message_from_call_args(&args);
-                                self.push_value(Value::Exception(ExceptionObject::new(
-                                    name, message,
-                                )));
+                                let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                                self.push_value(value);
                             }
                             _ => return Err(RuntimeError::new("attempted to call non-function")),
                         }
@@ -7357,6 +7419,21 @@ impl Vm {
                         let matches = self.exception_matches(&exception, &handler_type)?;
                         self.push_value(Value::Bool(matches));
                     }
+                    Opcode::MatchExceptionStar => {
+                        let handler_type = self.pop_value()?;
+                        let exception = self.pop_value()?;
+                        let (matched, remaining) =
+                            self.exception_split_for_star(&exception, &handler_type)?;
+                        let matched_value = matched.map(Value::Exception).unwrap_or(Value::None);
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.active_exception = match &matched_value {
+                                Value::Exception(exc) => Some(Value::Exception(exc.clone())),
+                                _ => frame.active_exception.clone(),
+                            };
+                        }
+                        self.push_value(matched_value);
+                        self.push_value(remaining.map(Value::Exception).unwrap_or(Value::None));
+                    }
                     Opcode::ClearException => {
                         if let Some(frame) = self.frames.last_mut() {
                             frame.active_exception = None;
@@ -7620,6 +7697,71 @@ impl Vm {
         Ok(self.exception_inherits(exception_name, handler_name))
     }
 
+    fn exception_split_for_star(
+        &self,
+        exception: &Value,
+        handler_type: &Value,
+    ) -> Result<(Option<ExceptionObject>, Option<ExceptionObject>), RuntimeError> {
+        let Value::Exception(exception_obj) = exception else {
+            return Err(RuntimeError::new("expected exception instance"));
+        };
+        self.exception_split_for_star_object(exception_obj, handler_type)
+    }
+
+    fn exception_split_for_star_object(
+        &self,
+        exception: &ExceptionObject,
+        handler_type: &Value,
+    ) -> Result<(Option<ExceptionObject>, Option<ExceptionObject>), RuntimeError> {
+        if self.exception_inherits(&exception.name, "BaseExceptionGroup") {
+            let mut matched_members = Vec::new();
+            let mut remaining_members = Vec::new();
+            for member in &exception.exceptions {
+                let (matched, remaining) =
+                    self.exception_split_for_star_object(member, handler_type)?;
+                if let Some(matched) = matched {
+                    matched_members.push(matched);
+                }
+                if let Some(remaining) = remaining {
+                    remaining_members.push(remaining);
+                }
+            }
+            let matched_group = if matched_members.is_empty() {
+                None
+            } else {
+                Some(self.clone_exception_group_with_members(exception, matched_members))
+            };
+            let remaining_group = if remaining_members.is_empty() {
+                None
+            } else {
+                Some(self.clone_exception_group_with_members(exception, remaining_members))
+            };
+            return Ok((matched_group, remaining_group));
+        }
+
+        let matches = self.exception_matches(&Value::Exception(exception.clone()), handler_type)?;
+        if matches {
+            Ok((Some(exception.clone()), None))
+        } else {
+            Ok((None, Some(exception.clone())))
+        }
+    }
+
+    fn clone_exception_group_with_members(
+        &self,
+        template: &ExceptionObject,
+        members: Vec<ExceptionObject>,
+    ) -> ExceptionObject {
+        ExceptionObject {
+            name: template.name.clone(),
+            message: template.message.clone(),
+            exceptions: members,
+            cause: template.cause.clone(),
+            context: template.context.clone(),
+            suppress_context: template.suppress_context,
+        }
+    }
+
     fn exception_inherits(&self, exception_name: &str, handler_name: &str) -> bool {
         if exception_name == handler_name {
             return true;
@@ -7706,6 +7848,62 @@ impl Vm {
             return Some(format_value(&args[0]));
         }
         None
+    }
+
+    fn instantiate_exception_type(
+        &self,
+        name: &str,
+        args: &[Value],
+        kwargs: &HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "keyword arguments not supported for exceptions",
+            ));
+        }
+
+        if self.exception_inherits(name, "BaseExceptionGroup") {
+            let message = args.first().map(format_value);
+            let members = if let Some(value) = args.get(1) {
+                self.exception_members_from_value(value)?
+            } else {
+                Vec::new()
+            };
+            return Ok(Value::Exception(ExceptionObject::with_members(
+                name.to_string(),
+                message,
+                members,
+            )));
+        }
+
+        let message = exception_message_from_call_args(args);
+        Ok(Value::Exception(ExceptionObject::new(name.to_string(), message)))
+    }
+
+    fn exception_members_from_value(
+        &self,
+        value: &Value,
+    ) -> Result<Vec<ExceptionObject>, RuntimeError> {
+        let entries = match value {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("ExceptionGroup members must be a sequence")),
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("ExceptionGroup members must be a sequence")),
+            },
+            _ => return Err(RuntimeError::new("ExceptionGroup members must be a sequence")),
+        };
+        let mut members = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let normalized = self.normalize_exception_value(entry)?;
+            let Value::Exception(exception) = normalized else {
+                return Err(RuntimeError::new("ExceptionGroup members must be exceptions"));
+            };
+            members.push(exception);
+        }
+        Ok(members)
     }
 
     fn frame_trace(frame: &Frame) -> TraceFrame {
@@ -14582,6 +14780,15 @@ impl Vm {
                     .map(|context| Value::Exception((**context).clone()))
                     .unwrap_or(Value::None)),
                 "__suppress_context__" => Ok(Value::Bool(exception.suppress_context)),
+                "exceptions" => {
+                    let members = exception
+                        .exceptions
+                        .iter()
+                        .cloned()
+                        .map(Value::Exception)
+                        .collect::<Vec<_>>();
+                    Ok(self.heap.alloc_tuple(members))
+                }
                 _ => Err(RuntimeError::new(format!(
                     "exception has no attribute '{}'",
                     name
@@ -14993,6 +15200,8 @@ impl Vm {
         };
         let loader_name = if source_info.is_namespace {
             NAMESPACE_LOADER
+        } else if source_info.is_bytecode {
+            SOURCELESS_FILE_LOADER
         } else {
             SOURCE_FILE_LOADER
         };
@@ -22863,6 +23072,18 @@ fn cache_path_from_source_path(path: &str) -> String {
         .to_string()
 }
 
+fn cached_module_path(root: &Path, rel_name: &str) -> PathBuf {
+    let rel_path = Path::new(rel_name);
+    let parent = rel_path.parent().unwrap_or_else(|| Path::new(""));
+    let stem = rel_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("module");
+    root.join(parent)
+        .join("__pycache__")
+        .join(format!("{stem}.cpython-314.pyc"))
+}
+
 fn uuid_random_bytes(rng: &mut Mt19937) -> [u8; 16] {
     let mut bytes = [0u8; 16];
     bytes[..4].copy_from_slice(&rng.next_u32().to_be_bytes());
@@ -24257,6 +24478,8 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "GeneratorExit" => Some("BaseException"),
         "SystemExit" => Some("BaseException"),
         "KeyboardInterrupt" => Some("BaseException"),
+        "BaseExceptionGroup" => Some("BaseException"),
+        "ExceptionGroup" => Some("BaseExceptionGroup"),
         "StopIteration" => Some("Exception"),
         "StopAsyncIteration" => Some("Exception"),
         "AssertionError" => Some("Exception"),

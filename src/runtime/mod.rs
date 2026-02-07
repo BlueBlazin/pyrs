@@ -794,6 +794,7 @@ impl Value {
 pub struct ExceptionObject {
     pub name: String,
     pub message: Option<String>,
+    pub exceptions: Vec<ExceptionObject>,
     pub cause: Option<Box<ExceptionObject>>,
     pub context: Option<Box<ExceptionObject>>,
     pub suppress_context: bool,
@@ -804,6 +805,18 @@ impl ExceptionObject {
         Self {
             name: name.into(),
             message,
+            exceptions: Vec::new(),
+            cause: None,
+            context: None,
+            suppress_context: false,
+        }
+    }
+
+    pub fn with_members(name: impl Into<String>, message: Option<String>, members: Vec<ExceptionObject>) -> Self {
+        Self {
+            name: name.into(),
+            message,
+            exceptions: members,
             cause: None,
             context: None,
             suppress_context: false,

@@ -935,6 +935,7 @@ fn translated_successors(
         | Opcode::ListAppend
         | Opcode::ListExtend
         | Opcode::DictUpdate => vec![(next_ip, pop(2)? + 1)],
+        Opcode::MatchExceptionStar => vec![(next_ip, pop(2)? + 2)],
         Opcode::BuildList | Opcode::BuildTuple => {
             let count = arg.ok_or_else(|| CpythonError::new("missing build count"))? as i32;
             vec![(next_ip, pop(count)? + 1)]

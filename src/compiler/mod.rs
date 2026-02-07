@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ast::{
-    AssignTarget, CallArg, ComprehensionClause, Constant, DictEntry, ExceptHandler, Expr,
-    ExprKind, MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
+    AssignTarget, CallArg, ComprehensionClause, Constant, DictEntry, ExceptHandler, Expr, ExprKind,
+    MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
 };
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
@@ -331,7 +331,10 @@ fn collect_locals_stmt(
             }
         }
         StmtKind::For {
-            target, body, orelse, ..
+            target,
+            body,
+            orelse,
+            ..
         } => {
             collect_locals_target(target, locals);
             for stmt in body {
@@ -421,8 +424,46 @@ fn collect_locals_stmt(
 }
 
 fn collect_pattern_locals(pattern: &Pattern, locals: &mut HashSet<String>) {
-    if let Pattern::Capture(name) = pattern {
-        locals.insert(name.clone());
+    match pattern {
+        Pattern::Capture(name) => {
+            locals.insert(name.clone());
+        }
+        Pattern::Sequence(items) | Pattern::Or(items) => {
+            for item in items {
+                collect_pattern_locals(item, locals);
+            }
+        }
+        Pattern::Mapping { entries, rest } => {
+            for (_, value) in entries {
+                collect_pattern_locals(value, locals);
+            }
+            if let Some(name) = rest {
+                locals.insert(name.clone());
+            }
+        }
+        Pattern::Class {
+            positional,
+            keywords,
+            ..
+        } => {
+            for pattern in positional {
+                collect_pattern_locals(pattern, locals);
+            }
+            for (_, pattern) in keywords {
+                collect_pattern_locals(pattern, locals);
+            }
+        }
+        Pattern::As { pattern, name } => {
+            collect_pattern_locals(pattern, locals);
+            locals.insert(name.clone());
+        }
+        Pattern::Star(Some(name)) => {
+            locals.insert(name.clone());
+        }
+        Pattern::Wildcard
+        | Pattern::Constant(_)
+        | Pattern::Value(_)
+        | Pattern::Star(None) => {}
     }
 }
 
@@ -795,14 +836,30 @@ fn collect_uses_expr(
         }
         ExprKind::ListComp { elt, clauses } => {
             let body = build_list_comp_body(elt, clauses);
-            let scope =
-                analyze_scope(ScopeType::Function, &[], &[], &[], None, None, &body, enclosing)?;
+            let scope = analyze_scope(
+                ScopeType::Function,
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                &body,
+                enclosing,
+            )?;
             child_free.extend(scope.freevars.into_iter());
         }
         ExprKind::GeneratorExp { elt, clauses } => {
             let body = build_genexpr_body(elt, clauses);
-            let scope =
-                analyze_scope(ScopeType::Function, &[], &[], &[], None, None, &body, enclosing)?;
+            let scope = analyze_scope(
+                ScopeType::Function,
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                &body,
+                enclosing,
+            )?;
             child_free.extend(scope.freevars.into_iter());
         }
         ExprKind::DictComp {
@@ -811,8 +868,16 @@ fn collect_uses_expr(
             clauses,
         } => {
             let body = build_dict_comp_body(key, value, clauses);
-            let scope =
-                analyze_scope(ScopeType::Function, &[], &[], &[], None, None, &body, enclosing)?;
+            let scope = analyze_scope(
+                ScopeType::Function,
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                &body,
+                enclosing,
+            )?;
             child_free.extend(scope.freevars.into_iter());
         }
         ExprKind::Slice { lower, upper, step } => {
@@ -1656,7 +1721,10 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::Dict(entries) => {
-                if entries.iter().any(|entry| matches!(entry, DictEntry::Unpack(_))) {
+                if entries
+                    .iter()
+                    .any(|entry| matches!(entry, DictEntry::Unpack(_)))
+                {
                     compiler.emit(Opcode::BuildDict, Some(0));
                     for entry in entries {
                         match entry {
@@ -2171,7 +2239,7 @@ impl Compiler {
         subject_temp: &str,
     ) -> Result<(), CompileError> {
         match pattern {
-            Pattern::Wildcard | Pattern::Capture(_) => {
+            Pattern::Wildcard | Pattern::Capture(_) | Pattern::Star(_) => {
                 self.emit_const(Value::Bool(true));
                 Ok(())
             }
@@ -2181,6 +2249,23 @@ impl Compiler {
                 self.emit(Opcode::CompareEq, None);
                 Ok(())
             }
+            Pattern::Value(expr) => {
+                self.emit_load_name(subject_temp)?;
+                self.compile_expr(expr)?;
+                self.emit(Opcode::CompareEq, None);
+                Ok(())
+            }
+            Pattern::Sequence(items) => self.compile_sequence_pattern_test(items, subject_temp),
+            Pattern::Mapping { entries, .. } => {
+                self.compile_mapping_pattern_test(entries, subject_temp)
+            }
+            Pattern::Class {
+                class,
+                positional,
+                keywords,
+            } => self.compile_class_pattern_test(class, positional, keywords, subject_temp),
+            Pattern::Or(options) => self.compile_or_pattern_test(options, subject_temp),
+            Pattern::As { pattern, .. } => self.compile_pattern_test(pattern, subject_temp),
         }
     }
 
@@ -2189,10 +2274,378 @@ impl Compiler {
         pattern: &Pattern,
         subject_temp: &str,
     ) -> Result<(), CompileError> {
-        if let Pattern::Capture(name) = pattern {
-            self.emit_load_name(subject_temp)?;
-            self.emit_store_name_scoped(name)?;
+        match pattern {
+            Pattern::Capture(name) => {
+                self.emit_load_name(subject_temp)?;
+                self.emit_store_name_scoped(name)?;
+            }
+            Pattern::As { pattern, name } => {
+                self.compile_pattern_bindings(pattern, subject_temp)?;
+                self.emit_load_name(subject_temp)?;
+                self.emit_store_name_scoped(name)?;
+            }
+            Pattern::Sequence(items) => {
+                let star_index = items.iter().position(|item| matches!(item, Pattern::Star(_)));
+                for (idx, item) in items.iter().enumerate() {
+                    match item {
+                        Pattern::Star(Some(name)) => {
+                            let trailing = items.len().saturating_sub(idx + 1);
+                            self.emit_load_name("list")?;
+                            self.emit_load_name(subject_temp)?;
+                            self.emit_const(Value::Int(idx as i64));
+                            if trailing == 0 {
+                                self.emit_const(Value::None);
+                            } else {
+                                self.emit_const(Value::Int(-(trailing as i64)));
+                            }
+                            self.emit_const(Value::None);
+                            self.emit(Opcode::BuildSlice, Some(3));
+                            self.emit(Opcode::Subscript, None);
+                            self.emit(Opcode::CallFunction, Some(1));
+                            self.emit_store_name_scoped(name)?;
+                        }
+                        Pattern::Star(None) => {}
+                        _ => {
+                            let from_end = if let Some(star) = star_index {
+                                idx > star
+                            } else {
+                                false
+                            };
+                            let index = if from_end {
+                                -((items.len() - idx) as i64)
+                            } else {
+                                idx as i64
+                            };
+                            let temp = self.fresh_temp("match_bind_item");
+                            self.emit_extract_pattern_item(subject_temp, index, &temp)?;
+                            self.compile_pattern_bindings(item, &temp)?;
+                        }
+                    }
+                }
+            }
+            Pattern::Mapping { entries, rest } => {
+                for (key, value_pattern) in entries {
+                    let temp = self.fresh_temp("match_map_bind");
+                    self.emit_load_name(subject_temp)?;
+                    self.compile_expr(key)?;
+                    self.emit(Opcode::Subscript, None);
+                    self.emit_store_name(&temp);
+                    self.compile_pattern_bindings(value_pattern, &temp)?;
+                }
+                if let Some(name) = rest {
+                    let rest_temp = self.fresh_temp("match_map_rest");
+                    self.emit_load_name("dict")?;
+                    self.emit_load_name(subject_temp)?;
+                    self.emit(Opcode::CallFunction, Some(1));
+                    self.emit_store_name(&rest_temp);
+                    for (key, _) in entries {
+                        self.emit_load_name(&rest_temp)?;
+                        self.compile_expr(key)?;
+                        self.emit(Opcode::DeleteSubscript, None);
+                    }
+                    self.emit_load_name(&rest_temp)?;
+                    self.emit_store_name_scoped(name)?;
+                }
+            }
+            Pattern::Class {
+                class,
+                positional,
+                keywords,
+            } => {
+                let class_temp = self.fresh_temp("match_class_bind");
+                self.compile_expr(class)?;
+                self.emit_store_name(&class_temp);
+
+                let match_args_temp = self.fresh_temp("match_args_bind");
+                self.emit_load_name("getattr")?;
+                self.emit_load_name(&class_temp)?;
+                self.emit_const(Value::Str("__match_args__".to_string()));
+                self.emit(Opcode::BuildTuple, Some(0));
+                self.emit(Opcode::CallFunction, Some(3));
+                self.emit_store_name(&match_args_temp);
+
+                for (idx, pattern) in positional.iter().enumerate() {
+                    let attr_name_temp = self.fresh_temp("match_attr_name_bind");
+                    self.emit_extract_pattern_item(&match_args_temp, idx as i64, &attr_name_temp)?;
+
+                    let attr_value_temp = self.fresh_temp("match_attr_bind");
+                    self.emit_load_name("getattr")?;
+                    self.emit_load_name(subject_temp)?;
+                    self.emit_load_name(&attr_name_temp)?;
+                    self.emit(Opcode::CallFunction, Some(2));
+                    self.emit_store_name(&attr_value_temp);
+                    self.compile_pattern_bindings(pattern, &attr_value_temp)?;
+                }
+
+                for (name, pattern) in keywords {
+                    let attr_value_temp = self.fresh_temp("match_kw_attr_bind");
+                    self.emit_load_name("getattr")?;
+                    self.emit_load_name(subject_temp)?;
+                    self.emit_const(Value::Str(name.clone()));
+                    self.emit(Opcode::CallFunction, Some(2));
+                    self.emit_store_name(&attr_value_temp);
+                    self.compile_pattern_bindings(pattern, &attr_value_temp)?;
+                }
+            }
+            Pattern::Or(options) => {
+                if options.is_empty() {
+                    return Ok(());
+                }
+                let mut end_jumps = Vec::new();
+                for option in options.iter().take(options.len().saturating_sub(1)) {
+                    self.compile_pattern_test(option, subject_temp)?;
+                    let next_option = self.emit_jump(Opcode::JumpIfFalse);
+                    self.compile_pattern_bindings(option, subject_temp)?;
+                    end_jumps.push(self.emit_jump(Opcode::Jump));
+                    let next_ip = self.current_ip();
+                    self.patch_jump(next_option, next_ip)?;
+                }
+                let last = options.last().expect("checked not empty");
+                self.compile_pattern_bindings(last, subject_temp)?;
+                let end_ip = self.current_ip();
+                for jump in end_jumps {
+                    self.patch_jump(jump, end_ip)?;
+                }
+            }
+            Pattern::Wildcard | Pattern::Constant(_) | Pattern::Value(_) | Pattern::Star(None) => {}
+            Pattern::Star(Some(name)) => {
+                self.emit_load_name(subject_temp)?;
+                self.emit_store_name_scoped(name)?;
+            }
         }
+        Ok(())
+    }
+
+    fn compile_or_pattern_test(
+        &mut self,
+        options: &[Pattern],
+        subject_temp: &str,
+    ) -> Result<(), CompileError> {
+        if options.is_empty() {
+            self.emit_const(Value::Bool(false));
+            return Ok(());
+        }
+        self.compile_pattern_test(&options[0], subject_temp)?;
+        let mut end_jumps = Vec::new();
+        for option in options.iter().skip(1) {
+            self.emit(Opcode::DupTop, None);
+            let done_jump = self.emit_jump(Opcode::JumpIfTrue);
+            self.emit(Opcode::PopTop, None);
+            self.compile_pattern_test(option, subject_temp)?;
+            end_jumps.push(done_jump);
+        }
+        let end = self.current_ip();
+        for jump in end_jumps {
+            self.patch_jump(jump, end)?;
+        }
+        Ok(())
+    }
+
+    fn compile_sequence_pattern_test(
+        &mut self,
+        items: &[Pattern],
+        subject_temp: &str,
+    ) -> Result<(), CompileError> {
+        let star_positions = items
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, item)| matches!(item, Pattern::Star(_)).then_some(idx))
+            .collect::<Vec<_>>();
+        if star_positions.len() > 1 {
+            return Err(CompileError::new(
+                "multiple starred patterns in sequence pattern",
+            ));
+        }
+        let star_index = star_positions.first().copied();
+        let min_required = items.len().saturating_sub(star_positions.len());
+
+        let mut fail_jumps = Vec::new();
+
+        self.emit_load_name("isinstance")?;
+        self.emit_load_name(subject_temp)?;
+        self.emit_load_name("list")?;
+        self.emit_load_name("tuple")?;
+        self.emit(Opcode::BuildTuple, Some(2));
+        self.emit(Opcode::CallFunction, Some(2));
+        fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+
+        self.emit_load_name("len")?;
+        self.emit_load_name(subject_temp)?;
+        self.emit(Opcode::CallFunction, Some(1));
+        if star_index.is_some() {
+            self.emit_const(Value::Int(min_required as i64));
+            self.emit(Opcode::CompareGe, None);
+        } else {
+            self.emit_const(Value::Int(items.len() as i64));
+            self.emit(Opcode::CompareEq, None);
+        }
+        fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+
+        for (idx, item) in items.iter().enumerate() {
+            if matches!(item, Pattern::Star(_)) {
+                continue;
+            }
+            let from_end = if let Some(star) = star_index {
+                idx > star
+            } else {
+                false
+            };
+            let index = if from_end {
+                -((items.len() - idx) as i64)
+            } else {
+                idx as i64
+            };
+            let item_temp = self.fresh_temp("match_seq_item");
+            self.emit_extract_pattern_item(subject_temp, index, &item_temp)?;
+            self.compile_pattern_test(item, &item_temp)?;
+            fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+        }
+
+        self.emit_const(Value::Bool(true));
+        let end_jump = self.emit_jump(Opcode::Jump);
+        let fail_target = self.current_ip();
+        for jump in fail_jumps {
+            self.patch_jump(jump, fail_target)?;
+        }
+        self.emit_const(Value::Bool(false));
+        let end_target = self.current_ip();
+        self.patch_jump(end_jump, end_target)?;
+        Ok(())
+    }
+
+    fn compile_mapping_pattern_test(
+        &mut self,
+        entries: &[(Expr, Pattern)],
+        subject_temp: &str,
+    ) -> Result<(), CompileError> {
+        let mut fail_jumps = Vec::new();
+
+        self.emit_load_name("isinstance")?;
+        self.emit_load_name(subject_temp)?;
+        self.emit_load_name("dict")?;
+        self.emit(Opcode::CallFunction, Some(2));
+        fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+
+        for (key, value_pattern) in entries {
+            self.compile_expr(key)?;
+            self.emit_load_name(subject_temp)?;
+            self.emit(Opcode::CompareIn, None);
+            fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+
+            let value_temp = self.fresh_temp("match_map_value");
+            self.emit_load_name(subject_temp)?;
+            self.compile_expr(key)?;
+            self.emit(Opcode::Subscript, None);
+            self.emit_store_name(&value_temp);
+            self.compile_pattern_test(value_pattern, &value_temp)?;
+            fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+        }
+
+        self.emit_const(Value::Bool(true));
+        let end_jump = self.emit_jump(Opcode::Jump);
+        let fail_target = self.current_ip();
+        for jump in fail_jumps {
+            self.patch_jump(jump, fail_target)?;
+        }
+        self.emit_const(Value::Bool(false));
+        let end_target = self.current_ip();
+        self.patch_jump(end_jump, end_target)?;
+        Ok(())
+    }
+
+    fn compile_class_pattern_test(
+        &mut self,
+        class: &Expr,
+        positional: &[Pattern],
+        keywords: &[(String, Pattern)],
+        subject_temp: &str,
+    ) -> Result<(), CompileError> {
+        let mut fail_jumps = Vec::new();
+
+        let class_temp = self.fresh_temp("match_class");
+        self.compile_expr(class)?;
+        self.emit_store_name(&class_temp);
+
+        self.emit_load_name("isinstance")?;
+        self.emit_load_name(subject_temp)?;
+        self.emit_load_name(&class_temp)?;
+        self.emit(Opcode::CallFunction, Some(2));
+        fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+
+        let match_args_temp = self.fresh_temp("match_args");
+        self.emit_load_name("getattr")?;
+        self.emit_load_name(&class_temp)?;
+        self.emit_const(Value::Str("__match_args__".to_string()));
+        self.emit(Opcode::BuildTuple, Some(0));
+        self.emit(Opcode::CallFunction, Some(3));
+        self.emit_store_name(&match_args_temp);
+
+        for (idx, pattern) in positional.iter().enumerate() {
+            self.emit_load_name("len")?;
+            self.emit_load_name(&match_args_temp)?;
+            self.emit(Opcode::CallFunction, Some(1));
+            self.emit_const(Value::Int((idx + 1) as i64));
+            self.emit(Opcode::CompareGe, None);
+            fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+
+            let attr_name_temp = self.fresh_temp("match_attr_name");
+            self.emit_extract_pattern_item(&match_args_temp, idx as i64, &attr_name_temp)?;
+
+            self.emit_load_name("hasattr")?;
+            self.emit_load_name(subject_temp)?;
+            self.emit_load_name(&attr_name_temp)?;
+            self.emit(Opcode::CallFunction, Some(2));
+            fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+
+            let attr_value_temp = self.fresh_temp("match_attr_value");
+            self.emit_load_name("getattr")?;
+            self.emit_load_name(subject_temp)?;
+            self.emit_load_name(&attr_name_temp)?;
+            self.emit(Opcode::CallFunction, Some(2));
+            self.emit_store_name(&attr_value_temp);
+            self.compile_pattern_test(pattern, &attr_value_temp)?;
+            fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+        }
+
+        for (name, pattern) in keywords {
+            self.emit_load_name("hasattr")?;
+            self.emit_load_name(subject_temp)?;
+            self.emit_const(Value::Str(name.clone()));
+            self.emit(Opcode::CallFunction, Some(2));
+            fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+
+            let attr_value_temp = self.fresh_temp("match_kw_attr");
+            self.emit_load_name("getattr")?;
+            self.emit_load_name(subject_temp)?;
+            self.emit_const(Value::Str(name.clone()));
+            self.emit(Opcode::CallFunction, Some(2));
+            self.emit_store_name(&attr_value_temp);
+            self.compile_pattern_test(pattern, &attr_value_temp)?;
+            fail_jumps.push(self.emit_jump(Opcode::JumpIfFalse));
+        }
+
+        self.emit_const(Value::Bool(true));
+        let end_jump = self.emit_jump(Opcode::Jump);
+        let fail_target = self.current_ip();
+        for jump in fail_jumps {
+            self.patch_jump(jump, fail_target)?;
+        }
+        self.emit_const(Value::Bool(false));
+        let end_target = self.current_ip();
+        self.patch_jump(end_jump, end_target)?;
+        Ok(())
+    }
+
+    fn emit_extract_pattern_item(
+        &mut self,
+        subject_temp: &str,
+        index: i64,
+        target_temp: &str,
+    ) -> Result<(), CompileError> {
+        self.emit_load_name(subject_temp)?;
+        self.emit_const(Value::Int(index));
+        self.emit(Opcode::Subscript, None);
+        self.emit_store_name(target_temp);
         Ok(())
     }
 
@@ -2365,9 +2818,7 @@ impl Compiler {
                     })
                     .collect::<Vec<_>>();
                 if starred.len() > 1 {
-                    return Err(CompileError::new(
-                        "multiple starred targets in assignment",
-                    ));
+                    return Err(CompileError::new("multiple starred targets in assignment"));
                 }
                 if let Some(star_idx) = starred.first().copied() {
                     let before = star_idx as u32;
@@ -2694,10 +3145,7 @@ impl Compiler {
                     ExprKind::Call {
                         func: Box::new(Expr::new(
                             ExprKind::Attribute {
-                                value: Box::new(Expr::new(
-                                    ExprKind::Name(ctx_temp.clone()),
-                                    span,
-                                )),
+                                value: Box::new(Expr::new(ExprKind::Name(ctx_temp.clone()), span)),
                                 name: "__aenter__".to_string(),
                             },
                             span,
@@ -2837,6 +3285,21 @@ impl Compiler {
             return self.compile_try_finally(body, finalbody);
         }
 
+        let has_star = handlers.iter().any(|handler| handler.is_star);
+        let has_plain = handlers.iter().any(|handler| !handler.is_star);
+        if has_star && has_plain {
+            return Err(CompileError::new(
+                "cannot mix 'except' and 'except*' in the same try",
+            ));
+        }
+
+        if has_star {
+            if finalbody.is_empty() {
+                return self.compile_try_except_star(body, handlers, orelse);
+            }
+            return self.compile_try_except_star_finally(body, handlers, orelse, finalbody);
+        }
+
         if finalbody.is_empty() {
             return self.compile_try_except(body, handlers, orelse);
         }
@@ -2902,6 +3365,85 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_try_except_star(
+        &mut self,
+        body: &[Stmt],
+        handlers: &[ExceptHandler],
+        orelse: &[Stmt],
+    ) -> Result<(), CompileError> {
+        let setup_except = self.emit_jump(Opcode::SetupExcept);
+        for stmt in body {
+            self.compile_stmt(stmt)?;
+        }
+        self.emit(Opcode::PopBlock, None);
+
+        for stmt in orelse {
+            self.compile_stmt(stmt)?;
+        }
+
+        let jump_to_end = self.emit_jump(Opcode::Jump);
+        let handler_start = self.current_ip();
+        self.patch_jump(setup_except, handler_start)?;
+
+        // The raised exception is on the stack at handler entry.
+        let remaining_name = self.fresh_temp("except_star_remaining");
+        self.emit_store_name(&remaining_name);
+
+        for handler in handlers {
+            if !handler.is_star {
+                return Err(CompileError::new(
+                    "cannot mix 'except' and 'except*' in the same try",
+                ));
+            }
+            let type_expr = handler
+                .type_expr
+                .as_ref()
+                .ok_or_else(|| CompileError::new("except* requires an exception type"))?;
+
+            // Split the current remainder against this handler type.
+            self.emit_load_name(&remaining_name)?;
+            self.compile_expr(type_expr)?;
+            self.emit(Opcode::MatchExceptionStar, None);
+            // Stack layout now: [matched_or_none, remainder_or_none]
+            self.emit_store_name(&remaining_name);
+            // Keep a copy for null-check while preserving the matched value for binding.
+            self.emit(Opcode::DupTop, None);
+            let next_handler_jump = self.emit_jump(Opcode::JumpIfNone);
+
+            if let Some(name) = &handler.name {
+                self.emit_store_name_scoped(name)?;
+            } else {
+                self.emit(Opcode::PopTop, None);
+            }
+
+            for stmt in &handler.body {
+                self.compile_stmt(stmt)?;
+            }
+            self.emit(Opcode::ClearException, None);
+            let matched_continue_jump = self.emit_jump(Opcode::Jump);
+
+            let next_handler_start = self.current_ip();
+            self.patch_jump(next_handler_jump, next_handler_start)?;
+            // Drop the unmatched marker (`None`) before evaluating the next handler.
+            self.emit(Opcode::PopTop, None);
+            let continue_target = self.current_ip();
+            self.patch_jump(matched_continue_jump, continue_target)?;
+        }
+
+        // Re-raise any remainder that no except* handler matched.
+        self.emit_load_name(&remaining_name)?;
+        let no_reraise_jump = self.emit_jump(Opcode::JumpIfNone);
+        self.emit_load_name(&remaining_name)?;
+        self.emit(Opcode::Raise, Some(1));
+        let after_reraise = self.current_ip();
+        self.patch_jump(no_reraise_jump, after_reraise)?;
+
+        let end_target = self.current_ip();
+        self.patch_jump(jump_to_end, end_target)?;
+
+        Ok(())
+    }
+
     fn compile_try_except_finally(
         &mut self,
         body: &[Stmt],
@@ -2911,6 +3453,34 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         let setup_finally = self.emit_jump(Opcode::SetupExcept);
         self.compile_try_except(body, handlers, orelse)?;
+        self.emit(Opcode::PopBlock, None);
+        for stmt in finalbody {
+            self.compile_stmt(stmt)?;
+        }
+        let jump_to_end = self.emit_jump(Opcode::Jump);
+
+        let handler_start = self.current_ip();
+        self.patch_jump(setup_finally, handler_start)?;
+        self.emit(Opcode::PopTop, None);
+        for stmt in finalbody {
+            self.compile_stmt(stmt)?;
+        }
+        self.emit(Opcode::Raise, Some(0));
+
+        let end_target = self.current_ip();
+        self.patch_jump(jump_to_end, end_target)?;
+        Ok(())
+    }
+
+    fn compile_try_except_star_finally(
+        &mut self,
+        body: &[Stmt],
+        handlers: &[ExceptHandler],
+        orelse: &[Stmt],
+        finalbody: &[Stmt],
+    ) -> Result<(), CompileError> {
+        let setup_finally = self.emit_jump(Opcode::SetupExcept);
+        self.compile_try_except_star(body, handlers, orelse)?;
         self.emit(Opcode::PopBlock, None);
         for stmt in finalbody {
             self.compile_stmt(stmt)?;
