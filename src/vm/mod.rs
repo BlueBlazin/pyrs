@@ -16,7 +16,8 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::containers::{
-    dedup_hashable_values, dict_get_value, dict_set_value, dict_set_value_checked, ensure_hashable,
+    dedup_hashable_values, dict_get_value, dict_remove_value, dict_set_value,
+    dict_set_value_checked, ensure_hashable,
 };
 use self::ops::{
     add_values, and_values, compare_ge, compare_gt, compare_in, compare_le, compare_lt,
@@ -4888,7 +4889,15 @@ impl Vm {
                                 }
                             }
                             Value::List(list) => self.load_attr_list_method(list, &attr_name)?,
-                            Value::Int(value) => self.load_attr_int_method(value, &attr_name)?,
+                            Value::Int(value) => {
+                                self.load_attr_int_method(Value::Int(value), &attr_name)?
+                            }
+                            Value::BigInt(value) => {
+                                self.load_attr_int_method(Value::BigInt(value), &attr_name)?
+                            }
+                            Value::Bool(value) => {
+                                self.load_attr_int_method(Value::Bool(value), &attr_name)?
+                            }
                             Value::Str(text) => self.load_attr_str_method(text, &attr_name)?,
                             Value::Bytes(obj) => match &*obj.kind() {
                                 Object::Bytes(values) => {
@@ -5794,12 +5803,8 @@ impl Vm {
                                 }
                                 Value::Dict(obj) => {
                                     ensure_hashable(&index)?;
-                                    if let Object::Dict(entries) = &mut *obj.kind_mut() {
-                                        let before = entries.len();
-                                        entries.retain(|(key, _)| *key != index);
-                                        if entries.len() == before {
-                                            return Err(RuntimeError::new("key not found"));
-                                        }
+                                    if dict_remove_value(&obj, &index).is_none() {
+                                        return Err(RuntimeError::new("key not found"));
                                     }
                                 }
                                 Value::ByteArray(obj) => {
@@ -8890,7 +8895,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, list))
     }
 
-    fn load_attr_int_method(&self, value: i64, attr_name: &str) -> Result<Value, RuntimeError> {
+    fn load_attr_int_method(&self, value: Value, attr_name: &str) -> Result<Value, RuntimeError> {
         let kind = match attr_name {
             "to_bytes" => NativeMethodKind::IntToBytes,
             "bit_length" => NativeMethodKind::IntBitLengthMethod,
@@ -8909,9 +8914,7 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-            module_data
-                .globals
-                .insert("value".to_string(), Value::Int(value));
+            module_data.globals.insert("value".to_string(), value);
         }
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
@@ -9043,13 +9046,11 @@ impl Vm {
     }
 
     fn dict_lookup_str_key(&self, dict: &ObjRef, key: &str) -> Result<Option<Value>, RuntimeError> {
-        let Object::Dict(entries) = &*dict.kind() else {
+        let string_key = Value::Str(key.to_string());
+        if !matches!(&*dict.kind(), Object::Dict(_)) {
             return Err(RuntimeError::new("function attribute dict is invalid"));
-        };
-        Ok(entries
-            .iter()
-            .find(|(stored, _)| matches!(stored, Value::Str(name) if name == key))
-            .map(|(_, value)| value.clone()))
+        }
+        Ok(dict_get_value(dict, &string_key))
     }
 
     fn dict_set_str_key(
@@ -9058,32 +9059,18 @@ impl Vm {
         key: String,
         value: Value,
     ) -> Result<(), RuntimeError> {
-        let Object::Dict(entries) = &mut *dict.kind_mut() else {
+        if !matches!(&*dict.kind(), Object::Dict(_)) {
             return Err(RuntimeError::new("function attribute dict is invalid"));
-        };
-        if let Some((_, stored)) = entries
-            .iter_mut()
-            .find(|(stored, _)| matches!(stored, Value::Str(name) if name == &key))
-        {
-            *stored = value;
-            return Ok(());
         }
-        entries.push((Value::Str(key), value));
+        dict_set_value(dict, Value::Str(key), value);
         Ok(())
     }
 
     fn dict_remove_str_key(&self, dict: &ObjRef, key: &str) -> Result<bool, RuntimeError> {
-        let Object::Dict(entries) = &mut *dict.kind_mut() else {
+        if !matches!(&*dict.kind(), Object::Dict(_)) {
             return Err(RuntimeError::new("function attribute dict is invalid"));
-        };
-        if let Some(index) = entries
-            .iter()
-            .position(|(stored, _)| matches!(stored, Value::Str(name) if name == key))
-        {
-            entries.remove(index);
-            return Ok(true);
         }
-        Ok(false)
+        Ok(dict_remove_value(dict, &Value::Str(key.to_string())).is_some())
     }
 
     fn ensure_function_annotations(&mut self, func: &ObjRef) -> Result<ObjRef, RuntimeError> {
@@ -10554,14 +10541,13 @@ impl Vm {
                 let key = args.first().cloned().expect("checked len");
                 ensure_hashable(&key)?;
                 let default = args.get(1).cloned().unwrap_or(Value::None);
-                let mut receiver_kind = receiver.kind_mut();
-                let Object::Dict(entries) = &mut *receiver_kind else {
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
                     return Err(RuntimeError::new("dict.setdefault() receiver must be dict"));
-                };
-                if let Some((_, value)) = entries.iter().find(|(stored, _)| *stored == key) {
-                    return Ok(NativeCallResult::Value(value.clone()));
                 }
-                entries.push((key, default.clone()));
+                if let Some(value) = dict_get_value(&receiver, &key) {
+                    return Ok(NativeCallResult::Value(value));
+                }
+                dict_set_value(&receiver, key, default.clone());
                 Ok(NativeCallResult::Value(default))
             }
             NativeMethodKind::DictGet => {
@@ -10571,12 +10557,11 @@ impl Vm {
                 let key = args.first().cloned().expect("checked len");
                 ensure_hashable(&key)?;
                 let default = args.get(1).cloned().unwrap_or(Value::None);
-                let receiver_kind = receiver.kind();
-                let Object::Dict(entries) = &*receiver_kind else {
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
                     return Err(RuntimeError::new("dict.get() receiver must be dict"));
-                };
-                if let Some((_, value)) = entries.iter().find(|(stored, _)| *stored == key) {
-                    return Ok(NativeCallResult::Value(value.clone()));
+                }
+                if let Some(value) = dict_get_value(&receiver, &key) {
+                    return Ok(NativeCallResult::Value(value));
                 }
                 Ok(NativeCallResult::Value(default))
             }
@@ -10587,12 +10572,10 @@ impl Vm {
                 let key = args.first().cloned().expect("checked len");
                 ensure_hashable(&key)?;
                 let default = args.get(1).cloned();
-                let mut receiver_kind = receiver.kind_mut();
-                let Object::Dict(entries) = &mut *receiver_kind else {
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
                     return Err(RuntimeError::new("dict.pop() receiver must be dict"));
-                };
-                if let Some(idx) = entries.iter().position(|(stored, _)| *stored == key) {
-                    let (_, value) = entries.remove(idx);
+                }
+                if let Some(value) = dict_remove_value(&receiver, &key) {
                     return Ok(NativeCallResult::Value(value));
                 }
                 if let Some(default) = default {
@@ -10695,7 +10678,7 @@ impl Vm {
                 }
                 let value = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Int(value)) => *value,
+                        Some(value) => value_to_bigint(value.clone())?,
                         _ => return Err(RuntimeError::new("int receiver is invalid")),
                     },
                     _ => return Err(RuntimeError::new("int receiver is invalid")),
@@ -10717,20 +10700,12 @@ impl Vm {
                 } else {
                     false
                 };
-                if value < 0 && !signed {
-                    return Err(RuntimeError::new("can't convert negative int to unsigned"));
-                }
-                let mut bytes = vec![0u8; length as usize];
-                let mut remaining = value as i128;
-                for i in 0..bytes.len() {
-                    let idx = if byteorder == "little" {
-                        i
-                    } else {
-                        bytes.len() - 1 - i
-                    };
-                    bytes[idx] = (remaining & 0xFF) as u8;
-                    remaining >>= 8;
-                }
+                let bytes = bigint_to_fixed_bytes(
+                    &value,
+                    length as usize,
+                    byteorder == "little",
+                    signed,
+                )?;
                 Ok(NativeCallResult::Value(self.heap.alloc_bytes(bytes)))
             }
             NativeMethodKind::IntBitLengthMethod => {
@@ -10739,14 +10714,12 @@ impl Vm {
                 }
                 let value = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Int(value)) => *value,
+                        Some(value) => value_to_bigint(value.clone())?,
                         _ => return Err(RuntimeError::new("int receiver is invalid")),
                     },
                     _ => return Err(RuntimeError::new("int receiver is invalid")),
                 };
-                Ok(NativeCallResult::Value(Value::Int(
-                    (i64::BITS - value.unsigned_abs().leading_zeros()) as i64,
-                )))
+                Ok(NativeCallResult::Value(Value::Int(value.bit_length() as i64)))
             }
             NativeMethodKind::StrStartsWith => {
                 if args.len() != 1 {
@@ -11632,9 +11605,7 @@ impl Vm {
                 ensure_hashable(&target)?;
                 let receiver_kind = receiver.kind();
                 let contains = match &*receiver_kind {
-                    Object::Set(values) | Object::FrozenSet(values) => {
-                        values.iter().any(|value| *value == target)
-                    }
+                    Object::Set(values) | Object::FrozenSet(values) => values.contains(&target),
                     _ => return Err(RuntimeError::new("__contains__() receiver must be set")),
                 };
                 Ok(NativeCallResult::Value(Value::Bool(contains)))
@@ -11649,9 +11620,7 @@ impl Vm {
                 let Object::Set(values) = &mut *receiver_kind else {
                     return Err(RuntimeError::new("add() receiver must be set"));
                 };
-                if !values.iter().any(|value| *value == item) {
-                    values.push(item);
-                }
+                values.insert(item);
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::SetUpdate => {
@@ -11665,9 +11634,7 @@ impl Vm {
                 };
                 for item in items {
                     ensure_hashable(&item)?;
-                    if !values.iter().any(|value| *value == item) {
-                        values.push(item);
-                    }
+                    values.insert(item);
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -11680,9 +11647,14 @@ impl Vm {
                     _ => return Err(RuntimeError::new("issuperset() receiver must be set")),
                 };
                 let other_values = self.collect_iterable_values(args[0].clone())?;
-                let is_superset = other_values
-                    .iter()
-                    .all(|item| receiver_values.iter().any(|value| value == item));
+                let mut is_superset = true;
+                for item in &other_values {
+                    ensure_hashable(item)?;
+                    if !receiver_values.contains(item) {
+                        is_superset = false;
+                        break;
+                    }
+                }
                 Ok(NativeCallResult::Value(Value::Bool(is_superset)))
             }
             NativeMethodKind::SetIsSubset => {
@@ -11693,10 +11665,8 @@ impl Vm {
                     Object::Set(values) | Object::FrozenSet(values) => values.clone(),
                     _ => return Err(RuntimeError::new("issubset() receiver must be set")),
                 };
-                let other_values = self.collect_iterable_values(args[0].clone())?;
-                let is_subset = receiver_values
-                    .iter()
-                    .all(|item| other_values.iter().any(|value| value == item));
+                let other = dedup_hashable_values(self.collect_iterable_values(args[0].clone())?)?;
+                let is_subset = receiver_values.iter().all(|item| other.contains(item));
                 Ok(NativeCallResult::Value(Value::Bool(is_subset)))
             }
             NativeMethodKind::SetIsDisjoint => {
@@ -11707,10 +11677,8 @@ impl Vm {
                     Object::Set(values) | Object::FrozenSet(values) => values.clone(),
                     _ => return Err(RuntimeError::new("isdisjoint() receiver must be set")),
                 };
-                let other_values = self.collect_iterable_values(args[0].clone())?;
-                let is_disjoint = receiver_values
-                    .iter()
-                    .all(|item| other_values.iter().all(|value| value != item));
+                let other = dedup_hashable_values(self.collect_iterable_values(args[0].clone())?)?;
+                let is_disjoint = receiver_values.iter().all(|item| !other.contains(item));
                 Ok(NativeCallResult::Value(Value::Bool(is_disjoint)))
             }
             NativeMethodKind::ClassRegister => {
@@ -14086,31 +14054,8 @@ impl Vm {
             }
         };
         let signed = is_truthy(&signed_arg);
-        if bytes.len() > 8 {
-            return Err(RuntimeError::new(
-                "int.from_bytes() overflow for this runtime",
-            ));
-        }
-
-        let mut unsigned = 0i128;
-        if byteorder == "little" {
-            for (idx, byte) in bytes.iter().enumerate() {
-                unsigned |= (*byte as i128) << (idx * 8);
-            }
-        } else {
-            for byte in &bytes {
-                unsigned = (unsigned << 8) | (*byte as i128);
-            }
-        }
-        let bits = (bytes.len() * 8) as u32;
-        let value = if signed && bits > 0 && ((unsigned >> (bits - 1)) & 1) == 1 {
-            unsigned - (1i128 << bits)
-        } else {
-            unsigned
-        };
-        let value =
-            i64::try_from(value).map_err(|_| RuntimeError::new("int.from_bytes() overflow"))?;
-        Ok(Value::Int(value))
+        let value = bigint_from_bytes(&bytes, byteorder == "little", signed);
+        Ok(value_from_bigint(value))
     }
 
     fn builtin_compile(
@@ -24425,8 +24370,105 @@ fn value_from_bigint(value: BigInt) -> Value {
     }
 }
 
+fn bigint_from_bytes(bytes: &[u8], little_endian: bool, signed: bool) -> BigInt {
+    if bytes.is_empty() {
+        return BigInt::zero();
+    }
+
+    let mut value = BigInt::zero();
+    if little_endian {
+        for byte in bytes.iter().rev() {
+            value = value.mul_small(256);
+            value = value.add_small(*byte as u32);
+        }
+    } else {
+        for byte in bytes {
+            value = value.mul_small(256);
+            value = value.add_small(*byte as u32);
+        }
+    }
+
+    let sign_bit_set = if little_endian {
+        bytes.last().is_some_and(|byte| (byte & 0x80) != 0)
+    } else {
+        bytes.first().is_some_and(|byte| (byte & 0x80) != 0)
+    };
+    if signed && sign_bit_set {
+        let modulus = BigInt::one().shl_bits(bytes.len() * 8);
+        value = value.sub(&modulus);
+    }
+    value
+}
+
+fn bigint_to_unsigned_le_bytes(value: &BigInt) -> Vec<u8> {
+    if value.is_zero() {
+        return vec![0];
+    }
+    let divisor = BigInt::from_i64(256);
+    let mut current = value.clone();
+    let mut out = Vec::new();
+    while !current.is_zero() {
+        let (quotient, remainder) = current
+            .div_mod_floor(&divisor)
+            .expect("divisor is non-zero");
+        let byte = remainder.to_i64().expect("remainder fits in i64");
+        out.push(byte as u8);
+        current = quotient;
+    }
+    out
+}
+
+fn bigint_to_fixed_bytes(
+    value: &BigInt,
+    length: usize,
+    little_endian: bool,
+    signed: bool,
+) -> Result<Vec<u8>, RuntimeError> {
+    if length == 0 {
+        if value.is_zero() {
+            return Ok(Vec::new());
+        }
+        return Err(RuntimeError::new("int too big to convert"));
+    }
+
+    let bits = length
+        .checked_mul(8)
+        .ok_or_else(|| RuntimeError::new("int too big to convert"))?;
+    let modulus = BigInt::one().shl_bits(bits);
+    let unsigned_value = if signed {
+        let signed_limit = BigInt::one().shl_bits(bits - 1);
+        let signed_min = signed_limit.negated();
+        let signed_max = signed_limit.sub(&BigInt::one());
+        if value.cmp_total(&signed_min) == Ordering::Less
+            || value.cmp_total(&signed_max) == Ordering::Greater
+        {
+            return Err(RuntimeError::new("int too big to convert"));
+        }
+        if value.is_negative() {
+            modulus.add(value)
+        } else {
+            value.clone()
+        }
+    } else {
+        if value.is_negative() {
+            return Err(RuntimeError::new("can't convert negative int to unsigned"));
+        }
+        value.clone()
+    };
+
+    let mut bytes = bigint_to_unsigned_le_bytes(&unsigned_value);
+    if bytes.len() > length {
+        return Err(RuntimeError::new("int too big to convert"));
+    }
+    bytes.resize(length, 0);
+    if !little_endian {
+        bytes.reverse();
+    }
+    Ok(bytes)
+}
+
 fn parse_decimal_bigint_literal(text: &str) -> Result<BigInt, RuntimeError> {
-    let cleaned = text.trim_end().replace('_', "");
+    let cleaned = text.trim_end();
     if cleaned.is_empty() {
         return Err(RuntimeError::new("invalid literal for int() with base 10"));
     }
@@ -24435,17 +24477,44 @@ fn parse_decimal_bigint_literal(text: &str) -> Result<BigInt, RuntimeError> {
     } else if let Some(rest) = cleaned.strip_prefix('-') {
         (true, rest)
     } else {
-        (false, cleaned.as_str())
+        (false, cleaned)
     };
-    if digits.is_empty() {
-        return Err(RuntimeError::new("invalid literal for int() with base 10"));
-    }
-    let mut value = BigInt::from_str_radix(digits, 10)
+    let normalized = normalize_decimal_int_digits(digits)
+        .ok_or_else(|| RuntimeError::new("invalid literal for int() with base 10"))?;
+    let mut value = BigInt::from_str_radix(&normalized, 10)
         .ok_or_else(|| RuntimeError::new("invalid literal for int() with base 10"))?;
     if negative {
         value = value.negated();
     }
     Ok(value)
+}
+
+fn normalize_decimal_int_digits(digits: &str) -> Option<String> {
+    if digits.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(digits.len());
+    let mut saw_digit = false;
+    let mut prev_underscore = false;
+    for ch in digits.chars() {
+        if ch == '_' {
+            if !saw_digit || prev_underscore {
+                return None;
+            }
+            prev_underscore = true;
+            continue;
+        }
+        if !ch.is_ascii_digit() {
+            return None;
+        }
+        saw_digit = true;
+        prev_underscore = false;
+        out.push(ch);
+    }
+    if !saw_digit || prev_underscore {
+        return None;
+    }
+    Some(out)
 }
 
 fn seed_from_value(value: &Value) -> Result<u64, RuntimeError> {

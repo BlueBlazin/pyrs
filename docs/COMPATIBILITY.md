@@ -27,7 +27,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 
 ## Runtime & Object Model
 - [x] Core types subset (None, bool, int, float, str, tuple, list, dict)
-- [~] Arbitrary-precision `int` parity (`Value::BigInt` now powers core large-int arithmetic/bitwise/shift/comparison paths, Python-floor `//`/`%`/`divmod` semantics, large-decimal/base `int(...)` parsing, `%x`/`%X`/`%o` bigint formatting, and lazy large-stop `range` iteration; long-tail conversion/format/error-text edges remain pending)
+- [~] Arbitrary-precision `int` parity (`Value::BigInt` now powers core large-int arithmetic/bitwise/shift/comparison paths, Python-floor `//`/`%`/`divmod` semantics, large-decimal/base `int(...)` parsing (including stricter base-0/underscore validation), `%x`/`%X`/`%o` bigint formatting, bigint-aware `int.bit_length`, arbitrary-size `int.from_bytes`/`int.to_bytes`, and lazy large-stop `range` iteration; long-tail conversion/format/error-text edges remain pending)
 - [x] `bytes`, `bytearray`, `memoryview`, `set`, `frozenset`, `complex`
 - [x] Function + frame model (positional-only params, positional params, defaults, keyword args, keyword-only params, *args/**kwargs; closures + `nonlocal`)
 - [x] Generators (lazy suspended-frame protocol: `__next__`, `send`, `throw`, `close`)
@@ -44,7 +44,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Classes subset (multiple inheritance with C3 MRO metadata, instance attrs + bound methods, descriptor-aware attribute load/store paths, explicit `super(type, obj)` support, `__slots__` restrictions including empty-slot and `__dict__` slot behavior, class-header `metaclass=` keyword path, metaclass conflict detection, and metaclass method lookup fallback)
 - [~] Attribute-hook parity (`__getattribute__` custom override path + `object.__getattribute__` baseline are implemented; full CPython fallback/error-edge semantics remain pending)
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
-- [~] Hash-container parity (`dict`/`set`/`frozenset` now use hash-indexed runtime container objects with insertion-order backing vectors; unhashable key/item rejection is enforced on constructor/update/assignment/membership flows, literal dict construction, `dict.fromkeys(...)`, and `collections.Counter(...)`; dict equality is insertion-order independent, and set/frozenset equality is value-based including cross-type equality; full CPython hash/equality edge parity and container-performance closure remain pending)
+- [~] Hash-container parity (`dict`/`set`/`frozenset` now use hash-indexed runtime container objects with insertion-order backing vectors; unhashable key/item rejection is enforced on constructor/update/assignment/membership flows, literal dict construction, `dict.fromkeys(...)`, and `collections.Counter(...)`; dict keyed operations now route through hash-indexed lookup/update/delete helpers (`get`/`setdefault`/`pop`/delete), and membership/set-relationship checks use hash-based paths with hashability enforcement; dict equality is insertion-order independent, and set/frozenset equality is value-based including cross-type equality; full CPython hash/equality edge parity and container-performance closure remain pending)
 
 ## Stdlib Coverage
 - [x] Stub/partial accounting gate (`docs/STUB_ACCOUNTING.md` + generated `docs/NOOP_BUILTIN_INVENTORY.txt` enforced by `tests/noop_inventory.rs`)
@@ -74,10 +74,10 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 ## CPython Tests
 - [x] First-class CPython harness with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`)
 - [x] Owned allowlist tracking (`tests/cpython_allowlist.txt`) with stale-entry detection in harness
-- [~] Current curated language/import harness suites are near-empty-allowlist; latest expansion includes `test/test_list.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`
+- [~] Current curated language/import harness suites are near-empty-allowlist; latest expansion includes `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, `test/test_configparser.py`, `test/test_base64.py`, `test/test_bisect.py`, `test/test_copy.py`, `test/test_fnmatch.py`, `test/test_genericalias.py`, `test/test_heapq.py`, `test/test_pprint.py`, `test/test_reprlib.py`, `test/test_sched.py`, `test/test_statistics.py`, `test/test_textwrap.py`, `test/test_tokenize.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`
 - [x] Differential tests vs CPython (`tests/differential_cpython.rs`)
 - [x] Parser/compiler/VM fuzzing (`tests/fuzz_parser_vm.rs` + existing arithmetic fuzz)
-- [~] Incremental `Lib/test` coverage expansion (broader suite growth and allowlist reduction ongoing; latest language-suite expansion adds `test_set`, `test_list`, `test_tuple`, `test_slice`, `test_format`, `test_configparser`, `test_json/__init__`, `test_dataclasses/__init__`, and `test_enum`)
+- [~] Incremental `Lib/test` coverage expansion (broader suite growth and allowlist reduction ongoing; latest language-suite expansion adds `test_set`, `test_list`, `test_tuple`, `test_slice`, `test_format`, `test_configparser`, `test_base64`, `test_bisect`, `test_copy`, `test_fnmatch`, `test_genericalias`, `test_heapq`, `test_pprint`, `test_reprlib`, `test_sched`, `test_statistics`, `test_textwrap`, `test_tokenize`, `test_json/__init__`, `test_dataclasses/__init__`, and `test_enum`)
 
 ## Real-world Apps
 - [x] Curated pure-Python smoke/regression suite (`tests/realworld_smoke.rs`)

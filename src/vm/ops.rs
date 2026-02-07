@@ -715,21 +715,21 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(entries) => {
                 ensure_hashable(left)?;
-                Ok(entries.iter().any(|(key, _)| key == left))
+                Ok(entries.contains_key(left))
             }
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => {
                 ensure_hashable(left)?;
-                Ok(values.iter().any(|value| value == left))
+                Ok(values.contains(left))
             }
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::FrozenSet(obj) => match &*obj.kind() {
             Object::FrozenSet(values) => {
                 ensure_hashable(left)?;
-                Ok(values.iter().any(|value| value == left))
+                Ok(values.contains(left))
             }
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },

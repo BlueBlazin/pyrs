@@ -355,6 +355,94 @@ ok = (a > (2 ** 63 - 1) and b < -(2 ** 63) and c == ((1 << 64) - 1) and int(d, 1
 }
 
 #[test]
+fn executes_int_float_conversion_and_base0_underscore_rules() {
+    let source = "\
+a = int(1.9)\n\
+b = int(-1.9)\n\
+c = int(1e20)\n\
+v1 = int('00', 0)\n\
+v2 = int('0_0', 0)\n\
+v3 = int('0x_ff', 0)\n\
+ok = (a == 1 and b == -1 and c == int('100000000000000000000') and v1 == 0 and v2 == 0 and v3 == 255)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_bigint_from_bytes_to_bytes_and_bit_length_paths() {
+    let source = "\
+big = int.from_bytes(b'\\x01' + (b'\\x00' * 20), 'big')\n\
+neg = int.from_bytes((b'\\xff' * 20), 'big', signed=True)\n\
+roundtrip = big.to_bytes(21, 'big')\n\
+bit_big = (1 << 130).bit_length()\n\
+bit_bool = True.bit_length()\n\
+ok = (big == (1 << 160) and neg == -1 and len(roundtrip) == 21 and roundtrip[0] == 1 and bit_big == 131 and bit_bool == 1)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn rejects_invalid_int_literal_underscore_and_base0_forms() {
+    for source in [
+        "int('010', 0)\n",
+        "int('0_1', 0)\n",
+        "int('_1')\n",
+        "int('1_')\n",
+        "int('1__2')\n",
+        "int('0x__ff', 0)\n",
+    ] {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        let err = vm.execute(&code).expect_err("execution should fail");
+        assert!(
+            err.message.contains("invalid literal"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn rejects_int_from_non_finite_float() {
+    for source in ["int(float('nan'))\n", "int(float('inf'))\n"] {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        let err = vm.execute(&code).expect_err("execution should fail");
+        assert!(
+            err.message.contains("cannot convert float"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn rejects_int_to_bytes_overflow_paths() {
+    for source in [
+        "(1 << 80).to_bytes(10, 'big')\n",
+        "(-129).to_bytes(1, 'big', True)\n",
+    ] {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        let err = vm.execute(&code).expect_err("execution should fail");
+        assert!(
+            err.message.contains("int too big to convert"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
 fn executes_range_with_large_bigint_stop_lazily() {
     let source = "\
 it = iter(range(1 << 1000))\n\
@@ -1463,6 +1551,32 @@ ok = (a == b) and (c == d) and (a == c) and (c == a) and not (a != c)\n";
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_hash_equality_numeric_key_canonicalization() {
+    let source = "\
+d = {}\n\
+d[1] = 'int'\n\
+d[True] = 'bool'\n\
+d[1.0] = 'float'\n\
+s = {1, True, 1.0}\n\
+ok = (len(d) == 1 and d[1] == 'float' and d[True] == 'float' and len(s) == 1 and (1 in s) and (True in s))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn set_relationship_methods_reject_unhashable_items() {
+    let source = "{1}.issuperset([[]])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("unhashable type: 'list'"));
 }
 
 #[test]

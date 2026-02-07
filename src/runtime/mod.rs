@@ -336,6 +336,10 @@ impl DictObject {
         self.find_entry(key).map(|(_, value)| value)
     }
 
+    pub fn contains_key(&self, key: &Value) -> bool {
+        self.find_entry(key).is_some()
+    }
+
     pub fn insert(&mut self, key: Value, value: Value) {
         if let Some(index) = self.find_index(&key) {
             self.entries[index].1 = value;
@@ -346,6 +350,13 @@ impl DictObject {
         if let Some(hash) = value_hash_key(&self.entries[index].0) {
             self.index.entry(hash).or_default().push(index);
         }
+    }
+
+    pub fn remove_key(&mut self, key: &Value) -> Option<(Value, Value)> {
+        let index = self.find_index(key)?;
+        let removed = self.entries.remove(index);
+        self.rebuild_index();
+        Some(removed)
     }
 
     fn find_entry(&self, key: &Value) -> Option<&(Value, Value)> {
@@ -522,6 +533,29 @@ impl SetObject {
             self.index.entry(hash).or_default().push(index);
         }
         true
+    }
+
+    pub fn remove_value(&mut self, value: &Value) -> bool {
+        let Some(index) = self.find_index(value) else {
+            return false;
+        };
+        self.values.remove(index);
+        self.rebuild_index();
+        true
+    }
+
+    fn find_index(&self, value: &Value) -> Option<usize> {
+        if let Some(hash) = value_hash_key(value) {
+            if let Some(bucket) = self.index.get(&hash) {
+                for index in bucket {
+                    if self.values[*index] == *value {
+                        return Some(*index);
+                    }
+                }
+                return None;
+            }
+        }
+        self.values.iter().position(|item| *item == *value)
     }
 
     fn rebuild_index(&mut self) {
@@ -1968,12 +2002,12 @@ impl BuiltinFunction {
                     if trimmed.is_empty() {
                         return Err(RuntimeError::new("int() invalid literal"));
                     }
-                    let (sign, body) = if let Some(rest) = trimmed.strip_prefix('-') {
-                        (-1_i128, rest)
+                    let (is_negative, body) = if let Some(rest) = trimmed.strip_prefix('-') {
+                        (true, rest)
                     } else if let Some(rest) = trimmed.strip_prefix('+') {
-                        (1_i128, rest)
+                        (false, rest)
                     } else {
-                        (1_i128, trimmed)
+                        (false, trimmed)
                     };
                     if body.is_empty() {
                         return Err(RuntimeError::new("int() invalid literal"));
@@ -1985,6 +2019,7 @@ impl BuiltinFunction {
                     }
 
                     let mut digits = body;
+                    let mut saw_prefix = false;
                     if base == 0 {
                         if let Some(rest) = digits
                             .strip_prefix("0x")
@@ -1992,18 +2027,21 @@ impl BuiltinFunction {
                         {
                             base = 16;
                             digits = rest;
+                            saw_prefix = true;
                         } else if let Some(rest) = digits
                             .strip_prefix("0o")
                             .or_else(|| digits.strip_prefix("0O"))
                         {
                             base = 8;
                             digits = rest;
+                            saw_prefix = true;
                         } else if let Some(rest) = digits
                             .strip_prefix("0b")
                             .or_else(|| digits.strip_prefix("0B"))
                         {
                             base = 2;
                             digits = rest;
+                            saw_prefix = true;
                         } else {
                             base = 10;
                         }
@@ -2013,6 +2051,7 @@ impl BuiltinFunction {
                             .or_else(|| digits.strip_prefix("0X"))
                         {
                             digits = rest;
+                            saw_prefix = true;
                         }
                     } else if base == 8 {
                         if let Some(rest) = digits
@@ -2020,6 +2059,7 @@ impl BuiltinFunction {
                             .or_else(|| digits.strip_prefix("0O"))
                         {
                             digits = rest;
+                            saw_prefix = true;
                         }
                     } else if base == 2 {
                         if let Some(rest) = digits
@@ -2027,17 +2067,24 @@ impl BuiltinFunction {
                             .or_else(|| digits.strip_prefix("0B"))
                         {
                             digits = rest;
+                            saw_prefix = true;
                         }
                     }
 
-                    let normalized = digits.replace('_', "");
-                    if normalized.is_empty() {
+                    let normalized = normalize_int_digits_for_base(digits, base as u32, saw_prefix)
+                        .ok_or_else(|| RuntimeError::new("int() invalid literal"))?;
+                    if explicit_base == Some(0)
+                        && !saw_prefix
+                        && normalized.len() > 1
+                        && normalized.starts_with('0')
+                        && normalized.chars().any(|ch| ch != '0')
+                    {
                         return Err(RuntimeError::new("int() invalid literal"));
                     }
 
                     let mut parsed = BigInt::from_str_radix(&normalized, base as u32)
                         .ok_or_else(|| RuntimeError::new("int() invalid literal"))?;
-                    if sign < 0 {
+                    if is_negative {
                         parsed = parsed.negated();
                     }
                     Ok(match parsed.to_i64() {
@@ -2065,12 +2112,31 @@ impl BuiltinFunction {
                     Value::Int(value) => Ok(Value::Int(*value)),
                     Value::BigInt(value) => Ok(Value::BigInt(value.clone())),
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
-                    Value::Float(value) => Ok(Value::Int(*value as i64)),
+                    Value::Float(value) => {
+                        if value.is_nan() {
+                            return Err(RuntimeError::new(
+                                "cannot convert float NaN to integer",
+                            ));
+                        }
+                        if value.is_infinite() {
+                            return Err(RuntimeError::new(
+                                "cannot convert float infinity to integer",
+                            ));
+                        }
+                        let truncated = value.trunc();
+                        let bigint = BigInt::from_f64_integral(truncated)
+                            .ok_or_else(|| RuntimeError::new("int() invalid literal"))?;
+                        Ok(match bigint.to_i64() {
+                            Some(value) => Value::Int(value),
+                            None => Value::BigInt(bigint),
+                        })
+                    }
                     Value::Str(value) => parse_with_base(value, explicit_base),
                     Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
                         Object::Bytes(bytes) | Object::ByteArray(bytes) => {
-                            let text = String::from_utf8_lossy(bytes);
-                            parse_with_base(&text, explicit_base)
+                            let text = std::str::from_utf8(bytes)
+                                .map_err(|_| RuntimeError::new("int() invalid literal"))?;
+                            parse_with_base(text, explicit_base)
                         }
                         _ => Err(RuntimeError::new("int() unsupported type")),
                     },
@@ -2081,10 +2147,19 @@ impl BuiltinFunction {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("int.bit_length() expects one argument"));
                 }
-                let value = value_to_int(args[0].clone())?;
-                Ok(Value::Int(
-                    (i64::BITS - value.unsigned_abs().leading_zeros()) as i64,
-                ))
+                let bits = match &args[0] {
+                    Value::Int(value) => (i64::BITS - value.unsigned_abs().leading_zeros()) as i64,
+                    Value::Bool(value) => {
+                        if *value {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    Value::BigInt(value) => value.bit_length() as i64,
+                    _ => return Err(RuntimeError::new("expected integer")),
+                };
+                Ok(Value::Int(bits))
             }
             BuiltinFunction::IntFromBytes => {
                 Err(RuntimeError::new("int.from_bytes() requires VM context"))
@@ -3816,6 +3891,43 @@ fn dedup_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
         }
     }
     Ok(out)
+}
+
+fn normalize_int_digits_for_base(digits: &str, radix: u32, allow_prefix_underscore: bool) -> Option<String> {
+    if !(2..=36).contains(&radix) {
+        return None;
+    }
+    if digits.is_empty() {
+        return None;
+    }
+
+    let mut chars = digits.chars().peekable();
+    if allow_prefix_underscore && matches!(chars.peek(), Some('_')) {
+        chars.next();
+    }
+
+    let mut out = String::with_capacity(digits.len());
+    let mut saw_digit = false;
+    let mut prev_underscore = false;
+    for ch in chars {
+        if ch == '_' {
+            if !saw_digit || prev_underscore {
+                return None;
+            }
+            prev_underscore = true;
+            continue;
+        }
+        if ch.to_digit(radix).is_none() {
+            return None;
+        }
+        saw_digit = true;
+        prev_underscore = false;
+        out.push(ch);
+    }
+    if !saw_digit || prev_underscore {
+        return None;
+    }
+    Some(out)
 }
 
 fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {

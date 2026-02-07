@@ -1,14 +1,12 @@
-use crate::runtime::{ObjRef, Object, RuntimeError, Value};
+use crate::runtime::{ObjRef, Object, RuntimeError, SetObject, Value};
 
 pub(crate) fn dedup_hashable_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
-    let mut out = Vec::new();
+    let mut deduped = SetObject::new(Vec::new());
     for value in values {
         ensure_hashable(&value)?;
-        if !out.iter().any(|existing| *existing == value) {
-            out.push(value);
-        }
+        deduped.insert(value);
     }
-    Ok(out)
+    Ok(deduped.to_vec())
 }
 
 pub(crate) fn dict_get_value(dict: &ObjRef, key: &Value) -> Option<Value> {
@@ -27,6 +25,15 @@ pub(crate) fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
         _ => return,
     };
     entries.insert(key, value);
+}
+
+pub(crate) fn dict_remove_value(dict: &ObjRef, key: &Value) -> Option<Value> {
+    let mut dict_kind = dict.kind_mut();
+    let entries = match &mut *dict_kind {
+        Object::Dict(entries) => entries,
+        _ => return None,
+    };
+    entries.remove_key(key).map(|(_, value)| value)
 }
 
 pub(crate) fn dict_set_value_checked(
