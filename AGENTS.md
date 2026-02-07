@@ -58,7 +58,7 @@ Current milestone state summary:
 10. Milestone 12 complete (P0): current curated CPython harness language/import suites pass with an empty allowlist.
 11. Remaining milestones 13-16 cover: long-tail language/runtime parity + stdlib/packaging usability closure, performance/observability/runtime hooks, native-extension ecosystem compatibility, and release hardening/certification.
 12. Strict Milestone 13 P0 blockers now explicitly include full `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` semantic closure with robustness/performance proof; these are tracked in `docs/STUB_ACCOUNTING.md`, `docs/ROADMAP.md`, and `docs/PRODUCTION_READINESS.md`.
-13. Curated CPython language harness currently passes with empty allowlist (including `test_enum.py` import path); strict standalone `test_csv` unittest execution is still a P0 blocker via `_io.open`/`tempfile`-path `StopIteration` propagation.
+13. Curated CPython language harness currently passes with empty allowlist (including `test_enum.py` import path); curated import harness still has active `zipfile`/`struct.Struct` constructor-path blockers (`test_pkgutil.py`, `test_importlib/resources/test_resource.py`), and strict standalone `test_csv` unittest execution is still a P0 blocker via `_io.open`/`tempfile`-path `StopIteration` propagation.
 
 ## Engineering Principles
 - Maintain correctness first, then performance.

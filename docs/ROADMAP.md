@@ -332,7 +332,7 @@ Progress:
 - VM call/import stack-discipline fix landed for nested frame-producing paths: builtin/import opcode result delivery now targets caller frames robustly, removing `builtin caller frame missing` regressions while preserving nested import behavior.
 - Runtime compatibility slice landed for stdlib bootstrap: `__getattr__` fallback now triggers when `__getattribute__` raises `AttributeError`, `str()`/`float()` now accept zero-argument forms, `io.text_encoding` is implemented, and `os.getenv`/`os.write` plus `random.choices` (including `Random` instance method path) are available with regressions.
 - Enum/import closure follow-up landed: metaclass `__call__` dispatch for class invocation is now wired through unified call paths, enum shim functional-call import paths no longer fail, and baseline `datetime.date(...)` constructor support is in place for stdlib import-time usage.
-- Active Milestone 13 blockers remain explicit: `_io.open` still lacks CPython file-object semantics needed by `tempfile`/`test_csv` execution paths, and strict standalone `test_csv` unittest execution still fails with a `StopIteration` propagation path under `unittest.runner`.
+- Active Milestone 13 blockers remain explicit: `_io.open` still lacks CPython file-object semantics needed by `tempfile`/`test_csv` execution paths, strict standalone `test_csv` unittest execution still fails with a `StopIteration` propagation path under `unittest.runner`, and curated import-suite parity still has `zipfile`/`struct.Struct` constructor blockers.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:

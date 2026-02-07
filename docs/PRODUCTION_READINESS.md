@@ -114,7 +114,8 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 **Testing & QA**
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
 - [~] P0: Current curated CPython language/import harness suites are near zero-allowlist and now include `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, `test/test_configparser.py`, `test/test_base64.py`, `test/test_binascii.py`, `test/test_bisect.py`, `test/test_copy.py`, `test/test_copyreg.py`, `test/test_csv.py`, `test/test_fnmatch.py`, `test/test_genericalias.py`, `test/test_heapq.py`, `test/test_pprint.py`, `test/test_reprlib.py`, `test/test_sched.py`, `test/test_statistics.py`, `test/test_textwrap.py`, `test/test_tokenize.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`; `tests/cpython_allowlist.txt` remains empty.
-- [x] P0: Remaining curated harness blocker (`test/test_enum.py`) is closed for the current curated suite gate.
+- [x] P0: Prior curated language-suite blocker (`test/test_enum.py`) is closed.
+- [ ] P0: Curated import-suite blockers remain (`test/test_pkgutil.py`, `test/test_importlib/resources/test_resource.py`) on `zipfile`/`struct.Struct` constructor paths (`class constructor takes no arguments`).
 - [ ] P0: Strict standalone `test_csv` unittest execution still fails due `StopIteration` propagation under `unittest.runner`; `_io.open`/`tempfile`-path closure remains mandatory before release.
 - [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
 - [ ] P0: Full CPython module-suite closure for `json`/`csv`/`pickle` stack (`test_json`, `test_csv`, `test_pickle`, `test_pickletools`, `test_copyreg`) with owned allowlist policy.
