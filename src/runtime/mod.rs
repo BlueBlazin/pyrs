@@ -1,5 +1,7 @@
 //! Runtime object model (stubbed).
 
+pub mod bigint;
+
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -9,6 +11,7 @@ use std::ops::Index;
 use std::rc::{Rc, Weak};
 
 use crate::bytecode::CodeObject;
+pub use bigint::BigInt;
 
 #[derive(Debug)]
 pub struct ModuleObject {
@@ -590,6 +593,25 @@ fn value_hash_key(value: &Value) -> Option<u64> {
             1u8.hash(&mut hasher);
             (*integer as f64).to_bits().hash(&mut hasher);
         }
+        Value::BigInt(integer) => {
+            1u8.hash(&mut hasher);
+            if let Some(small) = integer.to_i64() {
+                (small as f64).to_bits().hash(&mut hasher);
+            } else {
+                let as_float = integer.to_f64();
+                if as_float.is_finite()
+                    && BigInt::from_f64_integral(as_float)
+                        .as_ref()
+                        .is_some_and(|converted| converted == integer)
+                {
+                    let normalized = if as_float == 0.0 { 0.0 } else { as_float };
+                    normalized.to_bits().hash(&mut hasher);
+                } else {
+                    0xffu8.hash(&mut hasher);
+                    integer.hash(&mut hasher);
+                }
+            }
+        }
         Value::Float(float) => {
             1u8.hash(&mut hasher);
             let normalized = if *float == 0.0 { 0.0 } else { *float };
@@ -722,6 +744,11 @@ pub enum IteratorKind {
     ByteArray(ObjRef),
     MemoryView(ObjRef),
     Count { current: i64, step: i64 },
+    Range {
+        current: BigInt,
+        stop: BigInt,
+        step: BigInt,
+    },
 }
 
 #[derive(Debug)]
@@ -741,6 +768,7 @@ enum ImmediateKey {
     None,
     Bool(bool),
     Int(i64),
+    BigInt(BigInt),
     Float(u64),
     Complex(u64, u64),
     Str(String),
@@ -857,6 +885,7 @@ impl Heap {
             Value::None => self.id_for_immediate(ImmediateKey::None),
             Value::Bool(value) => self.id_for_immediate(ImmediateKey::Bool(*value)),
             Value::Int(value) => self.id_for_immediate(ImmediateKey::Int(*value)),
+            Value::BigInt(value) => self.id_for_immediate(ImmediateKey::BigInt(value.clone())),
             Value::Float(value) => self.id_for_immediate(ImmediateKey::Float(value.to_bits())),
             Value::Complex { real, imag } => {
                 self.id_for_immediate(ImmediateKey::Complex(real.to_bits(), imag.to_bits()))
@@ -1004,7 +1033,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             | IteratorKind::Bytes(list)
             | IteratorKind::ByteArray(list)
             | IteratorKind::MemoryView(list) => stack.push(list.clone()),
-            IteratorKind::Str(_) | IteratorKind::Count { .. } => {}
+            IteratorKind::Str(_)
+            | IteratorKind::Count { .. }
+            | IteratorKind::Range { .. } => {}
         },
         Object::Generator(_) => {}
         Object::Module(module) => {
@@ -1105,6 +1136,10 @@ fn clear_object_refs(obj: &ObjRef) {
                 iterator.kind = IteratorKind::Str(String::new());
                 iterator.index = 0;
             }
+            IteratorKind::Range { .. } => {
+                iterator.kind = IteratorKind::Str(String::new());
+                iterator.index = 0;
+            }
         },
         Object::Generator(generator) => {
             generator.started = false;
@@ -1145,6 +1180,7 @@ pub enum Value {
     None,
     Bool(bool),
     Int(i64),
+    BigInt(BigInt),
     Float(f64),
     Complex {
         real: f64,
@@ -1255,12 +1291,23 @@ impl PartialEq for Value {
             (Value::None, Value::None) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Bool(a), Value::Int(b)) => (*a as i64) == *b,
+            (Value::Bool(a), Value::BigInt(b)) => BigInt::from_i64(*a as i64) == *b,
             (Value::Bool(a), Value::Float(b)) => (*a as i64 as f64) == *b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Int(a), Value::Bool(b)) => *a == (*b as i64),
+            (Value::Int(a), Value::BigInt(b)) => BigInt::from_i64(*a) == *b,
             (Value::Int(a), Value::Float(b)) => (*a as f64) == *b,
+            (Value::BigInt(a), Value::BigInt(b)) => a == b,
+            (Value::BigInt(a), Value::Bool(b)) => *a == BigInt::from_i64(*b as i64),
+            (Value::BigInt(a), Value::Int(b)) => *a == BigInt::from_i64(*b),
+            (Value::BigInt(a), Value::Float(b)) => BigInt::from_f64_integral(*b)
+                .as_ref()
+                .is_some_and(|converted| converted == a),
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::Float(a), Value::Int(b)) => *a == (*b as f64),
+            (Value::Float(a), Value::BigInt(b)) => BigInt::from_f64_integral(*a)
+                .as_ref()
+                .is_some_and(|converted| converted == b),
             (Value::Float(a), Value::Bool(b)) => *a == (*b as i64 as f64),
             (
                 Value::Complex {
@@ -3671,6 +3718,9 @@ fn builtin_min_max(args: Vec<Value>, preferred: Ordering) -> Result<Value, Runti
 fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
     match value {
         Value::Int(value) => Ok(value),
+        Value::BigInt(value) => value
+            .to_i64()
+            .ok_or_else(|| RuntimeError::new("integer too large to convert")),
         Value::Bool(value) => Ok(if value { 1 } else { 0 }),
         _ => Err(RuntimeError::new("expected integer")),
     }
@@ -3680,6 +3730,7 @@ fn value_to_float(value: Value) -> Result<f64, RuntimeError> {
     match value {
         Value::Float(value) => Ok(value),
         Value::Int(value) => Ok(value as f64),
+        Value::BigInt(value) => Ok(value.to_f64()),
         Value::Bool(value) => Ok(if value { 1.0 } else { 0.0 }),
         Value::Complex { real, imag } if imag == 0.0 => Ok(real),
         Value::Str(value) => value
@@ -4022,6 +4073,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::None => Value::Str("NoneType".to_string()),
         Value::Bool(_) => Value::Builtin(BuiltinFunction::Bool),
         Value::Int(_) => Value::Builtin(BuiltinFunction::Int),
+        Value::BigInt(_) => Value::Builtin(BuiltinFunction::Int),
         Value::Float(_) => Value::Builtin(BuiltinFunction::Float),
         Value::Complex { .. } => Value::Builtin(BuiltinFunction::Complex),
         Value::Str(_) => Value::Builtin(BuiltinFunction::Str),
@@ -4116,6 +4168,7 @@ pub fn format_value(value: &Value) -> String {
             }
         }
         Value::Int(value) => value.to_string(),
+        Value::BigInt(value) => value.to_string(),
         Value::Float(value) => format_float(*value),
         Value::Complex { real, imag } => {
             if *real == 0.0 {
@@ -4358,6 +4411,7 @@ fn is_truthy_value(value: &Value) -> bool {
         Value::None => false,
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
+        Value::BigInt(value) => !value.is_zero(),
         Value::Float(value) => *value != 0.0,
         Value::Complex { real, imag } => *real != 0.0 || *imag != 0.0,
         Value::Str(value) => !value.is_empty(),

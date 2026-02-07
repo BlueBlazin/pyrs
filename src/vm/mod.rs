@@ -30,9 +30,10 @@ use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::parser;
 use crate::runtime::{
-    format_value, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
-    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
-    NativeMethodKind, NativeMethodObject, ObjRef, Object, RuntimeError, SuperObject, Value,
+    format_value, BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject,
+    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
+    ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object, RuntimeError, SuperObject,
+    Value,
 };
 
 #[derive(Debug, Clone)]
@@ -75,6 +76,7 @@ const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;
 const MT_UPPER_MASK: u32 = 0x8000_0000;
 const MT_LOWER_MASK: u32 = 0x7fff_ffff;
+const RANGE_EAGER_LIMIT: usize = 1_000_000;
 const SIGNAL_DEFAULT: i64 = 0;
 const SIGNAL_IGNORE: i64 = 1;
 const SIGNAL_SIGINT: i64 = 2;
@@ -12275,6 +12277,7 @@ impl Vm {
                     IteratorKind::ByteArray(_) => "bytearray_iterator",
                     IteratorKind::MemoryView(_) => "memoryview_iterator",
                     IteratorKind::Count { .. } => "count",
+                    IteratorKind::Range { .. } => "range_iterator",
                 },
                 _ => "iterator",
             },
@@ -12388,6 +12391,24 @@ impl Vm {
                     let value = *current;
                     *current = current.saturating_add(*step);
                     Some(Value::Int(value))
+                }
+                IteratorKind::Range {
+                    current,
+                    stop,
+                    step,
+                } => {
+                    let done = if step.is_negative() {
+                        current.cmp_total(stop) != Ordering::Greater
+                    } else {
+                        current.cmp_total(stop) != Ordering::Less
+                    };
+                    if done {
+                        None
+                    } else {
+                        let value = current.clone();
+                        *current = current.add(step);
+                        Some(value_from_bigint(value))
+                    }
                 }
             },
             _ => None,
@@ -13001,6 +13022,7 @@ impl Vm {
             BuiltinFunction::WarningsReleaseLock => {
                 self.builtin_warnings_release_lock(args, kwargs)
             }
+            BuiltinFunction::Range => call_builtin_with_kwargs(&self.heap, builtin, args, kwargs),
             _ => {
                 if kwargs.is_empty() {
                     builtin.call(&self.heap, args)
@@ -24128,7 +24150,26 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
     match value {
         Value::Int(value) => Ok(value),
         Value::Bool(value) => Ok(if value { 1 } else { 0 }),
+        Value::BigInt(value) => value
+            .to_i64()
+            .ok_or_else(|| RuntimeError::new("integer overflow")),
         _ => Err(RuntimeError::new("unsupported operand type")),
+    }
+}
+
+fn value_to_bigint(value: Value) -> Result<BigInt, RuntimeError> {
+    match value {
+        Value::Int(value) => Ok(BigInt::from_i64(value)),
+        Value::Bool(value) => Ok(BigInt::from_i64(if value { 1 } else { 0 })),
+        Value::BigInt(value) => Ok(value),
+        _ => Err(RuntimeError::new("range() expects integers")),
+    }
+}
+
+fn value_from_bigint(value: BigInt) -> Value {
+    match value.to_i64() {
+        Some(number) => Value::Int(number),
+        None => Value::BigInt(value),
     }
 }
 
@@ -24142,6 +24183,18 @@ fn seed_from_value(value: &Value) -> Result<u64, RuntimeError> {
             Ok(nanos as u64)
         }
         Value::Int(value) => Ok(*value as u64),
+        Value::BigInt(value) => match value.to_i64() {
+            Some(number) => Ok(number as u64),
+            None => {
+                let text = value.to_string();
+                let mut hash: u64 = 1469598103934665603;
+                for byte in text.as_bytes() {
+                    hash ^= *byte as u64;
+                    hash = hash.wrapping_mul(1099511628211);
+                }
+                Ok(hash)
+            }
+        },
         Value::Bool(value) => Ok(if *value { 1 } else { 0 }),
         Value::Float(value) => Ok(value.to_bits()),
         Value::Str(value) => {
@@ -24237,6 +24290,10 @@ fn numeric_pair(left: &Value, right: &Value) -> Option<(NumericValue, NumericVal
                 NumericValue::Int(0)
             }
         }
+        Value::BigInt(value) => match value.to_i64() {
+            Some(number) => NumericValue::Int(number),
+            None => NumericValue::Float(value.to_f64()),
+        },
         Value::Float(value) => NumericValue::Float(*value),
         _ => return None,
     };
@@ -24250,6 +24307,10 @@ fn numeric_pair(left: &Value, right: &Value) -> Option<(NumericValue, NumericVal
                 NumericValue::Int(0)
             }
         }
+        Value::BigInt(value) => match value.to_i64() {
+            Some(number) => NumericValue::Int(number),
+            None => NumericValue::Float(value.to_f64()),
+        },
         Value::Float(value) => NumericValue::Float(*value),
         _ => return None,
     };
@@ -24268,6 +24329,7 @@ fn numeric_as_complex(value: &Value) -> Option<(f64, f64)> {
     match value {
         Value::Int(value) => Some((*value as f64, 0.0)),
         Value::Bool(value) => Some((if *value { 1.0 } else { 0.0 }, 0.0)),
+        Value::BigInt(value) => Some((value.to_f64(), 0.0)),
         Value::Float(value) => Some((*value, 0.0)),
         Value::Complex { real, imag } => Some((*real, *imag)),
         _ => None,
@@ -24345,6 +24407,7 @@ fn value_to_f64(value: Value) -> Result<f64, RuntimeError> {
     match value {
         Value::Float(value) => Ok(value),
         Value::Int(value) => Ok(value as f64),
+        Value::BigInt(value) => Ok(value.to_f64()),
         Value::Bool(value) => Ok(if value { 1.0 } else { 0.0 }),
         Value::Complex { real, imag } if imag == 0.0 => Ok(real),
         Value::Str(value) => value
@@ -25877,6 +25940,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::None => false,
         Value::Bool(value) => *value,
         Value::Int(value) => *value != 0,
+        Value::BigInt(value) => !value.is_zero(),
         Value::Float(value) => *value != 0.0,
         Value::Complex { real, imag } => *real != 0.0 || *imag != 0.0,
         Value::Str(value) => !value.is_empty(),
@@ -26243,29 +26307,52 @@ fn call_builtin_with_kwargs(
             let start = start.unwrap_or(Value::Int(0));
             let step = step.unwrap_or(Value::Int(1));
 
-            let start = value_to_int(start)?;
-            let stop = value_to_int(stop)?;
-            let step = value_to_int(step)?;
-
-            if step == 0 {
+            let start_big = value_to_bigint(start)?;
+            let stop_big = value_to_bigint(stop)?;
+            let step_big = value_to_bigint(step)?;
+            if step_big.is_zero() {
                 return Err(RuntimeError::new("range() step cannot be zero"));
             }
 
-            let mut values = Vec::new();
-            let mut i = start;
-            if step > 0 {
-                while i < stop {
-                    values.push(Value::Int(i));
-                    i += step;
-                }
+            let eager = if let (Some(start), Some(stop), Some(step)) =
+                (start_big.to_i64(), stop_big.to_i64(), step_big.to_i64())
+            {
+                random_range_count(start, stop, step)
+                    .ok()
+                    .and_then(|count| usize::try_from(count).ok())
+                    .is_some_and(|count| count <= RANGE_EAGER_LIMIT)
             } else {
-                while i > stop {
-                    values.push(Value::Int(i));
-                    i += step;
-                }
-            }
+                false
+            };
 
-            Ok(heap.alloc_list(values))
+            if eager {
+                let start = start_big.to_i64().expect("checked");
+                let stop = stop_big.to_i64().expect("checked");
+                let step = step_big.to_i64().expect("checked");
+                let mut values = Vec::new();
+                let mut i = start;
+                if step > 0 {
+                    while i < stop {
+                        values.push(Value::Int(i));
+                        i += step;
+                    }
+                } else {
+                    while i > stop {
+                        values.push(Value::Int(i));
+                        i += step;
+                    }
+                }
+                Ok(heap.alloc_list(values))
+            } else {
+                Ok(Value::Iterator(heap.alloc(Object::Iterator(IteratorObject {
+                    kind: IteratorKind::Range {
+                        current: start_big,
+                        stop: stop_big,
+                        step: step_big,
+                    },
+                    index: 0,
+                }))))
+            }
         }
         BuiltinFunction::Sum => {
             let start = kwargs.remove("start");

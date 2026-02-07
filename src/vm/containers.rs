@@ -75,6 +75,7 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::None => "NoneType",
         Value::Bool(_) => "bool",
         Value::Int(_) => "int",
+        Value::BigInt(_) => "int",
         Value::Float(_) => "float",
         Value::Complex { .. } => "complex",
         Value::Str(_) => "str",

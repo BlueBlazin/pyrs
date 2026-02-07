@@ -67,6 +67,39 @@ fn python314_path() -> Option<PathBuf> {
     None
 }
 
+fn cpython_lib_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PYRS_CPYTHON_LIB") {
+        let path = PathBuf::from(path);
+        if path.join("ipaddress.py").is_file() {
+            return Some(path);
+        }
+    }
+    let candidates = [
+        "/Users/$USER/Downloads/Python-3.14.3/Lib",
+        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
+    ];
+    for candidate in candidates {
+        let path = PathBuf::from(candidate);
+        if path.join("ipaddress.py").is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn int_string(value: Option<Value>) -> Option<String> {
+    match value {
+        Some(Value::Int(number)) => Some(number.to_string()),
+        Some(Value::BigInt(number)) => Some(number.to_string()),
+        Some(Value::Bool(flag)) => Some(if flag {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        }),
+        _ => None,
+    }
+}
+
 fn compile_cpython_pyc(source: &str, module_name: &str) -> Option<PathBuf> {
     let python = python314_path()?;
     let base = std::env::temp_dir().join(format!(
@@ -234,6 +267,89 @@ i = 1.0 < 2\n";
     assert_float_global(&vm, "g", -3.5);
     assert_eq!(vm.get_global("h"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("i"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_bigint_pow_shift_bitwise_and_comparison_ops() {
+    let source = "\
+a = 2 ** 128\n\
+b = a >> 64\n\
+c = 1 << 200\n\
+d = c >> 199\n\
+e = (-5) & 3\n\
+f = (-5) | 3\n\
+g = (-5) ^ 3\n\
+h = ~(-5)\n\
+i = a > (2 ** 127)\n\
+j = a < (2 ** 129)\n\
+k = a + 1\n\
+l = a - 1\n\
+m = a * 3\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+
+    assert_eq!(
+        int_string(vm.get_global("a")),
+        Some("340282366920938463463374607431768211456".to_string())
+    );
+    assert_eq!(
+        int_string(vm.get_global("b")),
+        Some("18446744073709551616".to_string())
+    );
+    assert_eq!(int_string(vm.get_global("d")), Some("2".to_string()));
+    assert_eq!(int_string(vm.get_global("e")), Some("3".to_string()));
+    assert_eq!(int_string(vm.get_global("f")), Some("-5".to_string()));
+    assert_eq!(int_string(vm.get_global("g")), Some("-8".to_string()));
+    assert_eq!(int_string(vm.get_global("h")), Some("4".to_string()));
+    assert_eq!(vm.get_global("i"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("j"), Some(Value::Bool(true)));
+    assert_eq!(
+        int_string(vm.get_global("k")),
+        Some("340282366920938463463374607431768211457".to_string())
+    );
+    assert_eq!(
+        int_string(vm.get_global("l")),
+        Some("340282366920938463463374607431768211455".to_string())
+    );
+    assert_eq!(
+        int_string(vm.get_global("m")),
+        Some("1020847100762815390390123822295304634368".to_string())
+    );
+}
+
+#[test]
+fn executes_range_with_large_bigint_stop_lazily() {
+    let source = "\
+it = iter(range(1 << 1000))\n\
+a = next(it)\n\
+b = next(it)\n\
+ok = (a == 0 and b == 1)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+#[ignore = "Milestone 13 backlog: class-based raise parity for stdlib ipaddress import"]
+fn imports_ipaddress_and_executes_ipv6_bigint_paths() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = "\
+import ipaddress\n\
+maxv = int(ipaddress.IPv6Address('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')) >> 120\n\
+num = ipaddress.IPv6Network('2001:db8::/64').num_addresses\n\
+ok = maxv == 255 and num == (1 << 64)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]

@@ -6,16 +6,40 @@ use super::{
     mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod,
     value_to_int, NumericValue,
 };
-use crate::runtime::{format_value, BuiltinFunction, Heap, Object, RuntimeError, Value};
+use crate::runtime::{format_value, BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value};
+
+fn int_like_to_bigint(value: &Value) -> Option<BigInt> {
+    match value {
+        Value::Bool(flag) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
+        Value::Int(number) => Some(BigInt::from_i64(*number)),
+        Value::BigInt(number) => Some(number.clone()),
+        _ => None,
+    }
+}
+
+fn integer_pair(left: &Value, right: &Value) -> Option<(BigInt, BigInt)> {
+    let left = int_like_to_bigint(left)?;
+    let right = int_like_to_bigint(right)?;
+    Some((left, right))
+}
+
+fn bigint_to_value(value: BigInt) -> Value {
+    match value.to_i64() {
+        Some(number) => Value::Int(number),
+        None => Value::BigInt(value),
+    }
+}
 
 pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = integer_pair(&left, &right) {
+        return Ok(bigint_to_value(left.add(&right)));
+    }
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return match (left, right) {
             (NumericValue::Int(left), NumericValue::Int(right)) => {
-                let value = left
-                    .checked_add(right)
-                    .ok_or_else(|| RuntimeError::new("integer overflow"))?;
-                Ok(Value::Int(value))
+                Ok(bigint_to_value(
+                    BigInt::from_i64(left).add(&BigInt::from_i64(right)),
+                ))
             }
             (left, right) => Ok(Value::Float(numeric_as_f64(left) + numeric_as_f64(right))),
         };
@@ -60,12 +84,14 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
 }
 
 pub(super) fn sub_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = integer_pair(&left, &right) {
+        return Ok(bigint_to_value(left.sub(&right)));
+    }
     match numeric_pair(&left, &right) {
         Some((NumericValue::Int(left), NumericValue::Int(right))) => {
-            let value = left
-                .checked_sub(right)
-                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
-            Ok(Value::Int(value))
+            Ok(bigint_to_value(
+                BigInt::from_i64(left).sub(&BigInt::from_i64(right)),
+            ))
         }
         Some((left, right)) => Ok(Value::Float(numeric_as_f64(left) - numeric_as_f64(right))),
         None => Err(RuntimeError::new("unsupported operand type for -")),
@@ -252,10 +278,41 @@ fn format_percent_value(value: Value, conversion: char) -> Result<String, Runtim
             other => format_value(&other),
         }),
         'r' | 'a' => Ok(format_value(&value)),
-        'd' | 'i' | 'u' => Ok(value_to_int(value)?.to_string()),
-        'x' => Ok(format!("{:x}", value_to_int(value)?)),
-        'X' => Ok(format!("{:X}", value_to_int(value)?)),
-        'o' => Ok(format!("{:o}", value_to_int(value)?)),
+        'd' | 'i' | 'u' => {
+            let integer =
+                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
+            Ok(integer.to_string())
+        }
+        'x' => {
+            let integer =
+                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
+            match integer.to_i64() {
+                Some(number) => Ok(format!("{number:x}")),
+                None => Err(RuntimeError::new(
+                    "unsupported operand type for hex formatting",
+                )),
+            }
+        }
+        'X' => {
+            let integer =
+                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
+            match integer.to_i64() {
+                Some(number) => Ok(format!("{number:X}")),
+                None => Err(RuntimeError::new(
+                    "unsupported operand type for hex formatting",
+                )),
+            }
+        }
+        'o' => {
+            let integer =
+                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
+            match integer.to_i64() {
+                Some(number) => Ok(format!("{number:o}")),
+                None => Err(RuntimeError::new(
+                    "unsupported operand type for octal formatting",
+                )),
+            }
+        }
         'c' => match value {
             Value::Int(code) => {
                 let code =
@@ -281,6 +338,21 @@ fn format_percent_value(value: Value, conversion: char) -> Result<String, Runtim
 }
 
 pub(super) fn pow_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let Some((left_big, right_big)) = integer_pair(&left, &right) {
+        if right_big.is_negative() {
+            let left = left_big.to_f64();
+            let right = right_big.to_f64();
+            if left == 0.0 {
+                return Err(RuntimeError::new("division by zero"));
+            }
+            return Ok(Value::Float(left.powf(right)));
+        }
+        let exponent = right_big
+            .to_i64()
+            .ok_or_else(|| RuntimeError::new("exponent too large"))?;
+        return Ok(bigint_to_value(left_big.pow_u64(exponent as u64)));
+    }
+
     let (left, right) = numeric_pair(&left, &right)
         .ok_or_else(|| RuntimeError::new("unsupported operand type for **"))?;
     match (left, right) {
@@ -310,6 +382,7 @@ pub(super) fn neg_value(value: Value) -> Result<Value, RuntimeError> {
                 .ok_or_else(|| RuntimeError::new("integer overflow"))?;
             Ok(Value::Int(value))
         }
+        Value::BigInt(value) => Ok(bigint_to_value(value.negated())),
         Value::Bool(value) => Ok(Value::Int(if value { -1 } else { 0 })),
         Value::Float(value) => Ok(Value::Float(-value)),
         _ => Err(RuntimeError::new("unsupported operand type for -")),
@@ -319,6 +392,7 @@ pub(super) fn neg_value(value: Value) -> Result<Value, RuntimeError> {
 pub(super) fn pos_value(value: Value) -> Result<Value, RuntimeError> {
     match value {
         Value::Int(value) => Ok(Value::Int(value)),
+        Value::BigInt(value) => Ok(bigint_to_value(value)),
         Value::Bool(value) => Ok(Value::Int(if value { 1 } else { 0 })),
         Value::Float(value) => Ok(Value::Float(value)),
         _ => Err(RuntimeError::new("unsupported operand type for +")),
@@ -326,31 +400,27 @@ pub(super) fn pos_value(value: Value) -> Result<Value, RuntimeError> {
 }
 
 pub(super) fn invert_value(value: Value) -> Result<Value, RuntimeError> {
-    let value =
-        value_to_int(value).map_err(|_| RuntimeError::new("unsupported operand type for ~"))?;
-    Ok(Value::Int(!value))
+    let value = int_like_to_bigint(&value)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for ~"))?;
+    Ok(bigint_to_value(value.bitnot()))
 }
 
 pub(super) fn and_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
     if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
         return Ok(Value::Bool(*left & *right));
     }
-    let left =
-        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for &"))?;
-    let right =
-        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for &"))?;
-    Ok(Value::Int(left & right))
+    let (left, right) =
+        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for &"))?;
+    Ok(bigint_to_value(left.bitand(&right)))
 }
 
 pub(super) fn xor_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
     if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
         return Ok(Value::Bool(*left ^ *right));
     }
-    let left =
-        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for ^"))?;
-    let right =
-        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for ^"))?;
-    Ok(Value::Int(left ^ right))
+    let (left, right) =
+        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for ^"))?;
+    Ok(bigint_to_value(left.bitxor(&right)))
 }
 
 pub(super) fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
@@ -392,19 +462,18 @@ pub(super) fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value,
         append_type_union_members(right, &mut members);
         return Ok(heap.alloc_tuple(members));
     }
-    if (matches!(left, Value::None) && !matches!(right, Value::Int(_) | Value::Bool(_)))
-        || (matches!(right, Value::None) && !matches!(left, Value::Int(_) | Value::Bool(_)))
+    if (matches!(left, Value::None) && !matches!(right, Value::Int(_) | Value::Bool(_) | Value::BigInt(_)))
+        || (matches!(right, Value::None)
+            && !matches!(left, Value::Int(_) | Value::Bool(_) | Value::BigInt(_)))
     {
         let mut members = Vec::new();
         append_type_union_members(left, &mut members);
         append_type_union_members(right, &mut members);
         return Ok(heap.alloc_tuple(members));
     }
-    let left =
-        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for |"))?;
-    let right =
-        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for |"))?;
-    Ok(Value::Int(left | right))
+    let (left, right) =
+        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for |"))?;
+    Ok(bigint_to_value(left.bitor(&right)))
 }
 
 fn is_type_union_operand(value: &Value) -> bool {
@@ -474,36 +543,29 @@ fn append_type_union_members(value: Value, members: &mut Vec<Value>) {
 }
 
 pub(super) fn lshift_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
-    let left =
-        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for <<"))?;
-    let right =
-        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for <<"))?;
-    if right < 0 {
+    let (left, right) =
+        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for <<"))?;
+    if right.is_negative() {
         return Err(RuntimeError::new("negative shift count"));
     }
-    let shift = right as u32;
-    if shift >= i64::BITS {
-        return Ok(Value::Int(0));
-    }
-    let value = left
-        .checked_shl(shift)
-        .ok_or_else(|| RuntimeError::new("integer overflow"))?;
-    Ok(Value::Int(value))
+    let shift = right
+        .to_i64()
+        .ok_or_else(|| RuntimeError::new("shift count too large"))?;
+    let shift = usize::try_from(shift).map_err(|_| RuntimeError::new("shift count too large"))?;
+    Ok(bigint_to_value(left.shl_bits(shift)))
 }
 
 pub(super) fn rshift_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
-    let left =
-        value_to_int(left).map_err(|_| RuntimeError::new("unsupported operand type for >>"))?;
-    let right =
-        value_to_int(right).map_err(|_| RuntimeError::new("unsupported operand type for >>"))?;
-    if right < 0 {
+    let (left, right) =
+        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for >>"))?;
+    if right.is_negative() {
         return Err(RuntimeError::new("negative shift count"));
     }
-    let shift = right as u32;
-    if shift >= i64::BITS {
-        return Ok(Value::Int(if left < 0 { -1 } else { 0 }));
-    }
-    Ok(Value::Int(left >> shift))
+    let shift = right
+        .to_i64()
+        .ok_or_else(|| RuntimeError::new("shift count too large"))?;
+    let shift = usize::try_from(shift).map_err(|_| RuntimeError::new("shift count too large"))?;
+    Ok(bigint_to_value(left.shr_bits_arithmetic(shift)))
 }
 
 pub(super) fn matmul_values(_left: Value, _right: Value) -> Result<Value, RuntimeError> {
@@ -513,6 +575,7 @@ pub(super) fn matmul_values(_left: Value, _right: Value) -> Result<Value, Runtim
 pub(super) fn ordering_from_cmp_value(value: Value) -> Result<Ordering, RuntimeError> {
     let numeric = match value {
         Value::Int(value) => value as f64,
+        Value::BigInt(value) => value.to_f64(),
         Value::Bool(value) => {
             if value {
                 1.0
@@ -537,6 +600,18 @@ pub(super) fn ordering_from_cmp_value(value: Value) -> Result<Ordering, RuntimeE
 }
 
 pub(super) fn compare_order(left: Value, right: Value) -> Result<Ordering, RuntimeError> {
+    if let Some((left, right)) = integer_pair(&left, &right) {
+        return Ok(left.cmp_total(&right));
+    }
+    match (&left, &right) {
+        (Value::BigInt(left), Value::Float(right)) => {
+            return Ok(left.to_f64().total_cmp(right));
+        }
+        (Value::Float(left), Value::BigInt(right)) => {
+            return Ok(left.total_cmp(&right.to_f64()));
+        }
+        _ => {}
+    }
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return Ok(match (left, right) {
             (NumericValue::Int(left), NumericValue::Int(right)) => left.cmp(&right),
@@ -696,13 +771,15 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
 }
 
 pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = integer_pair(&left, &right) {
+        return Ok(bigint_to_value(left.mul(&right)));
+    }
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return match (left, right) {
             (NumericValue::Int(left), NumericValue::Int(right)) => {
-                let value = left
-                    .checked_mul(right)
-                    .ok_or_else(|| RuntimeError::new("integer overflow"))?;
-                Ok(Value::Int(value))
+                Ok(bigint_to_value(
+                    BigInt::from_i64(left).mul(&BigInt::from_i64(right)),
+                ))
             }
             (left, right) => Ok(Value::Float(numeric_as_f64(left) * numeric_as_f64(right))),
         };
