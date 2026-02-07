@@ -59,7 +59,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [ ] P2: Inline cache / adaptive opcode support.
 
 **Runtime Object Model & Data Model**
-- [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC (container internals currently include `Vec`-backed dict/set structures; hashability semantics are tracked separately below).
+- [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC (runtime dict/set now use hash-indexed container objects with insertion-order backing vectors; long-tail hash/equality semantics and perf closure are tracked separately below).
 - [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (float/complex and mixed int/bool coercion foundations implemented; big-int parity pending).
 - [~] P0: bytes/bytearray/memoryview and buffer protocol (core bytes-like runtime types implemented; full buffer protocol pending).
 - [x] P0: set/frozenset.

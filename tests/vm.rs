@@ -22,11 +22,11 @@ fn dict_entries(value: Option<Value>) -> Option<Vec<(Value, Value)>> {
 fn set_values(value: Option<Value>) -> Option<Vec<Value>> {
     match value {
         Some(Value::Set(obj)) => match &*obj.kind() {
-            Object::Set(values) => Some(values.clone()),
+            Object::Set(values) => Some(values.to_vec()),
             _ => None,
         },
         Some(Value::FrozenSet(obj)) => match &*obj.kind() {
-            Object::FrozenSet(values) => Some(values.clone()),
+            Object::FrozenSet(values) => Some(values.to_vec()),
             _ => None,
         },
         _ => None,

@@ -20643,7 +20643,7 @@ impl Vm {
                 let entries = {
                     let source_kind = source_dict.kind();
                     match &*source_kind {
-                        Object::Dict(entries) => entries.clone(),
+                        Object::Dict(entries) => entries.to_vec(),
                         _ => Vec::new(),
                     }
                 };
@@ -26446,15 +26446,28 @@ fn collect_noop_symbols_from_value(
                 return;
             }
             let kind = obj.kind();
-            let values = match &*kind {
-                Object::List(values)
-                | Object::Tuple(values)
-                | Object::Set(values)
-                | Object::FrozenSet(values) => values,
-                _ => return,
-            };
-            for (idx, item) in values.iter().enumerate() {
-                collect_noop_symbols_from_value(&format!("{path}[{idx}]"), item, out, visited);
+            match &*kind {
+                Object::List(values) | Object::Tuple(values) => {
+                    for (idx, item) in values.iter().enumerate() {
+                        collect_noop_symbols_from_value(
+                            &format!("{path}[{idx}]"),
+                            item,
+                            out,
+                            visited,
+                        );
+                    }
+                }
+                Object::Set(values) | Object::FrozenSet(values) => {
+                    for (idx, item) in values.iter().enumerate() {
+                        collect_noop_symbols_from_value(
+                            &format!("{path}[{idx}]"),
+                            item,
+                            out,
+                            visited,
+                        );
+                    }
+                }
+                _ => {}
             }
         }
         Value::Dict(obj) => {
@@ -27242,7 +27255,7 @@ fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeErr
     }
     if let (Value::Dict(left_dict), Value::Dict(right_dict)) = (&left, &right) {
         let mut merged = match &*left_dict.kind() {
-            Object::Dict(entries) => entries.clone(),
+            Object::Dict(entries) => entries.to_vec(),
             _ => Vec::new(),
         };
         if let Object::Dict(entries) = &*right_dict.kind() {
@@ -27442,11 +27455,11 @@ fn compare_sequence_order(left: &[Value], right: &[Value]) -> Result<Ordering, R
 fn as_set_values(value: &Value) -> Option<Vec<Value>> {
     match value {
         Value::Set(obj) => match &*obj.kind() {
-            Object::Set(values) => Some(values.clone()),
+            Object::Set(values) => Some(values.to_vec()),
             _ => None,
         },
         Value::FrozenSet(obj) => match &*obj.kind() {
-            Object::FrozenSet(values) => Some(values.clone()),
+            Object::FrozenSet(values) => Some(values.to_vec()),
             _ => None,
         },
         _ => None,

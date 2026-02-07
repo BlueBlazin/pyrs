@@ -3,6 +3,9 @@
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::ops::Index;
 use std::rc::{Rc, Weak};
 
 use crate::bytecode::CodeObject;
@@ -264,13 +267,408 @@ impl ObjRef {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct DictObject {
+    entries: Vec<(Value, Value)>,
+    index: HashMap<u64, Vec<usize>>,
+}
+
+impl DictObject {
+    pub fn new(entries: Vec<(Value, Value)>) -> Self {
+        let mut out = Self {
+            entries: Vec::new(),
+            index: HashMap::new(),
+        };
+        for (key, value) in entries {
+            out.insert(key, value);
+        }
+        out
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.index.clear();
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, (Value, Value)> {
+        self.entries.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, (Value, Value)> {
+        self.entries.iter_mut()
+    }
+
+    pub fn to_vec(&self) -> Vec<(Value, Value)> {
+        self.entries.clone()
+    }
+
+    pub fn push(&mut self, pair: (Value, Value)) {
+        self.insert(pair.0, pair.1);
+    }
+
+    pub fn remove(&mut self, index: usize) -> (Value, Value) {
+        let removed = self.entries.remove(index);
+        self.rebuild_index();
+        removed
+    }
+
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&(Value, Value)) -> bool,
+    {
+        self.entries.retain(|entry| f(entry));
+        self.rebuild_index();
+    }
+
+    pub fn find(&self, key: &Value) -> Option<&Value> {
+        self.find_entry(key).map(|(_, value)| value)
+    }
+
+    pub fn insert(&mut self, key: Value, value: Value) {
+        if let Some(index) = self.find_index(&key) {
+            self.entries[index].1 = value;
+            return;
+        }
+        let index = self.entries.len();
+        self.entries.push((key, value));
+        if let Some(hash) = value_hash_key(&self.entries[index].0) {
+            self.index.entry(hash).or_default().push(index);
+        }
+    }
+
+    fn find_entry(&self, key: &Value) -> Option<&(Value, Value)> {
+        if let Some(hash) = value_hash_key(key) {
+            if let Some(bucket) = self.index.get(&hash) {
+                for index in bucket {
+                    let pair = &self.entries[*index];
+                    if pair.0 == *key {
+                        return Some(pair);
+                    }
+                }
+                return None;
+            }
+        }
+        self.entries.iter().find(|(stored, _)| *stored == *key)
+    }
+
+    fn find_index(&self, key: &Value) -> Option<usize> {
+        if let Some(hash) = value_hash_key(key) {
+            if let Some(bucket) = self.index.get(&hash) {
+                for index in bucket {
+                    if self.entries[*index].0 == *key {
+                        return Some(*index);
+                    }
+                }
+                return None;
+            }
+        }
+        self.entries.iter().position(|(stored, _)| *stored == *key)
+    }
+
+    fn rebuild_index(&mut self) {
+        self.index.clear();
+        for (index, (key, _)) in self.entries.iter().enumerate() {
+            if let Some(hash) = value_hash_key(key) {
+                self.index.entry(hash).or_default().push(index);
+            }
+        }
+    }
+}
+
+impl PartialEq for DictObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries
+    }
+}
+
+impl Eq for DictObject {}
+
+impl<'a> IntoIterator for &'a DictObject {
+    type Item = &'a (Value, Value);
+    type IntoIter = std::slice::Iter<'a, (Value, Value)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut DictObject {
+    type Item = &'a mut (Value, Value);
+    type IntoIter = std::slice::IterMut<'a, (Value, Value)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter_mut()
+    }
+}
+
+impl IntoIterator for DictObject {
+    type Item = (Value, Value);
+    type IntoIter = std::vec::IntoIter<(Value, Value)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+impl Index<usize> for DictObject {
+    type Output = (Value, Value);
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.entries[index]
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SetObject {
+    values: Vec<Value>,
+    index: HashMap<u64, Vec<usize>>,
+}
+
+impl SetObject {
+    pub fn new(values: Vec<Value>) -> Self {
+        let mut out = Self {
+            values: Vec::new(),
+            index: HashMap::new(),
+        };
+        for value in values {
+            out.insert(value);
+        }
+        out
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.values.clear();
+        self.index.clear();
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Value> {
+        self.values.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Value> {
+        self.values.iter_mut()
+    }
+
+    pub fn to_vec(&self) -> Vec<Value> {
+        self.values.clone()
+    }
+
+    pub fn push(&mut self, value: Value) {
+        self.insert(value);
+    }
+
+    pub fn remove(&mut self, index: usize) -> Value {
+        let removed = self.values.remove(index);
+        self.rebuild_index();
+        removed
+    }
+
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&Value) -> bool,
+    {
+        self.values.retain(|value| f(value));
+        self.rebuild_index();
+    }
+
+    pub fn contains(&self, value: &Value) -> bool {
+        if let Some(hash) = value_hash_key(value) {
+            if let Some(bucket) = self.index.get(&hash) {
+                for index in bucket {
+                    if self.values[*index] == *value {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+        self.values.iter().any(|item| *item == *value)
+    }
+
+    pub fn insert(&mut self, value: Value) -> bool {
+        if self.contains(&value) {
+            return false;
+        }
+        let index = self.values.len();
+        self.values.push(value);
+        if let Some(hash) = value_hash_key(&self.values[index]) {
+            self.index.entry(hash).or_default().push(index);
+        }
+        true
+    }
+
+    fn rebuild_index(&mut self) {
+        self.index.clear();
+        for (index, value) in self.values.iter().enumerate() {
+            if let Some(hash) = value_hash_key(value) {
+                self.index.entry(hash).or_default().push(index);
+            }
+        }
+    }
+}
+
+impl PartialEq for SetObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.values == other.values
+    }
+}
+
+impl Eq for SetObject {}
+
+impl<'a> IntoIterator for &'a SetObject {
+    type Item = &'a Value;
+    type IntoIter = std::slice::Iter<'a, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut SetObject {
+    type Item = &'a mut Value;
+    type IntoIter = std::slice::IterMut<'a, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.iter_mut()
+    }
+}
+
+impl IntoIterator for SetObject {
+    type Item = Value;
+    type IntoIter = std::vec::IntoIter<Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.into_iter()
+    }
+}
+
+impl Index<usize> for SetObject {
+    type Output = Value;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.values[index]
+    }
+}
+
+fn value_hash_key(value: &Value) -> Option<u64> {
+    let mut hasher = DefaultHasher::new();
+    match value {
+        Value::None => {
+            0u8.hash(&mut hasher);
+        }
+        Value::Bool(boolean) => {
+            1u8.hash(&mut hasher);
+            ((*boolean as i64) as f64).to_bits().hash(&mut hasher);
+        }
+        Value::Int(integer) => {
+            1u8.hash(&mut hasher);
+            (*integer as f64).to_bits().hash(&mut hasher);
+        }
+        Value::Float(float) => {
+            1u8.hash(&mut hasher);
+            let normalized = if *float == 0.0 { 0.0 } else { *float };
+            normalized.to_bits().hash(&mut hasher);
+        }
+        Value::Complex { real, imag } => {
+            2u8.hash(&mut hasher);
+            let real = if *real == 0.0 { 0.0 } else { *real };
+            let imag = if *imag == 0.0 { 0.0 } else { *imag };
+            real.to_bits().hash(&mut hasher);
+            imag.to_bits().hash(&mut hasher);
+        }
+        Value::Str(text) => {
+            3u8.hash(&mut hasher);
+            text.hash(&mut hasher);
+        }
+        Value::Tuple(tuple) => {
+            4u8.hash(&mut hasher);
+            let Object::Tuple(values) = &*tuple.kind() else {
+                return None;
+            };
+            for value in values {
+                value_hash_key(value)?.hash(&mut hasher);
+            }
+        }
+        Value::FrozenSet(set) => {
+            5u8.hash(&mut hasher);
+            let Object::FrozenSet(values) = &*set.kind() else {
+                return None;
+            };
+            let mut folded: u64 = 0;
+            for value in values {
+                folded ^= value_hash_key(value)?;
+            }
+            folded.hash(&mut hasher);
+            values.len().hash(&mut hasher);
+        }
+        Value::Bytes(bytes) => {
+            6u8.hash(&mut hasher);
+            let Object::Bytes(values) = &*bytes.kind() else {
+                return None;
+            };
+            values.hash(&mut hasher);
+        }
+        Value::Exception(exception) => {
+            7u8.hash(&mut hasher);
+            exception.hash(&mut hasher);
+        }
+        Value::ExceptionType(name) => {
+            8u8.hash(&mut hasher);
+            name.hash(&mut hasher);
+        }
+        Value::Builtin(builtin) => {
+            9u8.hash(&mut hasher);
+            builtin.hash(&mut hasher);
+        }
+        Value::Code(code) => {
+            10u8.hash(&mut hasher);
+            Rc::as_ptr(code).hash(&mut hasher);
+        }
+        Value::Module(obj)
+        | Value::Class(obj)
+        | Value::Instance(obj)
+        | Value::Super(obj)
+        | Value::Function(obj)
+        | Value::BoundMethod(obj)
+        | Value::Iterator(obj)
+        | Value::Generator(obj)
+        | Value::Cell(obj) => {
+            11u8.hash(&mut hasher);
+            obj.id().hash(&mut hasher);
+        }
+        Value::List(_)
+        | Value::Dict(_)
+        | Value::Set(_)
+        | Value::ByteArray(_)
+        | Value::MemoryView(_)
+        | Value::Slice { .. } => return None,
+    }
+    Some(hasher.finish())
+}
+
 #[derive(Debug)]
 pub enum Object {
     List(Vec<Value>),
     Tuple(Vec<Value>),
-    Dict(Vec<(Value, Value)>),
-    Set(Vec<Value>),
-    FrozenSet(Vec<Value>),
+    Dict(DictObject),
+    Set(SetObject),
+    FrozenSet(SetObject),
     Bytes(Vec<u8>),
     ByteArray(Vec<u8>),
     MemoryView(MemoryViewObject),
@@ -377,15 +775,15 @@ impl Heap {
     }
 
     pub fn alloc_dict(&self, values: Vec<(Value, Value)>) -> Value {
-        Value::Dict(self.alloc(Object::Dict(values)))
+        Value::Dict(self.alloc(Object::Dict(DictObject::new(values))))
     }
 
     pub fn alloc_set(&self, values: Vec<Value>) -> Value {
-        Value::Set(self.alloc(Object::Set(values)))
+        Value::Set(self.alloc(Object::Set(SetObject::new(values))))
     }
 
     pub fn alloc_frozenset(&self, values: Vec<Value>) -> Value {
-        Value::FrozenSet(self.alloc(Object::FrozenSet(values)))
+        Value::FrozenSet(self.alloc(Object::FrozenSet(SetObject::new(values))))
     }
 
     pub fn alloc_bytes(&self, values: Vec<u8>) -> Value {
@@ -795,7 +1193,7 @@ impl Value {
     pub fn as_dict(&self) -> Option<Vec<(Value, Value)>> {
         match self {
             Value::Dict(obj) => match &*obj.kind() {
-                Object::Dict(values) => Some(values.clone()),
+                Object::Dict(values) => Some(values.to_vec()),
                 _ => None,
             },
             _ => None,
@@ -803,7 +1201,7 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExceptionObject {
     pub name: String,
     pub message: Option<String>,
@@ -825,7 +1223,11 @@ impl ExceptionObject {
         }
     }
 
-    pub fn with_members(name: impl Into<String>, message: Option<String>, members: Vec<ExceptionObject>) -> Self {
+    pub fn with_members(
+        name: impl Into<String>,
+        message: Option<String>,
+        members: Vec<ExceptionObject>,
+    ) -> Self {
         Self {
             name: name.into(),
             message,
@@ -1778,11 +2180,11 @@ impl BuiltinFunction {
                     Value::Str(value) => Ok(heap
                         .alloc_list(value.chars().map(|ch| Value::Str(ch.to_string())).collect())),
                     Value::Set(obj) => match &*obj.kind() {
-                        Object::Set(values) => Ok(heap.alloc_list(values.clone())),
+                        Object::Set(values) => Ok(heap.alloc_list(values.to_vec())),
                         _ => Err(RuntimeError::new("list() unsupported type")),
                     },
                     Value::FrozenSet(obj) => match &*obj.kind() {
-                        Object::FrozenSet(values) => Ok(heap.alloc_list(values.clone())),
+                        Object::FrozenSet(values) => Ok(heap.alloc_list(values.to_vec())),
                         _ => Err(RuntimeError::new("list() unsupported type")),
                     },
                     Value::Bytes(obj) => match &*obj.kind() {
@@ -1847,11 +2249,11 @@ impl BuiltinFunction {
                     Value::Str(value) => Ok(heap
                         .alloc_tuple(value.chars().map(|ch| Value::Str(ch.to_string())).collect())),
                     Value::Set(obj) => match &*obj.kind() {
-                        Object::Set(values) => Ok(heap.alloc_tuple(values.clone())),
+                        Object::Set(values) => Ok(heap.alloc_tuple(values.to_vec())),
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
                     },
                     Value::FrozenSet(obj) => match &*obj.kind() {
-                        Object::FrozenSet(values) => Ok(heap.alloc_tuple(values.clone())),
+                        Object::FrozenSet(values) => Ok(heap.alloc_tuple(values.to_vec())),
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
                     },
                     Value::Bytes(obj) => match &*obj.kind() {
@@ -1888,7 +2290,7 @@ impl BuiltinFunction {
                 }
                 match &args[0] {
                     Value::Dict(obj) => match &*obj.kind() {
-                        Object::Dict(entries) => Ok(heap.alloc_dict(entries.clone())),
+                        Object::Dict(entries) => Ok(heap.alloc_dict(entries.to_vec())),
                         _ => Err(RuntimeError::new("dict() unsupported type")),
                     },
                     other => {
@@ -3348,11 +3750,11 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
             _ => Err(RuntimeError::new("expected iterable")),
         },
         Value::Set(obj) => match &*obj.kind() {
-            Object::Set(values) => Ok(values.clone()),
+            Object::Set(values) => Ok(values.to_vec()),
             _ => Err(RuntimeError::new("expected iterable")),
         },
         Value::FrozenSet(obj) => match &*obj.kind() {
-            Object::FrozenSet(values) => Ok(values.clone()),
+            Object::FrozenSet(values) => Ok(values.to_vec()),
             _ => Err(RuntimeError::new("expected iterable")),
         },
         Value::Dict(obj) => match &*obj.kind() {
@@ -3862,9 +4264,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrSplit => "<bound method str.split>".to_string(),
                     NativeMethodKind::StrRSplit => "<bound method str.rsplit>".to_string(),
                     NativeMethodKind::StrPartition => "<bound method str.partition>".to_string(),
-                    NativeMethodKind::StrRPartition => {
-                        "<bound method str.rpartition>".to_string()
-                    }
+                    NativeMethodKind::StrRPartition => "<bound method str.rpartition>".to_string(),
                     NativeMethodKind::StrFind => "<bound method str.find>".to_string(),
                     NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
                     NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
@@ -3873,13 +4273,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
-                    NativeMethodKind::SetIsSuperset => {
-                        "<bound method set.issuperset>".to_string()
-                    }
+                    NativeMethodKind::SetIsSuperset => "<bound method set.issuperset>".to_string(),
                     NativeMethodKind::SetIsSubset => "<bound method set.issubset>".to_string(),
-                    NativeMethodKind::SetIsDisjoint => {
-                        "<bound method set.isdisjoint>".to_string()
-                    }
+                    NativeMethodKind::SetIsDisjoint => "<bound method set.isdisjoint>".to_string(),
                     NativeMethodKind::RePatternSearch => {
                         "<bound method Pattern.search>".to_string()
                     }

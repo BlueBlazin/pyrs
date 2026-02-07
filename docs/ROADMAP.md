@@ -304,7 +304,8 @@ Progress:
 - Expanded CPython probe runs outside the curated harness now carry forward remaining Milestone 13 blockers tracked in `docs/STUB_ACCOUNTING.md` (arbitrary-precision integer semantics for large shifts and `_testinternalcapi.hamt`).
 - Container semantics hardening batch landed: hashability guards now enforce `TypeError` for unhashable `dict` keys and `set`/`frozenset` items across core constructor/update/assignment/membership flows, with dedicated VM regressions.
 - VM refactor kickoff landed: container/hashability helpers are extracted into `src/vm/containers.rs` to begin decomposing `src/vm/mod.rs` without behavior regressions.
-- Container internals are still tracked as a remaining Milestone 13/14 blocker: runtime `dict`/`set`/`frozenset` remain `Vec`-backed and must move to hash-driven semantics for production parity/performance.
+- Runtime container upgrade landed: `dict`/`set`/`frozenset` now use dedicated hash-indexed runtime container objects with insertion-order backing vectors.
+- Container internals remain a Milestone 13/14 blocker for completion: finish CPython hash/equality edge parity and production-performance closure (growth/load-factor and hot-path behavior).
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)

@@ -43,7 +43,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Classes subset (multiple inheritance with C3 MRO metadata, instance attrs + bound methods, descriptor-aware attribute load/store paths, explicit `super(type, obj)` support, `__slots__` restrictions including empty-slot and `__dict__` slot behavior, class-header `metaclass=` keyword path, metaclass conflict detection, and metaclass method lookup fallback)
 - [~] Attribute-hook parity (`__getattribute__` custom override path + `object.__getattribute__` baseline are implemented; full CPython fallback/error-edge semantics remain pending)
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
-- [~] Hash-container parity (`dict`/`set`/`frozenset` remain `Vec`-backed with equality scans; unhashable key/item rejection is now enforced on core constructor/update/assignment/membership paths, while full hash-table internals and long-tail edge parity remain pending)
+- [~] Hash-container parity (`dict`/`set`/`frozenset` now use hash-indexed runtime container objects with insertion-order backing vectors; unhashable key/item rejection is enforced on core constructor/update/assignment/membership paths, while full CPython hash/equality edge parity and container-performance closure remain pending)
 
 ## Stdlib Coverage
 - [x] Stub/partial accounting gate (`docs/STUB_ACCOUNTING.md` + generated `docs/NOOP_BUILTIN_INVENTORY.txt` enforced by `tests/noop_inventory.rs`)
