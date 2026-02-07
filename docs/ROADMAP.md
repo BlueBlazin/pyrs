@@ -99,6 +99,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Import system parity for supported pure-Python scenarios (`importlib`, specs, hooks).
 - [x] Curated CPython harness parity closure for current language/import suites (allowlist burn-down to zero).
 - [ ] Runtime semantic closure for remaining data-model gaps (`__getattribute__`, metaclass precedence, `__slots__` layout edges, full codecs behavior).
+- [ ] Hash-based dict/set/frozenset semantic parity (`__hash__` contract, unhashable key/item rejection, CPython-compatible key/item lookup/update behavior).
 - [ ] Native extension loading parity for limited C-API/abi3 modules.
 - [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, and parity-regression blocking CI.
 
@@ -260,6 +261,7 @@ Execution record:
 ### Milestone 13 — Long-Tail Parity + Stdlib/Packaging Usability Closure (P0/P1)
 DoD:
 - Remaining language/runtime long-tail parity closes for production blocking semantics (`__getattribute__`, metaclass precedence/selection, `__slots__` edge layout behavior, full codecs behavior, pattern-family completion, `ExceptionGroup` split semantics, and full PEP 701 behavior).
+- Runtime container semantic parity closes for hash-driven types (`dict`/`set`/`frozenset`) including unhashable rejection behavior.
 - Stdlib coverage expands to unblock mainstream pure-Python ecosystems (`subprocess`, `socket`, `ssl`, `http`, `urllib`, `typing`, `dataclasses`, `enum`, `contextvars`, and importlib resource/package helpers).
 - Import and packaging paths close remaining usability gaps (zip/bytecode imports, `importlib.resources`, `pkgutil`, and `site` startup behavior).
 - venv + pip pure-Python package workflows are production-usable and covered by regression tests.
@@ -300,12 +302,14 @@ Progress:
 - CPython harness breadth expanded with zero allowlist impact: `tests/cpython_suite_language.txt` now includes `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, and `test/test_configparser.py`.
 - CPython harness regression-closure batch landed: `_colorize.decolor`, `functools.wraps` metadata propagation for bound-method inputs, VM-native `enumerate`/`filter` iterable handling, list slice assignment semantics, and `sys.exit` baseline behavior are now implemented with dedicated regressions.
 - Expanded CPython probe runs outside the curated harness now carry forward remaining Milestone 13 blockers tracked in `docs/STUB_ACCOUNTING.md` (arbitrary-precision integer semantics for large shifts and `_testinternalcapi.hamt`).
+- Container internals are still tracked as a remaining Milestone 13/14 blocker: runtime `dict`/`set`/`frozenset` remain `Vec`-backed and must move to hash-driven semantics for production parity/performance.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:
 - Baseline benchmark suite (including pyperformance subset plus project workloads) is automated and tracked for regressions.
 - Production optimization stack is implemented and validated (compiler-level simplifications, VM dispatch/lookup caches, and container/runtime hot-path improvements), with parity gates proving no semantic regressions.
+- VM/runtime codebase is decomposed into cohesive modules (reducing monolithic file hotspots) with no behavior regressions.
 - Debug and profiling hooks (`sys.settrace`, `sys.setprofile`, runtime metrics, profiling workflow) are operational.
 - JIT/embedding hook points in IR/VM boundaries are explicitly documented and covered by non-regression tests.
 

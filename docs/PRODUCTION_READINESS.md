@@ -59,10 +59,11 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [ ] P2: Inline cache / adaptive opcode support.
 
 **Runtime Object Model & Data Model**
-- [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC.
+- [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC (container internals currently include `Vec`-backed dict/set structures; hashability semantics are tracked separately below).
 - [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (float/complex and mixed int/bool coercion foundations implemented; big-int parity pending).
 - [~] P0: bytes/bytearray/memoryview and buffer protocol (core bytes-like runtime types implemented; full buffer protocol pending).
 - [x] P0: set/frozenset.
+- [ ] P0: Hash-based dict/set/frozenset semantic parity (`__hash__` contract, unhashable key/item rejection, CPython-compatible lookup/update behavior).
 - [~] P0: Unicode/codec behavior parity (including error handlers) (`codecs.encode`/`decode` foundations for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace` implemented; full parity pending).
 - [~] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`) (core VM descriptor hooks implemented; metaclass/slot edge parity pending).
 - [~] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) (instance hooks plus custom `__getattribute__` override and `object.__getattribute__` baseline are implemented; full fallback/error-edge parity pending).
@@ -116,6 +117,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [ ] P1: Profiling hooks + flamegraph support.
 - [ ] P2: Adaptive opcodes / inline caches.
 - [ ] P2: GC/allocator tuning and object layout optimizations.
+- [ ] P2: Container hot-path architecture/performance parity (dict/set hash-table internals, growth strategy, and memory behavior).
 
 **Concurrency & Platform**
 - [ ] P0: GIL correctness and thread safety.

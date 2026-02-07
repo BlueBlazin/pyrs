@@ -43,6 +43,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Classes subset (multiple inheritance with C3 MRO metadata, instance attrs + bound methods, descriptor-aware attribute load/store paths, explicit `super(type, obj)` support, `__slots__` restrictions including empty-slot and `__dict__` slot behavior, class-header `metaclass=` keyword path, metaclass conflict detection, and metaclass method lookup fallback)
 - [~] Attribute-hook parity (`__getattribute__` custom override path + `object.__getattribute__` baseline are implemented; full CPython fallback/error-edge semantics remain pending)
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
+- [~] Hash-container parity (`dict`/`set`/`frozenset` are currently `Vec`-backed with equality scans; full hashability semantics and hash-table internals are pending)
 
 ## Stdlib Coverage
 - [x] Stub/partial accounting gate (`docs/STUB_ACCOUNTING.md` + generated `docs/NOOP_BUILTIN_INVENTORY.txt` enforced by `tests/noop_inventory.rs`)
@@ -103,6 +104,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Generators (`yield`, `yield from`) + protocol (lazy suspension/resume + delegation semantics implemented).
 - [x] Tracebacks + accurate frames (file/line/col).
 - [x] Import system parity for supported pure-Python import scenarios (`importlib`, specs, hooks).
+- [ ] Hash-based dict/set/frozenset semantic parity (`__hash__` contract + unhashable key/item rejection).
 - [ ] Native extension loading parity for limited C-API/abi3 modules.
 - [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, parity-regression blocking CI.
 
