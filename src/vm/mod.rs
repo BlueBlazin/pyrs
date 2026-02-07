@@ -20547,7 +20547,7 @@ impl Vm {
                 .insert("__qualname__".to_string(), Value::Str(class_name.clone()));
             for (name, value) in members {
                 class_data.attrs.insert(name.clone(), value.clone());
-                dict_set_value(&members_dict, Value::Str(name), value);
+                dict_set_value_checked(&members_dict, Value::Str(name), value)?;
             }
             class_data
                 .attrs
@@ -20648,7 +20648,7 @@ impl Vm {
                     }
                 };
                 for (key, value) in entries {
-                    dict_set_value(&target_dict, key, value);
+                    dict_set_value_checked(&target_dict, key, value)?;
                 }
             }
         }
@@ -26314,7 +26314,7 @@ fn call_builtin_with_kwargs(
                 _ => return Err(RuntimeError::new("dict() internal error")),
             };
             for (name, value) in kwargs {
-                dict_set_value(&dict_obj, Value::Str(name), value);
+                dict_set_value_checked(&dict_obj, Value::Str(name), value)?;
             }
             Ok(Value::Dict(dict_obj))
         }
