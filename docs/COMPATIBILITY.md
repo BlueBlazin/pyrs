@@ -47,7 +47,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/float/str, abs/sum/min/max/all/any/pow, list/tuple/set/frozenset, bytes/bytearray/memoryview, complex, divmod, iter/next/`aiter`/`anext`, `type` (1-arg + 3-arg), locals, globals, `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, basic `__import__` name/fromlist/level semantics)
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
 - [x] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`)
-- [~] `types`, `inspect`
+- [~] `types`, `inspect` (`inspect.signature` now executes a non-`NoOp` path returning a `Signature` instance with baseline parameter-kind/default metadata; full CPython object/method parity still pending)
 - [~] `os`, `pathlib`, `io` (`open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` and wait-status helpers now execute non-`NoOp` paths; broader module parity still pending)
 - [~] `random` foundations (`seed`, `random`, `randrange`, `randint`, `getrandbits`, `choice`, `shuffle`)
 - [~] `math`, `itertools` (`math` core transcendentals/aggregates now execute non-`NoOp` paths; `itertools` long-tail helpers now execute non-`NoOp` paths (`accumulate`, `combinations*`, `compress`, `dropwhile`, `filterfalse`, `groupby`, `islice`, `pairwise`, `starmap`, `takewhile`, `tee`, `zip_longest`); full iterator/laziness edge parity still pending)

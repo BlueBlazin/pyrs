@@ -84,7 +84,6 @@ decimal.localcontext
 decimal.setcontext
 importlib.invalidate_caches
 importlib.util.spec_from_file_location
-inspect.signature
 platform.win32_is_iot
 threading.Barrier.__init__
 threading.Barrier.abort

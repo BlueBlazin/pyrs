@@ -1157,6 +1157,7 @@ pub enum BuiltinFunction {
     TypingTypeVarTuple,
     TypingTypeAliasType,
     InspectIsFunction,
+    InspectSignature,
     InspectIsClass,
     InspectIsModule,
     InspectIsGenerator,
@@ -2774,6 +2775,7 @@ impl BuiltinFunction {
             | BuiltinFunction::CollectionsDeque
             | BuiltinFunction::CollectionsDefaultDict
             | BuiltinFunction::InspectIsFunction
+            | BuiltinFunction::InspectSignature
             | BuiltinFunction::InspectIsClass
             | BuiltinFunction::InspectIsModule
             | BuiltinFunction::InspectIsGenerator

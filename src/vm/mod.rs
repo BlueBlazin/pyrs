@@ -2880,7 +2880,7 @@ impl Vm {
         self.install_builtin_module(
             "inspect",
             &[
-                ("signature", BuiltinFunction::NoOp),
+                ("signature", BuiltinFunction::InspectSignature),
                 ("isfunction", BuiltinFunction::InspectIsFunction),
                 ("isclass", BuiltinFunction::InspectIsClass),
                 ("ismodule", BuiltinFunction::InspectIsModule),
@@ -11658,6 +11658,7 @@ impl Vm {
             BuiltinFunction::CollectionsDefaultDict => {
                 self.builtin_collections_defaultdict(args, kwargs)
             }
+            BuiltinFunction::InspectSignature => self.builtin_inspect_signature(args, kwargs),
             BuiltinFunction::InspectIsFunction => self.builtin_inspect_isfunction(args, kwargs),
             BuiltinFunction::InspectIsClass => self.builtin_inspect_isclass(args, kwargs),
             BuiltinFunction::InspectIsModule => self.builtin_inspect_ismodule(args, kwargs),
@@ -17312,6 +17313,202 @@ impl Vm {
         self.defaultdict_factories
             .insert(dict.id(), default_factory);
         Ok(Value::Dict(dict))
+    }
+
+    fn builtin_inspect_signature(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "signature() expects one callable argument",
+            ));
+        }
+        for name in [
+            "follow_wrapped",
+            "globals",
+            "locals",
+            "eval_str",
+            "annotation_format",
+        ] {
+            kwargs.remove(name);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "signature() got an unexpected keyword argument",
+            ));
+        }
+
+        let callable = args.remove(0);
+        let signature_class = self
+            .modules
+            .get("inspect")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("Signature").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or_else(|| RuntimeError::new("inspect.Signature unavailable"))?;
+
+        let mut params = Vec::new();
+        let mut parts = Vec::new();
+        let mut return_annotation = Value::None;
+
+        let make_param =
+            |name: String, kind: &str, default: Option<Value>| -> (String, (Value, Value)) {
+                let rendered = match default.clone() {
+                    Some(value) => format!("{name}={}", format_value(&value)),
+                    None => name.clone(),
+                };
+                let entry = (
+                    Value::Str(name),
+                    self.heap.alloc_tuple(vec![
+                        Value::Str(kind.to_string()),
+                        default.unwrap_or(Value::None),
+                    ]),
+                );
+                (rendered, entry)
+            };
+
+        match callable {
+            Value::Function(func) => {
+                let (
+                    posonly_params,
+                    positional_params,
+                    vararg,
+                    kwarg,
+                    kwonly_params,
+                    defaults,
+                    kwonly_defaults,
+                    annotations,
+                ) = {
+                    let function_ref = func.kind();
+                    let function = match &*function_ref {
+                        Object::Function(function) => function,
+                        _ => unreachable!(),
+                    };
+                    (
+                        function.code.posonly_params.clone(),
+                        function.code.params.clone(),
+                        function.code.vararg.clone(),
+                        function.code.kwarg.clone(),
+                        function.code.kwonly_params.clone(),
+                        function.defaults.clone(),
+                        function.kwonly_defaults.clone(),
+                        function.annotations.clone(),
+                    )
+                };
+                let posonly_len = posonly_params.len();
+                let positional_len = posonly_len + positional_params.len();
+                let default_start = positional_len.saturating_sub(defaults.len());
+
+                for (idx, name) in posonly_params.iter().enumerate() {
+                    let default = if idx >= default_start {
+                        Some(defaults[idx - default_start].clone())
+                    } else {
+                        None
+                    };
+                    let (rendered, entry) = make_param(name.clone(), "POSITIONAL_ONLY", default);
+                    parts.push(rendered);
+                    params.push(entry);
+                }
+                if posonly_len > 0 {
+                    parts.push("/".to_string());
+                }
+
+                for (idx, name) in positional_params.iter().enumerate() {
+                    let param_idx = posonly_len + idx;
+                    let default = if param_idx >= default_start {
+                        Some(defaults[param_idx - default_start].clone())
+                    } else {
+                        None
+                    };
+                    let (rendered, entry) =
+                        make_param(name.clone(), "POSITIONAL_OR_KEYWORD", default);
+                    parts.push(rendered);
+                    params.push(entry);
+                }
+
+                if let Some(vararg) = &vararg {
+                    parts.push(format!("*{vararg}"));
+                    params.push((
+                        Value::Str(vararg.clone()),
+                        self.heap.alloc_tuple(vec![
+                            Value::Str("VAR_POSITIONAL".to_string()),
+                            Value::None,
+                        ]),
+                    ));
+                } else if !kwonly_params.is_empty() {
+                    parts.push("*".to_string());
+                }
+
+                for name in &kwonly_params {
+                    let default = kwonly_defaults.get(name).cloned();
+                    let (rendered, entry) = make_param(name.clone(), "KEYWORD_ONLY", default);
+                    parts.push(rendered);
+                    params.push(entry);
+                }
+
+                if let Some(kwarg) = &kwarg {
+                    parts.push(format!("**{kwarg}"));
+                    params.push((
+                        Value::Str(kwarg.clone()),
+                        self.heap
+                            .alloc_tuple(vec![Value::Str("VAR_KEYWORD".to_string()), Value::None]),
+                    ));
+                }
+
+                if let Some(annotations) = &annotations {
+                    if let Object::Dict(entries) = &*annotations.kind() {
+                        if let Some((_, value)) = entries
+                            .iter()
+                            .find(|(key, _)| matches!(key, Value::Str(name) if name == "return"))
+                        {
+                            return_annotation = value.clone();
+                        }
+                    }
+                }
+            }
+            _ => {
+                parts.push("*args".to_string());
+                params.push((
+                    Value::Str("args".to_string()),
+                    self.heap
+                        .alloc_tuple(vec![Value::Str("VAR_POSITIONAL".to_string()), Value::None]),
+                ));
+                parts.push("**kwargs".to_string());
+                params.push((
+                    Value::Str("kwargs".to_string()),
+                    self.heap
+                        .alloc_tuple(vec![Value::Str("VAR_KEYWORD".to_string()), Value::None]),
+                ));
+            }
+        }
+
+        let signature_text = Value::Str(format!("({})", parts.join(", ")));
+        let instance = match self
+            .heap
+            .alloc_instance(InstanceObject::new(signature_class))
+        {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("__text__".to_string(), signature_text);
+            instance_data
+                .attrs
+                .insert("parameters".to_string(), self.heap.alloc_dict(params));
+            instance_data
+                .attrs
+                .insert("return_annotation".to_string(), return_annotation);
+        }
+        Ok(Value::Instance(instance))
     }
 
     fn builtin_inspect_isfunction(

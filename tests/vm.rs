@@ -396,7 +396,7 @@ fn imports_sysconfigdata_module_for_platform() {
 
 #[test]
 fn exposes_inspect_signature_and_co_flags() {
-    let source = "import inspect\nsig = inspect.signature(lambda: 1)\nok = (sig is None) and inspect.CO_VARARGS == 4 and inspect.CO_VARKEYWORDS == 8 and inspect.CO_COROUTINE == 128\n";
+    let source = "import inspect\nsig = inspect.signature(lambda x, y=1, /, z=2, *, w=3, **kw: x + y)\nparams = sig.parameters\nok = isinstance(params, dict) and params['x'][0] == 'POSITIONAL_ONLY' and params['y'][1] == 1 and params['z'][0] == 'POSITIONAL_OR_KEYWORD' and params['w'][0] == 'KEYWORD_ONLY' and params['kw'][0] == 'VAR_KEYWORD' and sig.return_annotation is None and inspect.CO_VARARGS == 4 and inspect.CO_VARKEYWORDS == 8 and inspect.CO_COROUTINE == 128\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
