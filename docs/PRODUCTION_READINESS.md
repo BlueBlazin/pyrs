@@ -102,6 +102,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [ ] P1: `pydoc`/help output parity.
 - [ ] P1: `site` initialization and `ensurepip`/venv story.
 - [ ] P2: Rich error messages with caret spans and suggestions.
+- [~] P2: VM/runtime module decomposition away from monolithic hotspots (`src/vm/ops.rs` extracted for arithmetic/comparison kernels; further split required).
 
 **Testing & QA**
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.

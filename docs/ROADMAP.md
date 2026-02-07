@@ -306,6 +306,7 @@ Progress:
 - VM refactor kickoff landed: container/hashability helpers are extracted into `src/vm/containers.rs` to begin decomposing `src/vm/mod.rs` without behavior regressions.
 - Runtime container upgrade landed: `dict`/`set`/`frozenset` now use dedicated hash-indexed runtime container objects with insertion-order backing vectors.
 - Container equality parity batch landed: dict equality is now insertion-order independent, and set/frozenset equality is now value-based (including cross-type `set == frozenset` semantics), with dedicated VM regressions.
+- VM decomposition batch landed: arithmetic/comparison/type-union operator kernels were extracted from `src/vm/mod.rs` into `src/vm/ops.rs` with zero-regression full-suite validation, reducing monolith pressure ahead of bigint work.
 - Container internals remain a Milestone 13/14 blocker for completion: finish CPython hash/equality edge parity and production-performance closure (growth/load-factor and hot-path behavior).
 - Regression coverage added for all above behaviors in `tests/vm.rs`; full suite and parity gate remain green.
 
