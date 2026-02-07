@@ -7,12 +7,12 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Vendored `Grammar/python.gram` and `Grammar/Tokens` (synced from CPython 3.14.3)
 - [x] Indentation + baseline tokenization (names with Unicode identifier support, explicit line-join backslashes, ints/floats with underscores/base prefixes/exponents, strings with prefixes, operators, and soft-keyword handling for `match`/`case`/`type`)
 - [~] Tokenizer parity for current curated CPython suites (additional long-tail lexical parity still pending)
-- [x] Statements subset: pass, expr, assign/augassign (incl chained assignment, tuple/list destructuring targets, and generalized attribute/subscript targets), `del`, if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with (including multi-item forms), class (bases + `metaclass=` keyword path supported), decorators, `match`/`case` (literal/capture/guard plus sequence/mapping/class/or/as/star families), `except*` parsing, and core async statement semantics (`async def`/`async for`/`async with`)
+- [x] Statements subset: pass, expr, assign/augassign (incl chained assignment, tuple/list destructuring targets, and generalized attribute/subscript targets), `del`, if/elif/else, while/for/else (tuple/list targets), break/continue, def/return, import/from (dotted modules supported), global/nonlocal, raise (including `raise ... from ...`), assert, try/except/else, with (including multi-item forms), class (bases + `metaclass=` keyword path supported), decorators, `match`/`case` (literal/capture/guard plus sequence/mapping/class/or/as/star families, class-pattern positional-after-keyword rejection, duplicate-capture and OR-binding parity checks, and irrefutable reachability checks), `except*` parsing, and core async statement semantics (`async def`/`async for`/`async with`)
 - [x] Expressions subset: arithmetic (incl `**`, `/`, `//`, `%`), comparisons (incl `in`/`not in`/`is`/`is not`), boolean ops, conditional expr, calls (including generator-expression argument form), literals (including implicit adjacent string concatenation and imaginary-number literal lowering), attribute/subscript/slice, lambda, `yield`, `yield from`, assignment expressions (`:=`), await semantics, list/dict comprehensions, generator expressions, starred tuple/list displays, and f-string lowering
 - [x] Type annotations / hints (variable annotations, function parameter + return annotations; eager evaluation only)
 - [~] Type-parameter/type-alias syntax baseline (`def`/`class` type params plus `type Name = ...` parsing/lowering; full PEP 695 runtime semantics pending)
 - [x] `__future__` import placement + unknown-feature compile-time validation
-- [~] Advanced grammar/runtime parity gaps remain (pattern edge semantics, full exception-group edge semantics, full f-string/PEP 701 coverage)
+- [~] Advanced grammar/runtime parity gaps remain (remaining pattern edge/form semantics, full exception-group edge semantics, full f-string/PEP 701 coverage)
 
 ## Bytecode
 - [x] Opcode source files synced (`opcode.py`, `bytecodes.c`, `opcode.h`)
@@ -109,7 +109,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 ### P1 (Major Ecosystem Enablers)
 - [x] Async/await + async generators (core coroutine/async-iterator protocol and runtime semantics implemented for milestone scope).
 - [x] Comprehensions with correct scoping.
-- [~] Pattern matching (`match`/`case`) core subset (literal/capture/guard) implemented; full pattern families pending.
+- [~] Pattern matching (`match`/`case`) broad families are implemented (literal/capture/guard/sequence/mapping/class/or/as/star) with compile-time binding/reachability validation; long-tail edge/form parity remains pending.
 - [x] Exception chaining (`__cause__`, `__context__`, suppression metadata).
 - [~] Descriptor protocol + attribute lookup parity (descriptor hooks + `__getattr__`/`__setattr__`/`__delattr__` implemented; class-header `metaclass=` path and `__slots__` restrictions implemented; full `__getattribute__` and metaclass-precedence edge parity pending).
 - [~] Core stdlib: `sys`, `types`, `inspect`, `io`.

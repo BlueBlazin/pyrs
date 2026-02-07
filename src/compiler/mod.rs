@@ -139,6 +139,25 @@ enum NameKind {
     Name,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum IrrefutablePatternKind {
+    Wildcard,
+    Capture(String),
+}
+
+impl IrrefutablePatternKind {
+    fn unreachable_message(&self) -> String {
+        match self {
+            IrrefutablePatternKind::Wildcard => {
+                "wildcard makes remaining patterns unreachable".to_string()
+            }
+            IrrefutablePatternKind::Capture(name) => {
+                format!("name capture '{name}' makes remaining patterns unreachable")
+            }
+        }
+    }
+}
+
 fn analyze_scope(
     scope_type: ScopeType,
     posonly_params: &[Parameter],
@@ -2197,6 +2216,8 @@ impl Compiler {
     }
 
     fn compile_match(&mut self, subject: &Expr, cases: &[MatchCase]) -> Result<(), CompileError> {
+        self.validate_match_cases(cases)?;
+
         let subject_temp = self.fresh_temp("match_subject");
         self.compile_expr(subject)?;
         self.emit_store_name(&subject_temp);
@@ -2231,6 +2252,126 @@ impl Compiler {
             self.patch_jump(jump, end_ip)?;
         }
         Ok(())
+    }
+
+    fn validate_match_cases(&self, cases: &[MatchCase]) -> Result<(), CompileError> {
+        for (idx, case) in cases.iter().enumerate() {
+            Self::validate_pattern_bindings(&case.pattern)?;
+            if idx + 1 < cases.len() && case.guard.is_none() {
+                if let Some(kind) = Self::irrefutable_pattern_kind(&case.pattern) {
+                    return Err(CompileError::new(kind.unreachable_message()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_pattern_bindings(pattern: &Pattern) -> Result<HashSet<String>, CompileError> {
+        let mut bound = HashSet::new();
+        match pattern {
+            Pattern::Wildcard | Pattern::Constant(_) | Pattern::Value(_) | Pattern::Star(None) => {}
+            Pattern::Capture(name) | Pattern::Star(Some(name)) => {
+                Self::insert_pattern_binding(&mut bound, name)?;
+            }
+            Pattern::As { pattern, name } => {
+                Self::merge_pattern_bindings(&mut bound, Self::validate_pattern_bindings(pattern)?)?;
+                Self::insert_pattern_binding(&mut bound, name)?;
+            }
+            Pattern::Sequence(items) => {
+                for item in items {
+                    Self::merge_pattern_bindings(&mut bound, Self::validate_pattern_bindings(item)?)?;
+                }
+            }
+            Pattern::Mapping { entries, rest } => {
+                for (_, value_pattern) in entries {
+                    Self::merge_pattern_bindings(
+                        &mut bound,
+                        Self::validate_pattern_bindings(value_pattern)?,
+                    )?;
+                }
+                if let Some(name) = rest {
+                    Self::insert_pattern_binding(&mut bound, name)?;
+                }
+            }
+            Pattern::Class {
+                positional,
+                keywords,
+                ..
+            } => {
+                for subpattern in positional {
+                    Self::merge_pattern_bindings(
+                        &mut bound,
+                        Self::validate_pattern_bindings(subpattern)?,
+                    )?;
+                }
+                for (_, subpattern) in keywords {
+                    Self::merge_pattern_bindings(
+                        &mut bound,
+                        Self::validate_pattern_bindings(subpattern)?,
+                    )?;
+                }
+            }
+            Pattern::Or(options) => {
+                let mut expected_bindings: Option<HashSet<String>> = None;
+                for (idx, option) in options.iter().enumerate() {
+                    if idx + 1 < options.len() {
+                        if let Some(kind) = Self::irrefutable_pattern_kind(option) {
+                            return Err(CompileError::new(kind.unreachable_message()));
+                        }
+                    }
+
+                    let option_bindings = Self::validate_pattern_bindings(option)?;
+                    if let Some(expected) = &expected_bindings {
+                        if option_bindings != *expected {
+                            return Err(CompileError::new(
+                                "alternative patterns bind different names",
+                            ));
+                        }
+                    } else {
+                        expected_bindings = Some(option_bindings);
+                    }
+                }
+                bound = expected_bindings.unwrap_or_default();
+            }
+        }
+        Ok(bound)
+    }
+
+    fn merge_pattern_bindings(
+        target: &mut HashSet<String>,
+        incoming: HashSet<String>,
+    ) -> Result<(), CompileError> {
+        for name in incoming {
+            Self::insert_pattern_binding(target, &name)?;
+        }
+        Ok(())
+    }
+
+    fn insert_pattern_binding(
+        target: &mut HashSet<String>,
+        name: &str,
+    ) -> Result<(), CompileError> {
+        if !target.insert(name.to_string()) {
+            return Err(CompileError::new(format!(
+                "multiple assignments to name '{name}' in pattern"
+            )));
+        }
+        Ok(())
+    }
+
+    fn irrefutable_pattern_kind(pattern: &Pattern) -> Option<IrrefutablePatternKind> {
+        match pattern {
+            Pattern::Wildcard => Some(IrrefutablePatternKind::Wildcard),
+            Pattern::Capture(name) => Some(IrrefutablePatternKind::Capture(name.clone())),
+            Pattern::As { pattern, .. } => Self::irrefutable_pattern_kind(pattern),
+            Pattern::Or(options) => options.iter().find_map(Self::irrefutable_pattern_kind),
+            Pattern::Constant(_)
+            | Pattern::Value(_)
+            | Pattern::Sequence(_)
+            | Pattern::Mapping { .. }
+            | Pattern::Class { .. }
+            | Pattern::Star(_) => None,
+        }
     }
 
     fn compile_pattern_test(

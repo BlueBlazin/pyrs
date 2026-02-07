@@ -335,8 +335,13 @@ impl Parser {
                     | TokenKind::ColonEqual
             )
         {
-            if let Ok(parsed) = self.parse_match_stmt(pos) {
-                return Ok(parsed);
+            match self.parse_match_stmt(pos) {
+                Ok(parsed) => return Ok(parsed),
+                Err(err) => {
+                    if self.match_header_looks_statement_like(pos) {
+                        return Err(err);
+                    }
+                }
             }
         }
         let token = self.token_at(pos);
@@ -564,15 +569,20 @@ impl Parser {
         pos = self.expect_kind(pos, TokenKind::LParen)?;
         let mut positional = Vec::new();
         let mut keywords = Vec::new();
+        let mut saw_keyword = false;
         while !matches!(self.token_at(pos).kind, TokenKind::RParen | TokenKind::EndMarker) {
             if self.token_at(pos).kind == TokenKind::Name
                 && matches!(self.token_at(pos + 1).kind, TokenKind::Equal)
             {
+                saw_keyword = true;
                 let key = self.token_at(pos).lexeme.clone();
                 let (pattern, next) = self.parse_match_pattern(pos + 2)?;
                 keywords.push((key, pattern));
                 pos = next;
             } else {
+                if saw_keyword {
+                    return Err(self.error_at(pos, "positional patterns follow keyword patterns"));
+                }
                 let (pattern, next) = self.parse_match_pattern(pos)?;
                 positional.push(pattern);
                 pos = next;
@@ -3741,6 +3751,27 @@ impl Parser {
         self.match_keyword(pos, keyword)
             || matches!(self.token_at(pos).kind, TokenKind::Name)
                 && self.token_at(pos).lexeme == lexeme
+    }
+
+    fn match_header_looks_statement_like(&self, mut pos: usize) -> bool {
+        let mut paren = 0usize;
+        let mut bracket = 0usize;
+        let mut brace = 0usize;
+        loop {
+            let token = self.token_at(pos);
+            match token.kind {
+                TokenKind::EndMarker | TokenKind::Newline => return false,
+                TokenKind::LParen => paren += 1,
+                TokenKind::RParen => paren = paren.saturating_sub(1),
+                TokenKind::LBracket => bracket += 1,
+                TokenKind::RBracket => bracket = bracket.saturating_sub(1),
+                TokenKind::LBrace => brace += 1,
+                TokenKind::RBrace => brace = brace.saturating_sub(1),
+                TokenKind::Colon if paren == 0 && bracket == 0 && brace == 0 => return true,
+                _ => {}
+            }
+            pos += 1;
+        }
     }
 
     fn expect_end(&self, pos: usize) -> Result<(), ParseError> {

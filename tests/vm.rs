@@ -3586,7 +3586,7 @@ fn executes_match_case_statement() {
 
 #[test]
 fn executes_match_sequence_or_and_as_patterns() {
-    let source = "subject = [1, 2, 3, 4]\nmatch subject:\n    case [1, *middle, 4]:\n        seq_ok = len(middle) == 2 and middle[0] == 2 and middle[1] == 3\n    case _:\n        seq_ok = False\nvalue = 2\nmatch value:\n    case 1 | (2 as captured):\n        or_ok = captured == 2\n    case _:\n        or_ok = False\n";
+    let source = "subject = [1, 2, 3, 4]\nmatch subject:\n    case [1, *middle, 4]:\n        seq_ok = len(middle) == 2 and middle[0] == 2 and middle[1] == 3\n    case _:\n        seq_ok = False\nvalue = 2\nmatch value:\n    case (1 as captured) | (2 as captured):\n        or_ok = captured == 2\n    case _:\n        or_ok = False\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3607,6 +3607,58 @@ fn executes_match_mapping_and_class_patterns() {
     assert_eq!(vm.get_global("class_ok"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
     assert_eq!(vm.get_global("y"), Some(Value::Int(4)));
+}
+
+#[test]
+fn rejects_duplicate_capture_names_in_match_pattern() {
+    let source = "match value:\n    case [x, x]:\n        out = 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message
+            .contains("multiple assignments to name 'x' in pattern"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn rejects_or_patterns_with_different_binding_sets() {
+    let source = "match value:\n    case [x] | [x, y]:\n        out = 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message
+            .contains("alternative patterns bind different names"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn rejects_irrefutable_match_case_before_later_case() {
+    let source = "match value:\n    case _:\n        out = 0\n    case 1:\n        out = 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message
+            .contains("wildcard makes remaining patterns unreachable"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn rejects_or_pattern_with_early_irrefutable_alternative() {
+    let source = "match value:\n    case x | 1:\n        out = x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message
+            .contains("name capture 'x' makes remaining patterns unreachable"),
+        "unexpected message: {}",
+        err.message
+    );
 }
 
 #[test]

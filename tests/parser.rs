@@ -2178,6 +2178,17 @@ fn parses_match_pattern_families() {
 }
 
 #[test]
+fn rejects_positional_after_keyword_in_class_pattern() {
+    let source = "match value:\n    case Point(x=1, 2):\n        out = 1\n";
+    let err = parser::parse_module(source).expect_err("parse should fail");
+    assert!(
+        err.message.contains("positional patterns follow keyword patterns"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
 fn parses_async_statements_and_await() {
     let source = "async def f(x):\n    return await x\nasync for i in [1]:\n    pass\nasync with ctx:\n    pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
