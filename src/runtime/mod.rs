@@ -955,6 +955,7 @@ pub enum BuiltinFunction {
     SysGetFrame,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
+    PlatformLibcVer,
     Import,
     ImportModule,
     FindSpec,
@@ -2511,6 +2512,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetFrame
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
+            | BuiltinFunction::PlatformLibcVer
             | BuiltinFunction::ImportlibSourceFromCache
             | BuiltinFunction::ImportlibCacheFromSource
             | BuiltinFunction::RandomSeed

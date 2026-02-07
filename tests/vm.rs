@@ -3614,6 +3614,16 @@ fn exposes_io_textiowrapper_and_sys_platform() {
 }
 
 #[test]
+fn exposes_platform_libc_ver_tuple() {
+    let source = "import platform\ninfo = platform.libc_ver()\nok = isinstance(info, tuple) and len(info) == 2 and isinstance(info[0], str) and isinstance(info[1], str)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_os_fsencode_fsdecode_and_unicodeerror() {
     let source = "import os\npayload = os.fsencode('abc')\ntext = os.fsdecode(payload)\ncaught = False\ntry:\n    raise UnicodeError\nexcept UnicodeError:\n    caught = True\nok = isinstance(payload, bytes) and text == 'abc' and caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");

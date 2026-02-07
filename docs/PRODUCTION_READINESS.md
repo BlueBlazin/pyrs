@@ -72,6 +72,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [ ] P1: Frame objects + `inspect` compatibility (locals/globals/stack).
 
 **Builtins**
+- [x] P0: Stub accounting is enforced (`docs/STUB_ACCOUNTING.md`, generated `docs/NOOP_BUILTIN_INVENTORY.txt`, and CI gate `tests/noop_inventory.rs`).
 - [~] P0: Core builtin set (print, len, range, float/int coercions, numeric ops, `set`/`frozenset`, bytes-like constructors, `complex`, `iter`/`next`, `type`, and random module foundations).
 - [ ] P0: Full builtin set (open, iter, next, vars, locals, globals, dir, help, input, etc.; `getattr`/`setattr`/`delattr`/`hasattr` and explicit-args `super` implemented).
 - [x] P1: `__import__` baseline (`name`/`fromlist`/`level` semantics wired to loader path).

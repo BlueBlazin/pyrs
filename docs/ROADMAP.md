@@ -264,6 +264,7 @@ DoD:
 - Import and packaging paths close remaining usability gaps (zip/bytecode imports, `importlib.resources`, `pkgutil`, and `site` startup behavior).
 - venv + pip pure-Python package workflows are production-usable and covered by regression tests.
 - Real-world smoke/regression matrix includes CLI/web/data pure-Python app classes running under constrained sandbox profile.
+- `NoOp` and non-`NoOp` partial implementation ledgers stay current (`docs/NOOP_BUILTIN_INVENTORY.txt` + `docs/STUB_ACCOUNTING.md`) with CI drift checks.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:

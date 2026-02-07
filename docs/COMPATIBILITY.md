@@ -42,6 +42,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 - [x] Object identity (`id`, `is`/`is not`) + refcount + basic cycle GC
 
 ## Stdlib Coverage
+- [x] Stub/partial accounting gate (`docs/STUB_ACCOUNTING.md` + generated `docs/NOOP_BUILTIN_INVENTORY.txt` enforced by `tests/noop_inventory.rs`)
 - [x] `builtins` subset (print `sep`/`end`, len `obj`, range keywords, sum `start`, sorted `reverse`, enumerate `start`, slice, bool/int/float/str, abs/sum/min/max/all/any/pow, list/tuple/set/frozenset, bytes/bytearray/memoryview, complex, divmod, iter/next/`aiter`/`anext`, `type` (1-arg + 3-arg), locals, globals, `getattr`/`setattr`/`delattr`/`hasattr`, explicit-args `super`, basic `__import__` name/fromlist/level semantics)
 - [x] `sys` import foundations (`path`, `meta_path`, `path_hooks`, `path_importer_cache`, `modules`)
 - [x] `importlib` foundations (`import_module`, `find_spec`, `importlib.util.find_spec`)

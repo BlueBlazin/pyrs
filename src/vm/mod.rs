@@ -318,6 +318,21 @@ impl Vm {
         self.sync_sys_path_from_module_paths();
     }
 
+    pub fn noop_builtin_inventory(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut module_names: Vec<String> = self.modules.keys().cloned().collect();
+        module_names.sort();
+        for module_name in module_names {
+            let Some(module) = self.modules.get(&module_name) else {
+                continue;
+            };
+            collect_noop_symbols_from_module(&module_name, module, &mut out);
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
     pub fn id_of(&self, value: &Value) -> u64 {
         self.heap.id_of(value)
     }
@@ -1326,6 +1341,7 @@ impl Vm {
                     "python_implementation",
                     BuiltinFunction::SysGetFilesystemEncoding,
                 ),
+                ("libc_ver", BuiltinFunction::PlatformLibcVer),
                 ("win32_is_iot", BuiltinFunction::NoOp),
                 ("uname", BuiltinFunction::Tuple),
             ],
@@ -11052,6 +11068,7 @@ impl Vm {
             BuiltinFunction::SysGetFilesystemEncodeErrors => {
                 self.builtin_sys_getfilesystemencodeerrors(args, kwargs)
             }
+            BuiltinFunction::PlatformLibcVer => self.builtin_platform_libc_ver(args, kwargs),
             BuiltinFunction::GetAttr => self.builtin_getattr(args, kwargs),
             BuiltinFunction::SetAttr => self.builtin_setattr(args, kwargs),
             BuiltinFunction::DelAttr => self.builtin_delattr(args, kwargs),
@@ -11507,6 +11524,90 @@ impl Vm {
             ));
         }
         Ok(Value::Str("surrogateescape".to_string()))
+    }
+
+    fn builtin_platform_libc_ver(
+        &self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 4 {
+            return Err(RuntimeError::new(
+                "platform.libc_ver() expects up to 4 arguments",
+            ));
+        }
+
+        let executable_kw = kwargs.remove("executable");
+        let lib_kw = kwargs.remove("lib");
+        let version_kw = kwargs.remove("version");
+        let chunksize_kw = kwargs.remove("chunksize");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "platform.libc_ver() got an unexpected keyword argument",
+            ));
+        }
+
+        if args.len() > 0 && executable_kw.is_some() {
+            return Err(RuntimeError::new(
+                "platform.libc_ver() got multiple values for executable",
+            ));
+        }
+        if args.len() > 1 && lib_kw.is_some() {
+            return Err(RuntimeError::new(
+                "platform.libc_ver() got multiple values for lib",
+            ));
+        }
+        if args.len() > 2 && version_kw.is_some() {
+            return Err(RuntimeError::new(
+                "platform.libc_ver() got multiple values for version",
+            ));
+        }
+        if args.len() > 3 && chunksize_kw.is_some() {
+            return Err(RuntimeError::new(
+                "platform.libc_ver() got multiple values for chunksize",
+            ));
+        }
+
+        let lib_value = args
+            .get(1)
+            .cloned()
+            .or(lib_kw)
+            .unwrap_or_else(|| Value::Str(String::new()));
+        let version_value = args
+            .get(2)
+            .cloned()
+            .or(version_kw)
+            .unwrap_or_else(|| Value::Str(String::new()));
+        let chunksize_value = args.get(3).cloned().or(chunksize_kw);
+
+        let default_lib = match lib_value {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("platform.libc_ver() lib must be str")),
+        };
+        let default_version = match version_value {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("platform.libc_ver() version must be str")),
+        };
+        if let Some(value) = chunksize_value {
+            value_to_int(value)?;
+        }
+
+        let detected_lib = if default_lib.is_empty() {
+            if cfg!(all(target_os = "linux", target_env = "musl")) {
+                "musl".to_string()
+            } else if cfg!(target_os = "linux") {
+                "glibc".to_string()
+            } else {
+                default_lib
+            }
+        } else {
+            default_lib
+        };
+
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Str(detected_lib),
+            Value::Str(default_version),
+        ]))
     }
 
     fn builtin_callable(
@@ -18707,6 +18808,44 @@ fn call_builtin_with_kwargs(
             }
             builtin.call(heap, args)
         }
+    }
+}
+
+fn collect_noop_symbols_from_module(module_name: &str, module: &ObjRef, out: &mut Vec<String>) {
+    let module_kind = module.kind();
+    let module_data = match &*module_kind {
+        Object::Module(module_data) => module_data,
+        _ => return,
+    };
+    let mut names: Vec<String> = module_data.globals.keys().cloned().collect();
+    names.sort();
+    for name in names {
+        let Some(value) = module_data.globals.get(&name) else {
+            continue;
+        };
+        collect_noop_symbols_from_value(&format!("{module_name}.{name}"), value, out);
+    }
+}
+
+fn collect_noop_symbols_from_value(path: &str, value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Builtin(BuiltinFunction::NoOp) => out.push(path.to_string()),
+        Value::Class(class) => {
+            let class_kind = class.kind();
+            let class_data = match &*class_kind {
+                Object::Class(class_data) => class_data,
+                _ => return,
+            };
+            let mut attrs: Vec<String> = class_data.attrs.keys().cloned().collect();
+            attrs.sort();
+            for attr in attrs {
+                let Some(attr_value) = class_data.attrs.get(&attr) else {
+                    continue;
+                };
+                collect_noop_symbols_from_value(&format!("{path}.{attr}"), attr_value, out);
+            }
+        }
+        _ => {}
     }
 }
 
