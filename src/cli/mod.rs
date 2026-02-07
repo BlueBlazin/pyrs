@@ -1,6 +1,8 @@
 //! CLI entry point and argument handling.
 
+use std::collections::HashSet;
 use std::env;
+use std::path::{Path, PathBuf};
 
 use crate::VERSION;
 use crate::compiler;
@@ -8,7 +10,7 @@ use crate::parser;
 use crate::stdlib;
 use crate::vm::Vm;
 
-const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
+const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
 
 pub fn run() -> i32 {
     let mut args = env::args().skip(1);
@@ -51,7 +53,20 @@ pub fn run() -> i32 {
             println!("pyrs {VERSION}");
             0
         }
-        Some(path) => match run_file(&path) {
+        Some(flag) if flag == "-S" || flag == "--no-site" => match args.next() {
+            Some(path) => match run_file(&path, false) {
+                Ok(()) => 0,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    2
+                }
+            },
+            None => {
+                eprintln!("error: -S/--no-site expects a file path");
+                2
+            }
+        },
+        Some(path) => match run_file(&path, true) {
             Ok(()) => 0,
             Err(err) => {
                 eprintln!("error: {err}");
@@ -65,9 +80,10 @@ fn print_help() {
     println!("{HELP}");
 }
 
-fn run_file(path: &str) -> Result<(), String> {
+fn run_file(path: &str, import_site: bool) -> Result<(), String> {
+    let mut vm = Vm::new();
+    configure_vm_for_execution(&mut vm, path, import_site)?;
     if path.ends_with(".pyc") {
-        let mut vm = Vm::new();
         vm.execute_pyc_file(path)
             .map_err(|err| format!("runtime error: {}", err.message))?;
         return Ok(());
@@ -88,11 +104,73 @@ fn run_file(path: &str) -> Result<(), String> {
     let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
 
-    let mut vm = Vm::new();
     vm.execute(&code)
         .map_err(|err| format!("runtime error: {}", err.message))?;
 
     Ok(())
+}
+
+fn configure_vm_for_execution(vm: &mut Vm, script_path: &str, import_site: bool) -> Result<(), String> {
+    let (stdlib_paths, strict_site_import) = detect_cpython_stdlib_paths();
+    for stdlib_path in &stdlib_paths {
+        vm.add_module_path(stdlib_path.clone());
+    }
+    if import_site && !stdlib_paths.is_empty() {
+        if let Err(err) = vm.import_module("site") {
+            if strict_site_import {
+                return Err(format!("startup site import failed: {}", err.message));
+            }
+        }
+    }
+    if let Some(parent) = Path::new(script_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            vm.add_module_path_front(parent.to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let mut strict_site_import = false;
+
+    let mut register = |candidate: PathBuf| {
+        if candidate.as_os_str().is_empty() {
+            return;
+        }
+        let normalized = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+        if !normalized.join("site.py").is_file() {
+            return;
+        }
+        if seen.insert(normalized.clone()) {
+            out.push(normalized);
+        }
+    };
+
+    if let Ok(path) = env::var("PYRS_CPYTHON_LIB") {
+        strict_site_import = true;
+        register(PathBuf::from(path));
+    }
+    if let Some(path) = env::var_os("PYTHONPATH") {
+        for entry in env::split_paths(&path) {
+            register(entry);
+        }
+    }
+    if let Ok(home) = env::var("PYTHONHOME") {
+        register(PathBuf::from(home).join("lib").join("python3.14"));
+    }
+
+    for candidate in [
+        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
+        "/opt/homebrew/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
+        "/usr/local/lib/python3.14",
+        "/usr/lib/python3.14",
+    ] {
+        register(PathBuf::from(candidate));
+    }
+
+    (out, strict_site_import)
 }
 
 fn run_ast(path: &str) -> Result<(), String> {

@@ -335,8 +335,24 @@ impl Vm {
     }
 
     pub fn add_module_path(&mut self, path: impl Into<PathBuf>) {
-        self.module_paths.push(path.into());
+        let path = path.into();
+        if self.module_paths.iter().any(|existing| existing == &path) {
+            return;
+        }
+        self.module_paths.push(path);
         self.sync_sys_path_from_module_paths();
+    }
+
+    pub fn add_module_path_front(&mut self, path: impl Into<PathBuf>) {
+        let path = path.into();
+        self.module_paths.retain(|existing| existing != &path);
+        self.module_paths.insert(0, path);
+        self.sync_sys_path_from_module_paths();
+    }
+
+    pub fn import_module(&mut self, name: &str) -> Result<(), RuntimeError> {
+        let _ = self.import_module_object(name)?;
+        Ok(())
     }
 
     pub fn noop_builtin_inventory(&self) -> Vec<String> {
