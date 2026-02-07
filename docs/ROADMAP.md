@@ -100,6 +100,9 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Curated CPython harness parity closure for current language/import suites (allowlist burn-down to zero).
 - [ ] Runtime semantic closure for remaining data-model gaps (`__getattribute__`, metaclass precedence, `__slots__` layout edges, full codecs behavior).
 - [ ] Hash-based dict/set/frozenset semantic parity (`__hash__` contract, unhashable key/item rejection, CPython-compatible key/item lookup/update behavior).
+- [ ] `json` semantic/safety/perf closure (full CPython encode/decode behavior and error contracts, malformed-input hardening, and benchmark baselines).
+- [ ] `_csv`/`csv` semantic/safety/perf closure (full parser/writer semantics and error-text parity, malformed-input hardening, and benchmark baselines).
+- [ ] `pickle`/`pickletools`/`copyreg` semantic/safety/perf closure (protocol/opcode/runtime parity plus benchmark baselines).
 - [ ] Native extension loading parity for limited C-API/abi3 modules.
 - [ ] Production release gate (security + reliability): sanitizers, deterministic crash repros, and parity-regression blocking CI.
 
@@ -111,7 +114,7 @@ Status flags: `[ ]` not started, `[x]` complete.
 - [x] Exception chaining (`__cause__`, `__context__`, suppression metadata) for explicit/implicit raises.
 - [~] Descriptor protocol + attribute lookup parity (descriptor hooks plus `__getattribute__` override baseline and `__getattr__`/`__setattr__`/`__delattr__` implemented; full `__getattribute__` fallback-edge and metaclass parity pending).
 - [~] Core stdlib: `sys`, `types`, `inspect`, `io`.
-- [~] Stdlib base: `os`, `pathlib`, `re`, `json`, `datetime`, `collections`, `math`, `codecs`.
+- [~] Stdlib base: `os`, `pathlib`, `re`, `datetime`, `collections`, `math`, `codecs`.
 - [~] Utility stdlib foundations: `random`.
 - [ ] HPy extension loading/execution path.
 - [ ] Cross-platform release qualification matrix (Linux/macOS/Windows) with parity gates.
@@ -263,6 +266,7 @@ DoD:
 - Remaining language/runtime long-tail parity closes for production blocking semantics (`__getattribute__`, metaclass precedence/selection, `__slots__` edge layout behavior, full codecs behavior, pattern-family completion, `ExceptionGroup` split semantics, and full PEP 701 behavior).
 - Runtime container semantic parity closes for hash-driven types (`dict`/`set`/`frozenset`) including unhashable rejection behavior.
 - Stdlib coverage expands to unblock mainstream pure-Python ecosystems (`subprocess`, `socket`, `ssl`, `http`, `urllib`, `typing`, `dataclasses`, `enum`, `contextvars`, and importlib resource/package helpers).
+- `json`/`_csv`/`pickle` stacks close to full CPython semantics with explicit robustness/performance gates (`test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness scope, plus malformed-input/differential coverage and benchmark reporting).
 - Import and packaging paths close remaining usability gaps (zip/bytecode imports, `importlib.resources`, `pkgutil`, and `site` startup behavior).
 - venv + pip pure-Python package workflows are production-usable and covered by regression tests.
 - Real-world smoke/regression matrix includes CLI/web/data pure-Python app classes running under constrained sandbox profile.
@@ -323,6 +327,7 @@ Progress:
 - `_csv` hardening landed beyond bootstrap: reader now supports `skipinitialspace`, `quotechar=None`, `escapechar`, and `field_size_limit` enforcement; writer now supports `quotechar=None`, `escapechar`, and `quoting` mode handling (`QUOTE_MINIMAL`, `QUOTE_ALL`, `QUOTE_NONE`) with dedicated regressions.
 - Container internals advanced toward production-performance closure: dict/set index maps now use direct hash-key lookup entries (instead of hash-bucket vectors), reducing lookup/update overhead and preserving insertion-order/value semantics; remaining closure is load-factor/growth-policy tuning and long-tail hash/equality parity.
 - Regression coverage added for all above behaviors in `tests/vm.rs`; parity gate remains green on core profile while expanded CPython harness closure continues against tracked Milestone 13 blockers.
+- Remaining mandatory P0 gate in Milestone 13: full `json`/`_csv`/`pickle` semantic closure with explicit robustness/performance proof; current implementations are still partial and tracked in `docs/STUB_ACCOUNTING.md`.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:

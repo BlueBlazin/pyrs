@@ -57,6 +57,7 @@ Current milestone state summary:
 9. Milestone 11 complete (P0/P1): parity/test gate foundations are active (CPython harness suites + differential CPython checks + parser/VM fuzzing + curated real-world smoke suite + parity profile script).
 10. Milestone 12 complete (P0): current curated CPython harness language/import suites pass with an empty allowlist.
 11. Remaining milestones 13-16 cover: long-tail language/runtime parity + stdlib/packaging usability closure, performance/observability/runtime hooks, native-extension ecosystem compatibility, and release hardening/certification.
+12. Strict Milestone 13 P0 blockers now explicitly include full `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` semantic closure with robustness/performance proof; these are tracked in `docs/STUB_ACCOUNTING.md`, `docs/ROADMAP.md`, and `docs/PRODUCTION_READINESS.md`.
 
 ## Engineering Principles
 - Maintain correctness first, then performance.
@@ -69,6 +70,7 @@ Current milestone state summary:
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - Production readiness accounting: `docs/PRODUCTION_READINESS.md`
 - Stub and partial implementation ledger: `docs/STUB_ACCOUNTING.md`
+- P0 critical-path note: `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` are explicit release blockers until full parity + robustness/perf gates are closed.
 - Generated `NoOp` inventory: `docs/NOOP_BUILTIN_INVENTORY.txt` (refresh with `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`)
 - `NoOp` inventory traversal is recursive across module/class/instance/container graphs.
 - Current `NoOp` inventory is reduced to test-only `_testcapi`/`_testinternalcapi` stubs plus `sys.monitoring` and `sys._jit` scaffolding.

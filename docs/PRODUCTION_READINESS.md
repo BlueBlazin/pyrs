@@ -64,6 +64,9 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [~] P0: bytes/bytearray/memoryview and buffer protocol (core bytes-like runtime types implemented; full buffer protocol pending).
 - [x] P0: set/frozenset.
 - [~] P0: Hash-based dict/set/frozenset semantic parity (`__hash__` contract, unhashable key/item rejection, CPython-compatible lookup/update behavior) (core unhashable key/item rejection is now enforced on constructor/update/assignment/membership flows, literal dict construction, `dict.fromkeys(...)`, and `collections.Counter(...)`; dict keyed operations now use hash-indexed lookup/update/delete helpers (`get`/`setdefault`/`pop`/delete) and set relationship checks enforce hashability; dict equality is insertion-order independent and set/frozenset equality is value-based including cross-type equality; hash-table storage growth/load-factor and long-tail edge parity remain pending).
+- [ ] P0: `json` semantic/safety/perf closure (full CPython behavior for encode/decode options and error contracts, malformed-input hardening, and benchmark baselines).
+- [ ] P0: `_csv`/`csv` semantic/safety/perf closure (full parser/writer behavior and error-text parity, malformed-input hardening, and benchmark baselines).
+- [ ] P0: `pickle`/`pickletools`/`copyreg` semantic/safety/perf closure (protocol/opcode/runtime parity plus benchmark baselines).
 - [~] P0: Unicode/codec behavior parity (including error handlers) (`codecs.encode`/`decode` foundations for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace` implemented; full parity pending).
 - [~] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`) (core VM descriptor hooks implemented; metaclass/slot edge parity pending).
 - [~] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) (instance hooks plus custom `__getattribute__` override and `object.__getattribute__` baseline are implemented; full fallback/error-edge parity pending).
@@ -91,7 +94,10 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [~] P0: `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`).
 - [~] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
 - [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core; `os`/`posix` now include non-`NoOp` `open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` + wait-status helpers, and `datetime` now exports baseline `date`/`timedelta` symbols; full module parity pending).
-- [~] P1: `re`, `json`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator` (`math` core stub surface removed; long-tail parity still pending).
+- [ ] P0: Full `json` parity and hardening (`test_json` closure, differential malformed-input coverage, performance baselines).
+- [ ] P0: Full `_csv`/`csv` parity and hardening (`test_csv` closure, malformed-input coverage, performance baselines).
+- [ ] P0: Full `pickle`/`pickletools`/`copyreg` parity and hardening (`test_pickle`, `test_pickletools`, `test_copyreg` closure, protocol coverage, performance baselines).
+- [~] P1: `re`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator` (`math` core stub surface removed; long-tail parity still pending).
 - [~] P1: `threading`, `multiprocessing`, `asyncio`, `concurrent.futures` (`asyncio`/`threading` foundations implemented; broader module parity pending).
 - [ ] P1: `subprocess`, `socket`, `ssl`, `http`, `urllib`.
 - [ ] P2: `logging`, `argparse`, `unittest`, `doctest`.
@@ -108,6 +114,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
 - [~] P0: Current curated CPython language/import harness suites are near zero-allowlist and now include `test/test_set.py`, `test/test_list.py`, `test/test_tuple.py`, `test/test_slice.py`, `test/test_format.py`, `test/test_configparser.py`, `test/test_base64.py`, `test/test_binascii.py`, `test/test_bisect.py`, `test/test_copy.py`, `test/test_copyreg.py`, `test/test_csv.py`, `test/test_fnmatch.py`, `test/test_genericalias.py`, `test/test_heapq.py`, `test/test_pprint.py`, `test/test_reprlib.py`, `test/test_sched.py`, `test/test_statistics.py`, `test/test_textwrap.py`, `test/test_tokenize.py`, `test/test_json/__init__.py`, `test/test_dataclasses/__init__.py`, and `test/test_enum.py`; `tests/cpython_allowlist.txt` remains empty.
 - [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
+- [ ] P0: Full CPython module-suite closure for `json`/`csv`/`pickle` stack (`test_json`, `test_csv`, `test_pickle`, `test_pickletools`, `test_copyreg`) with owned allowlist policy.
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).
 - [x] P1: Curated real-world smoke/regression suite with constrained subprocess profile (`tests/realworld_smoke.rs`, `scripts/run_parity_gate.sh`).
