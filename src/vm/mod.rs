@@ -5493,6 +5493,7 @@ impl Vm {
                         for _ in 0..count {
                             let value = self.pop_value()?;
                             let key = self.pop_value()?;
+                            ensure_hashable(&key)?;
                             values.push((key, value));
                         }
                         values.reverse();
@@ -21018,6 +21019,7 @@ impl Vm {
         let mut entries: Vec<(Value, Value)> = Vec::new();
         if let Some(source) = args.into_iter().next() {
             for item in self.collect_iterable_values(source)? {
+                ensure_hashable(&item)?;
                 if let Some((_, count)) = entries.iter_mut().find(|(key, _)| *key == item) {
                     *count = add_values(count.clone(), Value::Int(1), &self.heap)?;
                 } else {

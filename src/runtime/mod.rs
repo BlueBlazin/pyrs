@@ -2367,6 +2367,7 @@ impl BuiltinFunction {
                             match item {
                                 Value::Tuple(pair) => match &*pair.kind() {
                                     Object::Tuple(parts) if parts.len() == 2 => {
+                                        ensure_hashable_key(&parts[0])?;
                                         entries.push((parts[0].clone(), parts[1].clone()));
                                     }
                                     _ => {
@@ -2377,6 +2378,7 @@ impl BuiltinFunction {
                                 },
                                 Value::List(pair) => match &*pair.kind() {
                                     Object::List(parts) if parts.len() == 2 => {
+                                        ensure_hashable_key(&parts[0])?;
                                         entries.push((parts[0].clone(), parts[1].clone()));
                                     }
                                     _ => {
@@ -2404,6 +2406,7 @@ impl BuiltinFunction {
                 let default = args.get(1).cloned().unwrap_or(Value::None);
                 let mut entries: Vec<(Value, Value)> = Vec::new();
                 for key in keys {
+                    ensure_hashable_key(&key)?;
                     if let Some((_, value)) =
                         entries.iter_mut().find(|(existing, _)| *existing == key)
                     {
@@ -2423,7 +2426,7 @@ impl BuiltinFunction {
                 } else {
                     Vec::new()
                 };
-                Ok(heap.alloc_set(dedup_values(values)))
+                Ok(heap.alloc_set(dedup_values(values)?))
             }
             BuiltinFunction::FrozenSet => {
                 if args.len() > 1 {
@@ -2436,7 +2439,7 @@ impl BuiltinFunction {
                 } else {
                     Vec::new()
                 };
-                Ok(heap.alloc_frozenset(dedup_values(values)))
+                Ok(heap.alloc_frozenset(dedup_values(values)?))
             }
             BuiltinFunction::Bytes => {
                 if args.len() > 2 {
@@ -3804,14 +3807,15 @@ fn parse_complex_literal(text: &str) -> Result<(f64, f64), RuntimeError> {
     }
 }
 
-fn dedup_values(values: Vec<Value>) -> Vec<Value> {
+fn dedup_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     let mut out = Vec::new();
     for value in values {
+        ensure_hashable_key(&value)?;
         if !out.iter().any(|existing| *existing == value) {
             out.push(value);
         }
     }
-    out
+    Ok(out)
 }
 
 fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
@@ -3859,6 +3863,51 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
         },
         Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),
         _ => Err(RuntimeError::new("expected iterable")),
+    }
+}
+
+fn ensure_hashable_key(value: &Value) -> Result<(), RuntimeError> {
+    if value_hash_key(value).is_some() {
+        Ok(())
+    } else {
+        Err(RuntimeError::new(format!(
+            "unhashable type: '{}'",
+            value_type_name(value)
+        )))
+    }
+}
+
+fn value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::None => "NoneType",
+        Value::Bool(_) => "bool",
+        Value::Int(_) => "int",
+        Value::BigInt(_) => "int",
+        Value::Float(_) => "float",
+        Value::Complex { .. } => "complex",
+        Value::Str(_) => "str",
+        Value::List(_) => "list",
+        Value::Tuple(_) => "tuple",
+        Value::Dict(_) => "dict",
+        Value::Set(_) => "set",
+        Value::FrozenSet(_) => "frozenset",
+        Value::Bytes(_) => "bytes",
+        Value::ByteArray(_) => "bytearray",
+        Value::MemoryView(_) => "memoryview",
+        Value::Iterator(_) => "iterator",
+        Value::Generator(_) => "generator",
+        Value::Module(_) => "module",
+        Value::Class(_) => "type",
+        Value::Instance(_) => "object",
+        Value::Super(_) => "super",
+        Value::Function(_) => "function",
+        Value::BoundMethod(_) => "method",
+        Value::Exception(_) => "exception",
+        Value::ExceptionType(_) => "exceptiontype",
+        Value::Slice { .. } => "slice",
+        Value::Code(_) => "code",
+        Value::Builtin(_) => "builtin_function_or_method",
+        Value::Cell(_) => "cell",
     }
 }
 

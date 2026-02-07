@@ -1476,6 +1476,26 @@ fn rejects_unhashable_dict_key_assignment() {
 }
 
 #[test]
+fn rejects_unhashable_dict_literal_key() {
+    let source = "d = {[1, 2]: 3}\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("unhashable type: 'list'"));
+}
+
+#[test]
+fn rejects_unhashable_dict_fromkeys_key() {
+    let source = "d = dict.fromkeys([[1], [2]], 0)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("unhashable type: 'list'"));
+}
+
+#[test]
 fn rejects_unhashable_dict_key_membership() {
     let source = "d = {1: 2}\nok = [1] in d\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1488,6 +1508,16 @@ fn rejects_unhashable_dict_key_membership() {
 #[test]
 fn rejects_unhashable_set_item_add() {
     let source = "s = set()\ns.add([1, 2])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("unhashable type: 'list'"));
+}
+
+#[test]
+fn rejects_unhashable_collections_counter_item() {
+    let source = "from collections import Counter\nCounter([[1], [2]])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
