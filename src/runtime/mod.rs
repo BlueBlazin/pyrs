@@ -1963,7 +1963,7 @@ impl BuiltinFunction {
                 }
                 let parse_with_base = |text: &str,
                                        explicit_base: Option<i64>|
-                 -> Result<i64, RuntimeError> {
+                 -> Result<Value, RuntimeError> {
                     let trimmed = text.trim();
                     if trimmed.is_empty() {
                         return Err(RuntimeError::new("int() invalid literal"));
@@ -2035,10 +2035,15 @@ impl BuiltinFunction {
                         return Err(RuntimeError::new("int() invalid literal"));
                     }
 
-                    let parsed = i128::from_str_radix(&normalized, base as u32)
-                        .map_err(|_| RuntimeError::new("int() invalid literal"))?;
-                    let signed = sign * parsed;
-                    Ok(signed.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+                    let mut parsed = BigInt::from_str_radix(&normalized, base as u32)
+                        .ok_or_else(|| RuntimeError::new("int() invalid literal"))?;
+                    if sign < 0 {
+                        parsed = parsed.negated();
+                    }
+                    Ok(match parsed.to_i64() {
+                        Some(value) => Value::Int(value),
+                        None => Value::BigInt(parsed),
+                    })
                 };
 
                 let explicit_base = if args.len() == 2 {
@@ -2061,11 +2066,11 @@ impl BuiltinFunction {
                     Value::BigInt(value) => Ok(Value::BigInt(value.clone())),
                     Value::Bool(value) => Ok(Value::Int(if *value { 1 } else { 0 })),
                     Value::Float(value) => Ok(Value::Int(*value as i64)),
-                    Value::Str(value) => Ok(Value::Int(parse_with_base(value, explicit_base)?)),
+                    Value::Str(value) => parse_with_base(value, explicit_base),
                     Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
                         Object::Bytes(bytes) | Object::ByteArray(bytes) => {
                             let text = String::from_utf8_lossy(bytes);
-                            Ok(Value::Int(parse_with_base(&text, explicit_base)?))
+                            parse_with_base(&text, explicit_base)
                         }
                         _ => Err(RuntimeError::new("int() unsupported type")),
                     },
@@ -4030,7 +4035,29 @@ fn mod_pow_i64(base: i64, exponent: i64, modulo: i64) -> Result<i64, RuntimeErro
     i64::try_from(acc).map_err(|_| RuntimeError::new("integer overflow"))
 }
 
+fn int_like_bigint(value: &Value) -> Option<BigInt> {
+    match value {
+        Value::Int(value) => Some(BigInt::from_i64(*value)),
+        Value::Bool(value) => Some(BigInt::from_i64(if *value { 1 } else { 0 })),
+        Value::BigInt(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn bigint_to_value(value: BigInt) -> Value {
+    match value.to_i64() {
+        Some(number) => Value::Int(number),
+        None => Value::BigInt(value),
+    }
+}
+
 fn divmod_values(left: Value, right: Value) -> Result<(Value, Value), RuntimeError> {
+    if let (Some(left), Some(right)) = (int_like_bigint(&left), int_like_bigint(&right)) {
+        let (quotient, remainder) = left
+            .div_mod_floor(&right)
+            .ok_or_else(|| RuntimeError::new("divmod() division by zero"))?;
+        return Ok((bigint_to_value(quotient), bigint_to_value(remainder)));
+    }
     match (numeric_value(&left), numeric_value(&right)) {
         (Some(NumericValue::Int(left)), Some(NumericValue::Int(right))) => {
             if right == 0 {

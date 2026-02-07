@@ -109,6 +109,12 @@ pub(super) fn div_values(left: Value, right: Value) -> Result<Value, RuntimeErro
 }
 
 pub(super) fn floor_div_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = integer_pair(&left, &right) {
+        let (quotient, _) = left
+            .div_mod_floor(&right)
+            .ok_or_else(|| RuntimeError::new("division by zero"))?;
+        return Ok(bigint_to_value(quotient));
+    }
     let (left, right) = numeric_pair(&left, &right)
         .ok_or_else(|| RuntimeError::new("unsupported operand type for //"))?;
     match (left, right) {
@@ -128,6 +134,12 @@ pub(super) fn floor_div_values(left: Value, right: Value) -> Result<Value, Runti
 pub(super) fn mod_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
     if let Value::Str(format) = left {
         return string_percent_format(&format, right).map(Value::Str);
+    }
+    if let Some((left, right)) = integer_pair(&left, &right) {
+        let (_, remainder) = left
+            .div_mod_floor(&right)
+            .ok_or_else(|| RuntimeError::new("modulo by zero"))?;
+        return Ok(bigint_to_value(remainder));
     }
     let (left, right) = numeric_pair(&left, &right)
         .ok_or_else(|| RuntimeError::new("unsupported operand type for %"))?;
@@ -286,32 +298,24 @@ fn format_percent_value(value: Value, conversion: char) -> Result<String, Runtim
         'x' => {
             let integer =
                 int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
-            match integer.to_i64() {
-                Some(number) => Ok(format!("{number:x}")),
-                None => Err(RuntimeError::new(
-                    "unsupported operand type for hex formatting",
-                )),
-            }
+            integer
+                .to_str_radix(16)
+                .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))
         }
         'X' => {
             let integer =
                 int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
-            match integer.to_i64() {
-                Some(number) => Ok(format!("{number:X}")),
-                None => Err(RuntimeError::new(
-                    "unsupported operand type for hex formatting",
-                )),
-            }
+            let value = integer
+                .to_str_radix(16)
+                .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))?;
+            Ok(value.to_ascii_uppercase())
         }
         'o' => {
             let integer =
                 int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
-            match integer.to_i64() {
-                Some(number) => Ok(format!("{number:o}")),
-                None => Err(RuntimeError::new(
-                    "unsupported operand type for octal formatting",
-                )),
-            }
+            integer
+                .to_str_radix(8)
+                .ok_or_else(|| RuntimeError::new("unsupported operand type for octal formatting"))
         }
         'c' => match value {
             Value::Int(code) => {

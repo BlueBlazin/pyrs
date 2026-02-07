@@ -320,6 +320,41 @@ m = a * 3\n";
 }
 
 #[test]
+fn executes_bigint_floor_div_mod_and_divmod_parity() {
+    let source = "\
+n = (1 << 130)\n\
+a = n // 3\n\
+b = n % 3\n\
+c = divmod(-n, 3)\n\
+d = divmod(n, -3)\n\
+e = n // -3\n\
+f = n % -3\n\
+ok = (a * 3 + b == n and 0 <= b and b < 3 and c[0] * 3 + c[1] == -n and 0 <= c[1] and c[1] < 3 and d[0] * (-3) + d[1] == n and -3 < d[1] and d[1] <= 0 and e == d[0] and f == d[1])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_bigint_int_parsing_and_percent_formatting() {
+    let source = "\
+a = int('9223372036854775808')\n\
+b = int('-9223372036854775809')\n\
+c = int(b'0xffffffffffffffff', 0)\n\
+d = '%x' % (1 << 80)\n\
+e = '%o' % (1 << 70)\n\
+f = '%X' % (-(1 << 68))\n\
+ok = (a > (2 ** 63 - 1) and b < -(2 ** 63) and c == ((1 << 64) - 1) and int(d, 16) == (1 << 80) and int(e, 8) == (1 << 70) and f.startswith('-') and int(f[1:], 16) == (1 << 68))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_range_with_large_bigint_stop_lazily() {
     let source = "\
 it = iter(range(1 << 1000))\n\
@@ -5096,7 +5131,7 @@ fn socket_hostname_addrinfo_and_fromfd_smoke() {
 
 #[test]
 fn pylong_basic_helpers_work() {
-    let source = "import _pylong\nv = _pylong.int_from_string('1_234 ')\ns = _pylong.int_to_decimal_string(-42)\nq, r = _pylong.int_divmod(-7, 3)\np = _pylong.compute_powers(5, 2, 3)\nok = (v == 1234 and s == '-42' and q == -3 and r == 2 and p[4] == 16 and p[5] == 32)\n";
+    let source = "import _pylong\nv = _pylong.int_from_string('1_234 ')\ns = _pylong.int_to_decimal_string(-42)\nq, r = _pylong.int_divmod(-7, 3)\np = _pylong.compute_powers(5, 2, 3)\nbig = _pylong.int_from_string('123456789012345678901234567890')\nbig_s = _pylong.int_to_decimal_string(big)\nbq, br = _pylong.int_divmod(big, 97)\nok = (v == 1234 and s == '-42' and q == -3 and r == 2 and p[4] == 16 and p[5] == 32 and big_s == '123456789012345678901234567890' and bq * 97 + br == big and 0 <= br and br < 97)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

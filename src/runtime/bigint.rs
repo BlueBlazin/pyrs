@@ -309,6 +309,55 @@ impl BigInt {
         }
     }
 
+    pub fn div_mod_floor(&self, divisor: &Self) -> Option<(Self, Self)> {
+        if divisor.is_zero() {
+            return None;
+        }
+        if self.is_zero() {
+            return Some((Self::zero(), Self::zero()));
+        }
+
+        let (abs_quotient, abs_remainder) = self.abs_div_mod_positive(&divisor.abs());
+        let mut quotient = if self.sign == divisor.sign {
+            abs_quotient
+        } else {
+            abs_quotient.negated()
+        };
+        let mut remainder = if self.sign < 0 {
+            abs_remainder.negated()
+        } else {
+            abs_remainder
+        };
+        if !remainder.is_zero() && self.sign != divisor.sign {
+            quotient = quotient.sub(&Self::one());
+            remainder = remainder.add(divisor);
+        }
+        Some((quotient, remainder))
+    }
+
+    pub fn to_str_radix(&self, radix: u32) -> Option<String> {
+        if !(2..=36).contains(&radix) {
+            return None;
+        }
+        if self.is_zero() {
+            return Some("0".to_string());
+        }
+
+        let mut value = self.abs();
+        let mut out = Vec::new();
+        while !value.is_zero() {
+            let (quotient, rem) = value.div_mod_small_positive(radix);
+            let ch = char::from_digit(rem, radix)?;
+            out.push(ch);
+            value = quotient;
+        }
+        if self.sign < 0 {
+            out.push('-');
+        }
+        out.reverse();
+        Some(out.into_iter().collect())
+    }
+
     pub fn mul_small(&self, small: u32) -> Self {
         if self.is_zero() || small == 0 {
             return Self::zero();
@@ -489,6 +538,39 @@ impl BigInt {
             rem = value % divisor as u64;
         }
         (Self::from_parts(1, quotient), rem as u32)
+    }
+
+    fn abs_div_mod_positive(&self, divisor: &Self) -> (Self, Self) {
+        debug_assert!(divisor.sign > 0);
+        if self.is_zero() {
+            return (Self::zero(), Self::zero());
+        }
+
+        let mut remainder = self.abs();
+        let divisor = divisor.abs();
+        if remainder.cmp_total(&divisor) == Ordering::Less {
+            return (Self::zero(), remainder);
+        }
+
+        let mut quotient = Self::zero();
+        let one = Self::one();
+        let divisor_bits = divisor.bit_length();
+
+        while remainder.cmp_total(&divisor) != Ordering::Less {
+            let mut shift = remainder.bit_length().saturating_sub(divisor_bits);
+            let mut shifted = divisor.shl_bits(shift);
+            if shifted.cmp_total(&remainder) == Ordering::Greater {
+                if shift == 0 {
+                    break;
+                }
+                shift -= 1;
+                shifted = divisor.shl_bits(shift);
+            }
+            remainder = remainder.sub(&shifted);
+            quotient = quotient.add(&one.shl_bits(shift));
+        }
+
+        (quotient, remainder)
     }
 
     fn abs_add(left: &[u32], right: &[u32]) -> Vec<u32> {

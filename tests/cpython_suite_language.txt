@@ -11,6 +11,7 @@ test/test_decorators.py
 test/test_dict.py
 test/test_dictcomps.py
 test/test_listcomps.py
+test/test_list.py
 test/test_setcomps.py
 test/test_generators.py
 test/test_coroutines.py

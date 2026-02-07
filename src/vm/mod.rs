@@ -7852,8 +7852,12 @@ impl Vm {
         if exception_name == handler_name {
             return true;
         }
+        let mut seen = HashSet::new();
         let mut current = self.exception_parent_name(exception_name);
         while let Some(name) = current {
+            if !seen.insert(name.clone()) {
+                break;
+            }
             if name == handler_name {
                 return true;
             }
@@ -18774,7 +18778,7 @@ impl Vm {
                 "int_to_decimal_string() expects one argument",
             ));
         }
-        let value = value_to_int(args.remove(0))?;
+        let value = value_to_bigint(args.remove(0))?;
         Ok(Value::Str(value.to_string()))
     }
 
@@ -18786,13 +18790,15 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("int_divmod() expects two arguments"));
         }
-        let left = value_to_int(args.remove(0))?;
-        let right = value_to_int(args.remove(0))?;
-        let quotient = python_floor_div(left, right)?;
-        let remainder = python_mod(left, right)?;
-        Ok(self
-            .heap
-            .alloc_tuple(vec![Value::Int(quotient), Value::Int(remainder)]))
+        let left = value_to_bigint(args.remove(0))?;
+        let right = value_to_bigint(args.remove(0))?;
+        let (quotient, remainder) = left
+            .div_mod_floor(&right)
+            .ok_or_else(|| RuntimeError::new("int_divmod() division by zero"))?;
+        Ok(self.heap.alloc_tuple(vec![
+            value_from_bigint(quotient),
+            value_from_bigint(remainder),
+        ]))
     }
 
     fn builtin_pylong_int_from_string(
@@ -18807,14 +18813,7 @@ impl Vm {
             Value::Str(text) => text,
             _ => return Err(RuntimeError::new("int_from_string() expects a string")),
         };
-        let cleaned = text.trim_end().replace('_', "");
-        if cleaned.is_empty() {
-            return Err(RuntimeError::new("invalid literal for int() with base 10"));
-        }
-        let parsed = cleaned
-            .parse::<i64>()
-            .map_err(|_| RuntimeError::new("invalid literal for int() with base 10"))?;
-        Ok(Value::Int(parsed))
+        Ok(value_from_bigint(parse_decimal_bigint_literal(&text)?))
     }
 
     fn builtin_pylong_compute_powers(
@@ -18852,22 +18851,29 @@ impl Vm {
         let mut entries = Vec::with_capacity(max_entries);
         match base {
             Value::Int(base) => {
+                let base_big = BigInt::from_i64(base);
                 for exponent in (more_than + 1)..=w {
-                    let exponent = u32::try_from(exponent)
+                    let exponent_u32 = u32::try_from(exponent)
                         .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
-                    let value = i64::checked_pow(base, exponent)
-                        .ok_or_else(|| RuntimeError::new("compute_powers() overflow"))?;
-                    entries.push((Value::Int(exponent as i64), Value::Int(value)));
+                    let value = base_big.pow_u64(exponent_u32 as u64);
+                    entries.push((Value::Int(exponent as i64), value_from_bigint(value)));
                 }
             }
             Value::Bool(base) => {
-                let base = if base { 1 } else { 0 };
+                let base_big = BigInt::from_i64(if base { 1 } else { 0 });
                 for exponent in (more_than + 1)..=w {
-                    let exponent = u32::try_from(exponent)
+                    let exponent_u32 = u32::try_from(exponent)
                         .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
-                    let value = i64::checked_pow(base, exponent)
-                        .ok_or_else(|| RuntimeError::new("compute_powers() overflow"))?;
-                    entries.push((Value::Int(exponent as i64), Value::Int(value)));
+                    let value = base_big.pow_u64(exponent_u32 as u64);
+                    entries.push((Value::Int(exponent as i64), value_from_bigint(value)));
+                }
+            }
+            Value::BigInt(base_big) => {
+                for exponent in (more_than + 1)..=w {
+                    let exponent_u32 = u32::try_from(exponent)
+                        .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
+                    let value = base_big.pow_u64(exponent_u32 as u64);
+                    entries.push((Value::Int(exponent as i64), value_from_bigint(value)));
                 }
             }
             Value::Float(base) => {
@@ -18882,7 +18888,7 @@ impl Vm {
             }
             _ => {
                 return Err(RuntimeError::new(
-                    "compute_powers() base must be int, bool, or float",
+                    "compute_powers() base must be int, bool, bigint, or float",
                 ));
             }
         }
@@ -18913,14 +18919,7 @@ impl Vm {
                 ));
             }
         };
-        let cleaned = text.trim_end().replace('_', "");
-        if cleaned.is_empty() {
-            return Err(RuntimeError::new("invalid literal for int() with base 10"));
-        }
-        let parsed = cleaned
-            .parse::<i64>()
-            .map_err(|_| RuntimeError::new("invalid literal for int() with base 10"))?;
-        Ok(Value::Int(parsed))
+        Ok(value_from_bigint(parse_decimal_bigint_literal(&text)?))
     }
 
     fn builtin_string_formatter_parser(
@@ -24323,6 +24322,29 @@ fn value_from_bigint(value: BigInt) -> Value {
         Some(number) => Value::Int(number),
         None => Value::BigInt(value),
     }
+}
+
+fn parse_decimal_bigint_literal(text: &str) -> Result<BigInt, RuntimeError> {
+    let cleaned = text.trim_end().replace('_', "");
+    if cleaned.is_empty() {
+        return Err(RuntimeError::new("invalid literal for int() with base 10"));
+    }
+    let (negative, digits) = if let Some(rest) = cleaned.strip_prefix('+') {
+        (false, rest)
+    } else if let Some(rest) = cleaned.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, cleaned.as_str())
+    };
+    if digits.is_empty() {
+        return Err(RuntimeError::new("invalid literal for int() with base 10"));
+    }
+    let mut value = BigInt::from_str_radix(digits, 10)
+        .ok_or_else(|| RuntimeError::new("invalid literal for int() with base 10"))?;
+    if negative {
+        value = value.negated();
+    }
+    Ok(value)
 }
 
 fn seed_from_value(value: &Value) -> Result<u64, RuntimeError> {

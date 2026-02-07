@@ -60,7 +60,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Runtime Object Model & Data Model**
 - [~] P0: Core objects (int/float/str/list/tuple/dict/bool/None) + identity + refcount + cycle GC (runtime dict/set now use hash-indexed container objects with insertion-order backing vectors; long-tail hash/equality semantics and perf closure are tracked separately below).
-- [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (`Value::BigInt` now covers core large-int arithmetic/bitwise/shift/comparison paths plus lazy large-stop `range` support; long-tail arbitrary-precision parity for formatting/conversion and some arithmetic edges remains pending).
+- [~] P0: Full numeric tower (int big‑ints, float, complex) + coercion rules (`Value::BigInt` now covers core large-int arithmetic/bitwise/shift/comparison paths, Python-floor `//`/`%`/`divmod`, large `int(...)` parsing + `%x`/`%X`/`%o` formatting, and lazy large-stop `range` support; long-tail arbitrary-precision conversion/format/error-text edges remain pending).
 - [~] P0: bytes/bytearray/memoryview and buffer protocol (core bytes-like runtime types implemented; full buffer protocol pending).
 - [x] P0: set/frozenset.
 - [~] P0: Hash-based dict/set/frozenset semantic parity (`__hash__` contract, unhashable key/item rejection, CPython-compatible lookup/update behavior) (core unhashable key/item rejection is now enforced on constructor/update/assignment/membership flows; dict equality is insertion-order independent and set/frozenset equality is value-based including cross-type equality; hash-table storage and long-tail edge parity remain pending).
@@ -106,12 +106,12 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 
 **Testing & QA**
 - [x] P0: CPython `Lib/test` subset harness first-class (`tests/cpython_harness.rs`) with split language/import suites and owned allowlist.
-- [~] P0: Current curated CPython language/import harness suites are near zero-allowlist; expanded language-suite import closure is blocked by class-statement inheritance hangs for `seq_tests`-style bases (`tests/cpython_allowlist.txt` remains empty, blocker tracked in `docs/STUB_ACCOUNTING.md`).
+- [~] P0: Current curated CPython language/import harness suites are near zero-allowlist and now include `test/test_list.py`; `tests/cpython_allowlist.txt` remains empty.
 - [~] P0: Large `Lib/test` subset + CI gating (suite growth + allowlist reduction in progress).
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).
 - [x] P1: Curated real-world smoke/regression suite with constrained subprocess profile (`tests/realworld_smoke.rs`, `scripts/run_parity_gate.sh`).
-- [~] P1: Stdlib-import regression probes for bigint-heavy paths (`ipaddress` import path now has active regression coverage; remaining probe blocker is class-statement inheritance hang for `seq_tests`-style bases during expanded CPython suite imports).
+- [~] P1: Stdlib-import regression probes for bigint-heavy paths (`ipaddress` import path has active regression coverage; remaining import-probe blocker tracked in `docs/STUB_ACCOUNTING.md` is `_testinternalcapi.hamt` surface parity).
 - [ ] P2: Deterministic reproduction harness for crash bugs.
 
 **Performance & Profiling**

@@ -27,7 +27,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 
 ## Runtime & Object Model
 - [x] Core types subset (None, bool, int, float, str, tuple, list, dict)
-- [~] Arbitrary-precision `int` parity (`Value::BigInt` now powers core large-int arithmetic/bitwise/shift/comparison paths and lazy large-stop `range` iteration; long-tail formatting/conversion/division parity remains pending)
+- [~] Arbitrary-precision `int` parity (`Value::BigInt` now powers core large-int arithmetic/bitwise/shift/comparison paths, Python-floor `//`/`%`/`divmod` semantics, large-decimal/base `int(...)` parsing, `%x`/`%X`/`%o` bigint formatting, and lazy large-stop `range` iteration; long-tail conversion/format/error-text edges remain pending)
 - [x] `bytes`, `bytearray`, `memoryview`, `set`, `frozenset`, `complex`
 - [x] Function + frame model (positional-only params, positional params, defaults, keyword args, keyword-only params, *args/**kwargs; closures + `nonlocal`)
 - [x] Generators (lazy suspended-frame protocol: `__next__`, `send`, `throw`, `close`)
@@ -74,7 +74,7 @@ For a full production-readiness accounting (beyond compatibility deltas), see `d
 ## CPython Tests
 - [x] First-class CPython harness with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`)
 - [x] Owned allowlist tracking (`tests/cpython_allowlist.txt`) with stale-entry detection in harness
-- [~] Current curated language/import harness suites are near-empty-allowlist; expanded language-suite import closure is currently blocked by class-statement inheritance hangs for `seq_tests`-style bases (tracked in `docs/STUB_ACCOUNTING.md`)
+- [~] Current curated language/import harness suites are near-empty-allowlist; latest expansion includes `test/test_list.py` after class-statement inheritance hang closure
 - [x] Differential tests vs CPython (`tests/differential_cpython.rs`)
 - [x] Parser/compiler/VM fuzzing (`tests/fuzz_parser_vm.rs` + existing arithmetic fuzz)
 - [~] Incremental `Lib/test` coverage expansion (broader suite growth and allowlist reduction ongoing; latest language-suite expansion adds `test_set`, `test_list`, `test_tuple`, `test_slice`, `test_format`, and `test_configparser`)
