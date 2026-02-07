@@ -991,6 +991,22 @@ pub enum BuiltinFunction {
     MathIsFinite,
     MathIsInf,
     MathIsNaN,
+    MathLdExp,
+    MathHypot,
+    MathFAbs,
+    MathExp,
+    MathErfc,
+    MathLog,
+    MathFSum,
+    MathSumProd,
+    MathCos,
+    MathSin,
+    MathTan,
+    MathCosh,
+    MathAsin,
+    MathAtan,
+    MathAcos,
+    MathIsClose,
     TimeTime,
     TimeTimeNs,
     TimeLocalTime,
@@ -2556,6 +2572,22 @@ impl BuiltinFunction {
             | BuiltinFunction::MathIsFinite
             | BuiltinFunction::MathIsInf
             | BuiltinFunction::MathIsNaN
+            | BuiltinFunction::MathLdExp
+            | BuiltinFunction::MathHypot
+            | BuiltinFunction::MathFAbs
+            | BuiltinFunction::MathExp
+            | BuiltinFunction::MathErfc
+            | BuiltinFunction::MathLog
+            | BuiltinFunction::MathFSum
+            | BuiltinFunction::MathSumProd
+            | BuiltinFunction::MathCos
+            | BuiltinFunction::MathSin
+            | BuiltinFunction::MathTan
+            | BuiltinFunction::MathCosh
+            | BuiltinFunction::MathAsin
+            | BuiltinFunction::MathAtan
+            | BuiltinFunction::MathAcos
+            | BuiltinFunction::MathIsClose
             | BuiltinFunction::TimeTime
             | BuiltinFunction::TimeTimeNs
             | BuiltinFunction::TimeLocalTime

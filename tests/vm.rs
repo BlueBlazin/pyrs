@@ -1388,6 +1388,71 @@ m = time.monotonic()\n";
 }
 
 #[test]
+fn executes_extended_math_functions() {
+    let source = "import math\n\
+ld = math.ldexp(0.5, 3)\n\
+hyp = math.hypot(3, 4)\n\
+fabs = math.fabs(-2.5)\n\
+expv = math.exp(1.0)\n\
+erfc0 = math.erfc(0.0)\n\
+logv = math.log(8.0, 2.0)\n\
+fsumv = math.fsum([0.1, 0.2, 0.3])\n\
+sumprodv = math.sumprod([1, 2, 3], [4, 5, 6])\n\
+cosv = math.cos(0.0)\n\
+sinv = math.sin(0.0)\n\
+tanv = math.tan(0.0)\n\
+coshv = math.cosh(0.0)\n\
+asinv = math.asin(1.0)\n\
+atanv = math.atan(1.0)\n\
+acosv = math.acos(1.0)\n\
+close_ok = math.isclose(0.3000000001, 0.3, rel_tol=1e-9, abs_tol=1e-9)\n\
+far_ok = not math.isclose(1.0, 1.1)\n\
+ok = abs(ld - 4.0) < 1e-12 and abs(hyp - 5.0) < 1e-12 and abs(fabs - 2.5) < 1e-12 and abs(expv - 2.718281828459045) < 1e-12 and abs(erfc0 - 1.0) < 1e-6 and abs(logv - 3.0) < 1e-12 and abs(fsumv - 0.6) < 1e-12 and abs(sumprodv - 32.0) < 1e-12 and abs(cosv - 1.0) < 1e-12 and abs(sinv) < 1e-12 and abs(tanv) < 1e-12 and abs(coshv - 1.0) < 1e-12 and abs(asinv - 1.5707963267948966) < 1e-12 and abs(atanv - 0.7853981633974483) < 1e-12 and abs(acosv) < 1e-12 and close_ok and far_ok\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn raises_valueerror_for_math_domain_and_tolerance_errors() {
+    let source = r#"import math
+domain_sqrt = False
+try:
+    math.sqrt(-1)
+except ValueError:
+    domain_sqrt = True
+domain_log = False
+try:
+    math.log(-1)
+except ValueError:
+    domain_log = True
+domain_acos = False
+try:
+    math.acos(2)
+except ValueError:
+    domain_acos = True
+bad_tol = False
+try:
+    math.isclose(1.0, 1.0, rel_tol=-1.0)
+except ValueError:
+    bad_tol = True
+bad_lengths = False
+try:
+    math.sumprod([1, 2], [3])
+except ValueError:
+    bad_lengths = True
+ok = domain_sqrt and domain_log and domain_acos and bad_tol and bad_lengths
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_io_module_helpers() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

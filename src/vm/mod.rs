@@ -1251,27 +1251,27 @@ impl Vm {
             &[
                 ("sqrt", BuiltinFunction::MathSqrt),
                 ("copysign", BuiltinFunction::MathCopySign),
-                ("ldexp", BuiltinFunction::NoOp),
-                ("hypot", BuiltinFunction::NoOp),
-                ("fabs", BuiltinFunction::NoOp),
-                ("exp", BuiltinFunction::NoOp),
-                ("erfc", BuiltinFunction::NoOp),
-                ("log", BuiltinFunction::NoOp),
-                ("fsum", BuiltinFunction::NoOp),
-                ("sumprod", BuiltinFunction::NoOp),
-                ("cos", BuiltinFunction::NoOp),
-                ("sin", BuiltinFunction::NoOp),
-                ("tan", BuiltinFunction::NoOp),
-                ("cosh", BuiltinFunction::NoOp),
-                ("asin", BuiltinFunction::NoOp),
-                ("atan", BuiltinFunction::NoOp),
-                ("acos", BuiltinFunction::NoOp),
+                ("ldexp", BuiltinFunction::MathLdExp),
+                ("hypot", BuiltinFunction::MathHypot),
+                ("fabs", BuiltinFunction::MathFAbs),
+                ("exp", BuiltinFunction::MathExp),
+                ("erfc", BuiltinFunction::MathErfc),
+                ("log", BuiltinFunction::MathLog),
+                ("fsum", BuiltinFunction::MathFSum),
+                ("sumprod", BuiltinFunction::MathSumProd),
+                ("cos", BuiltinFunction::MathCos),
+                ("sin", BuiltinFunction::MathSin),
+                ("tan", BuiltinFunction::MathTan),
+                ("cosh", BuiltinFunction::MathCosh),
+                ("asin", BuiltinFunction::MathAsin),
+                ("atan", BuiltinFunction::MathAtan),
+                ("acos", BuiltinFunction::MathAcos),
                 ("floor", BuiltinFunction::MathFloor),
                 ("ceil", BuiltinFunction::MathCeil),
                 ("isfinite", BuiltinFunction::MathIsFinite),
                 ("isinf", BuiltinFunction::MathIsInf),
                 ("isnan", BuiltinFunction::MathIsNaN),
-                ("isclose", BuiltinFunction::NoOp),
+                ("isclose", BuiltinFunction::MathIsClose),
             ],
             vec![
                 ("pi", Value::Float(std::f64::consts::PI)),
@@ -11324,6 +11324,22 @@ impl Vm {
             BuiltinFunction::MathIsFinite => self.builtin_math_isfinite(args, kwargs),
             BuiltinFunction::MathIsInf => self.builtin_math_isinf(args, kwargs),
             BuiltinFunction::MathIsNaN => self.builtin_math_isnan(args, kwargs),
+            BuiltinFunction::MathLdExp => self.builtin_math_ldexp(args, kwargs),
+            BuiltinFunction::MathHypot => self.builtin_math_hypot(args, kwargs),
+            BuiltinFunction::MathFAbs => self.builtin_math_fabs(args, kwargs),
+            BuiltinFunction::MathExp => self.builtin_math_exp(args, kwargs),
+            BuiltinFunction::MathErfc => self.builtin_math_erfc(args, kwargs),
+            BuiltinFunction::MathLog => self.builtin_math_log(args, kwargs),
+            BuiltinFunction::MathFSum => self.builtin_math_fsum(args, kwargs),
+            BuiltinFunction::MathSumProd => self.builtin_math_sumprod(args, kwargs),
+            BuiltinFunction::MathCos => self.builtin_math_cos(args, kwargs),
+            BuiltinFunction::MathSin => self.builtin_math_sin(args, kwargs),
+            BuiltinFunction::MathTan => self.builtin_math_tan(args, kwargs),
+            BuiltinFunction::MathCosh => self.builtin_math_cosh(args, kwargs),
+            BuiltinFunction::MathAsin => self.builtin_math_asin(args, kwargs),
+            BuiltinFunction::MathAtan => self.builtin_math_atan(args, kwargs),
+            BuiltinFunction::MathAcos => self.builtin_math_acos(args, kwargs),
+            BuiltinFunction::MathIsClose => self.builtin_math_isclose(args, kwargs),
             BuiltinFunction::TimeTime => self.builtin_time_time(args, kwargs),
             BuiltinFunction::TimeTimeNs => self.builtin_time_time_ns(args, kwargs),
             BuiltinFunction::TimeLocalTime => self.builtin_time_localtime(args, kwargs),
@@ -13826,6 +13842,281 @@ impl Vm {
             return Err(RuntimeError::new("isnan() expects one argument"));
         }
         Ok(Value::Bool(value_to_f64(args[0].clone())?.is_nan()))
+    }
+
+    fn builtin_math_ldexp(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("ldexp() expects two arguments"));
+        }
+        let x = value_to_f64(args[0].clone())?;
+        let i = value_to_int(args[1].clone())?;
+        Ok(Value::Float(x * (2.0f64).powf(i as f64)))
+    }
+
+    fn builtin_math_hypot(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("hypot() does not accept keyword arguments"));
+        }
+        if args.is_empty() {
+            return Ok(Value::Float(0.0));
+        }
+        let mut max = 0.0f64;
+        let mut sum = 0.0f64;
+        let mut saw_nan = false;
+        for value in args {
+            let abs = value_to_f64(value)?.abs();
+            if abs.is_infinite() {
+                return Ok(Value::Float(f64::INFINITY));
+            }
+            if abs.is_nan() {
+                saw_nan = true;
+                continue;
+            }
+            if abs > max {
+                let ratio = if max == 0.0 { 0.0 } else { max / abs };
+                sum = (sum * ratio * ratio) + 1.0;
+                max = abs;
+            } else if abs != 0.0 {
+                let ratio = abs / max;
+                sum += ratio * ratio;
+            }
+        }
+        if saw_nan && max == 0.0 {
+            return Ok(Value::Float(f64::NAN));
+        }
+        Ok(Value::Float(max * sum.sqrt()))
+    }
+
+    fn builtin_math_fabs(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("fabs() expects one argument"));
+        }
+        Ok(Value::Float(value_to_f64(args[0].clone())?.abs()))
+    }
+
+    fn builtin_math_exp(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("exp() expects one argument"));
+        }
+        Ok(Value::Float(value_to_f64(args[0].clone())?.exp()))
+    }
+
+    fn builtin_math_erfc(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("erfc() expects one argument"));
+        }
+        Ok(Value::Float(erfc_approx(value_to_f64(args[0].clone())?)))
+    }
+
+    fn builtin_math_log(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("log() expects x and optional base"));
+        }
+        let x = value_to_f64(args[0].clone())?;
+        if x <= 0.0 {
+            return Err(RuntimeError::new("math domain error"));
+        }
+        if args.len() == 1 {
+            return Ok(Value::Float(x.ln()));
+        }
+        let base = value_to_f64(args[1].clone())?;
+        if base <= 0.0 || base == 1.0 {
+            return Err(RuntimeError::new("math domain error"));
+        }
+        Ok(Value::Float(x.ln() / base.ln()))
+    }
+
+    fn builtin_math_fsum(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("fsum() expects one iterable argument"));
+        }
+        let values = self.collect_iterable_values(args[0].clone())?;
+        let mut sum = 0.0f64;
+        let mut c = 0.0f64;
+        for value in values {
+            let y = value_to_f64(value)? - c;
+            let t = sum + y;
+            c = (t - sum) - y;
+            sum = t;
+        }
+        Ok(Value::Float(sum))
+    }
+
+    fn builtin_math_sumprod(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("sumprod() expects two iterable arguments"));
+        }
+        let left = self.collect_iterable_values(args[0].clone())?;
+        let right = self.collect_iterable_values(args[1].clone())?;
+        if left.len() != right.len() {
+            return Err(RuntimeError::new("sumprod() inputs are not the same length"));
+        }
+        let mut sum = 0.0f64;
+        let mut c = 0.0f64;
+        for (a, b) in left.into_iter().zip(right.into_iter()) {
+            let product = value_to_f64(a)? * value_to_f64(b)?;
+            let y = product - c;
+            let t = sum + y;
+            c = (t - sum) - y;
+            sum = t;
+        }
+        Ok(Value::Float(sum))
+    }
+
+    fn builtin_math_cos(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("cos() expects one argument"));
+        }
+        Ok(Value::Float(value_to_f64(args[0].clone())?.cos()))
+    }
+
+    fn builtin_math_sin(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("sin() expects one argument"));
+        }
+        Ok(Value::Float(value_to_f64(args[0].clone())?.sin()))
+    }
+
+    fn builtin_math_tan(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("tan() expects one argument"));
+        }
+        Ok(Value::Float(value_to_f64(args[0].clone())?.tan()))
+    }
+
+    fn builtin_math_cosh(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("cosh() expects one argument"));
+        }
+        Ok(Value::Float(value_to_f64(args[0].clone())?.cosh()))
+    }
+
+    fn builtin_math_asin(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("asin() expects one argument"));
+        }
+        let x = value_to_f64(args[0].clone())?;
+        if !(-1.0..=1.0).contains(&x) {
+            return Err(RuntimeError::new("math domain error"));
+        }
+        Ok(Value::Float(x.asin()))
+    }
+
+    fn builtin_math_atan(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("atan() expects one argument"));
+        }
+        Ok(Value::Float(value_to_f64(args[0].clone())?.atan()))
+    }
+
+    fn builtin_math_acos(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("acos() expects one argument"));
+        }
+        let x = value_to_f64(args[0].clone())?;
+        if !(-1.0..=1.0).contains(&x) {
+            return Err(RuntimeError::new("math domain error"));
+        }
+        Ok(Value::Float(x.acos()))
+    }
+
+    fn builtin_math_isclose(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(RuntimeError::new("isclose() expects two positional arguments"));
+        }
+        let a = value_to_f64(args.remove(0))?;
+        let b = value_to_f64(args.remove(0))?;
+        let rel_tol = if let Some(value) = kwargs.remove("rel_tol") {
+            value_to_f64(value)?
+        } else {
+            1e-9
+        };
+        let abs_tol = if let Some(value) = kwargs.remove("abs_tol") {
+            value_to_f64(value)?
+        } else {
+            0.0
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "isclose() got an unexpected keyword argument",
+            ));
+        }
+        if rel_tol < 0.0 || abs_tol < 0.0 {
+            return Err(RuntimeError::new("tolerances must be non-negative"));
+        }
+        if a == b {
+            return Ok(Value::Bool(true));
+        }
+        if a.is_infinite() || b.is_infinite() {
+            return Ok(Value::Bool(false));
+        }
+        let diff = (a - b).abs();
+        let tol = (rel_tol * a.abs()).max(rel_tol * b.abs()).max(abs_tol);
+        Ok(Value::Bool(diff <= tol))
     }
 
     fn builtin_time_time(
@@ -17696,6 +17987,31 @@ fn mod_float(left: f64, right: f64) -> Result<f64, RuntimeError> {
     Ok(value)
 }
 
+fn erfc_approx(x: f64) -> f64 {
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == f64::INFINITY {
+        return 0.0;
+    }
+    if x == f64::NEG_INFINITY {
+        return 2.0;
+    }
+    let z = x.abs();
+    let t = 1.0 / (1.0 + 0.5 * z);
+    let poly = -z * z - 1.265_512_23
+        + t * (1.000_023_68
+            + t * (0.374_091_96
+                + t * (0.096_784_18
+                    + t * (-0.186_288_06
+                        + t * (0.278_868_07
+                            + t * (-1.135_203_98
+                                + t * (1.488_515_87
+                                    + t * (-0.822_152_23 + t * 0.170_872_77))))))));
+    let ans = t * poly.exp();
+    if x >= 0.0 { ans } else { 2.0 - ans }
+}
+
 fn binary_operator<F>(
     args: Vec<Value>,
     kwargs: HashMap<String, Value>,
@@ -19771,6 +20087,12 @@ fn classify_runtime_error(message: &str) -> &'static str {
     }
     if message.contains("metaclass conflict") {
         return "TypeError";
+    }
+    if message.contains("math domain error")
+        || message.contains("tolerances must be non-negative")
+        || message.contains("inputs are not the same length")
+    {
+        return "ValueError";
     }
     if message.contains("bad file descriptor")
         || message.contains("open failed:")
