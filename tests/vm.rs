@@ -2093,6 +2093,33 @@ ok = ok and (b"bytearray" in data)
 }
 
 #[test]
+fn pickle_compat_emits_legacy_globals_for_range_and_map() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle compat global test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import collections
+import pickle
+range_pickle = pickle.dumps(range(1, 7), 0)
+map_pickle = pickle.dumps(map(int, '123'), 0)
+defaultdict_pickle = pickle.dumps(collections.defaultdict(), 0)
+defaultdict_roundtrip = pickle.loads(defaultdict_pickle)
+ok = (
+    b'c__builtin__\nxrange' in range_pickle and
+    b'citertools\nimap' in map_pickle and
+    b'ccollections\ndefaultdict' in defaultdict_pickle and
+    type(defaultdict_roundtrip) is collections.defaultdict
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn pickle_dispatch_table_none_item_raises_type_error() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pickle dispatch-table test (CPython Lib path not available)");
@@ -4383,7 +4410,7 @@ fn executes_multiplication_and_concat() {
 
 #[test]
 fn executes_range_variants() {
-    let source = "a = range(3)\nb = range(1, 4)\nc = range(5, 0, -2)\n";
+    let source = "a = list(range(3))\nb = list(range(1, 4))\nc = list(range(5, 0, -2))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4406,7 +4433,7 @@ fn executes_range_variants() {
 #[test]
 fn executes_range_with_keywords() {
     let source =
-        "a = range(stop=3)\nb = range(start=1, stop=4)\nc = range(start=1, stop=6, step=2)\n";
+        "a = list(range(stop=3))\nb = list(range(start=1, stop=4))\nc = list(range(start=1, stop=6, step=2))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4424,6 +4451,16 @@ fn executes_range_with_keywords() {
         list_values(vm.get_global("c")),
         Some(vec![Value::Int(1), Value::Int(3), Value::Int(5)])
     );
+}
+
+#[test]
+fn range_object_supports_len_index_and_slice() {
+    let source = "r = range(1, 7)\na = r[-1]\nb = r[2]\nc = r[2:]\nok = (len(r) == 6 and a == 6 and b == 3 and list(c) == [3, 4, 5, 6])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]

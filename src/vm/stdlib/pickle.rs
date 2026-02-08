@@ -1,6 +1,180 @@
 use super::super::*;
 
 impl Vm {
+    fn pickle_copyreg_callable(&mut self, attr_name: &str) -> Result<Value, RuntimeError> {
+        let copyreg_module = Value::Module(self.import_module_object("copyreg")?);
+        self.builtin_getattr(
+            vec![copyreg_module, Value::Str(attr_name.to_string())],
+            HashMap::new(),
+        )
+    }
+
+    fn object_reduce_ex_new_constructor_and_args(
+        &mut self,
+        value: &Value,
+        protocol: i64,
+    ) -> Result<Option<(Value, Value)>, RuntimeError> {
+        let Value::Instance(_) = value else {
+            return Ok(None);
+        };
+        let Some(class_obj) = self.class_of_value(value).map(Value::Class) else {
+            return Ok(None);
+        };
+
+        if let Some(getnewargs_ex) = self.lookup_bound_special_method(value, "__getnewargs_ex__")?
+        {
+            let payload = match self.call_internal(getnewargs_ex, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(RuntimeError::new("__getnewargs_ex__ callback failed"));
+                }
+            };
+            let Value::Tuple(pair_obj) = payload else {
+                return Err(RuntimeError::new(
+                    "__getnewargs_ex__ should return a tuple of length 2",
+                ));
+            };
+            let Object::Tuple(pair_values) = &*pair_obj.kind() else {
+                return Err(RuntimeError::new(
+                    "__getnewargs_ex__ should return a tuple of length 2",
+                ));
+            };
+            if pair_values.len() != 2 {
+                return Err(RuntimeError::new(
+                    "__getnewargs_ex__ should return a tuple of length 2",
+                ));
+            }
+            let (args_tuple, kwargs_dict) = match (&pair_values[0], &pair_values[1]) {
+                (Value::Tuple(args_tuple), Value::Dict(kwargs_dict)) => {
+                    (args_tuple.clone(), kwargs_dict.clone())
+                }
+                _ => {
+                    return Err(RuntimeError::new(
+                        "__getnewargs_ex__ should return (tuple, dict)",
+                    ))
+                }
+            };
+
+            let tuple_values = match &*args_tuple.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "__getnewargs_ex__ should return (tuple, dict)",
+                    ))
+                }
+            };
+            let kwargs_entries = match &*kwargs_dict.kind() {
+                Object::Dict(entries) => entries.iter().cloned().collect::<Vec<_>>(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "__getnewargs_ex__ should return (tuple, dict)",
+                    ))
+                }
+            };
+
+            if protocol >= 4 {
+                let constructor_args = self.heap.alloc_tuple(vec![
+                    class_obj,
+                    Value::Tuple(args_tuple),
+                    Value::Dict(kwargs_dict),
+                ]);
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj_ex__")?,
+                    constructor_args,
+                )));
+            }
+
+            // Protocols <4 lack NEWOBJ_EX. For int-subclass compatibility we lower
+            // __getnewargs_ex__ to int(cls, *args, base?) positional form.
+            if !matches!(value, Value::Instance(instance) if self.instance_backing_int(instance).is_some())
+            {
+                return Err(RuntimeError::new(
+                    "__getnewargs_ex__ kwargs require protocol >= 4",
+                ));
+            }
+            let mut constructor_args = Vec::with_capacity(1 + tuple_values.len() + kwargs_entries.len());
+            constructor_args.push(class_obj);
+            constructor_args.extend(tuple_values);
+            for (key, value) in kwargs_entries {
+                let Value::Str(name) = key else {
+                    return Err(RuntimeError::new(
+                        "__getnewargs_ex__ kwargs keys must be strings",
+                    ));
+                };
+                if name == "base" {
+                    constructor_args.push(value);
+                } else {
+                    return Err(RuntimeError::new(
+                        "__getnewargs_ex__ kwargs require protocol >= 4",
+                    ));
+                }
+            }
+            return Ok(Some((
+                Value::Builtin(BuiltinFunction::Int),
+                self.heap.alloc_tuple(constructor_args),
+            )));
+        }
+
+        if let Some(getnewargs) = self.lookup_bound_special_method(value, "__getnewargs__")? {
+            let payload = match self.call_internal(getnewargs, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(RuntimeError::new("__getnewargs__ callback failed"));
+                }
+            };
+            let Value::Tuple(args_obj) = payload else {
+                return Err(RuntimeError::new("__getnewargs__ should return a tuple"));
+            };
+            let Object::Tuple(args_values) = &*args_obj.kind() else {
+                return Err(RuntimeError::new("__getnewargs__ should return a tuple"));
+            };
+            let mut constructor_args = Vec::with_capacity(args_values.len() + 1);
+            constructor_args.push(class_obj);
+            constructor_args.extend(args_values.clone());
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap.alloc_tuple(constructor_args),
+            )));
+        }
+
+        if let Value::Instance(instance) = value {
+            if let Some(integer_value) = self.instance_backing_int(instance) {
+                let int_value = BuiltinFunction::Int.call(&self.heap, vec![integer_value])?;
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj__")?,
+                    self.heap.alloc_tuple(vec![class_obj, int_value]),
+                )));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn object_reduce_ex_legacy_constructor_and_args(
+        &mut self,
+        value: &Value,
+    ) -> Result<Option<(Value, Value)>, RuntimeError> {
+        let Value::Instance(instance) = value else {
+            return Ok(None);
+        };
+        let Some(class_obj) = self.class_of_value(value).map(Value::Class) else {
+            return Ok(None);
+        };
+        let Some(integer_value) = self.instance_backing_int(instance) else {
+            return Ok(None);
+        };
+        let int_value = BuiltinFunction::Int.call(&self.heap, vec![integer_value])?;
+        let constructor_args = self.heap.alloc_tuple(vec![
+            class_obj,
+            Value::Builtin(BuiltinFunction::Int),
+            int_value,
+        ]);
+        Ok(Some((
+            self.pickle_copyreg_callable("_reconstructor")?,
+            constructor_args,
+        )))
+    }
+
     fn instance_has_non_object_reduce(&self, instance: &ObjRef) -> bool {
         let class = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
@@ -89,8 +263,96 @@ impl Vm {
         }
     }
 
+    pub(in crate::vm) fn builtin_object_setstate(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "object.__setstate__() takes exactly two arguments",
+            ));
+        }
+        let Value::Instance(instance) = &args[0] else {
+            return Err(RuntimeError::new(
+                "object.__setstate__() requires an instance receiver",
+            ));
+        };
+        let apply_state_dict =
+            |instance: &ObjRef, state: &ObjRef| -> Result<(), RuntimeError> {
+                let entries: Vec<(Value, Value)> = match &*state.kind() {
+                    Object::Dict(entries) => entries.iter().cloned().collect(),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "state dictionary must be a dict object",
+                        ))
+                    }
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    for (key, value) in entries {
+                        let Value::Str(name) = key else {
+                            return Err(RuntimeError::new(
+                                "state dictionary keys must be strings",
+                            ));
+                        };
+                        instance_data.attrs.insert(name, value);
+                    }
+                    Ok(())
+                } else {
+                    Err(RuntimeError::new(
+                        "object.__setstate__() requires an instance receiver",
+                    ))
+                }
+            };
+
+        match &args[1] {
+            Value::None => Ok(Value::None),
+            Value::Dict(dict) => {
+                apply_state_dict(instance, dict)?;
+                Ok(Value::None)
+            }
+            Value::Tuple(tuple_obj) => {
+                let Object::Tuple(parts) = &*tuple_obj.kind() else {
+                    return Err(RuntimeError::new("invalid state payload"));
+                };
+                if parts.len() != 2 {
+                    return Err(RuntimeError::new("invalid state payload"));
+                }
+                match &parts[0] {
+                    Value::None => {}
+                    Value::Dict(dict) => apply_state_dict(instance, dict)?,
+                    _ => return Err(RuntimeError::new("invalid state payload")),
+                }
+                match &parts[1] {
+                    Value::None => {}
+                    Value::Dict(dict) => apply_state_dict(instance, dict)?,
+                    _ => return Err(RuntimeError::new("invalid state payload")),
+                }
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::new("invalid state payload")),
+        }
+    }
+
     fn reduce_ex_constructor_and_args(&self, value: &Value) -> (Value, Value) {
         match value {
+            Value::Dict(dict_obj) => {
+                if let Some(default_factory) = self.defaultdict_factories.get(&dict_obj.id()) {
+                    let args = if matches!(default_factory, Value::None) {
+                        Vec::new()
+                    } else {
+                        vec![default_factory.clone()]
+                    };
+                    return (
+                        Value::Builtin(BuiltinFunction::CollectionsDefaultDict),
+                        self.heap.alloc_tuple(args),
+                    );
+                }
+                (
+                    Value::Builtin(BuiltinFunction::Dict),
+                    self.heap.alloc_tuple(vec![value.clone()]),
+                )
+            }
             Value::Bool(_)
             | Value::Int(_)
             | Value::BigInt(_)
@@ -100,7 +362,6 @@ impl Vm {
             | Value::Bytes(_)
             | Value::List(_)
             | Value::Tuple(_)
-            | Value::Dict(_)
             | Value::Set(_)
             | Value::FrozenSet(_) => {
                 let constructor = self
@@ -115,7 +376,6 @@ impl Vm {
                         Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
                         Value::List(_) => Value::Builtin(BuiltinFunction::List),
                         Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
-                        Value::Dict(_) => Value::Builtin(BuiltinFunction::Dict),
                         Value::Set(_) => Value::Builtin(BuiltinFunction::Set),
                         Value::FrozenSet(_) => Value::Builtin(BuiltinFunction::FrozenSet),
                         _ => Value::Builtin(BuiltinFunction::ObjectNew),
@@ -124,6 +384,21 @@ impl Vm {
                     constructor,
                     self.heap.alloc_tuple(vec![value.clone()]),
                 )
+            }
+            Value::Exception(exception) => {
+                let args = exception
+                    .attrs
+                    .borrow()
+                    .get("args")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        if let Some(message) = &exception.message {
+                            self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+                        } else {
+                            self.heap.alloc_tuple(Vec::new())
+                        }
+                    });
+                (Value::ExceptionType(exception.name.clone()), args)
             }
             Value::ByteArray(obj) => {
                 let payload = match &*obj.kind() {
@@ -140,6 +415,43 @@ impl Vm {
                         .alloc_tuple(vec![Value::Str(payload), Value::Str("latin-1".to_string())]),
                 )
             }
+            Value::Iterator(obj) => match &*obj.kind() {
+                Object::Iterator(IteratorObject {
+                    kind:
+                        IteratorKind::Map {
+                            func,
+                            sources,
+                            ..
+                        },
+                    ..
+                }) => {
+                    let mut args = Vec::with_capacity(1 + sources.len());
+                    args.push(func.clone());
+                    args.extend(sources.clone());
+                    (
+                        Value::Builtin(BuiltinFunction::Map),
+                        self.heap.alloc_tuple(args),
+                    )
+                }
+                Object::Iterator(IteratorObject {
+                    kind: IteratorKind::RangeObject { start, stop, step },
+                    ..
+                }) => (
+                    Value::Builtin(BuiltinFunction::Range),
+                    self.heap.alloc_tuple(vec![
+                        value_from_bigint(start.clone()),
+                        value_from_bigint(stop.clone()),
+                        value_from_bigint(step.clone()),
+                    ]),
+                ),
+                _ => {
+                    let constructor = self
+                        .class_of_value(value)
+                        .map(Value::Class)
+                        .unwrap_or(Value::Builtin(BuiltinFunction::ObjectNew));
+                    (constructor, self.heap.alloc_tuple(Vec::new()))
+                }
+            },
             _ => {
                 let constructor = self
                     .class_of_value(value)
@@ -161,8 +473,9 @@ impl Vm {
             ));
         }
         let value = args[0].clone();
+        let mut protocol = 0;
         if args.len() == 2 {
-            let _ = value_to_int(args[1].clone())?;
+            protocol = value_to_int(args[1].clone())?;
         }
         if let Value::Builtin(builtin) = &value {
             if matches!(
@@ -188,7 +501,17 @@ impl Vm {
             return Ok(reduced);
         }
 
-        let (constructor, constructor_args) = self.reduce_ex_constructor_and_args(&value);
+        let (constructor, constructor_args) = if protocol < 2 {
+            match self.object_reduce_ex_legacy_constructor_and_args(&value)? {
+                Some(pair) => pair,
+                None => self.reduce_ex_constructor_and_args(&value),
+            }
+        } else {
+            match self.object_reduce_ex_new_constructor_and_args(&value, protocol)? {
+                Some(pair) => pair,
+                None => self.reduce_ex_constructor_and_args(&value),
+            }
+        };
         let state = match value {
             Value::Instance(_) => self.builtin_object_getstate(vec![value], HashMap::new())?,
             _ => Value::None,

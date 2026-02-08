@@ -85,7 +85,6 @@ const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;
 const MT_UPPER_MASK: u32 = 0x8000_0000;
 const MT_LOWER_MASK: u32 = 0x7fff_ffff;
-const RANGE_EAGER_LIMIT: usize = 1_000_000;
 const SIGNAL_DEFAULT: i64 = 0;
 const SIGNAL_IGNORE: i64 = 1;
 const SIGNAL_SIGINT: i64 = 2;
@@ -95,6 +94,7 @@ const LIST_BACKING_STORAGE_ATTR: &str = "__pyrs_list_storage__";
 const TUPLE_BACKING_STORAGE_ATTR: &str = "__pyrs_tuple_storage__";
 const STR_BACKING_STORAGE_ATTR: &str = "__pyrs_str_storage__";
 const BYTES_BACKING_STORAGE_ATTR: &str = "__pyrs_bytes_storage__";
+const INT_BACKING_STORAGE_ATTR: &str = "__pyrs_int_storage__";
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 
@@ -486,6 +486,37 @@ impl Vm {
         }
         cells.extend(closure);
         cells
+    }
+
+    fn capture_closure_cells_for_code(&self, code: &CodeObject) -> Result<Vec<ObjRef>, RuntimeError> {
+        let Some(frame) = self.frames.last() else {
+            return Ok(Vec::new());
+        };
+        if code.freevars.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut closure = Vec::with_capacity(code.freevars.len());
+        for name in &code.freevars {
+            let idx = if let Some(cell_idx) = frame.code.cellvars.iter().position(|cell| cell == name)
+            {
+                cell_idx
+            } else if let Some(free_idx) = frame.code.freevars.iter().position(|free| free == name)
+            {
+                frame.code.cellvars.len() + free_idx
+            } else {
+                return Err(RuntimeError::new(format!(
+                    "free variable '{}' is not available in enclosing scope",
+                    name
+                )));
+            };
+            let cell = frame
+                .cells
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| RuntimeError::new("cell index out of range"))?;
+            closure.push(cell);
+        }
+        Ok(closure)
     }
 
     fn class_lookup_fallback_from_frame(frame: &Frame) -> Option<HashMap<String, Value>> {
@@ -6057,6 +6088,9 @@ impl Vm {
                                         ));
                                     }
                                 },
+                                Value::Iterator(iterator) => {
+                                    self.load_attr_iterator(iterator, &attr_name)?
+                                }
                                 Value::MemoryView(view) => {
                                     self.load_attr_memoryview(view, &attr_name)?
                                 }
@@ -6136,6 +6170,10 @@ impl Vm {
                                     self.heap.alloc_bound_method(bound)
                                 }
                                 Value::Exception(exception) => match attr_name.as_str() {
+                                    "__reduce_ex__" | "__reduce__" => self
+                                        .alloc_reduce_ex_bound_method(Value::Exception(
+                                            exception.clone(),
+                                        )),
                                     "with_traceback" => {
                                         let wrapper =
                                             match self.heap.alloc_module(ModuleObject::new(
@@ -7292,7 +7330,8 @@ impl Vm {
                                 )
                             })
                             .unwrap_or_else(|| (self.main_module.clone(), None));
-                        let cells = self.build_cells(&code, Vec::new());
+                        let class_closure = self.capture_closure_cells_for_code(&code)?;
+                        let cells = self.build_cells(&code, class_closure);
                         let mut frame = Frame::new(code, class_module, true, false, cells, None);
                         frame.function_globals = outer_globals.clone();
                         frame.globals_fallback = Some(outer_globals);
@@ -10076,6 +10115,7 @@ impl Vm {
             BuiltinFunction::CodecsEscapeDecode => "escape_decode",
             BuiltinFunction::CodecsLookup => "lookup",
             BuiltinFunction::CodecsRegister => "register",
+            BuiltinFunction::CollectionsDefaultDict => "defaultdict",
             _ => "builtin",
         }
     }
@@ -10096,6 +10136,7 @@ impl Vm {
                 "maketrans".to_string()
             }
             BuiltinFunction::OperatorContains => "contains".to_string(),
+            BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_runtime_name(builtin),
         }
     }
@@ -10106,6 +10147,7 @@ impl Vm {
             BuiltinFunction::BytesMakeTrans => "bytearray.maketrans".to_string(),
             BuiltinFunction::StrMakeTrans => "str.maketrans".to_string(),
             BuiltinFunction::OperatorContains => "operator.contains".to_string(),
+            BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_attribute_name(builtin),
         }
     }
@@ -10166,6 +10208,8 @@ impl Vm {
             | BuiltinFunction::JsonDecoderScanString => "_json",
             BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner",
             BuiltinFunction::OperatorContains => "operator",
+            BuiltinFunction::FunctoolsReduce => "functools",
+            BuiltinFunction::CollectionsDefaultDict => "collections",
             BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
             | BuiltinFunction::CodecsEscapeDecode
@@ -10183,6 +10227,9 @@ impl Vm {
             "__self__" => Ok(Value::Builtin(builtin)),
             "__flags__" => Ok(Value::Int(0)),
             "__new__" => Ok(Value::Builtin(builtin)),
+            "__init__" if builtin == BuiltinFunction::Int => {
+                Ok(Value::Builtin(BuiltinFunction::ObjectInit))
+            }
             "__eq__" if builtin == BuiltinFunction::ObjectNew => {
                 Ok(Value::Builtin(BuiltinFunction::OperatorEq))
             }
@@ -10559,6 +10606,53 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
 
+    fn load_attr_iterator(
+        &self,
+        iterator: ObjRef,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        let (type_name, range_start, range_stop, range_step, allow_reduce) = match &*iterator.kind() {
+            Object::Iterator(state) => match &state.kind {
+                IteratorKind::RangeObject { start, stop, step } => (
+                    "range",
+                    Some(start.clone()),
+                    Some(stop.clone()),
+                    Some(step.clone()),
+                    true,
+                ),
+                IteratorKind::Map { .. } => ("map", None, None, None, true),
+                IteratorKind::Range { .. } => ("range_iterator", None, None, None, false),
+                IteratorKind::List(_) => ("list_iterator", None, None, None, false),
+                IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false),
+                IteratorKind::Str(_) => ("str_iterator", None, None, None, false),
+                IteratorKind::Dict(_) => ("dict_keyiterator", None, None, None, false),
+                IteratorKind::Set(_) => ("set_iterator", None, None, None, false),
+                IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false),
+                IteratorKind::ByteArray(_) => ("bytearray_iterator", None, None, None, false),
+                IteratorKind::MemoryView(_) => ("memoryview_iterator", None, None, None, false),
+                IteratorKind::Count { .. } => ("count", None, None, None, false),
+            },
+            _ => return Err(RuntimeError::new("attribute access unsupported type")),
+        };
+        match attr_name {
+            "__reduce_ex__" | "__reduce__" if allow_reduce => {
+                Ok(self.alloc_reduce_ex_bound_method(Value::Iterator(iterator)))
+            }
+            "start" if range_start.is_some() => Ok(value_from_bigint(
+                range_start.expect("range start is present"),
+            )),
+            "stop" if range_stop.is_some() => Ok(value_from_bigint(
+                range_stop.expect("range stop is present"),
+            )),
+            "step" if range_step.is_some() => Ok(value_from_bigint(
+                range_step.expect("range step is present"),
+            )),
+            _ => Err(RuntimeError::new(format!(
+                "{type_name} has no attribute '{attr_name}'"
+            ))),
+        }
+    }
+
     fn load_attr_memoryview(
         &self,
         view: ObjRef,
@@ -10624,6 +10718,9 @@ impl Vm {
                 BuiltinFunction::OperatorContains,
                 dict,
             ));
+        }
+        if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
+            return Ok(self.alloc_reduce_ex_bound_method(Value::Dict(dict)));
         }
         let kind = match attr_name {
             "keys" => NativeMethodKind::DictKeys,
@@ -11512,6 +11609,12 @@ impl Vm {
                 if let Some(message) = self.class_disallow_instantiation_message(&class) {
                     return Err(RuntimeError::new(message));
                 }
+                if self.class_has_builtin_type_base(&class) {
+                    let class_value =
+                        self.instantiate_type_derived_class(class.clone(), args, kwargs)?;
+                    self.push_value(class_value);
+                    false
+                } else {
                 let class_value = Value::Class(class.clone());
                 let mut instance = self.alloc_instance_for_class(&class);
                 if let Some(new_callable) = class_attr_lookup(&class, "__new__").filter(
@@ -11677,11 +11780,24 @@ impl Vm {
                         } else {
                             return Err(RuntimeError::new("bytearray instance construction failed"));
                         }
+                    } else if self.class_has_builtin_int_base(&class) {
+                        let int_value = self.builtin_int(args, kwargs)?;
+                        let (Value::Int(_) | Value::BigInt(_) | Value::Bool(_)) = int_value else {
+                            return Err(RuntimeError::new("int constructor returned non-int"));
+                        };
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert(INT_BACKING_STORAGE_ATTR.to_string(), int_value);
+                        } else {
+                            return Err(RuntimeError::new("int instance construction failed"));
+                        }
                     } else if !kwargs.is_empty() || !args.is_empty() {
                         return Err(RuntimeError::new("class constructor takes no arguments"));
                     }
                     self.push_value(Value::Instance(instance));
                     false
+                }
                 }
             }
             _ => {
@@ -11870,6 +11986,92 @@ impl Vm {
             })
     }
 
+    fn class_has_builtin_int_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "int",
+                _ => false,
+            })
+    }
+
+    fn class_has_builtin_type_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "type",
+                _ => false,
+            })
+    }
+
+    fn instantiate_type_derived_class(
+        &mut self,
+        metaclass: ObjRef,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 3 {
+            return Err(RuntimeError::new(format!(
+                "type.__new__() takes exactly 3 arguments ({} given)",
+                args.len()
+            )));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name.clone(),
+            _ => return Err(RuntimeError::new("type() first argument must be string")),
+        };
+        let base_values = match &args[1] {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+            },
+            Value::List(list_obj) => match &*list_obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+            },
+            _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+        };
+        let mut base_classes = Vec::with_capacity(base_values.len());
+        for base in base_values {
+            base_classes.push(self.class_from_base_value(base)?);
+        }
+        let namespace = match &args[2] {
+            Value::Dict(dict_obj) => match &*dict_obj.kind() {
+                Object::Dict(entries) => {
+                    let mut attrs = HashMap::new();
+                    for (key, value) in entries {
+                        let Value::Str(name) = key else {
+                            return Err(RuntimeError::new("type() dict keys must be strings"));
+                        };
+                        attrs.insert(name.clone(), value.clone());
+                    }
+                    attrs
+                }
+                _ => return Err(RuntimeError::new("type() third argument must be dict")),
+            },
+            _ => return Err(RuntimeError::new("type() third argument must be dict")),
+        };
+
+        let class_module = match self.heap.alloc_module(ModuleObject::new(name)) {
+            Value::Module(module) => module,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *class_module.kind_mut() {
+            module_data.globals = namespace;
+        }
+        match self.class_value_from_module(
+            &class_module,
+            base_classes,
+            Some(Value::Class(metaclass)),
+            kwargs,
+        )? {
+            ClassBuildOutcome::Value(value) => Ok(value),
+            ClassBuildOutcome::ExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("metaclass call failed"))
+            }
+        }
+    }
+
     fn alloc_instance_for_class(&mut self, class: &ObjRef) -> ObjRef {
         let instance = match self.heap.alloc_instance(InstanceObject::new(class.clone())) {
             Value::Instance(obj) => obj,
@@ -11911,6 +12113,13 @@ impl Vm {
                 );
             }
         }
+        if self.class_has_builtin_int_base(class) {
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(INT_BACKING_STORAGE_ATTR.to_string(), Value::Int(0));
+            }
+        }
         instance
     }
 
@@ -11944,6 +12153,18 @@ impl Vm {
         }
     }
 
+    fn instance_backing_int(&self, instance: &ObjRef) -> Option<Value> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        match instance_data.attrs.get(INT_BACKING_STORAGE_ATTR) {
+            Some(Value::Int(value)) => Some(Value::Int(*value)),
+            Some(Value::BigInt(value)) => Some(Value::BigInt(value.clone())),
+            Some(Value::Bool(value)) => Some(Value::Bool(*value)),
+            _ => None,
+        }
+    }
+
     fn instance_dict_entries(instance_data: &InstanceObject) -> Vec<(Value, Value)> {
         instance_data
             .attrs
@@ -11952,7 +12173,8 @@ impl Vm {
                 LIST_BACKING_STORAGE_ATTR
                 | TUPLE_BACKING_STORAGE_ATTR
                 | STR_BACKING_STORAGE_ATTR
-                | BYTES_BACKING_STORAGE_ATTR => None,
+                | BYTES_BACKING_STORAGE_ATTR
+                | INT_BACKING_STORAGE_ATTR => None,
                 _ => Some((Value::Str(name.clone()), value.clone())),
             })
             .collect()
@@ -12171,6 +12393,24 @@ impl Vm {
                     },
                 );
             }
+        }
+
+        if attr_name == "__getstate__" {
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::ObjectGetState,
+                instance.clone(),
+            )));
+        }
+        if attr_name == "__setstate__" {
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::ObjectSetState,
+                instance.clone(),
+            )));
+        }
+        if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
+            return Ok(AttrAccessOutcome::Value(
+                self.alloc_reduce_ex_bound_method(Value::Instance(instance.clone())),
+            ));
         }
 
         let class_name = match &*class_ref.kind() {
@@ -15239,7 +15479,23 @@ impl Vm {
 
     fn to_iterator_value(&mut self, source: Value) -> Result<Value, RuntimeError> {
         match source {
-            Value::Iterator(_) | Value::Generator(_) => Ok(source),
+            Value::Iterator(obj) => match &*obj.kind() {
+                Object::Iterator(state) => match &state.kind {
+                    IteratorKind::RangeObject { start, stop, step } => {
+                        Ok(self.heap.alloc_iterator(IteratorObject {
+                            kind: IteratorKind::Range {
+                                current: start.clone(),
+                                stop: stop.clone(),
+                                step: step.clone(),
+                            },
+                            index: 0,
+                        }))
+                    }
+                    _ => Ok(Value::Iterator(obj.clone())),
+                },
+                _ => Err(RuntimeError::new("yield from expects iterable")),
+            },
+            Value::Generator(_) => Ok(source),
             Value::DictKeys(keys_view) => match &*keys_view.kind() {
                 Object::DictKeysView(view) => {
                     self.to_iterator_value(Value::Dict(view.dict.clone()))
@@ -15729,6 +15985,8 @@ impl Vm {
                     IteratorKind::ByteArray(_) => "bytearray_iterator",
                     IteratorKind::MemoryView(_) => "memoryview_iterator",
                     IteratorKind::Count { .. } => "count",
+                    IteratorKind::Map { .. } => "map",
+                    IteratorKind::RangeObject { .. } => "range",
                     IteratorKind::Range { .. } => "range_iterator",
                 },
                 _ => "iterator",
@@ -15844,6 +16102,16 @@ impl Vm {
                     *current = current.saturating_add(*step);
                     Some(Value::Int(value))
                 }
+                IteratorKind::Map { values, .. } => {
+                    if state.index >= values.len() {
+                        None
+                    } else {
+                        let value = values[state.index].clone();
+                        state.index += 1;
+                        Some(value)
+                    }
+                }
+                IteratorKind::RangeObject { .. } => None,
                 IteratorKind::Range {
                     current,
                     stop,
@@ -16070,12 +16338,14 @@ impl Vm {
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
             BuiltinFunction::ObjectGetAttribute => self.builtin_object_getattribute(args, kwargs),
             BuiltinFunction::ObjectGetState => self.builtin_object_getstate(args, kwargs),
+            BuiltinFunction::ObjectSetState => self.builtin_object_setstate(args, kwargs),
             BuiltinFunction::ObjectReduceEx => self.builtin_object_reduce_ex(args, kwargs),
             BuiltinFunction::ObjectSetAttr => self.builtin_object_setattr(args, kwargs),
             BuiltinFunction::ObjectDelAttr => self.builtin_object_delattr(args, kwargs),
             BuiltinFunction::List => self.builtin_list(args, kwargs),
             BuiltinFunction::Tuple => self.builtin_tuple(args, kwargs),
             BuiltinFunction::Dict => self.builtin_dict(args, kwargs),
+            BuiltinFunction::DictFromKeys => self.builtin_dict_fromkeys(args, kwargs),
             BuiltinFunction::Set => self.builtin_set(args, kwargs),
             BuiltinFunction::FrozenSet => self.builtin_frozenset(args, kwargs),
             BuiltinFunction::Min => self.builtin_min(args, kwargs),
@@ -17268,6 +17538,13 @@ impl Vm {
                 }
             }
         }
+        if let Value::Iterator(iterator) = &args[0] {
+            if let Some((start, stop, step)) = self.range_object_parts(iterator) {
+                return Ok(value_from_bigint(
+                    self.range_object_len_bigint(&start, &stop, &step),
+                ));
+            }
+        }
         BuiltinFunction::Len.call(&self.heap, args)
     }
 
@@ -17717,12 +17994,35 @@ impl Vm {
 
     fn builtin_int(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        if let Some(Value::Class(class)) = args.first() {
+            if self.class_has_builtin_int_base(class) {
+                let class = class.clone();
+                args.remove(0);
+                let int_value = if kwargs.is_empty() {
+                    BuiltinFunction::Int.call(&self.heap, args)?
+                } else {
+                    call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)?
+                };
+                let instance = self.alloc_instance_for_class(&class);
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(INT_BACKING_STORAGE_ATTR.to_string(), int_value);
+                }
+                return Ok(Value::Instance(instance));
+            }
+        }
         if kwargs.is_empty() {
             if args.len() == 1 {
                 let arg = args[0].clone();
+                if let Value::Instance(instance) = &arg {
+                    if let Some(backing) = self.instance_backing_int(instance) {
+                        return BuiltinFunction::Int.call(&self.heap, vec![backing]);
+                    }
+                }
                 match BuiltinFunction::Int.call(&self.heap, args) {
                     Ok(value) => return Ok(value),
                     Err(err) if err.message == "int() unsupported type" => {
@@ -18211,6 +18511,23 @@ impl Vm {
             }
             let value = &args[0];
             let special = match value {
+                Value::Class(class) => {
+                    let metaclass = match &*class.kind() {
+                        Object::Class(class_data) => class_data.metaclass.clone(),
+                        _ => None,
+                    };
+                    metaclass.map(|meta| {
+                        let is_builtin_type = self
+                            .default_type_metaclass()
+                            .map(|type_class| type_class.id() == meta.id())
+                            .unwrap_or(false);
+                        if is_builtin_type {
+                            Value::Builtin(BuiltinFunction::Type)
+                        } else {
+                            Value::Class(meta)
+                        }
+                    })
+                }
                 Value::Function(_) => self.types_module_class("FunctionType").map(Value::Class),
                 Value::Builtin(builtin) => {
                     if self.builtin_is_type_object(*builtin) {
@@ -18218,6 +18535,11 @@ impl Vm {
                     } else {
                         self.types_module_class("BuiltinFunctionType").map(Value::Class)
                     }
+                }
+                Value::Dict(dict)
+                    if self.defaultdict_factories.contains_key(&dict.id()) =>
+                {
+                    Some(Value::Builtin(BuiltinFunction::CollectionsDefaultDict))
                 }
                 Value::Code(_) => self.types_module_class("CodeType").map(Value::Class),
                 Value::None => self.types_module_class("NoneType").map(Value::Class),
@@ -18684,7 +19006,7 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.is_empty() {
+        if args.is_empty() {
             return Err(RuntimeError::new(
                 "object.__new__() expects a class argument",
             ));
@@ -18701,10 +19023,28 @@ impl Vm {
         if let Some(message) = self.class_disallow_instantiation_message(&class_ref) {
             return Err(RuntimeError::new(message));
         }
-        match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
-            Value::Instance(instance) => Ok(Value::Instance(instance)),
+        let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref.clone())) {
+            Value::Instance(instance) => instance,
             _ => unreachable!(),
+        };
+        if self.class_has_builtin_int_base(&class_ref) {
+            let int_value = self.builtin_int(args, kwargs)?;
+            let (Value::Int(_) | Value::BigInt(_) | Value::Bool(_)) = int_value else {
+                return Err(RuntimeError::new("int constructor returned non-int"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(INT_BACKING_STORAGE_ATTR.to_string(), int_value);
+            }
+            return Ok(Value::Instance(instance));
         }
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "object.__new__() takes exactly one argument",
+            ));
+        }
+        Ok(Value::Instance(instance))
     }
 
     fn builtin_object_init(
@@ -18740,6 +19080,7 @@ impl Vm {
 
     fn class_has_permissive_object_init_base(&self, class: &ObjRef) -> bool {
         let allowed = [
+            "int",
             "list",
             "tuple",
             "dict",
@@ -18974,6 +19315,26 @@ impl Vm {
             dict_set_value_checked(&dict_obj, Value::Str(name), value)?;
         }
 
+        Ok(Value::Dict(dict_obj))
+    }
+
+    fn builtin_dict_fromkeys(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("dict.fromkeys() expects 1-2 arguments"));
+        }
+        let keys = self.collect_iterable_values(args[0].clone())?;
+        let default = args.get(1).cloned().unwrap_or(Value::None);
+        let dict_obj = match self.heap.alloc_dict(Vec::new()) {
+            Value::Dict(obj) => obj,
+            _ => unreachable!(),
+        };
+        for key in keys {
+            dict_set_value_checked(&dict_obj, key, default.clone())?;
+        }
         Ok(Value::Dict(dict_obj))
     }
 
@@ -19569,9 +19930,11 @@ impl Vm {
 
     fn is_callable_value(&self, value: &Value) -> bool {
         match value {
-            Value::Function(_) | Value::Builtin(_) | Value::BoundMethod(_) | Value::Class(_) => {
-                true
-            }
+            Value::Function(_)
+            | Value::Builtin(_)
+            | Value::BoundMethod(_)
+            | Value::Class(_)
+            | Value::ExceptionType(_) => true,
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
                     class_attr_lookup(&instance_data.class, "__call__").is_some()
@@ -19736,7 +20099,7 @@ impl Vm {
                         matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "type")
                     }))
                 }
-                Value::ExceptionType(_) => Ok(matches!(expected_builtin, BuiltinFunction::Type)),
+                Value::ExceptionType(_) => Ok(false),
                 _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
             },
             Value::ExceptionType(expected_name) => match candidate {
@@ -19774,6 +20137,10 @@ impl Vm {
             BuiltinFunction::List => matches!(value, Value::List(_)),
             BuiltinFunction::Tuple => matches!(value, Value::Tuple(_)),
             BuiltinFunction::Dict => matches!(value, Value::Dict(_)),
+            BuiltinFunction::CollectionsDefaultDict => matches!(
+                value,
+                Value::Dict(obj) if self.defaultdict_factories.contains_key(&obj.id())
+            ),
             BuiltinFunction::Set => matches!(value, Value::Set(_)),
             BuiltinFunction::FrozenSet => matches!(value, Value::FrozenSet(_)),
             BuiltinFunction::Bytes => matches!(value, Value::Bytes(_)),
@@ -19781,6 +20148,28 @@ impl Vm {
             BuiltinFunction::MemoryView => matches!(value, Value::MemoryView(_)),
             BuiltinFunction::Complex => matches!(value, Value::Complex { .. }),
             BuiltinFunction::TypesModuleType => matches!(value, Value::Module(_)),
+            BuiltinFunction::Range => matches!(
+                value,
+                Value::Iterator(obj)
+                    if matches!(
+                        &*obj.kind(),
+                        Object::Iterator(IteratorObject {
+                            kind: IteratorKind::RangeObject { .. },
+                            ..
+                        })
+                    )
+            ),
+            BuiltinFunction::Map => matches!(
+                value,
+                Value::Iterator(obj)
+                    if matches!(
+                        &*obj.kind(),
+                        Object::Iterator(IteratorObject {
+                            kind: IteratorKind::Map { .. },
+                            ..
+                        })
+                    )
+            ),
             _ => false,
         }
     }
@@ -19813,6 +20202,18 @@ impl Vm {
             None
         };
         let target = args.pop().expect("checked len");
+        if let Value::Iterator(iterator) = &target {
+            let iterator_kind = iterator.kind();
+            if matches!(
+                &*iterator_kind,
+                Object::Iterator(IteratorObject {
+                    kind: IteratorKind::RangeObject { .. },
+                    ..
+                })
+            ) {
+                return Err(RuntimeError::new("'range' object is not an iterator"));
+            }
+        }
         self.ensure_sync_iterator_target(&target)?;
         let iterator = self
             .to_iterator_value(target)
@@ -19905,6 +20306,7 @@ impl Vm {
             return Err(RuntimeError::new("map() expects at least two arguments"));
         }
         let func = args.remove(0);
+        let sources = args.clone();
         let mut iterators = Vec::new();
         for source in args {
             self.ensure_sync_iterator_target(&source)?;
@@ -19921,7 +20323,14 @@ impl Vm {
                 match self.next_from_iterator_value(iterator)? {
                     GeneratorResumeOutcome::Yield(value) => call_args.push(value),
                     GeneratorResumeOutcome::Complete(_) => {
-                        return Ok(self.heap.alloc_list(mapped));
+                        return Ok(self.heap.alloc_iterator(IteratorObject {
+                            kind: IteratorKind::Map {
+                                values: mapped,
+                                func,
+                                sources,
+                            },
+                            index: 0,
+                        }));
                     }
                     GeneratorResumeOutcome::PropagatedException => {
                         return Err(self.iteration_error_from_state("map() iteration failed")?);
@@ -20118,6 +20527,7 @@ impl Vm {
                 Object::Bytes(data) => self.load_attr_bytes_method(data.clone(), &name),
                 _ => Err(RuntimeError::new("attribute access unsupported type")),
             },
+            Value::Iterator(iterator) => self.load_attr_iterator(iterator, &name),
             Value::MemoryView(view) => self.load_attr_memoryview(view, &name),
             Value::Set(set) => self.load_attr_set_method(set, &name),
             Value::FrozenSet(set) => self.load_attr_set_method(set, &name),
@@ -20204,6 +20614,9 @@ impl Vm {
                 ))),
             },
             Value::Exception(exception) => match name.as_str() {
+                "__reduce_ex__" | "__reduce__" => {
+                    Ok(self.alloc_reduce_ex_bound_method(Value::Exception(exception.clone())))
+                }
                 "with_traceback" => {
                     let wrapper = match self.heap.alloc_module(ModuleObject::new(
                         "__exception_with_traceback__".to_string(),
@@ -31619,6 +32032,51 @@ impl Vm {
         ]))
     }
 
+    fn range_object_parts(&self, obj: &ObjRef) -> Option<(BigInt, BigInt, BigInt)> {
+        let kind = obj.kind();
+        let Object::Iterator(state) = &*kind else {
+            return None;
+        };
+        let IteratorKind::RangeObject { start, stop, step } = &state.kind else {
+            return None;
+        };
+        Some((start.clone(), stop.clone(), step.clone()))
+    }
+
+    fn range_object_len_bigint(&self, start: &BigInt, stop: &BigInt, step: &BigInt) -> BigInt {
+        let one = BigInt::one();
+        if step.is_negative() {
+            if start.cmp_total(stop) != Ordering::Greater {
+                return BigInt::zero();
+            }
+            let distance = start.sub(stop);
+            let numerator = distance.sub(&one);
+            let step_abs = step.negated();
+            let (q, _) = numerator
+                .div_mod_floor(&step_abs)
+                .expect("step is non-zero");
+            q.add(&one)
+        } else {
+            if start.cmp_total(stop) != Ordering::Less {
+                return BigInt::zero();
+            }
+            let distance = stop.sub(start);
+            let numerator = distance.sub(&one);
+            let (q, _) = numerator.div_mod_floor(step).expect("step is non-zero");
+            q.add(&one)
+        }
+    }
+
+    fn range_object_index_value(
+        &self,
+        start: &BigInt,
+        step: &BigInt,
+        index: i64,
+    ) -> Value {
+        let offset = step.mul(&BigInt::from_i64(index));
+        value_from_bigint(start.add(&offset))
+    }
+
     fn getitem_value(&mut self, value: Value, index: Value) -> Result<Value, RuntimeError> {
         if let Value::Instance(instance) = &value {
             if let Some(values) = self.namedtuple_instance_values(instance) {
@@ -31697,6 +32155,28 @@ impl Vm {
                     },
                     _ => Err(RuntimeError::new("subscript unsupported type")),
                 },
+                Value::Iterator(obj) => {
+                    let Some((start, stop, step_value)) = self.range_object_parts(&obj) else {
+                        return Err(RuntimeError::new("subscript unsupported type"));
+                    };
+                    let length = self.range_object_len_bigint(&start, &stop, &step_value);
+                    let Some(length_i64) = length.to_i64() else {
+                        return Err(RuntimeError::new("range too large for slicing"));
+                    };
+                    if length_i64 < 0 {
+                        return Err(RuntimeError::new("range too large for slicing"));
+                    }
+                    let indices = slice_indices(length_i64 as usize, lower, upper, step)?;
+                    let mut out = Vec::with_capacity(indices.len());
+                    for idx in indices {
+                        out.push(self.range_object_index_value(
+                            &start,
+                            &step_value,
+                            idx as i64,
+                        ));
+                    }
+                    Ok(self.heap.alloc_list(out))
+                }
                 Value::Dict(_) => Err(RuntimeError::new("slicing unsupported for dict")),
                 _ => Err(RuntimeError::new("subscript unsupported type")),
             },
@@ -31834,6 +32314,23 @@ impl Vm {
                     },
                     _ => Err(RuntimeError::new("subscript unsupported type")),
                 },
+                Value::Iterator(obj) => {
+                    let Some((start, stop, step_value)) = self.range_object_parts(&obj) else {
+                        return Err(RuntimeError::new("subscript unsupported type"));
+                    };
+                    let length = self.range_object_len_bigint(&start, &stop, &step_value);
+                    let Some(length_i64) = length.to_i64() else {
+                        return Err(RuntimeError::new("range too large for indexing"));
+                    };
+                    let mut index_int = value_to_int(index)?;
+                    if index_int < 0 {
+                        index_int += length_i64;
+                    }
+                    if index_int < 0 || index_int >= length_i64 {
+                        return Err(RuntimeError::new("range index out of range"));
+                    }
+                    Ok(self.range_object_index_value(&start, &step_value, index_int))
+                }
                 Value::Builtin(builtin)
                     if matches!(
                         builtin,
@@ -32089,6 +32586,10 @@ impl Vm {
             class_data.attrs.insert(
                 "__getstate__".to_string(),
                 Value::Builtin(BuiltinFunction::ObjectGetState),
+            );
+            class_data.attrs.insert(
+                "__setstate__".to_string(),
+                Value::Builtin(BuiltinFunction::ObjectSetState),
             );
             class_data.attrs.insert(
                 "__eq__".to_string(),
@@ -33721,6 +34222,170 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
             },
             _ => Err(RuntimeError::new("expected bytes-like payload")),
         },
+        Value::Iterator(obj) => {
+            let mut obj_kind = obj.kind_mut();
+            let Object::Iterator(iterator) = &mut *obj_kind else {
+                return Err(RuntimeError::new("expected bytes-like payload"));
+            };
+            let values = match &mut iterator.kind {
+                IteratorKind::List(list_obj) => match &*list_obj.kind() {
+                    Object::List(items) => {
+                        let start = iterator.index.min(items.len());
+                        let out = items[start..].to_vec();
+                        iterator.index = items.len();
+                        out
+                    }
+                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                },
+                IteratorKind::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                    Object::Tuple(items) => {
+                        let start = iterator.index.min(items.len());
+                        let out = items[start..].to_vec();
+                        iterator.index = items.len();
+                        out
+                    }
+                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                },
+                IteratorKind::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                    Object::Bytes(items) => {
+                        let start = iterator.index.min(items.len());
+                        let out = items[start..]
+                            .iter()
+                            .map(|byte| Value::Int(*byte as i64))
+                            .collect::<Vec<_>>();
+                        iterator.index = items.len();
+                        out
+                    }
+                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                },
+                IteratorKind::ByteArray(bytearray_obj) => match &*bytearray_obj.kind() {
+                    Object::ByteArray(items) => {
+                        let start = iterator.index.min(items.len());
+                        let out = items[start..]
+                            .iter()
+                            .map(|byte| Value::Int(*byte as i64))
+                            .collect::<Vec<_>>();
+                        iterator.index = items.len();
+                        out
+                    }
+                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                },
+                IteratorKind::MemoryView(memory_obj) => match &*memory_obj.kind() {
+                    Object::MemoryView(view) => match &*view.source.kind() {
+                        Object::Bytes(items) | Object::ByteArray(items) => {
+                            let start = iterator.index.min(items.len());
+                            let out = items[start..]
+                                .iter()
+                                .map(|byte| Value::Int(*byte as i64))
+                                .collect::<Vec<_>>();
+                            iterator.index = items.len();
+                            out
+                        }
+                        _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                    },
+                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                },
+                IteratorKind::Map { values, .. } => {
+                    let start = iterator.index.min(values.len());
+                    let out = values[start..].to_vec();
+                    iterator.index = values.len();
+                    out
+                }
+                IteratorKind::Range {
+                    current,
+                    stop,
+                    step,
+                } => {
+                    if step.is_zero() {
+                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                    }
+                    let mut out = Vec::new();
+                    let mut cursor = current.clone();
+                    if !step.is_negative() {
+                        while cursor.cmp_total(stop) == Ordering::Less {
+                            out.push(value_from_bigint(cursor.clone()));
+                            cursor = cursor.add(step);
+                        }
+                    } else {
+                        while cursor.cmp_total(stop) == Ordering::Greater {
+                            out.push(value_from_bigint(cursor.clone()));
+                            cursor = cursor.add(step);
+                        }
+                    }
+                    *current = cursor;
+                    iterator.index = iterator.index.saturating_add(out.len());
+                    out
+                }
+                IteratorKind::RangeObject { start, stop, step } => {
+                    if step.is_zero() {
+                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                    }
+                    let mut cursor = start.clone();
+                    for _ in 0..iterator.index {
+                        cursor = cursor.add(step);
+                    }
+                    let mut out = Vec::new();
+                    if !step.is_negative() {
+                        while cursor.cmp_total(stop) == Ordering::Less {
+                            out.push(value_from_bigint(cursor.clone()));
+                            cursor = cursor.add(step);
+                        }
+                    } else {
+                        while cursor.cmp_total(stop) == Ordering::Greater {
+                            out.push(value_from_bigint(cursor.clone()));
+                            cursor = cursor.add(step);
+                        }
+                    }
+                    iterator.index = iterator.index.saturating_add(out.len());
+                    out
+                }
+                IteratorKind::Dict(dict_obj) => match &*dict_obj.kind() {
+                    Object::Dict(items) => {
+                        let start = iterator.index.min(items.len());
+                        let out = items
+                            .iter()
+                            .skip(start)
+                            .map(|(key, _)| key.clone())
+                            .collect::<Vec<_>>();
+                        iterator.index = items.len();
+                        out
+                    }
+                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                },
+                IteratorKind::Set(set_obj) => match &*set_obj.kind() {
+                    Object::Set(items) | Object::FrozenSet(items) => {
+                        let all = items.to_vec();
+                        let start = iterator.index.min(all.len());
+                        let out = all.into_iter().skip(start).collect::<Vec<_>>();
+                        iterator.index = start.saturating_add(out.len());
+                        out
+                    }
+                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                },
+                IteratorKind::Str(text) => {
+                    let chars = text.chars().collect::<Vec<_>>();
+                    let start = iterator.index.min(chars.len());
+                    let out = chars[start..]
+                        .iter()
+                        .map(|ch| Value::Str(ch.to_string()))
+                        .collect::<Vec<_>>();
+                    iterator.index = chars.len();
+                    out
+                }
+                IteratorKind::Count { .. } => {
+                    return Err(RuntimeError::new("expected bytes-like payload"));
+                }
+            };
+            let mut out = Vec::with_capacity(values.len());
+            for value in values {
+                let byte = value_to_int(value)?;
+                if !(0..=255).contains(&byte) {
+                    return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                }
+                out.push(byte as u8);
+            }
+            Ok(out)
+        }
         Value::Str(text) => Ok(text.into_bytes()),
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => {
@@ -35735,47 +36400,16 @@ fn call_builtin_with_kwargs(
                 return Err(RuntimeError::new("range() step cannot be zero"));
             }
 
-            let eager = if let (Some(start), Some(stop), Some(step)) =
-                (start_big.to_i64(), stop_big.to_i64(), step_big.to_i64())
-            {
-                random_range_count(start, stop, step)
-                    .ok()
-                    .and_then(|count| usize::try_from(count).ok())
-                    .is_some_and(|count| count <= RANGE_EAGER_LIMIT)
-            } else {
-                false
-            };
-
-            if eager {
-                let start = start_big.to_i64().expect("checked");
-                let stop = stop_big.to_i64().expect("checked");
-                let step = step_big.to_i64().expect("checked");
-                let mut values = Vec::new();
-                let mut i = start;
-                if step > 0 {
-                    while i < stop {
-                        values.push(Value::Int(i));
-                        i += step;
-                    }
-                } else {
-                    while i > stop {
-                        values.push(Value::Int(i));
-                        i += step;
-                    }
-                }
-                Ok(heap.alloc_list(values))
-            } else {
-                Ok(Value::Iterator(heap.alloc(Object::Iterator(
-                    IteratorObject {
-                        kind: IteratorKind::Range {
-                            current: start_big,
-                            stop: stop_big,
-                            step: step_big,
-                        },
-                        index: 0,
+            Ok(Value::Iterator(heap.alloc(Object::Iterator(
+                IteratorObject {
+                    kind: IteratorKind::RangeObject {
+                        start: start_big,
+                        stop: stop_big,
+                        step: step_big,
                     },
-                ))))
-            }
+                    index: 0,
+                },
+            ))))
         }
         BuiltinFunction::Sum => {
             let start = kwargs.remove("start");

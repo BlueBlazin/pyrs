@@ -15,6 +15,16 @@ fn int_like_to_bigint(value: &Value) -> Option<BigInt> {
         Value::Bool(flag) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
         Value::Int(number) => Some(BigInt::from_i64(*number)),
         Value::BigInt(number) => Some(number.clone()),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_int_storage__")
+            {
+                Some(Value::Bool(flag)) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
+                Some(Value::Int(number)) => Some(BigInt::from_i64(*number)),
+                Some(Value::BigInt(number)) => Some(number.clone()),
+                _ => None,
+            },
+            _ => None,
+        },
         _ => None,
     }
 }

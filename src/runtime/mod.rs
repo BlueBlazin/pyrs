@@ -924,6 +924,16 @@ pub enum IteratorKind {
         current: i64,
         step: i64,
     },
+    RangeObject {
+        start: BigInt,
+        stop: BigInt,
+        step: BigInt,
+    },
+    Map {
+        values: Vec<Value>,
+        func: Value,
+        sources: Vec<Value>,
+    },
     Range {
         current: BigInt,
         stop: BigInt,
@@ -1227,7 +1237,23 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             | IteratorKind::Bytes(list)
             | IteratorKind::ByteArray(list)
             | IteratorKind::MemoryView(list) => stack.push(list.clone()),
-            IteratorKind::Str(_) | IteratorKind::Count { .. } | IteratorKind::Range { .. } => {}
+            IteratorKind::Map {
+                values,
+                func,
+                sources,
+            } => {
+                for value in values {
+                    trace_value(value, stack, marked);
+                }
+                trace_value(func, stack, marked);
+                for source in sources {
+                    trace_value(source, stack, marked);
+                }
+            }
+            IteratorKind::Str(_)
+            | IteratorKind::Count { .. }
+            | IteratorKind::RangeObject { .. }
+            | IteratorKind::Range { .. } => {}
         },
         Object::Generator(_) => {}
         Object::Module(module) => {
@@ -1335,7 +1361,13 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
-                IteratorKind::Range { .. } => {
+                IteratorKind::Map { values, sources, .. } => {
+                    values.clear();
+                    sources.clear();
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::RangeObject { .. } | IteratorKind::Range { .. } => {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -1742,6 +1774,7 @@ pub enum BuiltinFunction {
     ObjectInit,
     ObjectGetAttribute,
     ObjectGetState,
+    ObjectSetState,
     ObjectReduceEx,
     ObjectSetAttr,
     ObjectDelAttr,
@@ -4396,6 +4429,7 @@ impl BuiltinFunction {
             | BuiltinFunction::ObjectDelAttr
             | BuiltinFunction::Dir
             | BuiltinFunction::ObjectGetState
+            | BuiltinFunction::ObjectSetState
             | BuiltinFunction::ObjectReduceEx
             | BuiltinFunction::StringFormatterParser
             | BuiltinFunction::StringFormatterFieldNameSplit => {
@@ -4688,6 +4722,171 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
             },
             _ => Err(RuntimeError::new("expected iterable")),
         },
+        Value::Iterator(obj) => {
+            let mut obj_kind = obj.kind_mut();
+            let Object::Iterator(iterator) = &mut *obj_kind else {
+                return Err(RuntimeError::new("expected iterable"));
+            };
+            match &mut iterator.kind {
+                IteratorKind::List(list_obj) => match &*list_obj.kind() {
+                    Object::List(values) => {
+                        let start = iterator.index.min(values.len());
+                        let out = values[start..].to_vec();
+                        iterator.index = values.len();
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::new("expected iterable")),
+                },
+                IteratorKind::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                    Object::Tuple(values) => {
+                        let start = iterator.index.min(values.len());
+                        let out = values[start..].to_vec();
+                        iterator.index = values.len();
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::new("expected iterable")),
+                },
+                IteratorKind::Str(text) => {
+                    let chars = text.chars().collect::<Vec<_>>();
+                    let start = iterator.index.min(chars.len());
+                    let out = chars[start..]
+                        .iter()
+                        .map(|ch| Value::Str(ch.to_string()))
+                        .collect::<Vec<_>>();
+                    iterator.index = chars.len();
+                    Ok(out)
+                }
+                IteratorKind::Dict(dict_obj) => match &*dict_obj.kind() {
+                    Object::Dict(values) => {
+                        let start = iterator.index.min(values.len());
+                        let out = values
+                            .iter()
+                            .skip(start)
+                            .map(|(key, _)| key.clone())
+                            .collect::<Vec<_>>();
+                        iterator.index = values.len();
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::new("expected iterable")),
+                },
+                IteratorKind::Set(set_obj) => match &*set_obj.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => {
+                        let all = values.to_vec();
+                        let start = iterator.index.min(all.len());
+                        let out = all.into_iter().skip(start).collect::<Vec<_>>();
+                        iterator.index = start.saturating_add(out.len());
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::new("expected iterable")),
+                },
+                IteratorKind::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                    Object::Bytes(values) => {
+                        let start = iterator.index.min(values.len());
+                        let out = values[start..]
+                            .iter()
+                            .map(|byte| Value::Int(*byte as i64))
+                            .collect::<Vec<_>>();
+                        iterator.index = values.len();
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::new("expected iterable")),
+                },
+                IteratorKind::ByteArray(bytearray_obj) => match &*bytearray_obj.kind() {
+                    Object::ByteArray(values) => {
+                        let start = iterator.index.min(values.len());
+                        let out = values[start..]
+                            .iter()
+                            .map(|byte| Value::Int(*byte as i64))
+                            .collect::<Vec<_>>();
+                        iterator.index = values.len();
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::new("expected iterable")),
+                },
+                IteratorKind::MemoryView(memory_obj) => match &*memory_obj.kind() {
+                    Object::MemoryView(view) => match &*view.source.kind() {
+                        Object::Bytes(values) | Object::ByteArray(values) => {
+                            let start = iterator.index.min(values.len());
+                            let out = values[start..]
+                                .iter()
+                                .map(|byte| Value::Int(*byte as i64))
+                                .collect::<Vec<_>>();
+                            iterator.index = values.len();
+                            Ok(out)
+                        }
+                        _ => Err(RuntimeError::new("expected iterable")),
+                    },
+                    _ => Err(RuntimeError::new("expected iterable")),
+                },
+                IteratorKind::Map { values, .. } => {
+                    let start = iterator.index.min(values.len());
+                    let out = values[start..].to_vec();
+                    iterator.index = values.len();
+                    Ok(out)
+                }
+                IteratorKind::Range {
+                    current,
+                    stop,
+                    step,
+                } => {
+                    let mut out = Vec::new();
+                    let mut cursor = current.clone();
+                    if step.is_zero() {
+                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                    }
+                    if !step.is_negative() {
+                        while cursor.cmp_total(stop) == Ordering::Less {
+                            out.push(match cursor.to_i64() {
+                                Some(number) => Value::Int(number),
+                                None => Value::BigInt(cursor.clone()),
+                            });
+                            cursor = cursor.add(step);
+                        }
+                    } else {
+                        while cursor.cmp_total(stop) == Ordering::Greater {
+                            out.push(match cursor.to_i64() {
+                                Some(number) => Value::Int(number),
+                                None => Value::BigInt(cursor.clone()),
+                            });
+                            cursor = cursor.add(step);
+                        }
+                    }
+                    *current = cursor;
+                    iterator.index = iterator.index.saturating_add(out.len());
+                    Ok(out)
+                }
+                IteratorKind::RangeObject { start, stop, step } => {
+                    if step.is_zero() {
+                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                    }
+                    let mut cursor = start.clone();
+                    for _ in 0..iterator.index {
+                        cursor = cursor.add(step);
+                    }
+                    let mut out = Vec::new();
+                    if !step.is_negative() {
+                        while cursor.cmp_total(stop) == Ordering::Less {
+                            out.push(match cursor.to_i64() {
+                                Some(number) => Value::Int(number),
+                                None => Value::BigInt(cursor.clone()),
+                            });
+                            cursor = cursor.add(step);
+                        }
+                    } else {
+                        while cursor.cmp_total(stop) == Ordering::Greater {
+                            out.push(match cursor.to_i64() {
+                                Some(number) => Value::Int(number),
+                                None => Value::BigInt(cursor.clone()),
+                            });
+                            cursor = cursor.add(step);
+                        }
+                    }
+                    iterator.index = iterator.index.saturating_add(out.len());
+                    Ok(out)
+                }
+                IteratorKind::Count { .. } => Err(RuntimeError::new("expected iterable")),
+            }
+        }
         Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),
         _ => Err(RuntimeError::new("expected iterable")),
     }
