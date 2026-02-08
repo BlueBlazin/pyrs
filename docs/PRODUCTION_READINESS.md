@@ -72,7 +72,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [ ] P0: `json` semantic/safety/perf closure (full CPython behavior for encode/decode options and error contracts, malformed-input hardening, and benchmark baselines).
 - [ ] P0: `_csv`/`csv` semantic/safety/perf closure (full parser/writer behavior and error-text parity, malformed-input hardening, and benchmark baselines).
 - [ ] P0: `pickle`/`pickletools`/`copyreg` semantic/safety/perf closure (protocol/opcode/runtime parity plus benchmark baselines).
-- [~] P0: Unicode/codec behavior parity (including error handlers) (`codecs.encode`/`decode` foundations for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace` implemented; full parity pending).
+- [~] P0: Unicode/codec behavior parity (including error handlers) (`codecs.encode`/`decode` foundations for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` plus `raw-unicode-escape`/`unicode-escape`, and baseline `codecs.escape_decode`, with `strict`/`ignore`/`replace` implemented; full parity pending).
 - [~] P0: Descriptor protocol (`__get__`, `__set__`, `__delete__`) (core VM descriptor hooks implemented; metaclass/slot edge parity pending).
 - [~] P0: Attribute lookup parity (`__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__`) (instance hooks plus custom `__getattribute__` override and `object.__getattribute__` baseline are implemented; full fallback/error-edge parity pending).
 - [~] P0: MRO + metaclasses + `super()` semantics (C3 MRO + explicit `super(type, obj)` implemented; class-header `metaclass=` and `__build_class__` metaclass kwargs supported; resolved-metaclass tracking and base-metaclass conflict detection are implemented; full metaclass precedence semantics pending).
