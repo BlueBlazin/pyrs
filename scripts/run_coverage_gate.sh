@@ -33,9 +33,9 @@ if [[ "$enforce" != "1" ]]; then
   exit 0
 fi
 
-min_regions="${PYRS_COVERAGE_MIN_REGIONS:-0}"
-min_functions="${PYRS_COVERAGE_MIN_FUNCTIONS:-0}"
-min_lines="${PYRS_COVERAGE_MIN_LINES:-0}"
+min_regions="${PYRS_COVERAGE_MIN_REGIONS:-70}"
+min_functions="${PYRS_COVERAGE_MIN_FUNCTIONS:-65}"
+min_lines="${PYRS_COVERAGE_MIN_LINES:-70}"
 
 check_floor() {
   local label="$1"

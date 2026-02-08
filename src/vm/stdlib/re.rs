@@ -771,3 +771,116 @@ fn csv_sniffer_pattern_findall(pattern: &str, text: &str) -> Option<(usize, Vec<
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_sniffer_groupindex_entries_cover_known_patterns() {
+        let p1 = csv_sniffer_groupindex_entries(CSV_SNIFFER_PATTERN_1)
+            .expect("pattern 1 should expose groups");
+        assert_eq!(p1, vec![("delim", 1), ("space", 2), ("quote", 3)]);
+
+        let p4 = csv_sniffer_groupindex_entries(CSV_SNIFFER_PATTERN_4)
+            .expect("pattern 4 should expose groups");
+        assert_eq!(p4, vec![("quote", 1)]);
+
+        assert!(csv_sniffer_groupindex_entries("unknown").is_none());
+    }
+
+    #[test]
+    fn csv_sniffer_pattern_findall_recognizes_delimiters_and_quotes() {
+        let sample = "a,\"b\",c\n\"q\",r\n";
+        let (groups, matches) = csv_sniffer_pattern_findall(CSV_SNIFFER_PATTERN_1, sample)
+            .expect("pattern 1 should run");
+        assert_eq!(groups, 3);
+        assert!(
+            matches
+                .iter()
+                .any(|entry| entry == &vec![",".to_string(), "".to_string(), "\"".to_string()])
+        );
+
+        let (_, line_start_matches) =
+            csv_sniffer_pattern_findall(CSV_SNIFFER_PATTERN_2, sample).expect("pattern 2 runs");
+        assert!(
+            line_start_matches
+                .iter()
+                .any(|entry| entry[0] == "\"" && entry[1] == "," && entry[2].is_empty())
+        );
+    }
+
+    #[test]
+    fn csv_sniffer_pattern_findall_unknown_pattern_returns_none() {
+        assert!(csv_sniffer_pattern_findall("not-a-pattern", "a,b").is_none());
+    }
+
+    #[test]
+    fn re_match_methods_handle_index_and_missing_groups() {
+        let mut vm = Vm::new();
+        let matched = vm
+            .builtin_re_match_mode(
+                vec![Value::Str("(a)(b+)?".to_string()), Value::Str("a".to_string())],
+                HashMap::new(),
+                ReMode::Match,
+            )
+            .expect("match should succeed");
+        let match_obj = match matched {
+            Value::Module(obj) => obj,
+            other => panic!("expected match object module, got {other:?}"),
+        };
+
+        let whole = vm
+            .native_re_match_group(&match_obj, vec![])
+            .expect("group() should work");
+        assert_eq!(whole, Value::Str("a".to_string()));
+        let g1 = vm
+            .native_re_match_group(&match_obj, vec![Value::Int(1)])
+            .expect("group(1) should work");
+        assert_eq!(g1, Value::Str("a".to_string()));
+        let g2 = vm
+            .native_re_match_group(&match_obj, vec![Value::Int(2)])
+            .expect("group(2) should work");
+        assert_eq!(g2, Value::None);
+
+        let start2 = vm
+            .native_re_match_start(&match_obj, vec![Value::Int(2)])
+            .expect("start(2) should work");
+        let end2 = vm
+            .native_re_match_end(&match_obj, vec![Value::Int(2)])
+            .expect("end(2) should work");
+        assert_eq!(start2, Value::Int(-1));
+        assert_eq!(end2, Value::Int(-1));
+    }
+
+    #[test]
+    fn re_match_groups_support_default_fill_value() {
+        let mut vm = Vm::new();
+        let matched = vm
+            .builtin_re_match_mode(
+                vec![Value::Str("(a)(b+)?".to_string()), Value::Str("a".to_string())],
+                HashMap::new(),
+                ReMode::Match,
+            )
+            .expect("match should succeed");
+        let match_obj = match matched {
+            Value::Module(obj) => obj,
+            other => panic!("expected match object module, got {other:?}"),
+        };
+
+        let groups = vm
+            .native_re_match_groups(&match_obj, vec![Value::Str("missing".to_string())])
+            .expect("groups(default) should work");
+        match groups {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => {
+                    assert_eq!(values.len(), 2);
+                    assert_eq!(values[0], Value::Str("a".to_string()));
+                    assert_eq!(values[1], Value::Str("missing".to_string()));
+                }
+                other => panic!("expected tuple object, got {other:?}"),
+            },
+            other => panic!("expected tuple value, got {other:?}"),
+        }
+    }
+}

@@ -1229,6 +1229,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cmp::Ordering;
 
     #[test]
     fn shifts_reject_negative_shift_count() {
@@ -1300,5 +1301,82 @@ mod tests {
             },
             other => panic!("expected list value, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn floor_div_and_mod_follow_python_sign_rules() {
+        let quotient = floor_div_values(Value::Int(-7), Value::Int(3)).expect("floor div works");
+        let remainder = mod_values(Value::Int(-7), Value::Int(3)).expect("mod works");
+        assert_eq!(quotient, Value::Int(-3));
+        assert_eq!(remainder, Value::Int(2));
+
+        let big = Value::BigInt(BigInt::from_str_radix("100000000000000000000", 10).unwrap());
+        let big_q = floor_div_values(big.clone(), Value::Int(7)).expect("big floor div works");
+        let big_r = mod_values(big, Value::Int(7)).expect("big mod works");
+        assert_eq!(big_q, Value::BigInt(BigInt::from_str_radix("14285714285714285714", 10).unwrap()));
+        assert_eq!(big_r, Value::Int(2));
+    }
+
+    #[test]
+    fn set_bitwise_ops_return_expected_members() {
+        let heap = Heap::new();
+        let left = heap.alloc_set(vec![Value::Int(1), Value::Int(2)]);
+        let right = heap.alloc_set(vec![Value::Int(2), Value::Int(3)]);
+
+        let intersection = and_values(left.clone(), right.clone(), &heap).expect("set and works");
+        let union = or_values(left.clone(), right.clone(), &heap).expect("set or works");
+        let sym_diff = xor_values(left, right, &heap).expect("set xor works");
+
+        assert!(matches!(
+            intersection,
+            Value::Set(obj)
+                if matches!(&*obj.kind(), Object::Set(values)
+                    if values.contains(&Value::Int(2)) && values.len() == 1)
+        ));
+        assert!(matches!(
+            union,
+            Value::Set(obj)
+                if matches!(&*obj.kind(), Object::Set(values)
+                    if values.contains(&Value::Int(1))
+                        && values.contains(&Value::Int(2))
+                        && values.contains(&Value::Int(3))
+                        && values.len() == 3)
+        ));
+        assert!(matches!(
+            sym_diff,
+            Value::Set(obj)
+                if matches!(&*obj.kind(), Object::Set(values)
+                    if values.contains(&Value::Int(1))
+                        && values.contains(&Value::Int(3))
+                        && values.len() == 2)
+        ));
+    }
+
+    #[test]
+    fn ordering_from_cmp_value_accepts_int_like_and_rejects_other_types() {
+        assert_eq!(
+            ordering_from_cmp_value(Value::Int(-1)).expect("int should map to ordering"),
+            Ordering::Less
+        );
+        assert_eq!(
+            ordering_from_cmp_value(Value::Bool(false)).expect("bool false should map to equal"),
+            Ordering::Equal
+        );
+        assert_eq!(
+            ordering_from_cmp_value(Value::Bool(true)).expect("bool true should map to greater"),
+            Ordering::Greater
+        );
+        let err = ordering_from_cmp_value(Value::Str("nope".to_string()))
+            .expect_err("non-int-like cmp value should fail");
+        assert!(err.message.contains("cmp_to_key comparator must return a number"));
+    }
+
+    #[test]
+    fn compare_order_for_sequences_is_lexicographic() {
+        let heap = Heap::new();
+        let left = heap.alloc_list(vec![Value::Int(1), Value::Int(2)]);
+        let right = heap.alloc_list(vec![Value::Int(1), Value::Int(3)]);
+        let ordering = compare_order(left, right).expect("list compare should work");
+        assert_eq!(ordering, Ordering::Less);
     }
 }

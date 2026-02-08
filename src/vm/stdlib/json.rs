@@ -638,11 +638,26 @@ impl<'a> JsonParser<'a> {
         if self.peek() == Some(b'-') {
             self.pos += 1;
         }
-        while matches!(self.peek(), Some(b'0'..=b'9')) {
-            self.pos += 1;
+        match self.peek() {
+            Some(b'0') => {
+                self.pos += 1;
+                if matches!(self.peek(), Some(b'0'..=b'9')) {
+                    return Err(RuntimeError::new("invalid JSON number"));
+                }
+            }
+            Some(b'1'..=b'9') => {
+                self.pos += 1;
+                while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    self.pos += 1;
+                }
+            }
+            _ => return Err(RuntimeError::new("invalid JSON number")),
         }
         if self.peek() == Some(b'.') {
             self.pos += 1;
+            if !matches!(self.peek(), Some(b'0'..=b'9')) {
+                return Err(RuntimeError::new("invalid JSON number"));
+            }
             while matches!(self.peek(), Some(b'0'..=b'9')) {
                 self.pos += 1;
             }
@@ -651,6 +666,9 @@ impl<'a> JsonParser<'a> {
             self.pos += 1;
             if matches!(self.peek(), Some(b'+' | b'-')) {
                 self.pos += 1;
+            }
+            if !matches!(self.peek(), Some(b'0'..=b'9')) {
+                return Err(RuntimeError::new("invalid JSON number"));
             }
             while matches!(self.peek(), Some(b'0'..=b'9')) {
                 self.pos += 1;
@@ -857,6 +875,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_json_node_enforces_number_grammar() {
+        let valid_int = parse_json_node("123").expect("valid integer");
+        assert!(matches!(valid_int, JsonNode::Int(123)));
+        let valid_float = parse_json_node("-12.5e+2").expect("valid float with exponent");
+        assert!(matches!(valid_float, JsonNode::Float(value) if (value + 1250.0).abs() < 1e-9));
+
+        for invalid in ["01", "-01", "1.", "1e", "1e+", "-"] {
+            let err = parse_json_node(invalid).expect_err("invalid number should fail");
+            assert!(
+                err.message.contains("invalid JSON number") || err.message.contains("invalid JSON value"),
+                "unexpected error for {invalid:?}: {}",
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn json_source_text_rejects_non_text_input_types() {
+        let err = json_source_text(&Value::Int(1)).expect_err("int input should fail");
+        assert!(err.message.contains("expects str, bytes, or bytearray"));
+    }
+
+    #[test]
     fn builtin_json_dumps_enforces_nan_and_skipkeys_contracts() {
         let mut vm = Vm::new();
 
@@ -881,5 +922,26 @@ mod tests {
             )
             .expect("skipkeys=True should drop non-string keys");
         assert_eq!(skipped, Value::Str("{}".to_string()));
+    }
+
+    #[test]
+    fn builtin_json_dumps_uses_custom_separators_and_sort_keys() {
+        let mut vm = Vm::new();
+        let dict = vm.heap.alloc_dict(vec![
+            (Value::Str("b".to_string()), Value::Int(2)),
+            (Value::Str("a".to_string()), Value::Int(1)),
+        ]);
+        let kwargs = HashMap::from([
+            ("sort_keys".to_string(), Value::Bool(true)),
+            (
+                "separators".to_string(),
+                vm.heap
+                    .alloc_tuple(vec![Value::Str(";".to_string()), Value::Str("=".to_string())]),
+            ),
+        ]);
+        let dumped = vm
+            .builtin_json_dumps(vec![dict], kwargs)
+            .expect("json.dumps should succeed");
+        assert_eq!(dumped, Value::Str("{\"a\"=1;\"b\"=2}".to_string()));
     }
 }

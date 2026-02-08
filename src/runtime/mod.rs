@@ -5483,4 +5483,66 @@ mod tests {
         assert_ne!(bool_true, bool_false);
         assert_ne!(int_a, str_a);
     }
+
+    #[test]
+    fn dict_object_remove_and_reinsert_keeps_lookup_consistent() {
+        let mut dict = DictObject::new(vec![
+            (Value::Str("a".to_string()), Value::Int(1)),
+            (Value::Str("b".to_string()), Value::Int(2)),
+            (Value::Str("c".to_string()), Value::Int(3)),
+        ]);
+        let removed = dict.remove_key(&Value::Str("b".to_string()));
+        assert_eq!(
+            removed,
+            Some((Value::Str("b".to_string()), Value::Int(2)))
+        );
+        assert_eq!(dict.find(&Value::Str("a".to_string())), Some(&Value::Int(1)));
+        assert_eq!(dict.find(&Value::Str("c".to_string())), Some(&Value::Int(3)));
+        assert!(!dict.contains_key(&Value::Str("b".to_string())));
+
+        dict.insert(Value::Str("d".to_string()), Value::Int(4));
+        dict.insert(Value::Str("a".to_string()), Value::Int(10));
+        assert_eq!(dict.find(&Value::Str("d".to_string())), Some(&Value::Int(4)));
+        assert_eq!(dict.find(&Value::Str("a".to_string())), Some(&Value::Int(10)));
+    }
+
+    #[test]
+    fn set_object_remove_and_insert_keeps_membership_consistent() {
+        let mut set = SetObject::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        assert!(set.contains(&Value::Int(2)));
+        assert!(set.remove_value(&Value::Int(2)));
+        assert!(!set.contains(&Value::Int(2)));
+        assert!(!set.remove_value(&Value::Int(2)));
+        assert!(set.insert(Value::Int(4)));
+        assert!(set.contains(&Value::Int(4)));
+    }
+
+    #[test]
+    fn format_repr_escapes_control_characters_and_quotes() {
+        let value = Value::Str("line1\nline2\t'quoted'".to_string());
+        let repr = format_repr(&value);
+        assert_eq!(repr, "'line1\\nline2\\t\\'quoted\\''");
+    }
+
+    #[test]
+    fn truthiness_matches_collection_and_memoryview_content() {
+        let heap = Heap::new();
+        let empty_list = heap.alloc_list(Vec::new());
+        let non_empty_list = heap.alloc_list(vec![Value::Int(1)]);
+        let empty_bytes = heap.alloc_bytes(Vec::new());
+        let non_empty_bytes = heap.alloc_bytes(vec![1]);
+        let empty_memory = match empty_bytes {
+            Value::Bytes(obj) => heap.alloc_memoryview(obj),
+            other => panic!("expected bytes value, got {other:?}"),
+        };
+        let non_empty_memory = match non_empty_bytes {
+            Value::Bytes(obj) => heap.alloc_memoryview(obj),
+            other => panic!("expected bytes value, got {other:?}"),
+        };
+
+        assert!(!is_truthy_value(&empty_list));
+        assert!(is_truthy_value(&non_empty_list));
+        assert!(!is_truthy_value(&empty_memory));
+        assert!(is_truthy_value(&non_empty_memory));
+    }
 }

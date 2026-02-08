@@ -301,6 +301,30 @@ fn allowlist_entries_are_referenced_by_suites() {
 }
 
 #[test]
+fn subprocess_harness_helper_succeeds_for_short_program() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping subprocess helper test (pyrs binary not found)");
+        return;
+    };
+    run_source_in_subprocess(&bin, "value = 1 + 2\n", Duration::from_secs(5))
+        .expect("short subprocess program should succeed");
+}
+
+#[test]
+fn subprocess_harness_helper_times_out_hanging_program() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping subprocess helper timeout test (pyrs binary not found)");
+        return;
+    };
+    let err = run_source_in_subprocess(&bin, "while True:\n    pass\n", Duration::from_secs(1))
+        .expect_err("hanging subprocess should timeout");
+    assert!(
+        err.contains("timed out"),
+        "expected timeout error, got: {err}"
+    );
+}
+
+#[test]
 fn runs_cpython_language_suite() {
     run_suite_file(LANGUAGE_SUITE, ALLOWLIST_FILE, SuiteMode::ImportOnly);
 }
