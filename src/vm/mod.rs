@@ -245,7 +245,7 @@ enum RePatternValue {
 
 const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
-const LOCAL_SHIM_MODULES: &[&str] = &["enum", "pkgutil", "importlib.resources", "_json"];
+const LOCAL_SHIM_MODULES: &[&str] = &["enum", "pkgutil", "importlib.resources", "_json", "_pickle"];
 
 struct Frame {
     code: Rc<CodeObject>,
@@ -11448,6 +11448,17 @@ impl Vm {
         }
     }
 
+    fn instance_dict_entries(instance_data: &InstanceObject) -> Vec<(Value, Value)> {
+        instance_data
+            .attrs
+            .iter()
+            .filter_map(|(name, value)| match name.as_str() {
+                LIST_BACKING_STORAGE_ATTR | BYTES_BACKING_STORAGE_ATTR => None,
+                _ => Some((Value::Str(name.clone()), value.clone())),
+            })
+            .collect()
+    }
+
     fn load_attr_instance(
         &mut self,
         instance: &ObjRef,
@@ -11525,6 +11536,29 @@ impl Vm {
 
         if attr_name == "__class__" {
             return Ok(AttrAccessOutcome::Value(Value::Class(class_ref)));
+        }
+
+        if attr_name == "__dict__" {
+            let has_dynamic_dict = match collect_slot_names(&class_ref) {
+                Some(allowed_slots) => allowed_slots.iter().any(|name| name == "__dict__"),
+                None => true,
+            };
+            if !has_dynamic_dict {
+                let class_name = match &*class_ref.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "<class>".to_string(),
+                };
+                return Err(RuntimeError::new(format!(
+                    "'{}' object has no attribute '__dict__'",
+                    class_name
+                )));
+            }
+            if let Object::Instance(instance_data) = &*instance.kind() {
+                return Ok(AttrAccessOutcome::Value(
+                    self.heap.alloc_dict(Self::instance_dict_entries(instance_data)),
+                ));
+            }
+            return Err(RuntimeError::new("attribute access unsupported type"));
         }
 
         if let Some(attr) = self.load_attr_property_instance(instance, attr_name) {
@@ -18930,6 +18964,18 @@ impl Vm {
                     .class_mro_entries(class)
                     .iter()
                     .any(|entry| entry.id() == expected.id())),
+                Value::Exception(exception) => {
+                    let Object::Class(class_data) = &*expected.kind() else {
+                        return Ok(false);
+                    };
+                    Ok(self.exception_inherits(&exception.name, &class_data.name))
+                }
+                Value::ExceptionType(candidate_name) => {
+                    let Object::Class(class_data) = &*expected.kind() else {
+                        return Ok(false);
+                    };
+                    Ok(self.exception_inherits(candidate_name, &class_data.name))
+                }
                 Value::Builtin(_) => {
                     let Object::Class(class_data) = &*expected.kind() else {
                         return Ok(false);

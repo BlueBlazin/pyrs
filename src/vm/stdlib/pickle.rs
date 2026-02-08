@@ -76,11 +76,7 @@ impl Vm {
         match value {
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
-                    let entries = instance_data
-                        .attrs
-                        .iter()
-                        .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
-                        .collect::<Vec<_>>();
+                    let entries = Self::instance_dict_entries(instance_data);
                     if entries.is_empty() {
                         Ok(Value::None)
                     } else {

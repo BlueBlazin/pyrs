@@ -832,6 +832,16 @@ fn executes_isinstance_and_issubclass_builtins() {
 }
 
 #[test]
+fn issubclass_accepts_exception_type_values_from_raised_exceptions() {
+    let source = "class MyErr(Exception):\n    pass\nok = False\ntry:\n    raise MyErr('boom')\nexcept Exception as err:\n    ok = issubclass(err.__class__, MyErr)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_callable_builtin() {
     let source = "def f():\n    return 1\na = callable(f)\nb = callable(1)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1991,6 +2001,57 @@ ok = (first == 0x80 and second == 5 and value == 1)
 }
 
 #[test]
+fn picklebuffer_is_exposed_via_pickle_module() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping PickleBuffer shim test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+pb = pickle.PickleBuffer(b"abc")
+with pb.raw() as view:
+    raw = bytes(view)
+pb.release()
+caught = False
+try:
+    pb.raw()
+except ValueError:
+    caught = True
+ok = (raw == b"abc" and caught)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exception_type_metatype_behaves_like_type_and_pickle_handles_builtin_exceptions() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping exception metatype/pickle test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+import _pickle
+t = type(Warning)
+meta_ok = (t is type and isinstance(t, type) and issubclass(t, type))
+exports_ok = all(hasattr(_pickle, name) for name in (
+    "dump", "dumps", "load", "loads", "Pickler", "Unpickler"
+))
+data = pickle.dumps(Warning, protocol=0)
+loaded = pickle.loads(data)
+ok = (meta_ok and exports_ok and loaded is Warning)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn str_builtin_supports_bytes_decoding_signature() {
     let source = r#"a = str(b'\xff', 'latin-1')
 b = str(bytearray(b'abc'), 'utf-8')
@@ -2660,6 +2721,26 @@ fn empty_slots_block_dynamic_attributes() {
 #[test]
 fn dict_slot_allows_dynamic_attributes() {
     let source = "class Dynamic:\n    __slots__ = ('__dict__',)\nobj = Dynamic()\nobj.value = 12\nok = obj.value == 12\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn instance_dict_attribute_is_available_for_dynamic_instances() {
+    let source = "class C:\n    pass\nx = C()\nx.foo = 42\nd = x.__dict__\nvia_object = object.__getattribute__(x, '__dict__')\nok = (d['foo'] == 42 and via_object['foo'] == 42)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn instance_dict_attribute_respects_slots_without_dict() {
+    let source = "class S:\n    __slots__ = ('x',)\ns = S()\ns.x = 1\ncaught = False\ntry:\n    _ = s.__dict__\nexcept AttributeError:\n    caught = True\nok = caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

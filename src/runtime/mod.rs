@@ -2965,6 +2965,25 @@ impl BuiltinFunction {
                 }
                 let source = match &args[0] {
                     Value::Bytes(obj) | Value::ByteArray(obj) => obj.clone(),
+                    Value::MemoryView(obj) => match &*obj.kind() {
+                        Object::MemoryView(view) => view.source.clone(),
+                        _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
+                    },
+                    Value::Instance(obj) => match &*obj.kind() {
+                        Object::Instance(instance_data) => {
+                            match instance_data.attrs.get("__pyrs_bytes_storage__") {
+                                Some(Value::Bytes(storage)) | Some(Value::ByteArray(storage)) => {
+                                    storage.clone()
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "memoryview() expects bytes-like object",
+                                    ))
+                                }
+                            }
+                        }
+                        _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
+                    },
                     _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
                 };
                 Ok(heap.alloc_memoryview(source))
@@ -4907,7 +4926,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::Function(_) => Value::Str("function".to_string()),
         Value::Cell(_) => Value::Str("cell".to_string()),
         Value::Exception(exception) => Value::ExceptionType(exception.name.clone()),
-        Value::ExceptionType(_) => Value::Str("type".to_string()),
+        Value::ExceptionType(_) => Value::Builtin(BuiltinFunction::Type),
         Value::Slice { .. } => Value::Builtin(BuiltinFunction::Slice),
         Value::Code(_) => Value::Str("code".to_string()),
         Value::Builtin(_) => Value::Builtin(BuiltinFunction::Type),
