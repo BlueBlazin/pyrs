@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use pyrs::{compiler, parser, vm::Vm};
 
@@ -142,6 +145,45 @@ fn pyrs_bin() -> Option<PathBuf> {
     None
 }
 
+fn strict_unittest_timeout() -> Duration {
+    let secs = std::env::var("PYRS_STRICT_HARNESS_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(120);
+    Duration::from_secs(secs.max(1))
+}
+
+fn run_source_in_subprocess(bin: &Path, source: &str, timeout: Duration) -> Result<(), String> {
+    let mut child = Command::new(bin)
+        .arg("-c")
+        .arg(source)
+        .spawn()
+        .map_err(|err| format!("failed to spawn subprocess harness: {err}"))?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    return Ok(());
+                }
+                return Err(format!("subprocess harness failed with status {status}"));
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "subprocess harness timed out after {}s",
+                        timeout.as_secs()
+                    ));
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => return Err(format!("failed to poll subprocess harness: {err}")),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum SuiteMode {
     ImportOnly,
@@ -163,6 +205,13 @@ fn run_entry(lib: &Path, entry: &str, mode: SuiteMode) -> Result<(), String> {
             "import sys\nimport importlib\nimport unittest\n{executable_patch}sys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nresult = unittest.TextTestRunner(verbosity=0, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
         ),
     };
+
+    if matches!(mode, SuiteMode::StrictUnittest) {
+        if let Some(bin) = pyrs_bin() {
+            return run_source_in_subprocess(&bin, &source, strict_unittest_timeout());
+        }
+    }
+
     let module =
         parser::parse_module(&source).map_err(|err| format!("parse error {}", err.message))?;
     let code = compiler::compile_module_with_filename(&module, "<cpython_harness>")

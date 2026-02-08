@@ -16,6 +16,7 @@ Status values:
 | AQ-003 | `json` stack | Robustness/perf | Partial semantics | Close `test_json` parity, malformed-input safety corpus, and baseline perf report | 13 | OPEN |
 | AQ-004 | `_csv`/`csv` stack | Robustness/perf | Partial semantics despite significant progress | Close `test_csv` parity, malformed-input safety corpus, and baseline perf report | 13 | OPEN |
 | AQ-005 | `pickle`/`pickletools`/`copyreg` | Robustness/perf | Partial protocol/runtime semantics | Close protocol/runtime parity + perf report | 13 | OPEN |
+| AQ-006 | GC/leak regression detection | Reliability | Dedicated cycle-heavy leak regressions were added (`tests/gc_regression.rs`) and strict stdlib harness now runs per-entry subprocesses with timeout; root-cause closures for any remaining growth incidents are still pending | Keep leak regression lane green and close remaining root-cause issues surfaced by strict suites | 13 | IN_PROGRESS |
 
 ## P1 Items
 
@@ -24,7 +25,7 @@ Status values:
 | AQ-101 | Dict delete/update internals | Algorithmic scaling | Still uses order-preserving `Vec` removal/index maintenance paths in places | Complete hash-container hot-path architecture closure; benchmark and regressions | 14 | OPEN |
 | AQ-102 | Set/dict growth/load-factor policy | Perf stability | Basic hash index exists, growth strategy not fully tuned/validated | Implement and validate growth/load-factor policies with adversarial tests | 14 | OPEN |
 | AQ-103 | Clone hot spots in VM/runtime | Throughput + memory churn | Many clone paths exist; not all audited by hotness | Audit, classify, and reduce avoidable clones in hot paths; add perf sentinels | 14 | OPEN |
-| AQ-104 | VM monolith reviewability | Defect detection risk | `src/vm/mod.rs` still large | Continue extraction by concern with behavior-preserving tests | 14 | IN_PROGRESS |
+| AQ-104 | VM monolith reviewability | Defect detection risk | `src/vm/mod.rs` is still large, but CSV helper algorithms were extracted into `src/vm/stdlib/csv.rs` with direct unit tests | Continue extraction by concern with behavior-preserving tests | 14 | IN_PROGRESS |
 
 ## Audit Procedure
 

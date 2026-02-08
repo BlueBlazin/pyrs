@@ -12,6 +12,21 @@ Applies to all changes under:
 - `src/compiler/`
 - native stdlib handlers in `src/vm/stdlib/`
 
+## Gate 0: Core Helper Unit Coverage (P0)
+
+Critical helper algorithms must have direct module-local tests so regressions are caught
+before broad integration/harness runs.
+
+Required modules:
+- `src/vm/containers.rs`
+- `src/vm/stdlib/json.rs`
+- `src/vm/stdlib/csv.rs`
+
+Required evidence:
+1. `#[cfg(test)]` coverage in each module for argument validation + edge/error paths
+2. focused regression tests for previously broken contracts (escape/encoding, exception forwarding, strict parsing)
+3. no helper-only semantic changes merged without adding or updating unit coverage in the same commit
+
 ## Gate 1: Semantic Contract Conformance (P0)
 
 No operation is considered done until CPython-visible behavior matches for the in-scope contract.
@@ -76,12 +91,17 @@ Rules:
 
 Run this pipeline continuously during Milestone 13 and Milestone 14:
 
-1. `cargo test --quiet`
-2. curated CPython harness suites (`tests/cpython_harness.rs`)
-3. differential corpus tests (`tests/differential_cpython.rs`)
-4. fuzz/no-panic suites (`tests/fuzz_parser_vm.rs`)
-5. targeted algorithmic audits from `docs/ALGO_AUDIT_BACKLOG.md`
-6. stub/no-op drift gate (`tests/noop_inventory.rs`)
+1. `cargo test --quiet --lib` (module-local helper gates)
+2. `cargo test --quiet`
+3. curated CPython harness suites (`tests/cpython_harness.rs`)
+4. differential corpus tests (`tests/differential_cpython.rs`)
+5. fuzz/no-panic suites (`tests/fuzz_parser_vm.rs`)
+6. runtime leak regression lane (`tests/gc_regression.rs`)
+7. targeted algorithmic audits from `docs/ALGO_AUDIT_BACKLOG.md`
+8. stub/no-op drift gate (`tests/noop_inventory.rs`)
+
+Strict stdlib harness policy:
+- `tests/cpython_harness.rs` strict suite runs in isolated subprocesses with a per-entry timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent unbounded hangs/memory growth from masking regressions.
 
 ## Completion Criteria
 
