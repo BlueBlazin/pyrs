@@ -1225,3 +1225,80 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         _ => Err(RuntimeError::new("unsupported operand type for *")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shifts_reject_negative_shift_count() {
+        let lshift_err =
+            lshift_values(Value::Int(1), Value::Int(-1)).expect_err("negative shift should fail");
+        assert!(lshift_err.message.contains("negative shift count"));
+
+        let rshift_err =
+            rshift_values(Value::Int(8), Value::Int(-1)).expect_err("negative shift should fail");
+        assert!(rshift_err.message.contains("negative shift count"));
+    }
+
+    #[test]
+    fn compare_in_rejects_unhashable_dict_key_lookup() {
+        let heap = Heap::new();
+        let dict = heap.alloc_dict(vec![(Value::Str("k".to_string()), Value::Int(1))]);
+        let needle = heap.alloc_list(vec![Value::Int(1)]);
+
+        let err =
+            compare_in(&needle, &dict).expect_err("unhashable key should fail dictionary membership");
+        assert!(err.message.contains("unhashable type: 'list'"));
+    }
+
+    #[test]
+    fn compare_in_for_bytes_like_values_obeys_byte_range() {
+        let heap = Heap::new();
+        let bytes = heap.alloc_bytes(vec![1, 2, 3]);
+        let bytearray = heap.alloc_bytearray(vec![4, 5, 6]);
+        let memoryview = match &bytearray {
+            Value::ByteArray(obj) => heap.alloc_memoryview(obj.clone()),
+            _ => unreachable!(),
+        };
+
+        assert!(compare_in(&Value::Int(2), &bytes).expect("valid membership"));
+        assert!(!compare_in(&Value::Int(300), &bytes).expect("out-of-range should be false"));
+        assert!(compare_in(&Value::Int(5), &bytearray).expect("bytearray membership"));
+        assert!(compare_in(&Value::Int(6), &memoryview).expect("memoryview membership"));
+    }
+
+    #[test]
+    fn string_percent_c_enforces_range_and_type() {
+        let range_err = mod_values(Value::Str("%c".to_string()), Value::Int(0x110000))
+            .expect_err("out of range codepoint should fail");
+        assert!(range_err.message.contains("%c arg not in range"));
+
+        let heap = Heap::new();
+        let type_err = mod_values(
+            Value::Str("%c".to_string()),
+            heap.alloc_list(vec![Value::Int(1)]),
+        )
+            .expect_err("non-int/char argument should fail");
+        assert!(type_err.message.contains("%c requires int or char"));
+    }
+
+    #[test]
+    fn mul_values_handles_zero_and_negative_repeat_counts() {
+        let heap = Heap::new();
+        let repeated = mul_values(Value::Str("ab".to_string()), Value::Int(0), &heap)
+            .expect("zero repeat should succeed");
+        assert_eq!(repeated, Value::Str(String::new()));
+
+        let list = heap.alloc_list(vec![Value::Int(1), Value::Int(2)]);
+        let repeated_list =
+            mul_values(list, Value::Int(-3), &heap).expect("negative repeat should succeed");
+        match repeated_list {
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => assert!(values.is_empty()),
+                other => panic!("expected list object, got {other:?}"),
+            },
+            other => panic!("expected list value, got {other:?}"),
+        }
+    }
+}

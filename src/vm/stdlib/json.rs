@@ -743,6 +743,7 @@ fn json_node_to_value(node: JsonNode, heap: &Heap) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn json_escape_string_ensure_ascii_uses_lowercase_hex() {
@@ -827,5 +828,58 @@ mod tests {
             JsonNode::String(value) => assert_eq!(value, "😊"),
             other => panic!("expected string node, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn json_escape_string_allows_non_ascii_when_disabled() {
+        let escaped = json_escape_string("A☺😊", false);
+        assert_eq!(escaped, "\"A☺😊\"");
+    }
+
+    #[test]
+    fn parse_json_node_rejects_invalid_escape_and_trailing_data() {
+        let escape_err = parse_json_node("\"\\q\"").expect_err("invalid escape should fail");
+        assert!(escape_err.message.contains("invalid JSON escape"));
+
+        let trailing_err =
+            parse_json_node("{\"a\": 1} tail").expect_err("trailing data should fail");
+        assert!(trailing_err.message.contains("trailing data"));
+    }
+
+    #[test]
+    fn parse_json_node_rejects_invalid_surrogate_sequences() {
+        let low_only = parse_json_node("\"\\udc00\"").expect_err("unpaired low surrogate");
+        assert!(low_only.message.contains("invalid unicode escape"));
+
+        let bad_pair =
+            parse_json_node("\"\\ud800\\u0041\"").expect_err("invalid surrogate pair");
+        assert!(bad_pair.message.contains("invalid unicode escape"));
+    }
+
+    #[test]
+    fn builtin_json_dumps_enforces_nan_and_skipkeys_contracts() {
+        let mut vm = Vm::new();
+
+        let nan_err = vm
+            .builtin_json_dumps(
+                vec![Value::Float(f64::NAN)],
+                HashMap::from([("allow_nan".to_string(), Value::Bool(false))]),
+            )
+            .expect_err("allow_nan=False should reject NaN");
+        assert!(nan_err.message.contains("not JSON compliant"));
+
+        let bad_key_dict = vm.heap.alloc_dict(vec![(Value::Int(1), Value::Str("x".to_string()))]);
+        let key_err = vm
+            .builtin_json_dumps(vec![bad_key_dict.clone()], HashMap::new())
+            .expect_err("non-string key should fail when skipkeys is false");
+        assert!(key_err.message.contains("keys must be str"));
+
+        let skipped = vm
+            .builtin_json_dumps(
+                vec![bad_key_dict],
+                HashMap::from([("skipkeys".to_string(), Value::Bool(true))]),
+            )
+            .expect("skipkeys=True should drop non-string keys");
+        assert_eq!(skipped, Value::Str("{}".to_string()));
     }
 }
