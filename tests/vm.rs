@@ -5029,6 +5029,26 @@ fn collections_namedtuple_supports_percent_tuple_formatting() {
 }
 
 #[test]
+fn collections_namedtuple_instances_support_iteration_len_and_getitem() {
+    let source = "import collections\nM = collections.namedtuple('M', 'a b c')\nm = M(1, 2, 3)\na, b, c = m\nok = (a == 1 and b == 2 and c == 3 and len(m) == 3 and m[1] == 2 and list(m) == [1, 2, 3])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collections_namedtuple_make_builds_instances_from_iterables() {
+    let source = "import collections\nM = collections.namedtuple('M', 'x y')\na = M._make([4, 5])\nb = M._make((6, 7))\nok = isinstance(a, M) and a.x == 4 and a.y == 5 and b.x == 6 and b.y == 7\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_atexit_register_unregister_run_and_clear() {
     let source = "import atexit\nout = []\ndef f(x):\n    out.append(x)\ndef g(x):\n    out.append(x)\natexit.register(f, 1)\natexit.register(g, 2)\natexit.unregister(f)\natexit.register(f, 3)\natexit._run_exitfuncs()\natexit._clear()\nok = out == [3, 2]\n";
     let module = parser::parse_module(source).expect("parse should succeed");

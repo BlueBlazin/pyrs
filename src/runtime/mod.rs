@@ -1887,6 +1887,7 @@ pub enum BuiltinFunction {
     CollectionsChainMapRepr,
     CollectionsChainMapItems,
     CollectionsNamedTuple,
+    CollectionsNamedTupleMake,
     CollectionsDefaultDict,
     TokenizeTokenizerIter,
     StructCalcSize,
@@ -3487,7 +3488,95 @@ impl BuiltinFunction {
                     };
                     class.attrs.insert(field.clone(), descriptor);
                 }
-                Ok(heap.alloc_class(class))
+                let class_value = heap.alloc_class(class);
+                let make_wrapper = match heap.alloc_module(ModuleObject::new("__classmethod__")) {
+                    Value::Module(module) => module,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *make_wrapper.kind_mut() {
+                    module_data.globals.insert(
+                        "__func__".to_string(),
+                        Value::Builtin(BuiltinFunction::CollectionsNamedTupleMake),
+                    );
+                }
+                if let Value::Class(class_ref) = &class_value {
+                    if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                        class_data
+                            .attrs
+                            .insert("_make".to_string(), Value::Module(make_wrapper));
+                    }
+                }
+                Ok(class_value)
+            }
+            BuiltinFunction::CollectionsNamedTupleMake => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new(
+                        "namedtuple._make() expects class and iterable",
+                    ));
+                }
+                let class = match &args[0] {
+                    Value::Class(class) => class.clone(),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "namedtuple._make() requires class receiver",
+                        ));
+                    }
+                };
+                let fields = match &*class.kind() {
+                    Object::Class(class_data) => match class_data.attrs.get("__pyrs_namedtuple_fields__") {
+                        Some(Value::Tuple(fields_obj)) => match &*fields_obj.kind() {
+                            Object::Tuple(values) => values
+                                .iter()
+                                .map(|value| match value {
+                                    Value::Str(name) => Some(name.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Option<Vec<_>>>(),
+                            _ => None,
+                        },
+                        Some(Value::List(fields_obj)) => match &*fields_obj.kind() {
+                            Object::List(values) => values
+                                .iter()
+                                .map(|value| match value {
+                                    Value::Str(name) => Some(name.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Option<Vec<_>>>(),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                }
+                .ok_or_else(|| RuntimeError::new("namedtuple._make() requires namedtuple class"))?;
+                let values = match &args[1] {
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => values.clone(),
+                        _ => return Err(RuntimeError::new("namedtuple._make() expects iterable")),
+                    },
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => values.clone(),
+                        _ => return Err(RuntimeError::new("namedtuple._make() expects iterable")),
+                    },
+                    _ => return Err(RuntimeError::new("namedtuple._make() expects iterable")),
+                };
+                if values.len() != fields.len() {
+                    return Err(RuntimeError::new(format!(
+                        "Expected {} arguments, got {}",
+                        fields.len(),
+                        values.len()
+                    )));
+                }
+                let instance = match heap.alloc_instance(InstanceObject::new(class.clone())) {
+                    Value::Instance(instance) => instance,
+                    _ => unreachable!(),
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    for (field, value) in fields.into_iter().zip(values.into_iter()) {
+                        instance_data.attrs.insert(field, value);
+                    }
+                }
+                Ok(Value::Instance(instance))
             }
             BuiltinFunction::TypesMappingProxy => {
                 if args.len() != 1 {

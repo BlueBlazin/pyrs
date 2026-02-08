@@ -8570,14 +8570,12 @@ impl Vm {
         class: &ObjRef,
         class_keywords: &HashMap<String, Value>,
     ) -> Result<bool, RuntimeError> {
-        let base = match &*class.kind() {
-            Object::Class(class_data) => class_data.bases.first().cloned(),
-            _ => None,
-        };
-        let Some(base) = base else {
-            return Ok(false);
-        };
-        let Some(init_subclass) = class_attr_lookup(&base, "__init_subclass__") else {
+        let mro = self.class_mro_entries(class);
+        let init_subclass = mro
+            .into_iter()
+            .skip(1)
+            .find_map(|candidate| class_attr_lookup_direct(&candidate, "__init_subclass__"));
+        let Some(init_subclass) = init_subclass else {
             return Ok(false);
         };
         match self.call_internal(
@@ -8998,6 +8996,14 @@ impl Vm {
             Object::Class(_) => Ok(Value::Class(receiver.clone())),
             Object::Generator(_) => Ok(Value::Generator(receiver.clone())),
             Object::Module(_) => Ok(Value::Module(receiver.clone())),
+            Object::List(_) => Ok(Value::List(receiver.clone())),
+            Object::Tuple(_) => Ok(Value::Tuple(receiver.clone())),
+            Object::Dict(_) => Ok(Value::Dict(receiver.clone())),
+            Object::Set(_) => Ok(Value::Set(receiver.clone())),
+            Object::FrozenSet(_) => Ok(Value::FrozenSet(receiver.clone())),
+            Object::Bytes(_) => Ok(Value::Bytes(receiver.clone())),
+            Object::ByteArray(_) => Ok(Value::ByteArray(receiver.clone())),
+            Object::MemoryView(_) => Ok(Value::MemoryView(receiver.clone())),
             _ => Err(RuntimeError::new("unsupported bound method receiver")),
         }
     }
@@ -9007,7 +9013,15 @@ impl Vm {
             Value::Instance(obj)
             | Value::Class(obj)
             | Value::Generator(obj)
-            | Value::Module(obj) => Ok(obj.clone()),
+            | Value::Module(obj)
+            | Value::List(obj)
+            | Value::Tuple(obj)
+            | Value::Dict(obj)
+            | Value::Set(obj)
+            | Value::FrozenSet(obj)
+            | Value::Bytes(obj)
+            | Value::ByteArray(obj)
+            | Value::MemoryView(obj) => Ok(obj.clone()),
             _ => Err(RuntimeError::new("unsupported bound-method receiver value")),
         }
     }
@@ -9513,6 +9527,12 @@ impl Vm {
     }
 
     fn load_attr_dict_method(&self, dict: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
+        if attr_name == "__contains__" {
+            return Ok(self.alloc_builtin_bound_method(
+                BuiltinFunction::OperatorContains,
+                dict,
+            ));
+        }
         let kind = match attr_name {
             "keys" => NativeMethodKind::DictKeys,
             "values" => NativeMethodKind::DictValues,
@@ -13446,6 +13466,9 @@ impl Vm {
                 _ => Err(RuntimeError::new("yield from expects iterable")),
             },
             Value::Instance(instance) => {
+                if let Some(values) = self.namedtuple_instance_values(&instance) {
+                    return self.to_iterator_value(self.heap.alloc_tuple(values));
+                }
                 if let Some(backing_list) = self.instance_backing_list(&instance) {
                     return self.to_iterator_value(Value::List(backing_list));
                 }
@@ -13645,6 +13668,18 @@ impl Vm {
             },
             _ => None,
         }
+    }
+
+    fn namedtuple_instance_values(&self, instance: &ObjRef) -> Option<Vec<Value>> {
+        let instance_ref = instance.kind();
+        let Object::Instance(instance_data) = &*instance_ref else {
+            return None;
+        };
+        let fields = self.class_namedtuple_fields(&instance_data.class)?;
+        fields
+            .iter()
+            .map(|field| instance_data.attrs.get(field).cloned())
+            .collect()
     }
 
     fn class_disallow_instantiation_message(&self, class: &ObjRef) -> Option<String> {
@@ -14769,6 +14804,9 @@ impl Vm {
             BuiltinFunction::CsvListDialects => self.builtin_csv_list_dialects(args, kwargs),
             BuiltinFunction::CsvFieldSizeLimit => self.builtin_csv_field_size_limit(args, kwargs),
             BuiltinFunction::CsvDialectValidate => self.builtin_csv_dialect_validate(args, kwargs),
+            BuiltinFunction::CollectionsNamedTupleMake => {
+                self.builtin_collections_namedtuple_make(args, kwargs)
+            }
             BuiltinFunction::AtexitRegister => self.builtin_atexit_register(args, kwargs),
             BuiltinFunction::AtexitUnregister => self.builtin_atexit_unregister(args, kwargs),
             BuiltinFunction::AtexitRunExitFuncs => self.builtin_atexit_run_exitfuncs(args, kwargs),
@@ -15189,6 +15227,9 @@ impl Vm {
             return Err(RuntimeError::new("len() expects one argument"));
         }
         if let Value::Instance(instance) = &args[0] {
+            if let Some(values) = self.namedtuple_instance_values(instance) {
+                return Ok(Value::Int(values.len() as i64));
+            }
             if let Some(backing_list) = self.instance_backing_list(instance) {
                 if let Object::List(values) = &*backing_list.kind() {
                     return Ok(Value::Int(values.len() as i64));
@@ -15203,6 +15244,45 @@ impl Vm {
             }
         }
         BuiltinFunction::Len.call(&self.heap, args)
+    }
+
+    fn builtin_collections_namedtuple_make(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "namedtuple._make() expects iterable",
+            ));
+        }
+        let class = match &args[0] {
+            Value::Class(class) => class.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "namedtuple._make() requires class receiver",
+                ));
+            }
+        };
+        let Some(fields) = self.class_namedtuple_fields(&class) else {
+            return Err(RuntimeError::new(
+                "namedtuple._make() requires namedtuple class",
+            ));
+        };
+        let values = self.collect_iterable_values(args[1].clone())?;
+        if values.len() != fields.len() {
+            return Err(RuntimeError::new(format!(
+                "Expected {} arguments, got {}",
+                fields.len(),
+                values.len()
+            )));
+        }
+        match self.call_internal(Value::Class(class), values, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("namedtuple._make() failed"))
+            }
+        }
     }
 
     fn builtin_dir(
@@ -27774,6 +27854,9 @@ impl Vm {
 
     fn getitem_value(&mut self, value: Value, index: Value) -> Result<Value, RuntimeError> {
         if let Value::Instance(instance) = &value {
+            if let Some(values) = self.namedtuple_instance_values(instance) {
+                return self.getitem_value(self.heap.alloc_tuple(values), index);
+            }
             if let Some(backing_list) = self.instance_backing_list(instance) {
                 return self.getitem_value(Value::List(backing_list), index);
             }
@@ -28055,8 +28138,7 @@ impl Vm {
                         GeneratorResumeOutcome::Yield(value) => out.push(value),
                         GeneratorResumeOutcome::Complete(_) => break,
                         GeneratorResumeOutcome::PropagatedException => {
-                            self.propagate_pending_generator_exception()?;
-                            return Err(RuntimeError::new("iteration failed"));
+                            return Err(self.iteration_error_from_state("iteration failed")?);
                         }
                     }
                 }
@@ -28069,7 +28151,7 @@ impl Vm {
                         GeneratorResumeOutcome::Yield(value) => out.push(value),
                         GeneratorResumeOutcome::Complete(_) => break,
                         GeneratorResumeOutcome::PropagatedException => {
-                            return Err(RuntimeError::new("iteration failed"));
+                            return Err(self.iteration_error_from_state("iteration failed")?);
                         }
                     }
                 }
