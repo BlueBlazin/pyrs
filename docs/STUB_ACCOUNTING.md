@@ -16,7 +16,7 @@ Nothing is allowed to stay "half-implemented" without a tracked owner and closur
 - `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` are strict P0 release blockers.
 - Milestone 13 is not complete while any of those rows remain partial.
 - Closure proof requirements:
-1. CPython suites for `test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness/CI scope with owned allowlist expectations.
+1. CPython suites for `test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness/CI scope, including strict unittest execution lane (`tests/cpython_suite_strict_stdlib.txt`) with owned allowlist expectations (`tests/cpython_allowlist_strict.txt`).
 2. Differential and malformed-input regression coverage for parser/decoder safety behavior.
 3. Baseline throughput/allocation benchmark reporting against representative payload sizes.
 

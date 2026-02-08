@@ -237,14 +237,14 @@ Progress:
 ### Milestone 11 — Testing and Parity Gate (P0/P1)
 DoD:
 - CPython `Lib/test` harness is first-class (not ignored by default in CI/profile used for parity).
-- Curated `Lib/test` language/import subsets pass with strict ownership tracking for any expected gaps.
+- Curated `Lib/test` language/import/strict-stdlib subsets pass with strict ownership tracking for any expected gaps.
 - Differential tests versus CPython and parser/VM fuzzing run continuously.
 - Real-world pure-Python applications pass curated smoke/regression suites.
 - Residual Milestone 8/9 semantic gaps (`__getattribute__` edge parity, metaclass precedence/selection, `__slots__` layout edge cases, full codecs behavior) are either closed or explicitly scoped with failing tests and ownership.
 Status: complete
 Progress:
-- CPython harness is now first-class and non-ignored (`tests/cpython_harness.rs`) with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`) plus strict allowlist ownership/category tracking (`tests/cpython_allowlist.txt`) and stale-allowlist detection.
-- Current curated language/import harness suites pass with an empty allowlist (`tests/cpython_allowlist.txt`).
+- CPython harness is now first-class and non-ignored (`tests/cpython_harness.rs`) with split suites (`tests/cpython_suite_language.txt`, `tests/cpython_suite_imports.txt`, `tests/cpython_suite_strict_stdlib.txt`) plus strict allowlist ownership/category tracking (`tests/cpython_allowlist.txt`, `tests/cpython_allowlist_strict.txt`) and stale-allowlist detection.
+- Current curated language/import harness suites pass with an empty allowlist (`tests/cpython_allowlist.txt`), and the strict stdlib suite is active with owned entries in `tests/cpython_allowlist_strict.txt`.
 - Differential-vs-CPython coverage landed in `tests/differential_cpython.rs` for curated corpus and arithmetic fuzz expressions.
 - Parser/compiler/VM no-panic fuzzing landed in `tests/fuzz_parser_vm.rs`.
 - Curated real-world smoke coverage landed in `tests/realworld_smoke.rs` and is executed in a constrained subprocess profile (`env_clear`, isolated temp cwd/home, and timeout enforcement).
@@ -342,6 +342,7 @@ Progress:
 - Runtime compatibility slice landed for stdlib bootstrap: `__getattr__` fallback now triggers when `__getattribute__` raises `AttributeError`, `str()`/`float()` now accept zero-argument forms, `io.text_encoding` is implemented, and `os.getenv`/`os.write` plus `random.choices` (including `Random` instance method path) are available with regressions.
 - Enum/import closure follow-up landed: metaclass `__call__` dispatch for class invocation is now wired through unified call paths, enum shim functional-call import paths no longer fail, and baseline `datetime.date(...)` constructor support is in place for stdlib import-time usage.
 - Active Milestone 13 blockers remain explicit: `_io.open` still lacks CPython file-object semantics needed by `tempfile`/`test_csv` execution paths, and strict standalone `test_csv` unittest execution still fails under `unittest.runner` (the prior `_csv` `StopIteration` propagation failure is fixed; remaining failures are broader unittest/io/re/parity gaps).
+- Strict stdlib harness lane is now first-class: `tests/cpython_suite_strict_stdlib.txt` executes modules via `unittest` in `tests/cpython_harness.rs`, with owned allowlist tracking in `tests/cpython_allowlist_strict.txt`.
 - Async control-flow parity fix landed: lowered `async for` now clears `StopAsyncIteration` through normal handler flow and exits via an explicit exhaustion flag, preventing stale active-exception leakage into subsequent calls.
 - User-defined exception class-constructor parity fix landed: exception subclasses without explicit `__init__` now accept positional args and populate `.args` (instead of failing with `class constructor takes no arguments`).
 - Fallback resource-shim correctness fix landed: `pkgutil.get_data` and `importlib.resources` shim `read_*` paths now return bytes/text payloads, not file-handle objects.
