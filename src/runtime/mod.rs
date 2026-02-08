@@ -245,6 +245,7 @@ pub enum NativeMethodKind {
     ReMatchSpan,
     ExceptionWithTraceback,
     ExceptionAddNote,
+    ObjectReduceExBound,
     ComplexReduceEx,
     ClassRegister,
     PropertyGet,
@@ -5233,6 +5234,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::ExceptionAddNote => {
                         "<bound method BaseException.add_note>".to_string()
+                    }
+                    NativeMethodKind::ObjectReduceExBound => {
+                        "<bound method object.__reduce_ex__>".to_string()
                     }
                     NativeMethodKind::ComplexReduceEx => {
                         "<bound method complex.__reduce_ex__>".to_string()

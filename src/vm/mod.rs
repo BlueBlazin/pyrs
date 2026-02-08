@@ -9744,6 +9744,20 @@ impl Vm {
         self.alloc_native_bound_method(NativeMethodKind::Builtin(builtin), receiver)
     }
 
+    fn alloc_reduce_ex_bound_method(&self, value: Value) -> Value {
+        let wrapper = match self
+            .heap
+            .alloc_module(ModuleObject::new("__object_reduce_ex_bound__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+            module_data.globals.insert("value".to_string(), value);
+        }
+        self.alloc_native_bound_method(NativeMethodKind::ObjectReduceExBound, wrapper)
+    }
+
     fn load_dunder_class_attr(&self, value: &Value) -> Result<Value, RuntimeError> {
         if let Some(class) = self.class_of_value(value) {
             return Ok(Value::Class(class));
@@ -9948,6 +9962,15 @@ impl Vm {
         }
     }
 
+    fn builtin_runtime_name(&self, builtin: BuiltinFunction) -> String {
+        for (name, value) in &self.builtins {
+            if matches!(value, Value::Builtin(candidate) if *candidate == builtin) {
+                return name.clone();
+            }
+        }
+        self.builtin_type_name(builtin).to_string()
+    }
+
     fn builtin_type_dict_entries(&self, builtin: BuiltinFunction) -> Vec<(Value, Value)> {
         let mut entries = Vec::new();
         if builtin == BuiltinFunction::Dict {
@@ -10005,7 +10028,7 @@ impl Vm {
                 .heap
                 .alloc_dict(self.builtin_type_dict_entries(builtin))),
             "__name__" | "__qualname__" => {
-                Ok(Value::Str(self.builtin_type_name(builtin).to_string()))
+                Ok(Value::Str(self.builtin_runtime_name(builtin)))
             }
             "__module__" => Ok(Value::Str(builtin_module_name.to_string())),
             "__self__" => Ok(Value::Builtin(builtin)),
@@ -10079,7 +10102,9 @@ impl Vm {
                 Ok(Value::Builtin(BuiltinFunction::CollectionsDequeTypeRepr))
             }
             "__repr__" | "__str__" | "__format__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
-            "__reduce_ex__" => Ok(Value::Builtin(BuiltinFunction::ObjectReduceEx)),
+            "__reduce_ex__" | "__reduce__" => {
+                Ok(self.alloc_reduce_ex_bound_method(Value::Builtin(builtin)))
+            }
             "bit_length" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntBitLength))
             }
@@ -13947,6 +13972,26 @@ impl Vm {
                 };
                 exception.notes.push(note);
                 Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::ObjectReduceExBound => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "__reduce_ex__() takes at most one protocol argument",
+                    ));
+                }
+                let receiver_kind = receiver.kind();
+                let Object::Module(module_data) = &*receiver_kind else {
+                    return Err(RuntimeError::new("object reduce receiver is invalid"));
+                };
+                let Some(value) = module_data.globals.get("value").cloned() else {
+                    return Err(RuntimeError::new("object reduce receiver is invalid"));
+                };
+                let mut forwarded = vec![value];
+                if let Some(protocol) = args.first() {
+                    forwarded.push(protocol.clone());
+                }
+                let reduced = self.builtin_object_reduce_ex(forwarded, HashMap::new())?;
+                Ok(NativeCallResult::Value(reduced))
             }
             NativeMethodKind::ComplexReduceEx => {
                 if args.len() > 1 {

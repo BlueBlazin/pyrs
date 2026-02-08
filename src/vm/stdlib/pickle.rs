@@ -151,6 +151,9 @@ impl Vm {
         if args.len() == 2 {
             let _ = value_to_int(args[1].clone())?;
         }
+        if let Value::Builtin(builtin) = &value {
+            return Ok(Value::Str(self.builtin_runtime_name(*builtin)));
+        }
         if let Value::Instance(instance) = &value {
             if let Some(class_name) = class_name_for_instance(instance) {
                 if class_name == "__csv_dialect__" {
