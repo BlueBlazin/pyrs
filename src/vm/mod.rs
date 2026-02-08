@@ -3339,6 +3339,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::StringIONext),
                             );
                             class_data.attrs.insert(
+                                "__enter__".to_string(),
+                                Value::Builtin(BuiltinFunction::StringIOEnter),
+                            );
+                            class_data.attrs.insert(
+                                "__exit__".to_string(),
+                                Value::Builtin(BuiltinFunction::StringIOExit),
+                            );
+                            class_data.attrs.insert(
                                 "write".to_string(),
                                 Value::Builtin(BuiltinFunction::StringIOWrite),
                             );
@@ -5502,6 +5510,7 @@ impl Vm {
                                             wrapper,
                                         )
                                     }
+                                    "__class__" => Value::ExceptionType(exception.name.clone()),
                                     "__cause__" => exception
                                         .cause
                                         .as_ref()
@@ -6744,9 +6753,19 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
-                                let caller_idx = self.frames.len().saturating_sub(1);
-                                let result = self.call_builtin(builtin, args, HashMap::new())?;
-                                self.push_value_to_caller_frame(caller_idx, result)?;
+                                let caller_depth = self.frames.len();
+                                let caller_idx = caller_depth.saturating_sub(1);
+                                let caller_ip = self
+                                    .frames
+                                    .get(caller_idx)
+                                    .map(|frame| frame.ip)
+                                    .unwrap_or(0);
+                                let call_result = self.call_builtin(builtin, args, HashMap::new());
+                                self.finalize_builtin_opcode_call(
+                                    caller_depth,
+                                    caller_ip,
+                                    call_result,
+                                )?;
                             }
                             Value::Instance(instance) => {
                                 let receiver = Value::Instance(instance.clone());
@@ -6918,9 +6937,19 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
-                                let caller_idx = self.frames.len().saturating_sub(1);
-                                let result = self.call_builtin(builtin, args, kwargs)?;
-                                self.push_value_to_caller_frame(caller_idx, result)?;
+                                let caller_depth = self.frames.len();
+                                let caller_idx = caller_depth.saturating_sub(1);
+                                let caller_ip = self
+                                    .frames
+                                    .get(caller_idx)
+                                    .map(|frame| frame.ip)
+                                    .unwrap_or(0);
+                                let call_result = self.call_builtin(builtin, args, kwargs);
+                                self.finalize_builtin_opcode_call(
+                                    caller_depth,
+                                    caller_ip,
+                                    call_result,
+                                )?;
                             }
                             Value::Instance(instance) => {
                                 let receiver = Value::Instance(instance.clone());
@@ -7063,9 +7092,19 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
-                                let caller_idx = self.frames.len().saturating_sub(1);
-                                let result = self.call_builtin(builtin, args, kwargs)?;
-                                self.push_value_to_caller_frame(caller_idx, result)?;
+                                let caller_depth = self.frames.len();
+                                let caller_idx = caller_depth.saturating_sub(1);
+                                let caller_ip = self
+                                    .frames
+                                    .get(caller_idx)
+                                    .map(|frame| frame.ip)
+                                    .unwrap_or(0);
+                                let call_result = self.call_builtin(builtin, args, kwargs);
+                                self.finalize_builtin_opcode_call(
+                                    caller_depth,
+                                    caller_ip,
+                                    call_result,
+                                )?;
                             }
                             Value::Instance(instance) => {
                                 let receiver = Value::Instance(instance.clone());
@@ -7169,9 +7208,19 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
-                                let caller_idx = self.frames.len().saturating_sub(1);
-                                let result = self.call_builtin(builtin, args, kwargs)?;
-                                self.push_value_to_caller_frame(caller_idx, result)?;
+                                let caller_depth = self.frames.len();
+                                let caller_idx = caller_depth.saturating_sub(1);
+                                let caller_ip = self
+                                    .frames
+                                    .get(caller_idx)
+                                    .map(|frame| frame.ip)
+                                    .unwrap_or(0);
+                                let call_result = self.call_builtin(builtin, args, kwargs);
+                                self.finalize_builtin_opcode_call(
+                                    caller_depth,
+                                    caller_ip,
+                                    call_result,
+                                )?;
                             }
                             Value::Instance(instance) => {
                                 let receiver = Value::Instance(instance.clone());
@@ -7289,9 +7338,19 @@ impl Vm {
                                 }
                             }
                             Value::Builtin(builtin) => {
-                                let caller_idx = self.frames.len().saturating_sub(1);
-                                let result = self.call_builtin(builtin, args, kwargs)?;
-                                self.push_value_to_caller_frame(caller_idx, result)?;
+                                let caller_depth = self.frames.len();
+                                let caller_idx = caller_depth.saturating_sub(1);
+                                let caller_ip = self
+                                    .frames
+                                    .get(caller_idx)
+                                    .map(|frame| frame.ip)
+                                    .unwrap_or(0);
+                                let call_result = self.call_builtin(builtin, args, kwargs);
+                                self.finalize_builtin_opcode_call(
+                                    caller_depth,
+                                    caller_ip,
+                                    call_result,
+                                )?;
                             }
                             Value::Instance(instance) => {
                                 let receiver = Value::Instance(instance.clone());
@@ -9298,6 +9357,7 @@ impl Vm {
             "rsplit" => NativeMethodKind::StrRSplit,
             "partition" => NativeMethodKind::StrPartition,
             "rpartition" => NativeMethodKind::StrRPartition,
+            "count" => NativeMethodKind::StrCount,
             "find" => NativeMethodKind::StrFind,
             "rfind" => NativeMethodKind::StrRFind,
             "lstrip" => NativeMethodKind::StrLStrip,
@@ -10069,6 +10129,40 @@ impl Vm {
         Ok(Some(attr))
     }
 
+    fn caller_exception_handled(&self, caller_depth: usize, caller_ip: usize) -> bool {
+        if self.frames.len() < caller_depth {
+            return true;
+        }
+        self.frames
+            .get(caller_depth.saturating_sub(1))
+            .map(|frame| frame.ip != caller_ip)
+            .unwrap_or(false)
+    }
+
+    fn finalize_builtin_opcode_call(
+        &mut self,
+        caller_depth: usize,
+        caller_ip: usize,
+        result: Result<Value, RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        match result {
+            Ok(value) => {
+                if !self.caller_exception_handled(caller_depth, caller_ip) {
+                    let caller_idx = caller_depth.saturating_sub(1);
+                    self.push_value_to_caller_frame(caller_idx, value)?;
+                }
+                Ok(())
+            }
+            Err(err) => {
+                if self.caller_exception_handled(caller_depth, caller_ip) {
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
     fn call_internal(
         &mut self,
         callable: Value,
@@ -10127,13 +10221,22 @@ impl Vm {
                 }
             }
             Value::Builtin(builtin) => {
-                let result = self.call_builtin(builtin, args, kwargs)?;
-                if let Some(caller) = self.frames.get(caller_depth - 1) {
-                    if caller.active_exception.is_some() || caller.ip != caller_ip {
-                        return Ok(InternalCallOutcome::CallerExceptionHandled);
+                return match self.call_builtin(builtin, args, kwargs) {
+                    Ok(result) => {
+                        if self.caller_exception_handled(caller_depth, caller_ip) {
+                            Ok(InternalCallOutcome::CallerExceptionHandled)
+                        } else {
+                            Ok(InternalCallOutcome::Value(result))
+                        }
                     }
-                }
-                return Ok(InternalCallOutcome::Value(result));
+                    Err(err) => {
+                        if self.caller_exception_handled(caller_depth, caller_ip) {
+                            Ok(InternalCallOutcome::CallerExceptionHandled)
+                        } else {
+                            Err(err)
+                        }
+                    }
+                };
             }
             Value::Instance(instance) => {
                 let receiver = Value::Instance(instance.clone());
@@ -10274,7 +10377,7 @@ impl Vm {
             .frames
             .get(caller_depth - 1)
             .ok_or_else(|| RuntimeError::new("caller frame missing"))?;
-        if caller.active_exception.is_some() || caller.ip != caller_ip {
+        if caller.ip != caller_ip {
             return Ok(InternalCallOutcome::CallerExceptionHandled);
         }
 
@@ -10729,6 +10832,7 @@ impl Vm {
                 "match" => Some(NativeMethodKind::RePatternMatch),
                 "fullmatch" => Some(NativeMethodKind::RePatternFullMatch),
                 "sub" => Some(NativeMethodKind::RePatternSub),
+                "findall" => Some(NativeMethodKind::Builtin(BuiltinFunction::RePatternFindAll)),
                 _ => None,
             };
             if let Some(kind) = kind {
@@ -10803,6 +10907,12 @@ impl Vm {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
         };
+        if matches!(
+            &*class_ref.kind(),
+            Object::Class(class_data) if class_data.name == "__csv_dialect__"
+        ) {
+            return Err(RuntimeError::new("csv dialect attributes are read-only"));
+        }
 
         if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
             let (_getter, setter, _deleter) = self.descriptor_hooks(&descriptor)?;
@@ -10880,6 +10990,12 @@ impl Vm {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
         };
+        if matches!(
+            &*class_ref.kind(),
+            Object::Class(class_data) if class_data.name == "__csv_dialect__"
+        ) {
+            return Err(RuntimeError::new("csv dialect attributes are read-only"));
+        }
 
         if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
             let (_getter, _setter, deleter) = self.descriptor_hooks(&descriptor)?;
@@ -10927,6 +11043,7 @@ impl Vm {
                     | NativeMethodKind::StrSplit
                     | NativeMethodKind::StrSplitLines
                     | NativeMethodKind::StrRSplit
+                    | NativeMethodKind::StrCount
                     | NativeMethodKind::StrFind
                     | NativeMethodKind::StrRFind
                     | NativeMethodKind::ListSort
@@ -12208,6 +12325,80 @@ impl Vm {
                 };
                 Ok(NativeCallResult::Value(self.heap.alloc_tuple(parts)))
             }
+            NativeMethodKind::StrCount => {
+                let start_kw = kwargs.remove("start");
+                let end_kw = kwargs.remove("end");
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "count() got an unexpected keyword argument",
+                    ));
+                }
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "count() expects sub, optional start, optional end",
+                    ));
+                }
+                if start_kw.is_some() && args.len() > 1 {
+                    return Err(RuntimeError::new("count() got multiple values for start"));
+                }
+                if end_kw.is_some() && args.len() > 2 {
+                    return Err(RuntimeError::new("count() got multiple values for end"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let needle = match &args[0] {
+                    Value::Str(value) => value.clone(),
+                    _ => return Err(RuntimeError::new("count() substring must be str")),
+                };
+                let len = text.len() as i64;
+                let mut start = if let Some(value) = start_kw {
+                    value_to_int(value)?
+                } else if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let mut end = if let Some(value) = end_kw {
+                    value_to_int(value)?
+                } else if let Some(value) = args.get(2) {
+                    value_to_int(value.clone())?
+                } else {
+                    len
+                };
+                if start < 0 {
+                    start += len;
+                }
+                if end < 0 {
+                    end += len;
+                }
+                start = start.clamp(0, len);
+                end = end.clamp(0, len);
+                if end < start {
+                    return Ok(NativeCallResult::Value(Value::Int(0)));
+                }
+                let start_idx = start as usize;
+                let end_idx = end as usize;
+                let Some(slice) = text.get(start_idx..end_idx) else {
+                    return Ok(NativeCallResult::Value(Value::Int(0)));
+                };
+                if needle.is_empty() {
+                    let count = slice.chars().count() as i64 + 1;
+                    return Ok(NativeCallResult::Value(Value::Int(count)));
+                }
+                let mut remaining = slice;
+                let mut count = 0i64;
+                while let Some(index) = remaining.find(&needle) {
+                    count += 1;
+                    let next = index + needle.len();
+                    remaining = &remaining[next..];
+                }
+                Ok(NativeCallResult::Value(Value::Int(count)))
+            }
             NativeMethodKind::StrFind | NativeMethodKind::StrRFind => {
                 let method_name = if matches!(kind, NativeMethodKind::StrFind) {
                     "find"
@@ -13083,7 +13274,7 @@ impl Vm {
                         _ => Err(RuntimeError::new("__iter__() returned non-iterator")),
                     },
                     InternalCallOutcome::CallerExceptionHandled => {
-                        Err(RuntimeError::new("__iter__() failed"))
+                        Err(self.runtime_error_from_active_exception("__iter__() failed"))
                     }
                 }
             }
@@ -13858,6 +14049,7 @@ impl Vm {
             BuiltinFunction::FrozenSet => self.builtin_frozenset(args, kwargs),
             BuiltinFunction::Min => self.builtin_min(args, kwargs),
             BuiltinFunction::Max => self.builtin_max(args, kwargs),
+            BuiltinFunction::Sum => self.builtin_sum(args, kwargs),
             BuiltinFunction::Sorted => self.builtin_sorted(args, kwargs),
             BuiltinFunction::All => self.builtin_all(args, kwargs),
             BuiltinFunction::Any => self.builtin_any(args, kwargs),
@@ -14050,6 +14242,7 @@ impl Vm {
             BuiltinFunction::ReFullMatch => self.builtin_re_fullmatch(args, kwargs),
             BuiltinFunction::ReCompile => self.builtin_re_compile(args, kwargs),
             BuiltinFunction::ReEscape => self.builtin_re_escape(args, kwargs),
+            BuiltinFunction::RePatternFindAll => self.builtin_re_pattern_findall(args, kwargs),
             BuiltinFunction::OperatorAdd => self.builtin_operator_add(args, kwargs),
             BuiltinFunction::OperatorSub => self.builtin_operator_sub(args, kwargs),
             BuiltinFunction::OperatorMul => self.builtin_operator_mul(args, kwargs),
@@ -14194,6 +14387,8 @@ impl Vm {
             BuiltinFunction::StringIOTell => self.builtin_stringio_tell(args, kwargs),
             BuiltinFunction::StringIOIter => self.builtin_stringio_iter(args, kwargs),
             BuiltinFunction::StringIONext => self.builtin_stringio_next(args, kwargs),
+            BuiltinFunction::StringIOEnter => self.builtin_stringio_enter(args, kwargs),
+            BuiltinFunction::StringIOExit => self.builtin_stringio_exit(args, kwargs),
             BuiltinFunction::StringFormatterParser => {
                 self.builtin_string_formatter_parser(args, kwargs)
             }
@@ -16152,6 +16347,13 @@ impl Vm {
         if args.len() == 2 {
             let _ = value_to_int(args[1].clone())?;
         }
+        if let Value::Instance(instance) = &value {
+            if let Some(class_name) = class_name_for_instance(instance) {
+                if class_name == "__csv_dialect__" {
+                    return Err(RuntimeError::new("cannot pickle 'Dialect' instances"));
+                }
+            }
+        }
         let class_value = self
             .class_of_value(&value)
             .map(Value::Class)
@@ -16418,6 +16620,38 @@ impl Vm {
         self.builtin_min_max(args, kwargs, Ordering::Greater, "max")
     }
 
+    fn builtin_sum(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("sum() expects 1-2 arguments"));
+        }
+        let start_kw = kwargs.remove("start");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "sum() got an unexpected keyword argument",
+            ));
+        }
+        if start_kw.is_some() && args.len() > 1 {
+            return Err(RuntimeError::new("sum() got multiple values"));
+        }
+        let start = if let Some(value) = start_kw {
+            value
+        } else if args.len() == 2 {
+            args.remove(1)
+        } else {
+            Value::Int(0)
+        };
+        let values = self.collect_iterable_values(args.remove(0))?;
+        let mut total = start;
+        for value in values {
+            total = add_values(total, value, &self.heap)?;
+        }
+        Ok(total)
+    }
+
     fn builtin_min_max(
         &mut self,
         mut args: Vec<Value>,
@@ -16668,8 +16902,7 @@ impl Vm {
                     }
                     GeneratorResumeOutcome::Complete(_) => break,
                     GeneratorResumeOutcome::PropagatedException => {
-                        self.propagate_pending_generator_exception()?;
-                        return Err(RuntimeError::new("iteration failed"));
+                        return Err(self.iteration_error_from_state("iteration failed")?);
                     }
                 }
             },
@@ -16859,7 +17092,14 @@ impl Vm {
             },
             Value::Builtin(expected_builtin) => match candidate {
                 Value::Builtin(candidate_builtin) => Ok(candidate_builtin == expected_builtin),
-                Value::Class(_) => Ok(matches!(expected_builtin, BuiltinFunction::Type)),
+                Value::Class(class) => {
+                    if !matches!(expected_builtin, BuiltinFunction::Type) {
+                        return Ok(false);
+                    }
+                    Ok(self.class_mro_entries(class).iter().any(|entry| {
+                        matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "type")
+                    }))
+                }
                 Value::ExceptionType(_) => Ok(matches!(expected_builtin, BuiltinFunction::Type)),
                 _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
             },
@@ -16946,8 +17186,7 @@ impl Vm {
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
-                    self.propagate_pending_generator_exception()?;
-                    Err(RuntimeError::new("StopIteration"))
+                    Err(self.iteration_error_from_state("next() iteration failed")?)
                 }
             },
             Value::Iterator(iterator_ref) => {
@@ -16969,19 +17208,7 @@ impl Vm {
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
-                    if self.pending_generator_exception.is_some() {
-                        self.propagate_pending_generator_exception()?;
-                    }
-                    if self
-                        .frames
-                        .last()
-                        .and_then(|frame| frame.active_exception.as_ref())
-                        .is_some()
-                    {
-                        Ok(Value::None)
-                    } else {
-                        Err(RuntimeError::new("next() iteration failed"))
-                    }
+                    Err(self.iteration_error_from_state("next() iteration failed")?)
                 }
             },
             _ => Err(RuntimeError::new("next() argument is not iterable")),
@@ -17055,7 +17282,7 @@ impl Vm {
                         return Ok(self.heap.alloc_list(mapped));
                     }
                     GeneratorResumeOutcome::PropagatedException => {
-                        return Err(RuntimeError::new("map() iteration failed"));
+                        return Err(self.iteration_error_from_state("map() iteration failed")?);
                     }
                 }
             }
@@ -17090,7 +17317,7 @@ impl Vm {
                 GeneratorResumeOutcome::Yield(value) => value,
                 GeneratorResumeOutcome::Complete(_) => break,
                 GeneratorResumeOutcome::PropagatedException => {
-                    return Err(RuntimeError::new("filter() iteration failed"));
+                    return Err(self.iteration_error_from_state("filter() iteration failed")?);
                 }
             };
 
@@ -21558,56 +21785,94 @@ impl Vm {
         let quotechar = self.extract_csv_quotechar(dialect_arg.clone(), &mut kwargs)?;
         let escapechar = self.extract_csv_escapechar(dialect_arg.clone(), &mut kwargs)?;
         let skipinitialspace = self.extract_csv_skipinitialspace(dialect_arg.clone(), &mut kwargs)?;
-        let quoting = self.extract_csv_quoting(dialect_arg.clone(), &mut kwargs)?;
-        let _doublequote = self.extract_csv_doublequote(dialect_arg.clone(), &mut kwargs)?;
+        let mut quoting = self.extract_csv_quoting(dialect_arg.clone(), &mut kwargs)?;
+        let doublequote = self.extract_csv_doublequote(dialect_arg.clone(), &mut kwargs)?;
+        let lineterminator = self.extract_csv_lineterminator(dialect_arg.clone(), &mut kwargs)?;
         let strict = self.extract_csv_strict(dialect_arg, &mut kwargs)?;
+        if quotechar.is_none() && quoting == 0 {
+            quoting = 3;
+        }
+        validate_csv_parameter_consistency(
+            delimiter,
+            quotechar,
+            escapechar,
+            skipinitialspace,
+            &lineterminator,
+            quoting,
+        )?;
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "reader() got unexpected keyword arguments",
             ));
         }
-        let rows = self.collect_iterable_values(source)?;
-        let mut parsed_rows = Vec::with_capacity(rows.len());
-        let field_limit = if self.csv_field_size_limit >= 0 {
-            Some(self.csv_field_size_limit as usize)
-        } else {
-            None
-        };
-        for row in rows {
-            let mut text = self.coerce_csv_field_text(row)?;
-            if text.ends_with('\n') {
-                text.pop();
-                if text.ends_with('\r') {
-                    text.pop();
-                }
+        let iterator = match self.to_iterator_value(source) {
+            Ok(iterator) => iterator,
+            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+                return Err(RuntimeError::new("expected iterable"));
             }
-            let fields = parse_csv_row_simple(
-                &text,
-                delimiter,
-                quotechar,
-                escapechar,
-                skipinitialspace,
-                quoting,
-                strict,
-                field_limit,
-            )?
-            .into_iter()
-            .map(|field| csv_reader_value_for_field(field, quoting))
-            .collect::<Result<Vec<_>, _>>()?;
-            parsed_rows.push(self.heap.alloc_list(fields));
-        }
+            Err(err) => return Err(err),
+        };
         let reader_class = self.csv_reader_class();
         let reader = self.alloc_instance_for_class(&reader_class);
         if let Object::Instance(instance_data) = &mut *reader.kind_mut() {
             instance_data
                 .attrs
-                .insert("_rows".to_string(), self.heap.alloc_list(parsed_rows));
+                .insert("_iter".to_string(), iterator);
             instance_data
                 .attrs
-                .insert("_index".to_string(), Value::Int(0));
+                .insert("_pending_record".to_string(), Value::Str(String::new()));
+            instance_data
+                .attrs
+                .insert("_physical_line_num".to_string(), Value::Int(0));
             instance_data
                 .attrs
                 .insert("line_num".to_string(), Value::Int(0));
+            instance_data.attrs.insert(
+                "__csv_delimiter__".to_string(),
+                Value::Str(delimiter.to_string()),
+            );
+            instance_data.attrs.insert(
+                "__csv_quotechar__".to_string(),
+                match quotechar {
+                    Some(ch) => Value::Str(ch.to_string()),
+                    None => Value::None,
+                },
+            );
+            instance_data.attrs.insert(
+                "__csv_escapechar__".to_string(),
+                match escapechar {
+                    Some(ch) => Value::Str(ch.to_string()),
+                    None => Value::None,
+                },
+            );
+            instance_data
+                .attrs
+                .insert("__csv_quoting__".to_string(), Value::Int(quoting));
+            instance_data
+                .attrs
+                .insert("__csv_doublequote__".to_string(), Value::Bool(doublequote));
+            instance_data.attrs.insert(
+                "__csv_skipinitialspace__".to_string(),
+                Value::Bool(skipinitialspace),
+            );
+            instance_data
+                .attrs
+                .insert("__csv_strict__".to_string(), Value::Bool(strict));
+            instance_data.attrs.insert(
+                "__csv_field_limit__".to_string(),
+                Value::Int(self.csv_field_size_limit),
+            );
+            let dialect = self.build_csv_dialect_module(
+                delimiter,
+                quotechar,
+                escapechar,
+                doublequote,
+                skipinitialspace,
+                lineterminator,
+                quoting,
+                strict,
+            );
+            instance_data.attrs.insert("dialect".to_string(), dialect);
         }
         Ok(Value::Instance(reader))
     }
@@ -21625,6 +21890,66 @@ impl Vm {
             );
         }
         class
+    }
+
+    fn build_csv_dialect_module(
+        &mut self,
+        delimiter: char,
+        quotechar: Option<char>,
+        escapechar: Option<char>,
+        doublequote: bool,
+        skipinitialspace: bool,
+        lineterminator: String,
+        quoting: i64,
+        strict: bool,
+    ) -> Value {
+        let class = self.alloc_synthetic_class("__csv_dialect__");
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.attrs.insert(
+                "__reduce_ex__".to_string(),
+                Value::Builtin(BuiltinFunction::ObjectReduceEx),
+            );
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_csv".to_string()));
+        }
+        let dialect = self.alloc_instance_for_class(&class);
+        if let Object::Instance(instance_data) = &mut *dialect.kind_mut() {
+            instance_data
+                .attrs
+                .insert("delimiter".to_string(), Value::Str(delimiter.to_string()));
+            instance_data.attrs.insert(
+                "quotechar".to_string(),
+                match quotechar {
+                    Some(ch) => Value::Str(ch.to_string()),
+                    None => Value::None,
+                },
+            );
+            instance_data.attrs.insert(
+                "escapechar".to_string(),
+                match escapechar {
+                    Some(ch) => Value::Str(ch.to_string()),
+                    None => Value::None,
+                },
+            );
+            instance_data
+                .attrs
+                .insert("doublequote".to_string(), Value::Bool(doublequote));
+            instance_data.attrs.insert(
+                "skipinitialspace".to_string(),
+                Value::Bool(skipinitialspace),
+            );
+            instance_data
+                .attrs
+                .insert("lineterminator".to_string(), Value::Str(lineterminator));
+            instance_data
+                .attrs
+                .insert("quoting".to_string(), Value::Int(quoting));
+            instance_data
+                .attrs
+                .insert("strict".to_string(), Value::Bool(strict));
+        }
+        Value::Instance(dialect)
     }
 
     fn builtin_csv_reader_iter(
@@ -21651,31 +21976,220 @@ impl Vm {
             ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
-            return Err(RuntimeError::new("csv.reader.__next__ receiver invalid"));
+        let (
+            iterator,
+            mut pending_record,
+            mut physical_line_num,
+            delimiter,
+            quotechar,
+            escapechar,
+            quoting,
+            doublequote,
+            skipinitialspace,
+            strict,
+            field_limit,
+        ) = match &*receiver.kind() {
+            Object::Instance(instance_data) => {
+                let iterator = instance_data
+                    .attrs
+                    .get("_iter")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("csv.reader missing iterator"))?;
+                let pending_record = match instance_data.attrs.get("_pending_record") {
+                    Some(Value::Str(value)) => value.clone(),
+                    _ => String::new(),
+                };
+                let physical_line_num = match instance_data.attrs.get("_physical_line_num") {
+                    Some(Value::Int(value)) => *value,
+                    _ => 0,
+                };
+                let delimiter = instance_data
+                    .attrs
+                    .get("__csv_delimiter__")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("csv.reader missing delimiter"))
+                    .and_then(|value| csv_char_from_value(value, "delimiter"))?;
+                let quotechar = instance_data
+                    .attrs
+                    .get("__csv_quotechar__")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("csv.reader missing quotechar"))
+                    .and_then(|value| csv_optional_char_from_value(value, "quotechar"))?;
+                let escapechar = instance_data
+                    .attrs
+                    .get("__csv_escapechar__")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("csv.reader missing escapechar"))
+                    .and_then(|value| csv_optional_char_from_value(value, "escapechar"))?;
+                let quoting = instance_data
+                    .attrs
+                    .get("__csv_quoting__")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("csv.reader missing quoting"))
+                    .and_then(value_to_int)?;
+                let doublequote = instance_data
+                    .attrs
+                    .get("__csv_doublequote__")
+                    .cloned()
+                    .map(|value| is_truthy(&value))
+                    .unwrap_or(true);
+                let skipinitialspace = instance_data
+                    .attrs
+                    .get("__csv_skipinitialspace__")
+                    .cloned()
+                    .map(|value| is_truthy(&value))
+                    .unwrap_or(false);
+                let strict = instance_data
+                    .attrs
+                    .get("__csv_strict__")
+                    .cloned()
+                    .map(|value| is_truthy(&value))
+                    .unwrap_or(false);
+                let field_limit = match instance_data.attrs.get("__csv_field_limit__") {
+                    Some(Value::Int(limit)) if *limit >= 0 => Some(*limit as usize),
+                    _ => None,
+                };
+                (
+                    iterator,
+                    pending_record,
+                    physical_line_num,
+                    delimiter,
+                    quotechar,
+                    escapechar,
+                    quoting,
+                    doublequote,
+                    skipinitialspace,
+                    strict,
+                    field_limit,
+                )
+            }
+            _ => return Err(RuntimeError::new("csv.reader.__next__ receiver invalid")),
         };
-        let rows = match instance_data.attrs.get("_rows") {
-            Some(Value::List(list)) => list.clone(),
-            _ => return Err(RuntimeError::new("csv.reader missing rows")),
-        };
-        let index = match instance_data.attrs.get("_index") {
-            Some(Value::Int(value)) => *value as usize,
-            _ => 0,
-        };
-        let Object::List(values) = &*rows.kind() else {
-            return Err(RuntimeError::new("csv.reader rows invalid"));
-        };
-        if index >= values.len() {
-            return Err(RuntimeError::new("StopIteration"));
+
+        loop {
+            match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(value) => {
+                    physical_line_num += 1;
+                    let mut text = self.coerce_csv_reader_text(value)?;
+                    if text.ends_with('\n') {
+                        text.pop();
+                        if text.ends_with('\r') {
+                            text.pop();
+                        }
+                    } else if text.ends_with('\r') {
+                        text.pop();
+                    }
+                    if !pending_record.is_empty() {
+                        pending_record.push('\n');
+                    }
+                    pending_record.push_str(&text);
+                    if csv_record_needs_more_data(
+                        &pending_record,
+                        delimiter,
+                        quotechar,
+                        escapechar,
+                        skipinitialspace,
+                        quoting,
+                        doublequote,
+                    ) {
+                        continue;
+                    }
+                    let fields = parse_csv_row_simple(
+                        &pending_record,
+                        delimiter,
+                        quotechar,
+                        escapechar,
+                        skipinitialspace,
+                        quoting,
+                        doublequote,
+                        strict,
+                        field_limit,
+                    )?
+                    .into_iter()
+                    .map(|field| csv_reader_value_for_field(field, quoting))
+                    .collect::<Result<Vec<_>, _>>()?;
+                    pending_record.clear();
+                    if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                        instance_data.attrs.insert(
+                            "_pending_record".to_string(),
+                            Value::Str(pending_record.clone()),
+                        );
+                        instance_data.attrs.insert(
+                            "_physical_line_num".to_string(),
+                            Value::Int(physical_line_num),
+                        );
+                        instance_data
+                            .attrs
+                            .insert("line_num".to_string(), Value::Int(physical_line_num));
+                    }
+                    return Ok(self.heap.alloc_list(fields));
+                }
+                GeneratorResumeOutcome::Complete(_) => {
+                    if pending_record.is_empty() {
+                        if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                            instance_data.attrs.insert(
+                                "_pending_record".to_string(),
+                                Value::Str(String::new()),
+                            );
+                            instance_data.attrs.insert(
+                                "_physical_line_num".to_string(),
+                                Value::Int(physical_line_num),
+                            );
+                            instance_data
+                                .attrs
+                                .insert("line_num".to_string(), Value::Int(physical_line_num));
+                        }
+                        return Err(RuntimeError::new("StopIteration"));
+                    }
+                    let fields = parse_csv_row_simple(
+                        &pending_record,
+                        delimiter,
+                        quotechar,
+                        escapechar,
+                        skipinitialspace,
+                        quoting,
+                        doublequote,
+                        strict,
+                        field_limit,
+                    )?
+                    .into_iter()
+                    .map(|field| csv_reader_value_for_field(field, quoting))
+                    .collect::<Result<Vec<_>, _>>()?;
+                    if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                        instance_data
+                            .attrs
+                            .insert("_pending_record".to_string(), Value::Str(String::new()));
+                        instance_data.attrs.insert(
+                            "_physical_line_num".to_string(),
+                            Value::Int(physical_line_num),
+                        );
+                        instance_data
+                            .attrs
+                            .insert("line_num".to_string(), Value::Int(physical_line_num));
+                    }
+                    return Ok(self.heap.alloc_list(fields));
+                }
+                GeneratorResumeOutcome::PropagatedException => {
+                    if self.pending_generator_exception.is_some() {
+                        self.propagate_pending_generator_exception()?;
+                    }
+                    if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                        instance_data.attrs.insert(
+                            "_pending_record".to_string(),
+                            Value::Str(pending_record.clone()),
+                        );
+                        instance_data.attrs.insert(
+                            "_physical_line_num".to_string(),
+                            Value::Int(physical_line_num),
+                        );
+                        instance_data
+                            .attrs
+                            .insert("line_num".to_string(), Value::Int(physical_line_num));
+                    }
+                    return Err(self.runtime_error_from_active_exception("iteration failed"));
+                }
+            }
         }
-        let row = values[index].clone();
-        instance_data
-            .attrs
-            .insert("_index".to_string(), Value::Int((index + 1) as i64));
-        instance_data
-            .attrs
-            .insert("line_num".to_string(), Value::Int((index + 1) as i64));
-        Ok(row)
     }
 
     fn builtin_csv_writer(
@@ -21687,6 +22201,17 @@ impl Vm {
             return Err(RuntimeError::new("writer() expects file-like argument"));
         }
         let target = args.remove(0);
+        let write_callable = match self.builtin_getattr(
+            vec![target.clone(), Value::Str("write".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) if classify_runtime_error(&err.message) == "OSError" => return Err(err),
+            Err(_) => return Err(RuntimeError::new("writer() argument must have a write method")),
+        };
+        if !self.is_callable_value(&write_callable) {
+            return Err(RuntimeError::new("writer() argument must have a write method"));
+        }
         let dialect_arg = if !args.is_empty() {
             Some(args.remove(0))
         } else {
@@ -21695,10 +22220,22 @@ impl Vm {
         let delimiter = self.extract_csv_delimiter(dialect_arg.clone(), &mut kwargs)?;
         let quotechar = self.extract_csv_quotechar(dialect_arg.clone(), &mut kwargs)?;
         let escapechar = self.extract_csv_escapechar(dialect_arg.clone(), &mut kwargs)?;
-        let quoting = self.extract_csv_quoting(dialect_arg.clone(), &mut kwargs)?;
+        let skipinitialspace = self.extract_csv_skipinitialspace(dialect_arg.clone(), &mut kwargs)?;
+        let mut quoting = self.extract_csv_quoting(dialect_arg.clone(), &mut kwargs)?;
         let doublequote = self.extract_csv_doublequote(dialect_arg.clone(), &mut kwargs)?;
         let lineterminator = self.extract_csv_lineterminator(dialect_arg.clone(), &mut kwargs)?;
-        let _strict = self.extract_csv_strict(dialect_arg, &mut kwargs)?;
+        let strict = self.extract_csv_strict(dialect_arg, &mut kwargs)?;
+        if quotechar.is_none() && quoting == 0 {
+            quoting = 3;
+        }
+        validate_csv_parameter_consistency(
+            delimiter,
+            quotechar,
+            escapechar,
+            skipinitialspace,
+            &lineterminator,
+            quoting,
+        )?;
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "writer() got unexpected keyword arguments",
@@ -21742,6 +22279,13 @@ impl Vm {
                 Value::Str(lineterminator.clone()),
             );
             writer_data.globals.insert(
+                "__csv_skipinitialspace__".to_string(),
+                Value::Bool(skipinitialspace),
+            );
+            writer_data
+                .globals
+                .insert("__csv_strict__".to_string(), Value::Bool(strict));
+            writer_data.globals.insert(
                 "writerow".to_string(),
                 self.alloc_native_bound_method(
                     NativeMethodKind::Builtin(BuiltinFunction::CsvWriterRow),
@@ -21755,42 +22299,17 @@ impl Vm {
                     writer.clone(),
                 ),
             );
-
-            let dialect = match self.heap.alloc_module(ModuleObject::new("__csv_dialect__")) {
-                Value::Module(obj) => obj,
-                _ => unreachable!(),
-            };
-            if let Object::Module(dialect_data) = &mut *dialect.kind_mut() {
-                dialect_data
-                    .globals
-                    .insert("delimiter".to_string(), Value::Str(delimiter.to_string()));
-                dialect_data.globals.insert(
-                    "quotechar".to_string(),
-                    match quotechar {
-                        Some(ch) => Value::Str(ch.to_string()),
-                        None => Value::None,
-                    },
-                );
-                dialect_data.globals.insert(
-                    "escapechar".to_string(),
-                    match escapechar {
-                        Some(ch) => Value::Str(ch.to_string()),
-                        None => Value::None,
-                    },
-                );
-                dialect_data
-                    .globals
-                    .insert("quoting".to_string(), Value::Int(quoting));
-                dialect_data
-                    .globals
-                    .insert("doublequote".to_string(), Value::Bool(doublequote));
-                dialect_data
-                    .globals
-                    .insert("lineterminator".to_string(), Value::Str(lineterminator));
-            }
-            writer_data
-                .globals
-                .insert("dialect".to_string(), Value::Module(dialect));
+            let dialect = self.build_csv_dialect_module(
+                delimiter,
+                quotechar,
+                escapechar,
+                doublequote,
+                skipinitialspace,
+                lineterminator,
+                quoting,
+                strict,
+            );
+            writer_data.globals.insert("dialect".to_string(), dialect);
         }
         Ok(Value::Module(writer))
     }
@@ -21808,22 +22327,71 @@ impl Vm {
             _ => return Err(RuntimeError::new("writerow() receiver must be csv writer")),
         };
         let row = args.remove(0);
-        let (target, delimiter, quotechar, escapechar, quoting, doublequote, lineterminator) =
-            self.extract_csv_writer_state(&writer)?;
-        let values = self.collect_iterable_values(row)?;
-        let mut fields = Vec::with_capacity(values.len());
-        for value in values {
-            let text = self.coerce_csv_field_text(value)?;
-            fields.push(quote_csv_field(
-                &text,
-                delimiter,
-                quotechar,
-                escapechar,
-                quoting,
-                doublequote,
-            )?);
+        let (
+            target,
+            delimiter,
+            quotechar,
+            escapechar,
+            quoting,
+            doublequote,
+            lineterminator,
+            skipinitialspace,
+        ) = self.extract_csv_writer_state(&writer)?;
+        let iterator = match self.to_iterator_value(row.clone()) {
+            Ok(iterator) => iterator,
+            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+                return Err(self.csv_non_iterable_error(&row));
+            }
+            Err(err) => return Err(err),
+        };
+        let mut fields: Vec<(String, bool)> = Vec::new();
+        loop {
+            match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(value) => {
+                    fields.push(self.csv_writer_field_from_value(
+                        value,
+                        delimiter,
+                        quotechar,
+                        escapechar,
+                        quoting,
+                        doublequote,
+                    )?);
+                }
+                GeneratorResumeOutcome::Complete(_) => break,
+                GeneratorResumeOutcome::PropagatedException => {
+                    if self.pending_generator_exception.is_some() {
+                        self.propagate_pending_generator_exception()?;
+                    }
+                    return Err(self.runtime_error_from_active_exception("iteration failed"));
+                }
+            }
         }
-        let mut line = fields.join(&delimiter.to_string());
+
+        if fields.len() == 1 && fields[0].0.is_empty() && !fields[0].1 {
+            if quoting == 3 || quoting == 4 || quoting == 5 {
+                return Err(RuntimeError::new("single empty field record must be quoted"));
+            }
+            if let Some(quote) = quotechar {
+                fields[0] = (format!("{quote}{quote}"), true);
+            }
+        }
+        if quoting == 3 && fields.len() == 1 && fields[0].0.is_empty() && !fields[0].1 {
+            return Err(RuntimeError::new("single empty field record must be quoted"));
+        }
+        if delimiter == ' ' && skipinitialspace {
+            for (text, quoted) in &fields {
+                if text.is_empty() && !quoted {
+                    return Err(RuntimeError::new(
+                        "empty field must be quoted if delimiter is space and skipinitialspace is true",
+                    ));
+                }
+            }
+        }
+        let mut line = fields
+            .into_iter()
+            .map(|(field, _)| field)
+            .collect::<Vec<_>>()
+            .join(&delimiter.to_string());
         line.push_str(&lineterminator);
         let writer_callable = self.builtin_getattr(
             vec![target, Value::Str("write".to_string())],
@@ -21835,9 +22403,9 @@ impl Vm {
             HashMap::new(),
         )? {
             InternalCallOutcome::Value(_) => Ok(Value::Int(line.len() as i64)),
-            InternalCallOutcome::CallerExceptionHandled => {
-                Err(RuntimeError::new("writerow() write failed"))
-            }
+            InternalCallOutcome::CallerExceptionHandled => Err(self.runtime_error_from_active_exception(
+                "writerow() write failed",
+            )),
         }
     }
 
@@ -21851,11 +22419,93 @@ impl Vm {
         }
         let writer = args.remove(0);
         let rows = args.remove(0);
-        let iterable = self.collect_iterable_values(rows)?;
-        for row in iterable {
-            self.builtin_csv_writerow(vec![writer.clone(), row], HashMap::new())?;
+        let iterator = match self.to_iterator_value(rows.clone()) {
+            Ok(iterator) => iterator,
+            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+                return Err(RuntimeError::new("expected iterable"));
+            }
+            Err(err) => return Err(err),
+        };
+        loop {
+            match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(row) => {
+                    self.builtin_csv_writerow(vec![writer.clone(), row], HashMap::new())?;
+                }
+                GeneratorResumeOutcome::Complete(_) => break,
+                GeneratorResumeOutcome::PropagatedException => {
+                    if self.pending_generator_exception.is_some() {
+                        self.propagate_pending_generator_exception()?;
+                    }
+                    return Err(self.runtime_error_from_active_exception("iteration failed"));
+                }
+            }
         }
         Ok(Value::None)
+    }
+
+    fn runtime_error_from_active_exception(&mut self, fallback: &str) -> RuntimeError {
+        let active = self
+            .frames
+            .last_mut()
+            .and_then(|frame| frame.active_exception.take());
+        match active {
+            Some(value) => RuntimeError::new(format_value(&value)),
+            None => RuntimeError::new(fallback),
+        }
+    }
+
+    fn iteration_error_from_state(&mut self, fallback: &str) -> Result<RuntimeError, RuntimeError> {
+        if self.pending_generator_exception.is_some() {
+            self.propagate_pending_generator_exception()?;
+        }
+        Ok(self.runtime_error_from_active_exception(fallback))
+    }
+
+    fn csv_non_iterable_error(&self, value: &Value) -> RuntimeError {
+        RuntimeError::new(format!(
+            "iterable expected, not {}",
+            csv_type_name(value)
+        ))
+    }
+
+    fn csv_writer_field_from_value(
+        &mut self,
+        value: Value,
+        delimiter: char,
+        quotechar: Option<char>,
+        escapechar: Option<char>,
+        quoting: i64,
+        doublequote: bool,
+    ) -> Result<(String, bool), RuntimeError> {
+        let is_none = matches!(&value, Value::None);
+        let is_string = matches!(&value, Value::Str(_));
+        let is_numeric = matches!(
+            &value,
+            Value::Int(_)
+                | Value::BigInt(_)
+                | Value::Float(_)
+                | Value::Bool(_)
+                | Value::Complex { .. }
+        );
+        let text = self.coerce_csv_writer_field_text(value)?;
+        let force_quote = match quoting {
+            1 => true,        // QUOTE_ALL
+            2 => !is_numeric, // QUOTE_NONNUMERIC
+            4 => is_string,   // QUOTE_STRINGS
+            5 => !is_none,    // QUOTE_NOTNULL
+            _ => false,
+        };
+        let rendered = quote_csv_field(
+            &text,
+            delimiter,
+            quotechar,
+            escapechar,
+            quoting,
+            doublequote,
+            force_quote,
+        )?;
+        let was_quoted = force_quote || rendered != text;
+        Ok((rendered, was_quoted))
     }
 
     fn builtin_csv_register_dialect(
@@ -21948,50 +22598,37 @@ impl Vm {
         let skipinitialspace = value_to_bool_flag(skipinitialspace_value, "skipinitialspace")?;
         let lineterminator = match lineterminator_value {
             Value::Str(text) => text,
-            _ => return Err(RuntimeError::new("lineterminator must be str")),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "\"lineterminator\" must be a string, not {}",
+                    csv_type_name(&other)
+                )))
+            }
         };
-        let quoting = value_to_int(quoting_value)?;
+        let mut quoting = value_to_int(quoting_value)?;
         let strict = value_to_bool_flag(strict_value, "strict")?;
-
-        let dialect = match self.heap.alloc_module(ModuleObject::new("__csv_registered_dialect__")) {
-            Value::Module(module) => module,
-            _ => unreachable!(),
-        };
-        if let Object::Module(dialect_data) = &mut *dialect.kind_mut() {
-            dialect_data
-                .globals
-                .insert("delimiter".to_string(), Value::Str(delimiter.to_string()));
-            dialect_data.globals.insert(
-                "quotechar".to_string(),
-                match quotechar {
-                    Some(ch) => Value::Str(ch.to_string()),
-                    None => Value::None,
-                },
-            );
-            dialect_data.globals.insert(
-                "escapechar".to_string(),
-                match escapechar {
-                    Some(ch) => Value::Str(ch.to_string()),
-                    None => Value::None,
-                },
-            );
-            dialect_data
-                .globals
-                .insert("doublequote".to_string(), Value::Bool(doublequote));
-            dialect_data
-                .globals
-                .insert("skipinitialspace".to_string(), Value::Bool(skipinitialspace));
-            dialect_data
-                .globals
-                .insert("lineterminator".to_string(), Value::Str(lineterminator));
-            dialect_data
-                .globals
-                .insert("quoting".to_string(), Value::Int(quoting));
-            dialect_data
-                .globals
-                .insert("strict".to_string(), Value::Bool(strict));
+        if quotechar.is_none() && quoting == 0 {
+            quoting = 3;
         }
-        Ok(Value::Module(dialect))
+        validate_csv_parameter_consistency(
+            delimiter,
+            quotechar,
+            escapechar,
+            skipinitialspace,
+            &lineterminator,
+            quoting,
+        )?;
+
+        Ok(self.build_csv_dialect_module(
+            delimiter,
+            quotechar,
+            escapechar,
+            doublequote,
+            skipinitialspace,
+            lineterminator,
+            quoting,
+            strict,
+        ))
     }
 
     fn builtin_csv_unregister_dialect(
@@ -22005,10 +22642,10 @@ impl Vm {
             ));
         }
         let name = match &args[0] {
-            Value::Str(name) => name,
-            _ => return Err(RuntimeError::new("unregister_dialect() name must be str")),
+            Value::Str(name) => name.clone(),
+            _ => return Err(RuntimeError::new("unknown dialect")),
         };
-        if self.csv_dialects.remove(name).is_none() {
+        if self.csv_dialects.remove(&name).is_none() {
             return Err(RuntimeError::new("unknown dialect"));
         }
         Ok(Value::None)
@@ -22023,11 +22660,11 @@ impl Vm {
             return Err(RuntimeError::new("get_dialect() expects one argument"));
         }
         let name = match &args[0] {
-            Value::Str(name) => name,
-            _ => return Err(RuntimeError::new("get_dialect() name must be str")),
+            Value::Str(name) => name.clone(),
+            _ => return Err(RuntimeError::new("unknown dialect")),
         };
         self.csv_dialects
-            .get(name)
+            .get(&name)
             .cloned()
             .ok_or_else(|| RuntimeError::new("unknown dialect"))
     }
@@ -22072,7 +22709,58 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("Dialect() expects one argument"));
         }
-        Ok(args.into_iter().next().expect("checked len"))
+        let dialect = args.into_iter().next().expect("checked len");
+        let load_attr = |vm: &mut Vm, name: &str| {
+            vm.builtin_getattr(
+                vec![dialect.clone(), Value::Str(name.to_string())],
+                HashMap::new(),
+            )
+        };
+        let load_attr_or_none = |vm: &mut Vm, name: &str| match load_attr(vm, name) {
+            Ok(value) => Ok(value),
+            Err(err) if classify_runtime_error(&err.message) == "AttributeError" => Ok(Value::None),
+            Err(err) => Err(err),
+        };
+        let delimiter = csv_char_from_value(load_attr_or_none(self, "delimiter")?, "delimiter")?;
+        let quotechar =
+            csv_optional_char_from_value(load_attr_or_none(self, "quotechar")?, "quotechar")?;
+        let escapechar =
+            csv_optional_char_from_value(load_attr_or_none(self, "escapechar")?, "escapechar")?;
+        let doublequote = match load_attr_or_none(self, "doublequote")? {
+            Value::None => true,
+            value => value_to_bool_flag(value, "doublequote")?,
+        };
+        let skipinitialspace = match load_attr_or_none(self, "skipinitialspace")? {
+            Value::None => false,
+            value => value_to_bool_flag(value, "skipinitialspace")?,
+        };
+        let lineterminator = match load_attr_or_none(self, "lineterminator")? {
+            Value::Str(text) => text,
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "\"lineterminator\" must be a string, not {}",
+                    csv_type_name(&other)
+                )))
+            }
+        };
+        let mut quoting = value_to_int(load_attr_or_none(self, "quoting")?)?;
+        let _strict = match load_attr_or_none(self, "strict")? {
+            Value::None => false,
+            value => value_to_bool_flag(value, "strict")?,
+        };
+        let _ = doublequote;
+        if quotechar.is_none() && quoting == 0 {
+            quoting = 3;
+        }
+        validate_csv_parameter_consistency(
+            delimiter,
+            quotechar,
+            escapechar,
+            skipinitialspace,
+            &lineterminator,
+            quoting,
+        )?;
+        Ok(dialect)
     }
 
     fn resolve_csv_dialect(&self, dialect: Option<Value>) -> Result<Option<Value>, RuntimeError> {
@@ -22215,7 +22903,10 @@ impl Vm {
         if let Some(value) = kwargs.remove("lineterminator") {
             return match value {
                 Value::Str(text) => Ok(text),
-                _ => Err(RuntimeError::new("lineterminator must be str")),
+                other => Err(RuntimeError::new(format!(
+                    "\"lineterminator\" must be a string, not {}",
+                    csv_type_name(&other)
+                ))),
             };
         }
         let resolved = self.resolve_csv_dialect(dialect)?;
@@ -22226,7 +22917,10 @@ impl Vm {
             ) {
                 return match value {
                     Value::Str(text) => Ok(text),
-                    _ => Err(RuntimeError::new("lineterminator must be str")),
+                    other => Err(RuntimeError::new(format!(
+                        "\"lineterminator\" must be a string, not {}",
+                        csv_type_name(&other)
+                    ))),
                 };
             }
         }
@@ -22256,7 +22950,8 @@ impl Vm {
     fn extract_csv_writer_state(
         &self,
         writer: &ObjRef,
-    ) -> Result<(Value, char, Option<char>, Option<char>, i64, bool, String), RuntimeError> {
+    ) -> Result<(Value, char, Option<char>, Option<char>, i64, bool, String, bool), RuntimeError>
+    {
         let Object::Module(writer_data) = &*writer.kind() else {
             return Err(RuntimeError::new("writer object is invalid"));
         };
@@ -22295,6 +22990,12 @@ impl Vm {
             .cloned()
             .map(|value| is_truthy(&value))
             .unwrap_or(true);
+        let skipinitialspace = writer_data
+            .globals
+            .get("__csv_skipinitialspace__")
+            .cloned()
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
         let lineterminator = match writer_data.globals.get("__csv_lineterminator__") {
             Some(Value::Str(value)) => value.clone(),
             _ => return Err(RuntimeError::new("writer lineterminator is missing")),
@@ -22307,10 +23008,11 @@ impl Vm {
             quoting,
             doublequote,
             lineterminator,
+            skipinitialspace,
         ))
     }
 
-    fn coerce_csv_field_text(&mut self, value: Value) -> Result<String, RuntimeError> {
+    fn coerce_csv_writer_field_text(&mut self, value: Value) -> Result<String, RuntimeError> {
         match value {
             Value::Str(text) => Ok(text),
             Value::None => Ok(String::new()),
@@ -22318,6 +23020,19 @@ impl Vm {
                 Value::Str(text) => Ok(text),
                 _ => Err(RuntimeError::new("csv conversion failed")),
             },
+        }
+    }
+
+    fn coerce_csv_reader_text(&mut self, value: Value) -> Result<String, RuntimeError> {
+        match value {
+            Value::Str(text) => Ok(text),
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => Err(RuntimeError::new(
+                "iterator should return strings, not bytes (the file should be opened in text mode)",
+            )),
+            other => Err(RuntimeError::new(format!(
+                "iterator should return strings, not {}",
+                csv_type_name(&other)
+            ))),
         }
     }
 
@@ -22556,6 +23271,140 @@ impl Vm {
                 Ok(self.heap.alloc_bytes(escaped))
             }
             _ => Err(RuntimeError::new("re.escape() expects string argument")),
+        }
+    }
+
+    fn builtin_re_pattern_findall(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "Pattern.findall() expects string and optional pos/endpos",
+            ));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let pattern = re_pattern_from_compiled_module(&receiver)?;
+        let target = args.remove(0);
+
+        let clamp_index = |len: usize, raw: i64| -> usize {
+            if raw < 0 {
+                (len as i64 + raw).max(0) as usize
+            } else {
+                (raw as usize).min(len)
+            }
+        };
+
+        match target {
+            Value::Str(text) => {
+                if !matches!(pattern, RePatternValue::Str(_)) {
+                    return Err(RuntimeError::new(
+                        "cannot use a bytes pattern on a string-like object",
+                    ));
+                }
+                let raw_pos = if let Some(value) = args.first() {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let raw_end = if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    text.len() as i64
+                };
+                let mut start = clamp_index(text.len(), raw_pos);
+                let mut stop = clamp_index(text.len(), raw_end);
+                while start > 0 && !text.is_char_boundary(start) {
+                    start -= 1;
+                }
+                while stop > 0 && !text.is_char_boundary(stop) {
+                    stop -= 1;
+                }
+                if stop < start {
+                    stop = start;
+                }
+                let mut matches = Vec::new();
+                let mut cursor = start;
+                while cursor <= stop {
+                    let segment = Value::Str(text[cursor..stop].to_string());
+                    let Some((match_start, match_end)) =
+                        re_match_bounds(&pattern, &segment, ReMode::Search)?
+                    else {
+                        break;
+                    };
+                    let absolute_start = cursor + match_start;
+                    let absolute_end = cursor + match_end;
+                    if absolute_start > stop || absolute_end > stop {
+                        break;
+                    }
+                    matches.push(Value::Str(text[absolute_start..absolute_end].to_string()));
+                    if absolute_end == absolute_start {
+                        if absolute_end >= stop {
+                            break;
+                        }
+                        let mut next = absolute_end + 1;
+                        while next < stop && !text.is_char_boundary(next) {
+                            next += 1;
+                        }
+                        cursor = next;
+                    } else {
+                        cursor = absolute_end;
+                    }
+                }
+                Ok(self.heap.alloc_list(matches))
+            }
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                if !matches!(pattern, RePatternValue::Bytes(_)) {
+                    return Err(RuntimeError::new(
+                        "cannot use a string pattern on a bytes-like object",
+                    ));
+                }
+                let bytes = bytes_like_from_value(target)?;
+                let raw_pos = if let Some(value) = args.first() {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let raw_end = if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    bytes.len() as i64
+                };
+                let start = clamp_index(bytes.len(), raw_pos);
+                let mut stop = clamp_index(bytes.len(), raw_end);
+                if stop < start {
+                    stop = start;
+                }
+                let mut matches = Vec::new();
+                let mut cursor = start;
+                while cursor <= stop {
+                    let segment = self.heap.alloc_bytes(bytes[cursor..stop].to_vec());
+                    let Some((match_start, match_end)) =
+                        re_match_bounds(&pattern, &segment, ReMode::Search)?
+                    else {
+                        break;
+                    };
+                    let absolute_start = cursor + match_start;
+                    let absolute_end = cursor + match_end;
+                    if absolute_start > stop || absolute_end > stop {
+                        break;
+                    }
+                    matches.push(self.heap.alloc_bytes(bytes[absolute_start..absolute_end].to_vec()));
+                    if absolute_end == absolute_start {
+                        if absolute_end >= stop {
+                            break;
+                        }
+                        cursor = absolute_end + 1;
+                    } else {
+                        cursor = absolute_end;
+                    }
+                }
+                Ok(self.heap.alloc_list(matches))
+            }
+            _ => Err(RuntimeError::new(
+                "Pattern.findall() expects string or bytes-like object",
+            )),
         }
     }
 
@@ -25786,6 +26635,31 @@ impl Vm {
         Ok(Value::Str(out))
     }
 
+    fn builtin_stringio_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.__enter__ expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_stringio_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "StringIO.__exit__ expects up to 3 arguments",
+            ));
+        }
+        let _receiver = self.receiver_from_value(&args.remove(0))?;
+        Ok(Value::Bool(false))
+    }
+
     fn struct_format_from_receiver(&self, receiver: &ObjRef) -> Result<String, RuntimeError> {
         let Object::Instance(instance_data) = &*receiver.kind() else {
             return Err(RuntimeError::new("Struct method expects struct instance"));
@@ -28100,9 +28974,13 @@ impl Vm {
     }
 
     fn collect_iterable_values(&mut self, source: Value) -> Result<Vec<Value>, RuntimeError> {
-        let iter = self
-            .to_iterator_value(source)
-            .map_err(|_| RuntimeError::new("expected iterable"))?;
+        let iter = match self.to_iterator_value(source) {
+            Ok(iter) => iter,
+            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+                return Err(RuntimeError::new("expected iterable"));
+            }
+            Err(err) => return Err(err),
+        };
         match iter {
             Value::Iterator(iterator_ref) => {
                 let mut out = Vec::new();
@@ -28879,6 +29757,41 @@ fn frame_cell_value(frame: &Frame, name: &str) -> Option<Value> {
     None
 }
 
+fn csv_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::None => "NoneType",
+        Value::Bool(_) => "bool",
+        Value::Int(_) => "int",
+        Value::Float(_) => "float",
+        Value::Str(_) => "str",
+        Value::Bytes(_) => "bytes",
+        Value::ByteArray(_) => "bytearray",
+        Value::MemoryView(_) => "memoryview",
+        Value::Complex { .. } => "complex",
+        Value::List(_) => "list",
+        Value::Tuple(_) => "tuple",
+        Value::Dict(_) => "dict",
+        Value::DictKeys(_) => "dict_keys",
+        Value::Set(_) => "set",
+        Value::FrozenSet(_) => "frozenset",
+        Value::BigInt(_) => "int",
+        Value::Module(_) => "module",
+        Value::Class(_) => "type",
+        Value::Instance(_) => "object",
+        Value::Super(_) => "super",
+        Value::BoundMethod(_) => "method",
+        Value::Exception(_) => "BaseException",
+        Value::ExceptionType(_) => "type",
+        Value::Code(_) => "code",
+        Value::Function(_) => "function",
+        Value::Builtin(_) => "builtin_function_or_method",
+        Value::Cell(_) => "cell",
+        Value::Iterator(_) => "iterator",
+        Value::Generator(_) => "generator",
+        Value::Slice { .. } => "slice",
+    }
+}
+
 fn csv_char_from_value(value: Value, name: &str) -> Result<char, RuntimeError> {
     match value {
         Value::Str(text) => {
@@ -28886,19 +29799,91 @@ fn csv_char_from_value(value: Value, name: &str) -> Result<char, RuntimeError> {
             match (chars.next(), chars.next()) {
                 (Some(ch), None) => Ok(ch),
                 _ => Err(RuntimeError::new(format!(
-                    "{name} must be a one-character string"
+                    "\"{name}\" must be a unicode character, not a string of length {}",
+                    text.chars().count()
                 ))),
             }
         }
-        _ => Err(RuntimeError::new(format!("{name} must be str"))),
+        other => Err(RuntimeError::new(format!(
+            "\"{name}\" must be a unicode character, not {}",
+            csv_type_name(&other)
+        ))),
     }
 }
 
 fn csv_optional_char_from_value(value: Value, name: &str) -> Result<Option<char>, RuntimeError> {
     match value {
         Value::None => Ok(None),
-        other => csv_char_from_value(other, name).map(Some),
+        Value::Str(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => Ok(Some(ch)),
+                _ => Err(RuntimeError::new(format!(
+                    "\"{name}\" must be a unicode character or None, not a string of length {}",
+                    text.chars().count()
+                ))),
+            }
+        }
+        other => Err(RuntimeError::new(format!(
+            "\"{name}\" must be a unicode character or None, not {}",
+            csv_type_name(&other)
+        ))),
     }
+}
+
+fn validate_csv_parameter_consistency(
+    delimiter: char,
+    quotechar: Option<char>,
+    escapechar: Option<char>,
+    skipinitialspace: bool,
+    lineterminator: &str,
+    quoting: i64,
+) -> Result<(), RuntimeError> {
+    if !(0..=5).contains(&quoting) {
+        return Err(RuntimeError::new("bad \"quoting\" value"));
+    }
+    if quotechar.is_none() && quoting != 3 {
+        return Err(RuntimeError::new("quotechar must be set if quoting enabled"));
+    }
+    if delimiter == '\n' || delimiter == '\r' {
+        return Err(RuntimeError::new("delimiter cannot be a newline"));
+    }
+    if quotechar.is_some_and(|ch| ch == '\n' || ch == '\r') {
+        return Err(RuntimeError::new("quotechar cannot be a newline"));
+    }
+    if escapechar.is_some_and(|ch| ch == '\n' || ch == '\r') {
+        return Err(RuntimeError::new("escapechar cannot be a newline"));
+    }
+    if skipinitialspace && quotechar == Some(' ') {
+        return Err(RuntimeError::new(
+            "quotechar cannot be a space when skipinitialspace is true",
+        ));
+    }
+    if skipinitialspace && escapechar == Some(' ') {
+        return Err(RuntimeError::new(
+            "escapechar cannot be a space when skipinitialspace is true",
+        ));
+    }
+    if quotechar == Some(delimiter) || escapechar == Some(delimiter) {
+        return Err(RuntimeError::new("delimiter cannot be the same as quotechar or escapechar"));
+    }
+    if let (Some(quote), Some(escape)) = (quotechar, escapechar) {
+        if quote == escape {
+            return Err(RuntimeError::new("quotechar cannot be the same as escapechar"));
+        }
+    }
+    if lineterminator.is_empty() {
+        return Err(RuntimeError::new("lineterminator must not be empty"));
+    }
+    if lineterminator.contains(delimiter)
+        || quotechar.is_some_and(|ch| lineterminator.contains(ch))
+        || escapechar.is_some_and(|ch| lineterminator.contains(ch))
+    {
+        return Err(RuntimeError::new(
+            "lineterminator cannot contain delimiter, quotechar, or escapechar",
+        ));
+    }
+    Ok(())
 }
 
 fn value_to_bool_flag(value: Value, name: &str) -> Result<bool, RuntimeError> {
@@ -28935,6 +29920,62 @@ fn parse_csv_reader_float(text: &str) -> Result<f64, RuntimeError> {
         .map_err(|_| RuntimeError::new("could not convert string to float"))
 }
 
+fn csv_record_needs_more_data(
+    row: &str,
+    delimiter: char,
+    quotechar: Option<char>,
+    escapechar: Option<char>,
+    skipinitialspace: bool,
+    quoting: i64,
+    doublequote: bool,
+) -> bool {
+    if row.is_empty() {
+        return false;
+    }
+    let active_quotechar = if quoting == 3 { None } else { quotechar };
+    let mut in_quotes = false;
+    let mut at_field_start = true;
+    let mut chars = row.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if let Some(escape) = escapechar {
+            if ch == escape {
+                if chars.peek().is_some() {
+                    chars.next();
+                }
+                at_field_start = false;
+                continue;
+            }
+        }
+        if skipinitialspace && !in_quotes && at_field_start && ch == ' ' {
+            continue;
+        }
+        if let Some(quote) = active_quotechar {
+            if ch == quote {
+                if in_quotes {
+                    if doublequote && chars.peek().is_some_and(|next| *next == quote) {
+                        chars.next();
+                        at_field_start = false;
+                    } else {
+                        in_quotes = false;
+                    }
+                } else if at_field_start {
+                    in_quotes = true;
+                    at_field_start = false;
+                } else {
+                    at_field_start = false;
+                }
+                continue;
+            }
+        }
+        if ch == delimiter && !in_quotes {
+            at_field_start = true;
+            continue;
+        }
+        at_field_start = false;
+    }
+    in_quotes
+}
+
 fn parse_csv_row_simple(
     row: &str,
     delimiter: char,
@@ -28942,6 +29983,7 @@ fn parse_csv_row_simple(
     escapechar: Option<char>,
     skipinitialspace: bool,
     quoting: i64,
+    doublequote: bool,
     strict: bool,
     field_limit: Option<usize>,
 ) -> Result<Vec<CsvParsedField>, RuntimeError> {
@@ -28952,19 +29994,50 @@ fn parse_csv_row_simple(
     let mut current = String::new();
     let mut field_quoted = false;
     let mut in_quotes = false;
+    let mut just_closed_quote = false;
     let active_quotechar = if quoting == 3 { None } else { quotechar };
     let mut chars = row.chars().peekable();
     while let Some(ch) = chars.next() {
+        if !in_quotes && just_closed_quote {
+            if ch == delimiter {
+                fields.push(CsvParsedField {
+                    value: std::mem::take(&mut current),
+                    quoted: field_quoted,
+                });
+                field_quoted = false;
+                just_closed_quote = false;
+                if skipinitialspace {
+                    while chars.peek().is_some_and(|next| *next == ' ') {
+                        chars.next();
+                    }
+                }
+                continue;
+            }
+            if strict {
+                return Err(RuntimeError::new("',' expected after '\"'"));
+            }
+            just_closed_quote = false;
+        }
         if let Some(quote) = active_quotechar {
             if ch == quote {
-                if in_quotes && chars.peek().is_some_and(|next| *next == quote) {
-                    current.push(quote);
-                    chars.next();
-                } else {
-                    if !in_quotes && current.is_empty() {
-                        field_quoted = true;
+                if in_quotes {
+                    if doublequote && chars.peek().is_some_and(|next| *next == quote) {
+                        current.push(quote);
+                        chars.next();
+                    } else {
+                        in_quotes = false;
+                        just_closed_quote = true;
                     }
-                    in_quotes = !in_quotes;
+                } else if current.is_empty() {
+                    field_quoted = true;
+                    in_quotes = true;
+                    just_closed_quote = false;
+                } else {
+                    if strict {
+                        return Err(RuntimeError::new("',' expected after '\"'"));
+                    }
+                    current.push(quote);
+                    just_closed_quote = false;
                 }
                 continue;
             }
@@ -28991,7 +30064,7 @@ fn parse_csv_row_simple(
         }
         if (ch == '\n' || ch == '\r') && !in_quotes {
             return Err(RuntimeError::new(
-                "new-line character seen in unquoted field; use newline=''",
+                "new-line character seen in unquoted field - do you need to open the file with newline=''?",
             ));
         }
         if ch == delimiter && !in_quotes {
@@ -29000,6 +30073,7 @@ fn parse_csv_row_simple(
                 quoted: field_quoted,
             });
             field_quoted = false;
+            just_closed_quote = false;
             if skipinitialspace {
                 while chars.peek().is_some_and(|next| *next == ' ') {
                     chars.next();
@@ -29008,6 +30082,7 @@ fn parse_csv_row_simple(
             continue;
         }
         current.push(ch);
+        just_closed_quote = false;
         if let Some(limit) = field_limit {
             if current.chars().count() > limit {
                 return Err(RuntimeError::new("field larger than field limit"));
@@ -29031,6 +30106,7 @@ fn quote_csv_field(
     escapechar: Option<char>,
     quoting: i64,
     doublequote: bool,
+    force_quote: bool,
 ) -> Result<String, RuntimeError> {
     let needs_quote = field.contains(delimiter)
         || field.contains('\n')
@@ -29055,7 +30131,6 @@ fn quote_csv_field(
         return Ok(out);
     }
 
-    let force_quote = quoting == 1;
     if !force_quote && !needs_quote {
         return Ok(field.to_string());
     }
@@ -31644,7 +32719,7 @@ fn bind_arguments(
         .code
         .vararg
         .as_ref()
-        .map(|_| heap.alloc_list(extra_positional));
+        .map(|_| heap.alloc_tuple(extra_positional));
     let kwarg = func.code.kwarg.as_ref().map(|_| {
         let mut entries = Vec::with_capacity(extra_kwargs.len());
         for (key, value) in extra_kwargs {
@@ -31702,7 +32777,7 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
     if let Some(name) = code.vararg.as_ref() {
         let value = bindings
             .vararg
-            .unwrap_or_else(|| heap.alloc_list(Vec::new()));
+            .unwrap_or_else(|| heap.alloc_tuple(Vec::new()));
         assign(name.clone(), value);
     }
 
@@ -31730,6 +32805,8 @@ fn call_builtin_with_kwargs(
                 .remove("end")
                 .map(|value| format_value(&value))
                 .unwrap_or_else(|| "\n".to_string());
+            let _ = kwargs.remove("file");
+            let _ = kwargs.remove("flush");
             if !kwargs.is_empty() {
                 return Err(RuntimeError::new(
                     "print() got an unexpected keyword argument",
@@ -32482,11 +33559,79 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
 }
 
 fn classify_runtime_error(message: &str) -> &'static str {
+    const DIRECT_PREFIX_EXCEPTIONS: [&str; 18] = [
+        "TypeError",
+        "ValueError",
+        "RuntimeError",
+        "AttributeError",
+        "IndexError",
+        "KeyError",
+        "NameError",
+        "ImportError",
+        "ModuleNotFoundError",
+        "OSError",
+        "Error",
+        "AssertionError",
+        "ZeroDivisionError",
+        "StopIteration",
+        "StopAsyncIteration",
+        "SystemExit",
+        "KeyboardInterrupt",
+        "CalledProcessError",
+    ];
+    for exception in DIRECT_PREFIX_EXCEPTIONS {
+        if message == exception || message.starts_with(&format!("{exception}:")) {
+            return exception;
+        }
+    }
+
     if message.trim() == "StopIteration" || message.trim().starts_with("StopIteration:") {
         return "StopIteration";
     }
     if message.trim() == "StopAsyncIteration" || message.trim().starts_with("StopAsyncIteration:") {
         return "StopAsyncIteration";
+    }
+    if message.trim() == "CalledProcessError" || message.trim().starts_with("CalledProcessError:")
+    {
+        return "CalledProcessError";
+    }
+    if message.contains("unknown dialect")
+        || message.contains("new-line character seen in unquoted field")
+        || message.contains("field larger than field limit")
+        || message.contains("need to escape")
+        || message.contains("unexpected end of data")
+        || message.contains("',' expected after '\"'")
+        || message.contains("single empty field record must be quoted")
+        || message.contains("empty field must be quoted if delimiter is space and skipinitialspace is true")
+        || message.starts_with("iterable expected, not ")
+        || message.contains("iterator should return strings, not ")
+    {
+        return "Error";
+    }
+    if message.contains("csv dialect attributes are read-only") {
+        return "AttributeError";
+    }
+    if message.contains("cannot be a newline")
+        || message.contains("cannot be the same")
+        || message.contains("cannot be a space when skipinitialspace is true")
+        || message.contains("lineterminator cannot contain delimiter, quotechar, or escapechar")
+        || message.contains("lineterminator must not be empty")
+    {
+        return "ValueError";
+    }
+    if message.contains("must be a unicode character")
+        || message.contains("must be a string")
+        || message.contains("must be bool")
+        || message.contains("unexpected keyword argument")
+        || message.contains("expected iterable")
+        || message.contains("must have a write method")
+        || message.contains("name must be str")
+        || message.contains("quotechar must be set if quoting enabled")
+        || message.contains("bad \"quoting\" value")
+        || message.contains("argument count mismatch")
+        || message.contains("cannot pickle 'Dialect' instances")
+    {
+        return "TypeError";
     }
     if message.trim() == "KeyboardInterrupt" {
         return "KeyboardInterrupt";
@@ -32550,6 +33695,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("inputs are not the same length")
         || message.contains("not in list")
         || message.contains("could not convert string to float")
+        || message.contains("complex() invalid literal")
     {
         return "ValueError";
     }

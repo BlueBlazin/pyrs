@@ -6102,6 +6102,56 @@ ok = (
 }
 
 #[test]
+fn csv_reader_iter_exception_is_catchable_in_try_except() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+class BadIterable:
+    def __iter__(self):
+        raise OSError("boom")
+caught = False
+try:
+    csv.reader(BadIterable())
+except OSError:
+    caught = True
+ok = caught
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_reader_iter_exception_propagates_through_var_call_forwarding() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+class BadIterable:
+    def __iter__(self):
+        raise OSError("boom")
+def invoke(fn, *args, **kwargs):
+    return fn(*args, **kwargs)
+caught = False
+try:
+    invoke(csv.reader, BadIterable())
+except OSError:
+    caught = True
+ok = caught
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn contextlib_exit_allows_exception_traceback_assignment() {
     let Some(lib) = cpython_lib_path() else {
         return;
