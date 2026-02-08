@@ -9,7 +9,7 @@ Nothing is allowed to stay "half-implemented" without a tracked owner and closur
 - Inventory generator: `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`.
 - Inventory traversal is recursive across module/class/instance/container object graphs.
 - Native stdlib VM handlers are being isolated under `src/vm/stdlib/` (`json`, `re`, `_csv`/`csv`, and pickle-object-protocol helpers extracted) to keep parity audits against CPython implementations targeted and reviewable.
-- Core helper coverage now includes module-local unit tests in `src/vm/containers.rs`, `src/vm/stdlib/json.rs`, and `src/vm/stdlib/csv.rs` so semantic regressions are caught before full harness runs.
+- Core helper coverage now includes module-local unit tests in `src/vm/containers.rs`, `src/vm/ops.rs`, `src/runtime/mod.rs`, `src/vm/stdlib/json.rs`, `src/vm/stdlib/re.rs`, and `src/vm/stdlib/csv.rs` so semantic regressions are caught before full harness runs.
 - Policy: prefer official CPython pure-Python stdlib modules wherever feasible; native VM handlers should remain minimal and every retained native path must stay explicitly tracked in this ledger.
 - Engineering-process gates for semantic/algorithmic issues are tracked in `docs/ENGINEERING_GATES.md` and `docs/ALGO_AUDIT_BACKLOG.md`.
 
@@ -18,7 +18,7 @@ Nothing is allowed to stay "half-implemented" without a tracked owner and closur
 - Milestone 13 is not complete while any of those rows remain partial.
 - Closure proof requirements:
 1. CPython suites for `test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness/CI scope, including strict unittest execution lane (`tests/cpython_suite_strict_stdlib.txt`) with owned allowlist expectations (`tests/cpython_allowlist_strict.txt`; currently `stdlib-strict-pickle` and `stdlib-strict-pickletools` only).
-   Strict lane entries execute in isolated subprocesses with timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent runaway hangs from masking parity failures.
+   Strict lane entries execute in isolated subprocesses with timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent runaway hangs from masking parity failures; helper timeout behavior is regression-tested in `tests/cpython_harness.rs`.
 2. Differential and malformed-input regression coverage for parser/decoder safety behavior (including explicit malformed-contract differential probes for `json`, `_csv`, and pickle object-protocol paths).
 3. Baseline throughput/allocation benchmark reporting against representative payload sizes.
 

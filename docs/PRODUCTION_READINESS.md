@@ -128,7 +128,10 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).
 - [x] P1: Module-local unit tests for high-risk helper internals (`src/vm/containers.rs`, `src/vm/stdlib/json.rs`, `src/vm/stdlib/csv.rs`) are now in place as an early regression gate.
+- [~] P1: Module-local unit tests for high-risk helper internals are expanded (`src/vm/containers.rs`, `src/vm/ops.rs`, `src/runtime/mod.rs`, `src/vm/stdlib/json.rs`, `src/vm/stdlib/re.rs`, `src/vm/stdlib/csv.rs`); continue closing low-coverage branches in runtime/import paths.
 - [~] P1: Dedicated GC/leak regression lane (`tests/gc_regression.rs`) is active; continue expanding it with strict-stdlib reproductions until all historical growth/hang incidents are root-caused and closed.
+- [x] P1: Strict-harness subprocess timeout behavior is regression-tested (`tests/cpython_harness.rs`) to prevent hang-driven unbounded RAM growth from hiding parity failures.
+- [x] P1: Coverage gate automation exists in CI (`scripts/run_coverage_gate.sh` with 70/65/70 soft floors when enforcement is enabled).
 - [x] P1: Curated real-world smoke/regression suite with constrained subprocess profile (`tests/realworld_smoke.rs`, `scripts/run_parity_gate.sh`).
 - [~] P1: Stdlib-import regression probes for bigint-heavy paths (`ipaddress` import path has active regression coverage and now executes in a dedicated larger-stack test thread; remaining constrained-stack hardening plus `_testinternalcapi.hamt` parity are tracked in `docs/STUB_ACCOUNTING.md`).
 - [ ] P2: Deterministic reproduction harness for crash bugs.
