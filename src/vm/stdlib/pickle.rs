@@ -98,7 +98,6 @@ impl Vm {
             | Value::Complex { .. }
             | Value::Str(_)
             | Value::Bytes(_)
-            | Value::ByteArray(_)
             | Value::List(_)
             | Value::Tuple(_)
             | Value::Dict(_)
@@ -114,7 +113,6 @@ impl Vm {
                         Value::Complex { .. } => Value::Builtin(BuiltinFunction::Complex),
                         Value::Str(_) => Value::Builtin(BuiltinFunction::Str),
                         Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
-                        Value::ByteArray(_) => Value::Builtin(BuiltinFunction::ByteArray),
                         Value::List(_) => Value::Builtin(BuiltinFunction::List),
                         Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
                         Value::Dict(_) => Value::Builtin(BuiltinFunction::Dict),
@@ -125,6 +123,21 @@ impl Vm {
                 (
                     constructor,
                     self.heap.alloc_tuple(vec![value.clone()]),
+                )
+            }
+            Value::ByteArray(obj) => {
+                let payload = match &*obj.kind() {
+                    Object::ByteArray(values) => values.iter().map(|value| *value as char).collect(),
+                    _ => String::new(),
+                };
+                let constructor = self
+                    .class_of_value(value)
+                    .map(Value::Class)
+                    .unwrap_or(Value::Builtin(BuiltinFunction::ByteArray));
+                (
+                    constructor,
+                    self.heap
+                        .alloc_tuple(vec![Value::Str(payload), Value::Str("latin-1".to_string())]),
                 )
             }
             _ => {
@@ -152,7 +165,17 @@ impl Vm {
             let _ = value_to_int(args[1].clone())?;
         }
         if let Value::Builtin(builtin) = &value {
-            return Ok(Value::Str(self.builtin_runtime_name(*builtin)));
+            if matches!(
+                builtin,
+                BuiltinFunction::DictFromKeys
+                    | BuiltinFunction::BytesMakeTrans
+                    | BuiltinFunction::StrMakeTrans
+            ) {
+                return Err(RuntimeError::new(
+                    "TypeError: cannot pickle method_descriptor objects",
+                ));
+            }
+            return Ok(Value::Str(self.builtin_attribute_qualname(*builtin)));
         }
         if let Value::Instance(instance) = &value {
             if let Some(class_name) = class_name_for_instance(instance) {
@@ -252,6 +275,25 @@ mod tests {
         assert_eq!(parts.len(), 3);
         let constructor_args = tuple_values(&parts[1]);
         assert_eq!(constructor_args, vec![Value::Int(7)]);
+        assert_eq!(parts[2], Value::None);
+    }
+
+    #[test]
+    fn object_reduce_ex_bytearray_uses_latin1_constructor_args() {
+        let mut vm = Vm::new();
+        let payload = vm.heap.alloc_bytearray(vec![0x78, 0x79, 0x7A, 0xFF]);
+        let reduced = vm
+            .builtin_object_reduce_ex(vec![payload, Value::Int(0)], HashMap::new())
+            .expect("object.__reduce_ex__ should succeed");
+        let parts = tuple_values(&reduced);
+        let constructor_args = tuple_values(&parts[1]);
+        assert_eq!(
+            constructor_args,
+            vec![
+                Value::Str("xyz\u{ff}".to_string()),
+                Value::Str("latin-1".to_string())
+            ]
+        );
         assert_eq!(parts[2], Value::None);
     }
 

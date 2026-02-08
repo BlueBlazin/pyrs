@@ -2072,6 +2072,123 @@ ok = (name_ok and loaded is len)
 }
 
 #[test]
+fn pickle_bytearray_protocol_zero_roundtrips_and_supports_bytes_contains_checks() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle bytearray protocol-0 test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+import pickletools
+data = pickletools.optimize(pickle.dumps(bytearray(b"xyz"), 0))
+loaded = pickle.loads(data)
+ok = (loaded == bytearray(b"xyz"))
+ok = ok and (b"bytearray" in data)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_dispatch_table_none_item_raises_type_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle dispatch-table test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import io
+import pickle
+obj = object()
+pickler = pickle.Pickler(io.BytesIO())
+pickler.dispatch_table = {type(obj): None}
+raised = False
+try:
+    pickler.dump(obj)
+except TypeError:
+    raised = True
+ok = raised
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytearray_subclass_constructor_accepts_payload_and_supports_bytes_conversion() {
+    let source = r#"class Z(bytearray):
+    pass
+z = Z(b"abc")
+ok = (type(z) is Z and bytes(z) == b"abc")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn classmethod_bound_method_reduce_ex_returns_getattr_tuple() {
+    let source = r#"class C:
+    @classmethod
+    def f(cls):
+        return cls.__name__
+r = C.f.__reduce_ex__(4)
+rebuilt = r[0](*r[1])
+ok = (r[0] is getattr and r[1][0] is C and r[1][1] == "f" and rebuilt() == "C")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_zero_copy_bytearray_roundtrips_across_protocols() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping ZeroCopyBytearray pickle test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.picklecommon import ZeroCopyBytearray
+ok = True
+for proto in range(6):
+    obj = ZeroCopyBytearray(b"xyz")
+    a, b = pickle.loads(pickle.dumps((obj, obj), proto))
+    ok = ok and (a == obj) and (a is b)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn class_new_returning_non_instance_skips_init() {
+    let source = r#"class Factory:
+    def __new__(cls, value):
+        return value
+    def __init__(self, value):
+        raise RuntimeError("init should not run")
+result = Factory(42)
+ok = (result == 42)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn str_builtin_supports_bytes_decoding_signature() {
     let source = r#"a = str(b'\xff', 'latin-1')
 b = str(bytearray(b'abc'), 'utf-8')
@@ -2081,6 +2198,97 @@ try:
 except TypeError:
     c = True
 ok = (a == 'ÿ' and b == 'abc' and c)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn string_literal_escapes_support_octal_and_control_sequences() {
+    let source = r#"nul = "\0"
+bell = "\a"
+vert = "\v"
+octal = "\123"
+ok = (len(nul) == 1 and ord(nul) == 0 and ord(bell) == 7 and ord(vert) == 11 and octal == "S")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_index_matches_find_and_raises_value_error_when_missing() {
+    let source = r#"raised = False
+try:
+    "abc".index("z")
+except ValueError:
+    raised = True
+ok = ("abc".index("b") == 1 and "abc".find("b") == 1 and str.index("abc", "b") == 1 and raised)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn builtin_unbound_method_descriptors_cover_core_c_method_cases() {
+    let source = r#"ok = ("abcd".index("c") == 2)
+ok = ok and (str.index("abcd", "c") == 2)
+ok = ok and ([1, 2, 3].__len__() == 3)
+ok = ok and (list.__len__([1, 2, 3]) == 3)
+ok = ok and ({1, 2}.__contains__(2))
+ok = ok and set.__contains__({1, 2}, 2)
+ok = ok and (bytearray.maketrans(b"ab", b"xy") == bytes.maketrans(b"ab", b"xy"))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn tuple_and_str_subclass_core_methods_work_for_bound_and_unbound_calls() {
+    let source = r#"class TupleSub(tuple):
+    pass
+class StrSub(str):
+    pass
+t = TupleSub([1, 2, 2])
+s = StrSub("sweet")
+ok = (t.count(2) == 2 and TupleSub.count(t, 2) == 2 and s.count("e") == 2 and StrSub.count(s, "e") == 2)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn float_builtin_accepts_bytes_like_literals() {
+    let source = "a = float(b'1.5')\n\
+b = float(bytearray(b'2.25'))\n\
+ok = (a == 1.5 and b == 2.25)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn memoryview_supports_context_manager_and_obj_attribute() {
+    let source = r#"buf = bytearray(b"abc")
+with memoryview(buf) as view:
+    got = view.obj
+ok = (got is buf)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -6308,6 +6516,37 @@ ok = Child.flag
 #[test]
 fn user_classes_expose_qualname_for_unittest_loader_paths() {
     let source = "class KeyOrderingTest:\n    pass\nok = (KeyOrderingTest.__qualname__ == 'KeyOrderingTest')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn class_body_can_resolve_enclosing_function_locals() {
+    let source = r#"def make_pickler(base):
+    dt = {'x': 1}
+    class MyPickler(base):
+        dispatch_table = dt
+    return MyPickler.dispatch_table is dt
+
+ok = make_pickler(object)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_membership_accepts_bytes_like_needles() {
+    let source = "payload = b'c__builtin__\\nbytearray\\n(tR.'\n\
+needle = b'bytearray'\n\
+ok = (needle in payload)\n\
+ok = ok and (bytearray(b'bytearray') in payload)\n\
+ok = ok and (memoryview(b'bytearray') in payload)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

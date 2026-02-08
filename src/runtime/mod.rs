@@ -188,6 +188,7 @@ pub enum NativeMethodKind {
     ListRemove,
     ListPop,
     ListCount,
+    TupleCount,
     ListIndex,
     ListReverse,
     ListSort,
@@ -205,6 +206,9 @@ pub enum NativeMethodKind {
     BytesStartsWith,
     BytesEndsWith,
     BytesFind,
+    MemoryViewEnter,
+    MemoryViewExit,
+    MemoryViewRelease,
     StrRemovePrefix,
     StrRemoveSuffix,
     StrFormat,
@@ -222,6 +226,7 @@ pub enum NativeMethodKind {
     StrRPartition,
     StrCount,
     StrFind,
+    StrIndex,
     StrRFind,
     StrLStrip,
     StrRStrip,
@@ -246,6 +251,7 @@ pub enum NativeMethodKind {
     ExceptionWithTraceback,
     ExceptionAddNote,
     ObjectReduceExBound,
+    BoundMethodReduceEx,
     ComplexReduceEx,
     ClassRegister,
     PropertyGet,
@@ -1514,6 +1520,38 @@ impl Hash for ExceptionObject {
     }
 }
 
+fn instance_bytes_storage(instance: &ObjRef) -> Option<Vec<u8>> {
+    let Object::Instance(instance_data) = &*instance.kind() else {
+        return None;
+    };
+    let storage = instance_data.attrs.get("__pyrs_bytes_storage__")?;
+    match storage {
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => Some(values.clone()),
+            _ => None,
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => Some(values.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn bytearray_payload(obj: &ObjRef) -> Option<Vec<u8>> {
+    match &*obj.kind() {
+        Object::ByteArray(values) => Some(values.clone()),
+        _ => None,
+    }
+}
+
+fn bytes_payload(obj: &ObjRef) -> Option<Vec<u8>> {
+    match &*obj.kind() {
+        Object::Bytes(values) => Some(values.clone()),
+        _ => None,
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -1583,11 +1621,36 @@ impl PartialEq for Value {
             (Value::Generator(a), Value::Generator(b)) => a.id() == b.id(),
             (Value::Module(a), Value::Module(b))
             | (Value::Class(a), Value::Class(b))
-            | (Value::Instance(a), Value::Instance(b))
             | (Value::Super(a), Value::Super(b))
             | (Value::Function(a), Value::Function(b))
             | (Value::BoundMethod(a), Value::BoundMethod(b))
             | (Value::Cell(a), Value::Cell(b)) => a.id() == b.id(),
+            (Value::Instance(a), Value::Instance(b)) => {
+                if let (Some(left), Some(right)) = (instance_bytes_storage(a), instance_bytes_storage(b))
+                {
+                    left == right
+                } else {
+                    a.id() == b.id()
+                }
+            }
+            (Value::Instance(instance), Value::ByteArray(obj))
+            | (Value::ByteArray(obj), Value::Instance(instance)) => {
+                if let (Some(left), Some(right)) =
+                    (instance_bytes_storage(instance), bytearray_payload(obj))
+                {
+                    left == right
+                } else {
+                    false
+                }
+            }
+            (Value::Instance(instance), Value::Bytes(obj))
+            | (Value::Bytes(obj), Value::Instance(instance)) => {
+                if let (Some(left), Some(right)) = (instance_bytes_storage(instance), bytes_payload(obj)) {
+                    left == right
+                } else {
+                    false
+                }
+            }
             (Value::Exception(a), Value::Exception(b)) => a == b,
             (Value::ExceptionType(a), Value::ExceptionType(b)) => a == b,
             (
@@ -1934,6 +1997,10 @@ pub enum BuiltinFunction {
     CollectionsChainMapNewChild,
     CollectionsChainMapRepr,
     CollectionsChainMapItems,
+    CollectionsChainMapGet,
+    CollectionsChainMapGetItem,
+    CollectionsChainMapSetItem,
+    CollectionsChainMapDelItem,
     CollectionsOrderedDictTypeRepr,
     CollectionsDefaultDictTypeRepr,
     CollectionsCounterTypeRepr,
@@ -2241,6 +2308,10 @@ impl BuiltinFunction {
             | BuiltinFunction::CollectionsChainMapNewChild
             | BuiltinFunction::CollectionsChainMapRepr
             | BuiltinFunction::CollectionsChainMapItems
+            | BuiltinFunction::CollectionsChainMapGet
+            | BuiltinFunction::CollectionsChainMapGetItem
+            | BuiltinFunction::CollectionsChainMapSetItem
+            | BuiltinFunction::CollectionsChainMapDelItem
             | BuiltinFunction::CsvReaderIter
             | BuiltinFunction::CsvReaderNext => Err(RuntimeError::new(
                 "StringIO/BytesIO builtin not available in runtime-only call path",
@@ -2569,6 +2640,30 @@ impl BuiltinFunction {
                             .map_err(|_| RuntimeError::new("float() invalid literal"))?;
                         Ok(Value::Float(parsed))
                     }
+                    Value::Bytes(obj) => match &*obj.kind() {
+                        Object::Bytes(values) => {
+                            let text = std::str::from_utf8(values)
+                                .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                            let parsed = text
+                                .trim()
+                                .parse::<f64>()
+                                .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                            Ok(Value::Float(parsed))
+                        }
+                        _ => Err(RuntimeError::new("float() unsupported type")),
+                    },
+                    Value::ByteArray(obj) => match &*obj.kind() {
+                        Object::ByteArray(values) => {
+                            let text = std::str::from_utf8(values)
+                                .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                            let parsed = text
+                                .trim()
+                                .parse::<f64>()
+                                .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                            Ok(Value::Float(parsed))
+                        }
+                        _ => Err(RuntimeError::new("float() unsupported type")),
+                    },
                     _ => Err(RuntimeError::new("float() unsupported type")),
                 }
             }
@@ -2786,13 +2881,21 @@ impl BuiltinFunction {
                 }
             }
             BuiltinFunction::Tuple => {
-                if args.len() > 1 {
-                    return Err(RuntimeError::new("tuple() expects at most one argument"));
-                }
-                if args.is_empty() {
+                let source = match args.len() {
+                    0 => None,
+                    1 => Some(args[0].clone()),
+                    2 => match &args[0] {
+                        Value::Class(_) | Value::Builtin(BuiltinFunction::Tuple) => {
+                            Some(args[1].clone())
+                        }
+                        _ => return Err(RuntimeError::new("tuple() expects at most one argument")),
+                    },
+                    _ => return Err(RuntimeError::new("tuple() expects at most one argument")),
+                };
+                if source.is_none() {
                     return Ok(heap.alloc_tuple(Vec::new()));
                 }
-                match &args[0] {
+                match source.expect("checked is_some") {
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => Ok(heap.alloc_tuple(values.clone())),
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
@@ -4694,6 +4797,10 @@ fn value_to_bytes_with_encoding(
                         Object::Bytes(values) => Ok(values.clone()),
                         _ => Err(RuntimeError::new("bytes() unsupported type")),
                     },
+                    Some(Value::ByteArray(storage)) => match &*storage.kind() {
+                        Object::ByteArray(values) => Ok(values.clone()),
+                        _ => Err(RuntimeError::new("bytes() unsupported type")),
+                    },
                     _ => Err(RuntimeError::new("bytes() unsupported type")),
                 }
             }
@@ -5158,6 +5265,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
                     NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
+                    NativeMethodKind::TupleCount => "<bound method tuple.count>".to_string(),
                     NativeMethodKind::ListIndex => "<bound method list.index>".to_string(),
                     NativeMethodKind::ListReverse => "<bound method list.reverse>".to_string(),
                     NativeMethodKind::ListSort => "<bound method list.sort>".to_string(),
@@ -5181,6 +5289,15 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method bytes.endswith>".to_string()
                     }
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
+                    NativeMethodKind::MemoryViewEnter => {
+                        "<bound method memoryview.__enter__>".to_string()
+                    }
+                    NativeMethodKind::MemoryViewExit => {
+                        "<bound method memoryview.__exit__>".to_string()
+                    }
+                    NativeMethodKind::MemoryViewRelease => {
+                        "<bound method memoryview.release>".to_string()
+                    }
                     NativeMethodKind::StrRemovePrefix => {
                         "<bound method str.removeprefix>".to_string()
                     }
@@ -5202,6 +5319,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrRPartition => "<bound method str.rpartition>".to_string(),
                     NativeMethodKind::StrCount => "<bound method str.count>".to_string(),
                     NativeMethodKind::StrFind => "<bound method str.find>".to_string(),
+                    NativeMethodKind::StrIndex => "<bound method str.index>".to_string(),
                     NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
                     NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
                     NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
@@ -5237,6 +5355,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::ObjectReduceExBound => {
                         "<bound method object.__reduce_ex__>".to_string()
+                    }
+                    NativeMethodKind::BoundMethodReduceEx => {
+                        "<bound method method.__reduce_ex__>".to_string()
                     }
                     NativeMethodKind::ComplexReduceEx => {
                         "<bound method complex.__reduce_ex__>".to_string()

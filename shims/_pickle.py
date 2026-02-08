@@ -65,13 +65,56 @@ class UnpicklingError(PickleError):
 
 
 class Pickler:
-    def __new__(cls, *args, **kwargs):
-        return _pickle_module()._Pickler(*args, **kwargs)
+    def __init__(self, file, protocol=None, *, fix_imports=True, buffer_callback=None):
+        self._impl = _pickle_module()._Pickler(
+            file,
+            protocol,
+            fix_imports=fix_imports,
+            buffer_callback=buffer_callback,
+        )
+        self._sync_dispatch_table()
+
+    def _sync_dispatch_table(self):
+        if "dispatch_table" in self.__dict__:
+            self._impl.dispatch_table = self.__dict__["dispatch_table"]
+            return
+        class_dispatch = type(self).__dict__.get("dispatch_table")
+        if class_dispatch is not None:
+            self._impl.dispatch_table = class_dispatch
+
+    def dump(self, obj):
+        self._sync_dispatch_table()
+        return self._impl.dump(obj)
+
+    def __getattr__(self, name):
+        if name == "dispatch_table":
+            if "dispatch_table" in self.__dict__:
+                return self.__dict__["dispatch_table"]
+            class_dispatch = type(self).__dict__.get("dispatch_table")
+            if class_dispatch is not None:
+                return class_dispatch
+        return getattr(self._impl, name)
+
+    def __setattr__(self, name, value):
+        object.__setattr__(self, name, value)
+        if name == "_impl" or "_impl" not in self.__dict__:
+            return
+        if name == "dispatch_table":
+            self._impl.dispatch_table = value
 
 
 class Unpickler:
-    def __new__(cls, *args, **kwargs):
-        return _pickle_module()._Unpickler(*args, **kwargs)
+    def __init__(self, file, *, fix_imports=True, encoding="ASCII", errors="strict", buffers=None):
+        self._impl = _pickle_module()._Unpickler(
+            file,
+            fix_imports=fix_imports,
+            encoding=encoding,
+            errors=errors,
+            buffers=buffers,
+        )
+
+    def __getattr__(self, name):
+        return getattr(self._impl, name)
 
 
 def dump(obj, file, protocol=None, *, fix_imports=True, buffer_callback=None):

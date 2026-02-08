@@ -935,6 +935,18 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 Ok(Some('\n'))
             }
+            Some('a') => {
+                self.advance();
+                Ok(Some('\u{0007}'))
+            }
+            Some('b') => {
+                self.advance();
+                Ok(Some('\u{0008}'))
+            }
+            Some('f') => {
+                self.advance();
+                Ok(Some('\u{000c}'))
+            }
             Some('t') => {
                 self.advance();
                 Ok(Some('\t'))
@@ -942,6 +954,10 @@ impl<'a> Lexer<'a> {
             Some('r') => {
                 self.advance();
                 Ok(Some('\r'))
+            }
+            Some('v') => {
+                self.advance();
+                Ok(Some('\u{000b}'))
             }
             Some('\\') => {
                 self.advance();
@@ -994,6 +1010,18 @@ impl<'a> Lexer<'a> {
                 let value =
                     ((high.to_digit(16).unwrap_or(0) << 4) | low.to_digit(16).unwrap_or(0)) as u8;
                 Ok(Some(value as char))
+            }
+            Some(first @ '0'..='7') => {
+                let mut value = first.to_digit(8).unwrap_or(0);
+                self.advance();
+                for _ in 0..2 {
+                    let Some(next @ '0'..='7') = self.peek_char() else {
+                        break;
+                    };
+                    value = (value << 3) | next.to_digit(8).unwrap_or(0);
+                    self.advance();
+                }
+                Ok(Some((value as u8) as char))
             }
             Some('u') | Some('U') => {
                 let width = if self.peek_char() == Some('u') { 4 } else { 8 };

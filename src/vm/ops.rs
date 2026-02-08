@@ -1105,33 +1105,17 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
             _ => Err(RuntimeError::new("in expects string on left")),
         },
         Value::Bytes(obj) => match &*obj.kind() {
-            Object::Bytes(values) => {
-                let needle = value_to_int(left.clone())?;
-                if !(0..=255).contains(&needle) {
-                    return Ok(false);
-                }
-                Ok(values.iter().any(|value| *value as i64 == needle))
-            }
+            Object::Bytes(values) => compare_bytes_like_membership(left, values),
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
-            Object::ByteArray(values) => {
-                let needle = value_to_int(left.clone())?;
-                if !(0..=255).contains(&needle) {
-                    return Ok(false);
-                }
-                Ok(values.iter().any(|value| *value as i64 == needle))
-            }
+            Object::ByteArray(values) => compare_bytes_like_membership(left, values),
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => match &*view.source.kind() {
                 Object::Bytes(values) | Object::ByteArray(values) => {
-                    let needle = value_to_int(left.clone())?;
-                    if !(0..=255).contains(&needle) {
-                        return Ok(false);
-                    }
-                    Ok(values.iter().any(|value| *value as i64 == needle))
+                    compare_bytes_like_membership(left, values)
                 }
                 _ => Err(RuntimeError::new("unsupported operand type for in")),
             },
@@ -1139,6 +1123,61 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
         },
         _ => Err(RuntimeError::new("unsupported operand type for in")),
     }
+}
+
+fn compare_bytes_like_membership(left: &Value, haystack: &[u8]) -> Result<bool, RuntimeError> {
+    if let Value::Int(_) | Value::Bool(_) | Value::BigInt(_) = left {
+        let needle = value_to_int(left.clone())?;
+        if !(0..=255).contains(&needle) {
+            return Ok(false);
+        }
+        return Ok(haystack.iter().any(|value| *value as i64 == needle));
+    }
+    let needle = bytes_like_payload(left)
+        .ok_or_else(|| RuntimeError::new("a bytes-like object is required"))?;
+    Ok(bytes_contains(haystack, &needle))
+}
+
+fn bytes_like_payload(value: &Value) -> Option<Vec<u8>> {
+    match value {
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(values) => Some(values.clone()),
+            _ => None,
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(values) => Some(values.clone()),
+            _ => None,
+        },
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => match &*view.source.kind() {
+                Object::Bytes(values) | Object::ByteArray(values) => Some(values.clone()),
+                _ => None,
+            },
+            _ => None,
+        },
+        Value::Instance(obj) => match &*obj.kind() {
+            Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_bytes_storage__") {
+                Some(Value::Bytes(storage)) => match &*storage.kind() {
+                    Object::Bytes(values) => Some(values.clone()),
+                    _ => None,
+                },
+                Some(Value::ByteArray(storage)) => match &*storage.kind() {
+                    Object::ByteArray(values) => Some(values.clone()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack.windows(needle.len()).any(|window| window == needle)
 }
 
 pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
