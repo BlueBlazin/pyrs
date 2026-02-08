@@ -31244,6 +31244,7 @@ fn parse_char_class(chars: &[char], idx: &mut usize) -> Option<ReCharClass> {
 fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut idx = 0usize;
+    let mut group_depth = 0usize;
     let mut start_anchor = false;
     let mut end_anchor = false;
     if idx < chars.len() && chars[idx] == '^' {
@@ -31253,6 +31254,30 @@ fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
 
     let mut tokens = Vec::new();
     while idx < chars.len() {
+        if chars[idx] == '|' {
+            // Alternation requires a real regex engine; fall back.
+            return None;
+        }
+
+        if chars[idx] == '(' {
+            if idx + 1 < chars.len() && chars[idx + 1] == '?' {
+                // Non-capturing/named/lookahead groups are out-of-scope here.
+                return None;
+            }
+            group_depth += 1;
+            idx += 1;
+            continue;
+        }
+
+        if chars[idx] == ')' {
+            if group_depth == 0 {
+                return None;
+            }
+            group_depth -= 1;
+            idx += 1;
+            continue;
+        }
+
         if idx == chars.len() - 1 && chars[idx] == '$' {
             end_anchor = true;
             idx += 1;
@@ -31301,7 +31326,7 @@ fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
         };
         tokens.push(ReToken { atom, quantifier });
     }
-    if idx != chars.len() {
+    if idx != chars.len() || group_depth != 0 {
         return None;
     }
     Some(ParsedSimpleRegex {

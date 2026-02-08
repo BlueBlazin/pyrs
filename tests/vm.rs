@@ -4303,6 +4303,16 @@ fn re_match_supports_char_classes_ranges_and_plus() {
 }
 
 #[test]
+fn re_match_supports_basic_capturing_parentheses() {
+    let source = "import re\nok = re.match('(-*A-*)', 'A') is not None\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_match_case_statement() {
     let source = "value = 2\nmatch value:\n    case 1:\n        out = 'one'\n    case x if x > 1:\n        out = 'many'\n    case _:\n        out = 'other'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
