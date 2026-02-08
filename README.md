@@ -22,6 +22,12 @@
 - C-extension compatibility is not implemented yet (e.g. NumPy remains out of scope until extension milestones).
 - Performance/hardening milestones are still ahead.
 
+## Native Stdlib Layout
+
+- VM-native stdlib handlers are being split out of `src/vm/mod.rs` into `src/vm/stdlib/`.
+- Current extracted modules: `src/vm/stdlib/json.rs`, `src/vm/stdlib/re.rs`, `src/vm/stdlib/csv.rs`.
+- Direction: prefer CPython official pure-Python stdlib implementations whenever feasible; keep native handlers only where required and track remaining native/stub parity gaps in `docs/STUB_ACCOUNTING.md`.
+
 ## Quick Start
 
 Requirements:

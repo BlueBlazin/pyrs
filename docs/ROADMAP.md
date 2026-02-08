@@ -267,6 +267,7 @@ DoD:
 - Runtime container semantic parity closes for hash-driven types (`dict`/`set`/`frozenset`) including unhashable rejection behavior.
 - Stdlib coverage expands to unblock mainstream pure-Python ecosystems (`subprocess`, `socket`, `ssl`, `http`, `urllib`, `typing`, `dataclasses`, `enum`, `contextvars`, and importlib resource/package helpers).
 - `json`/`_csv`/`pickle` stacks close to full CPython semantics with explicit robustness/performance gates (`test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness scope, plus malformed-input/differential coverage and benchmark reporting).
+- Native stdlib VM handlers are isolated and progressively retired in favor of official CPython pure-Python stdlib implementations wherever feasible.
 - Import and packaging paths close remaining usability gaps (zip/bytecode imports, `importlib.resources`, `pkgutil`, and `site` startup behavior).
 - venv + pip pure-Python package workflows are production-usable and covered by regression tests.
 - Real-world smoke/regression matrix includes CLI/web/data pure-Python app classes running under constrained sandbox profile.
@@ -319,6 +320,7 @@ Progress:
 - Runtime container upgrade landed: `dict`/`set`/`frozenset` now use dedicated hash-indexed runtime container objects with insertion-order backing vectors.
 - Container equality parity batch landed: dict equality is now insertion-order independent, and set/frozenset equality is now value-based (including cross-type `set == frozenset` semantics), with dedicated VM regressions.
 - VM decomposition batch landed: arithmetic/comparison/type-union operator kernels were extracted from `src/vm/mod.rs` into `src/vm/ops.rs` with zero-regression full-suite validation, reducing monolith pressure ahead of bigint work.
+- VM stdlib decomposition batch landed: native `json`, `re`, and `_csv`/`csv` builtin handler methods were extracted from `src/vm/mod.rs` into `src/vm/stdlib/{json,re,csv}.rs` with zero-regression validation, improving diffability against CPython implementations and reducing monolithic VM surface.
 - Bigint conversion/format follow-up landed: `int(...)` now enforces base-0 and underscore validation rules more closely (including base-prefix forms), float-to-int conversion now rejects NaN/infinity and uses truncation toward zero with bigint fallback, `int.bit_length` now supports bigint receivers directly, and `int.from_bytes`/`int.to_bytes` now support arbitrary-size values with signed/unsigned overflow guards.
 - Hash-container lookup hardening landed in VM hot paths: dict keyed operations (`get`, `setdefault`, `pop`, delete, and string-key helpers) now route through hash-indexed container APIs, `in` checks for dict/set/frozenset use hash-based lookups with explicit hashability checks, and set relationship operations reject unhashable iterables consistently.
 - Container hot-path follow-up landed in runtime internals: dict/set delete paths now update hash-index buckets in-place instead of full index rebuilds, reducing churn in pop/remove-heavy workloads while preserving existing semantics and regression coverage.
