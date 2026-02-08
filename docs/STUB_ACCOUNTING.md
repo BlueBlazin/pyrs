@@ -17,9 +17,9 @@ Nothing is allowed to stay "half-implemented" without a tracked owner and closur
 - `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` are strict P0 release blockers.
 - Milestone 13 is not complete while any of those rows remain partial.
 - Closure proof requirements:
-1. CPython suites for `test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness/CI scope, including strict unittest execution lane (`tests/cpython_suite_strict_stdlib.txt`) with owned allowlist expectations (`tests/cpython_allowlist_strict.txt`).
+1. CPython suites for `test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness/CI scope, including strict unittest execution lane (`tests/cpython_suite_strict_stdlib.txt`) with owned allowlist expectations (`tests/cpython_allowlist_strict.txt`; currently `stdlib-strict-pickle` and `stdlib-strict-pickletools` only).
    Strict lane entries execute in isolated subprocesses with timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent runaway hangs from masking parity failures.
-2. Differential and malformed-input regression coverage for parser/decoder safety behavior.
+2. Differential and malformed-input regression coverage for parser/decoder safety behavior (including explicit malformed-contract differential probes for `json`, `_csv`, and pickle object-protocol paths).
 3. Baseline throughput/allocation benchmark reporting against representative payload sizes.
 
 ## Non-NoOp Partial Implementations

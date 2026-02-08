@@ -99,7 +99,7 @@ Run this pipeline continuously during Milestone 13 and Milestone 14:
 6. runtime leak regression lane (`tests/gc_regression.rs`)
 7. targeted algorithmic audits from `docs/ALGO_AUDIT_BACKLOG.md`
 8. stub/no-op drift gate (`tests/noop_inventory.rs`)
-9. coverage gate summary (`scripts/run_coverage_gate.sh`; report-only in CI by default, enforceable via `PYRS_COVERAGE_ENFORCE=1` and floor env vars)
+9. coverage gate summary (`scripts/run_coverage_gate.sh`; CI enforces soft floors at 70% regions / 65% functions / 70% lines, local runs remain report-only unless `PYRS_COVERAGE_ENFORCE=1`)
 
 Strict stdlib harness policy:
 - `tests/cpython_harness.rs` strict suite runs in isolated subprocesses with a per-entry timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent unbounded hangs/memory growth from masking regressions.
