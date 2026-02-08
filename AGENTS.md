@@ -76,6 +76,7 @@ Current milestone state summary:
 - Stub and partial implementation ledger: `docs/STUB_ACCOUNTING.md`
 - Engineering quality gates: `docs/ENGINEERING_GATES.md`
 - Algorithmic and semantic audit backlog: `docs/ALGO_AUDIT_BACKLOG.md`
+- Coverage gate script: `scripts/run_coverage_gate.sh` (`cargo llvm-cov` summary; CI report-only by default)
 - Native stdlib VM implementations: `src/vm/stdlib/`
 - P0 critical-path note: `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` are explicit release blockers until full parity + robustness/perf gates are closed.
 - Generated `NoOp` inventory: `docs/NOOP_BUILTIN_INVENTORY.txt` (refresh with `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`)

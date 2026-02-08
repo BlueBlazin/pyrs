@@ -22,6 +22,12 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-llvm-cov
+        run: |
+          if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+            cargo install cargo-llvm-cov --locked
+          fi
+
       - name: Download CPython 3.14.3 Lib
         run: |
           curl -fsSL -o /tmp/Python-3.14.3.tgz https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
@@ -33,3 +39,6 @@ jobs:
 
       - name: Run parity gate profile
         run: ./scripts/run_parity_gate.sh
+
+      - name: Run coverage gate (report-only)
+        run: ./scripts/run_coverage_gate.sh
