@@ -37,7 +37,6 @@ struct ScopeInfo {
     scope_type: ScopeType,
     locals: HashSet<String>,
     globals: HashSet<String>,
-    nonlocals: HashSet<String>,
     cellvars: Vec<String>,
     freevars: Vec<String>,
     cellvar_set: HashSet<String>,
@@ -83,27 +82,6 @@ impl ScopeInfo {
     ) -> Result<Self, CompileError> {
         analyze_scope(
             ScopeType::Function,
-            posonly_params,
-            params,
-            kwonly_params,
-            vararg.as_ref(),
-            kwarg.as_ref(),
-            body,
-            &enclosing.available_nonlocal,
-        )
-    }
-
-    fn for_lambda(
-        posonly_params: &[Parameter],
-        params: &[Parameter],
-        kwonly_params: &[Parameter],
-        vararg: &Option<Parameter>,
-        kwarg: &Option<Parameter>,
-        body: &Expr,
-        enclosing: &ScopeInfo,
-    ) -> Result<Self, CompileError> {
-        analyze_scope_expr(
-            ScopeType::Lambda,
             posonly_params,
             params,
             kwonly_params,
@@ -254,7 +232,6 @@ fn analyze_scope(
         scope_type,
         locals,
         globals,
-        nonlocals,
         cellvars,
         freevars,
         cellvar_set,

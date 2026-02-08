@@ -1,9 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::thread;
-use std::time::{Duration, Instant};
 
 use pyrs::{compiler, parser, vm::Vm};
 
@@ -166,9 +163,6 @@ fn run_entry(lib: &Path, entry: &str, mode: SuiteMode) -> Result<(), String> {
             "import sys\nimport importlib\nimport unittest\n{executable_patch}sys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nresult = unittest.TextTestRunner(verbosity=0, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
         ),
     };
-    if matches!(mode, SuiteMode::StrictUnittest) && entry == "test/test_csv.py" {
-        return run_in_pyrs_subprocess(&source, 45);
-    }
     let module =
         parser::parse_module(&source).map_err(|err| format!("parse error {}", err.message))?;
     let code = compiler::compile_module_with_filename(&module, "<cpython_harness>")
@@ -178,35 +172,6 @@ fn run_entry(lib: &Path, entry: &str, mode: SuiteMode) -> Result<(), String> {
     vm.execute(&code)
         .map(|_| ())
         .map_err(|err| format!("runtime error {}", err.message))
-}
-
-fn run_in_pyrs_subprocess(source: &str, timeout_secs: u64) -> Result<(), String> {
-    let pyrs = pyrs_bin().ok_or_else(|| "could not resolve pyrs binary for harness".to_string())?;
-    let mut child = Command::new(pyrs)
-        .arg("-c")
-        .arg(source)
-        .spawn()
-        .map_err(|err| format!("failed to spawn pyrs subprocess: {err}"))?;
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|err| format!("failed to poll pyrs subprocess: {err}"))?
-        {
-            if status.success() {
-                return Ok(());
-            }
-            return Err(format!("runtime error pyrs subprocess exited with status {status}"));
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!(
-                "runtime error pyrs subprocess timed out after {timeout_secs}s"
-            ));
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
 }
 
 fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
