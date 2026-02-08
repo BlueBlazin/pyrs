@@ -303,20 +303,10 @@ impl Vm {
             match self.next_from_iterator_value(&iterator)? {
                 GeneratorResumeOutcome::Yield(value) => {
                     physical_line_num += 1;
-                    let mut text = self.coerce_csv_reader_text(value)?;
-                    if text.ends_with('\n') {
-                        text.pop();
-                        if text.ends_with('\r') {
-                            text.pop();
-                        }
-                    } else if text.ends_with('\r') {
-                        text.pop();
-                    }
-                    if !pending_record.is_empty() {
-                        pending_record.push('\n');
-                    }
-                    pending_record.push_str(&text);
-                    if csv_record_needs_more_data(
+                    let text = self.coerce_csv_reader_text(value)?;
+                    let (line_body, line_ending) = split_csv_line_ending(&text);
+                    pending_record.push_str(line_body);
+                    let record_state = csv_record_state(
                         &pending_record,
                         delimiter,
                         quotechar,
@@ -324,7 +314,22 @@ impl Vm {
                         skipinitialspace,
                         quoting,
                         doublequote,
-                    ) {
+                    );
+                    if record_state.trailing_escape {
+                        if line_ending == "\r\n" {
+                            pending_record.push('\r');
+                            if record_state.in_quotes {
+                                pending_record.push('\n');
+                                continue;
+                            }
+                        } else if !line_ending.is_empty() {
+                            pending_record.push_str(line_ending);
+                            continue;
+                        } else {
+                            continue;
+                        }
+                    } else if record_state.in_quotes {
+                        pending_record.push_str(line_ending);
                         continue;
                     }
                     let fields = parse_csv_row_simple(
@@ -576,34 +581,17 @@ impl Vm {
             lineterminator,
             skipinitialspace,
         ) = self.extract_csv_writer_state(&writer)?;
-        let iterator = match self.to_iterator_value(row.clone()) {
-            Ok(iterator) => iterator,
-            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
-                return Err(self.csv_non_iterable_error(&row));
-            }
-            Err(err) => return Err(err),
-        };
-        let mut fields: Vec<(String, bool)> = Vec::new();
-        loop {
-            match self.next_from_iterator_value(&iterator)? {
-                GeneratorResumeOutcome::Yield(value) => {
-                    fields.push(self.csv_writer_field_from_value(
-                        value,
-                        delimiter,
-                        quotechar,
-                        escapechar,
-                        quoting,
-                        doublequote,
-                    )?);
-                }
-                GeneratorResumeOutcome::Complete(_) => break,
-                GeneratorResumeOutcome::PropagatedException => {
-                    if self.pending_generator_exception.is_some() {
-                        self.propagate_pending_generator_exception()?;
-                    }
-                    return Err(self.runtime_error_from_active_exception("iteration failed"));
-                }
-            }
+        let row_values = self.csv_collect_writer_row_values(row.clone())?;
+        let mut fields: Vec<(String, bool, bool)> = Vec::new();
+        for value in row_values {
+            fields.push(self.csv_writer_field_from_value(
+                value,
+                delimiter,
+                quotechar,
+                escapechar,
+                quoting,
+                doublequote,
+            )?);
         }
 
         if fields.len() == 1 && fields[0].0.is_empty() && !fields[0].1 {
@@ -613,7 +601,7 @@ impl Vm {
                 ));
             }
             if let Some(quote) = quotechar {
-                fields[0] = (format!("{quote}{quote}"), true);
+                fields[0] = (format!("{quote}{quote}"), true, fields[0].2);
             }
         }
         if quoting == 3 && fields.len() == 1 && fields[0].0.is_empty() && !fields[0].1 {
@@ -622,17 +610,28 @@ impl Vm {
             ));
         }
         if delimiter == ' ' && skipinitialspace {
-            for (text, quoted) in &fields {
-                if text.is_empty() && !quoted {
-                    return Err(RuntimeError::new(
-                        "empty field must be quoted if delimiter is space and skipinitialspace is true",
-                    ));
+            for (text, quoted, none_field) in &mut fields {
+                if text.is_empty() && !*quoted {
+                    let disallow_none = *none_field && (quoting == 4 || quoting == 5);
+                    if quoting == 3 || disallow_none {
+                        return Err(RuntimeError::new(
+                            "empty field must be quoted if delimiter is space and skipinitialspace is true",
+                        ));
+                    }
+                    if let Some(quote) = quotechar {
+                        *text = format!("{quote}{quote}");
+                        *quoted = true;
+                    } else {
+                        return Err(RuntimeError::new(
+                            "empty field must be quoted if delimiter is space and skipinitialspace is true",
+                        ));
+                    }
                 }
             }
         }
         let mut line = fields
             .into_iter()
-            .map(|(field, _)| field)
+            .map(|(field, _, _)| field)
             .collect::<Vec<_>>()
             .join(&delimiter.to_string());
         line.push_str(&lineterminator);
@@ -686,6 +685,61 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn csv_collect_writer_row_values(&mut self, row: Value) -> Result<Vec<Value>, RuntimeError> {
+        match self.to_iterator_value(row.clone()) {
+            Ok(iterator) => {
+                let mut values = Vec::new();
+                loop {
+                    match self.next_from_iterator_value(&iterator)? {
+                        GeneratorResumeOutcome::Yield(value) => values.push(value),
+                        GeneratorResumeOutcome::Complete(_) => break,
+                        GeneratorResumeOutcome::PropagatedException => {
+                            if self.pending_generator_exception.is_some() {
+                                self.propagate_pending_generator_exception()?;
+                            }
+                            return Err(
+                                self.runtime_error_from_active_exception("iteration failed")
+                            );
+                        }
+                    }
+                }
+                return Ok(values);
+            }
+            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+                if let Some(getitem) = self.lookup_bound_special_method(&row, "__getitem__")? {
+                    let mut values = Vec::new();
+                    let mut index: i64 = 0;
+                    loop {
+                        match self.call_internal(
+                            getitem.clone(),
+                            vec![Value::Int(index)],
+                            HashMap::new(),
+                        ) {
+                            Ok(InternalCallOutcome::Value(value)) => values.push(value),
+                            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                                return Err(RuntimeError::new("__getitem__() failed"));
+                            }
+                            Err(err)
+                                if runtime_error_matches_exception(&err.message, "IndexError")
+                                    || runtime_error_matches_exception(
+                                        &err.message,
+                                        "StopIteration",
+                                    ) =>
+                            {
+                                break;
+                            }
+                            Err(err) => return Err(err),
+                        }
+                        index += 1;
+                    }
+                    return Ok(values);
+                }
+                return Err(self.csv_non_iterable_error(&row));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
     pub(in crate::vm) fn runtime_error_from_active_exception(
         &mut self,
         fallback: &str,
@@ -695,8 +749,8 @@ impl Vm {
             .last_mut()
             .and_then(|frame| frame.active_exception.take());
         match active {
-            Some(Value::Exception(exception)) if exception.name == "Error" => {
-                RuntimeError::new(exception.message.unwrap_or_else(|| exception.name.clone()))
+            Some(Value::Exception(exception)) => {
+                RuntimeError::new(self.format_exception_object(&exception))
             }
             Some(value) => RuntimeError::new(format_value(&value)),
             None => RuntimeError::new(fallback),
@@ -725,7 +779,7 @@ impl Vm {
         escapechar: Option<char>,
         quoting: i64,
         doublequote: bool,
-    ) -> Result<(String, bool), RuntimeError> {
+    ) -> Result<(String, bool, bool), RuntimeError> {
         let is_none = matches!(&value, Value::None);
         let is_string = matches!(&value, Value::Str(_));
         let is_numeric = matches!(
@@ -754,7 +808,7 @@ impl Vm {
             force_quote,
         )?;
         let was_quoted = force_quote || rendered != text;
-        Ok((rendered, was_quoted))
+        Ok((rendered, was_quoted, is_none))
     }
 
     pub(in crate::vm) fn builtin_csv_register_dialect(
@@ -1284,10 +1338,25 @@ impl Vm {
         match value {
             Value::Str(text) => Ok(text),
             Value::None => Ok(String::new()),
-            other => match self.call_builtin(BuiltinFunction::Str, vec![other], HashMap::new())? {
-                Value::Str(text) => Ok(text),
-                _ => Err(RuntimeError::new("csv conversion failed")),
-            },
+            other => {
+                if let Some(str_method) = self.lookup_bound_special_method(&other, "__str__")? {
+                    match self.call_internal(str_method, Vec::new(), HashMap::new())? {
+                        InternalCallOutcome::Value(Value::Str(text)) => return Ok(text),
+                        InternalCallOutcome::Value(_) => {
+                            return Err(RuntimeError::new(
+                                "__str__ returned non-string (type str expected)",
+                            ));
+                        }
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("__str__() failed"));
+                        }
+                    }
+                }
+                match self.call_builtin(BuiltinFunction::Str, vec![other], HashMap::new())? {
+                    Value::Str(text) => Ok(text),
+                    _ => Err(RuntimeError::new("csv conversion failed")),
+                }
+            }
         }
     }
 

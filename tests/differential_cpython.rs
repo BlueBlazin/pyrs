@@ -212,3 +212,28 @@ fn differential_arithmetic_fuzz_matches_cpython() {
         );
     }
 }
+
+#[test]
+fn differential_list_sort_mutation_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"values = [3, 2, 1]
+def keyf(x):
+    values.append(0)
+    return x
+caught = None
+try:
+    values.sort(key=keyf)
+except Exception as exc:
+    caught = [type(exc).__name__, 'list modified during sort' in str(exc)]
+result = {"values": values, "caught": caught}
+"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(&py),
+        normalize_jsonish(&ours),
+        "list.sort mutation differential mismatch"
+    );
+}

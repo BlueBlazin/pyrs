@@ -995,6 +995,44 @@ impl<'a> Lexer<'a> {
                     ((high.to_digit(16).unwrap_or(0) << 4) | low.to_digit(16).unwrap_or(0)) as u8;
                 Ok(Some(value as char))
             }
+            Some('u') | Some('U') => {
+                let width = if self.peek_char() == Some('u') { 4 } else { 8 };
+                self.advance();
+                let mut value: u32 = 0;
+                for _ in 0..width {
+                    let ch = self.peek_char().ok_or_else(|| {
+                        LexError::new(
+                            "unterminated escape sequence",
+                            start_offset,
+                            start_line,
+                            start_column,
+                        )
+                    })?;
+                    if !ch.is_ascii_hexdigit() {
+                        return Err(LexError::new(
+                            "invalid unicode escape",
+                            start_offset,
+                            start_line,
+                            start_column,
+                        ));
+                    }
+                    self.advance();
+                    value = (value << 4) | ch.to_digit(16).unwrap_or(0);
+                }
+                let ch = if (0xD800..=0xDFFF).contains(&value) {
+                    '\u{FFFD}'
+                } else {
+                    char::from_u32(value).ok_or_else(|| {
+                        LexError::new(
+                            "invalid unicode escape",
+                            start_offset,
+                            start_line,
+                            start_column,
+                        )
+                    })?
+                };
+                Ok(Some(ch))
+            }
             Some('\n') => {
                 // In non-raw strings, backslash-newline is a line continuation.
                 self.advance();

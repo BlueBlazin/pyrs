@@ -5148,10 +5148,7 @@ pub fn format_value(value: &Value) -> String {
             _ => "<bound method ?>".to_string(),
         },
         Value::Cell(_) => "<cell>".to_string(),
-        Value::Exception(exception) => match &exception.message {
-            Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
-            _ => exception.name.clone(),
-        },
+        Value::Exception(exception) => exception.message.clone().unwrap_or_default(),
         Value::ExceptionType(name) => format!("<class '{}'>", name),
         Value::Slice { lower, upper, step } => {
             let lower = lower.map_or("None".to_string(), |value| value.to_string());

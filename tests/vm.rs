@@ -2227,6 +2227,26 @@ fn executes_try_except_statement() {
 }
 
 #[test]
+fn exception_str_returns_message_only() {
+    let source = "text = ''\ntry:\n    raise TypeError('bad')\nexcept TypeError as exc:\n    text = str(exc)\nok = text == 'bad'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn traceback_keeps_exception_type_prefix() {
+    let source = "raise TypeError('bad')";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("TypeError: bad"));
+}
+
+#[test]
 fn executes_try_except_else_statement() {
     let source = "try:\n    x = 1\nexcept Exception:\n    x = 2\nelse:\n    x = 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -2268,6 +2288,41 @@ fn executes_try_finally_on_exception() {
     let err = vm.execute(&code).expect_err("execution should raise");
     assert!(err.message.contains("ZeroDivisionError"));
     assert_eq!(vm.get_global("x"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_try_finally_on_return_statement() {
+    let source = "x = 0\ndef f():\n    global x\n    try:\n        return 7\n    finally:\n        x = 2\nresult = f()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("result"), Some(Value::Int(7)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+}
+
+#[test]
+fn executes_try_except_finally_on_return_statement() {
+    let source = "x = 0\ndef f():\n    global x\n    try:\n        raise ValueError('bad')\n    except ValueError:\n        return 11\n    finally:\n        x = 5\nresult = f()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("result"), Some(Value::Int(11)));
+    assert_eq!(vm.get_global("x"), Some(Value::Int(5)));
+}
+
+#[test]
+fn executes_finally_return_overrides_try_return() {
+    let source = "def f():\n    try:\n        return 1\n    finally:\n        return 2\nresult = f()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("result"), Some(Value::Int(2)));
 }
 
 #[test]
@@ -6362,6 +6417,36 @@ ok = (
     and rows_escape_eof == [['\n']]
     and strict_raised
 )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_roundtrips_quoted_newlines_for_all_line_terminators() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+import io
+rows = [
+    ['\na', 'b\nc', 'd\n'],
+    ['\r\ni', 'j\r\nk', 'l\r\n'],
+    ['\n\nu', 'v\n\nw', 'x\n\n'],
+]
+ok = True
+for lineterminator in ('\r\n', '\n', '\r'):
+    sink = io.StringIO(newline='')
+    writer = csv.writer(sink, lineterminator=lineterminator)
+    writer.writerows(rows)
+    sink.seek(0)
+    out = list(csv.reader(sink))
+    if out != rows:
+        ok = False
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

@@ -5238,6 +5238,15 @@ impl Vm {
                     let _ = dict_remove_value(&modules_dict, &key);
                 }
             } else {
+                if !present_in_sys_modules {
+                    if let Some(modules_dict) = self.sys_dict_obj("modules") {
+                        let _ = dict_set_value(
+                            &modules_dict,
+                            Value::Str(name.to_string()),
+                            Value::Module(module.clone()),
+                        );
+                    }
+                }
                 return Ok(module);
             }
         }
@@ -5247,6 +5256,13 @@ impl Vm {
                 if let Some((parent, _)) = name.rsplit_once('.') {
                     let _ = self.import_module_object(parent)?;
                     if let Some(module) = self.modules.get(name).cloned() {
+                        if let Some(modules_dict) = self.sys_dict_obj("modules") {
+                            let _ = dict_set_value(
+                                &modules_dict,
+                                Value::Str(name.to_string()),
+                                Value::Module(module.clone()),
+                            );
+                        }
                         return Ok(module);
                     }
                     if let Some(modules_dict) = self.sys_dict_obj("modules") {
@@ -7216,19 +7232,24 @@ impl Vm {
                                         self.push_function_call(data, bound_args, HashMap::new())?;
                                     }
                                     Object::NativeMethod(native) => {
-                                        match self.call_native_method(
+                                        let caller_depth = self.frames.len();
+                                        let caller_idx = caller_depth.saturating_sub(1);
+                                        let caller_ip = self
+                                            .frames
+                                            .get(caller_idx)
+                                            .map(|frame| frame.ip)
+                                            .unwrap_or(0);
+                                        let call_result = self.call_native_method(
                                             native.kind,
                                             method_data.receiver.clone(),
                                             args,
                                             HashMap::new(),
-                                        )? {
-                                            NativeCallResult::Value(result) => {
-                                                self.push_value(result)
-                                            }
-                                            NativeCallResult::PropagatedException => {
-                                                self.propagate_pending_generator_exception()?;
-                                            }
-                                        }
+                                        );
+                                        self.finalize_native_opcode_call(
+                                            caller_depth,
+                                            caller_ip,
+                                            call_result,
+                                        )?;
                                     }
                                     _ => {
                                         return Err(RuntimeError::new(
@@ -7398,19 +7419,24 @@ impl Vm {
                                         self.push_function_call(data, bound_args, kwargs)?;
                                     }
                                     Object::NativeMethod(native) => {
-                                        match self.call_native_method(
+                                        let caller_depth = self.frames.len();
+                                        let caller_idx = caller_depth.saturating_sub(1);
+                                        let caller_ip = self
+                                            .frames
+                                            .get(caller_idx)
+                                            .map(|frame| frame.ip)
+                                            .unwrap_or(0);
+                                        let call_result = self.call_native_method(
                                             native.kind,
                                             method_data.receiver.clone(),
                                             args,
                                             kwargs,
-                                        )? {
-                                            NativeCallResult::Value(result) => {
-                                                self.push_value(result)
-                                            }
-                                            NativeCallResult::PropagatedException => {
-                                                self.propagate_pending_generator_exception()?;
-                                            }
-                                        }
+                                        );
+                                        self.finalize_native_opcode_call(
+                                            caller_depth,
+                                            caller_ip,
+                                            call_result,
+                                        )?;
                                     }
                                     _ => {
                                         return Err(RuntimeError::new(
@@ -7553,19 +7579,24 @@ impl Vm {
                                         self.push_function_call(data, bound_args, kwargs)?;
                                     }
                                     Object::NativeMethod(native) => {
-                                        match self.call_native_method(
+                                        let caller_depth = self.frames.len();
+                                        let caller_idx = caller_depth.saturating_sub(1);
+                                        let caller_ip = self
+                                            .frames
+                                            .get(caller_idx)
+                                            .map(|frame| frame.ip)
+                                            .unwrap_or(0);
+                                        let call_result = self.call_native_method(
                                             native.kind,
                                             method_data.receiver.clone(),
                                             args,
                                             kwargs,
-                                        )? {
-                                            NativeCallResult::Value(result) => {
-                                                self.push_value(result)
-                                            }
-                                            NativeCallResult::PropagatedException => {
-                                                self.propagate_pending_generator_exception()?;
-                                            }
-                                        }
+                                        );
+                                        self.finalize_native_opcode_call(
+                                            caller_depth,
+                                            caller_ip,
+                                            call_result,
+                                        )?;
                                     }
                                     _ => {
                                         return Err(RuntimeError::new(
@@ -7675,19 +7706,24 @@ impl Vm {
                                         self.push_function_call(data, bound_args, kwargs)?;
                                     }
                                     Object::NativeMethod(native) => {
-                                        match self.call_native_method(
+                                        let caller_depth = self.frames.len();
+                                        let caller_idx = caller_depth.saturating_sub(1);
+                                        let caller_ip = self
+                                            .frames
+                                            .get(caller_idx)
+                                            .map(|frame| frame.ip)
+                                            .unwrap_or(0);
+                                        let call_result = self.call_native_method(
                                             native.kind,
                                             method_data.receiver.clone(),
                                             args,
                                             kwargs,
-                                        )? {
-                                            NativeCallResult::Value(result) => {
-                                                self.push_value(result)
-                                            }
-                                            NativeCallResult::PropagatedException => {
-                                                self.propagate_pending_generator_exception()?;
-                                            }
-                                        }
+                                        );
+                                        self.finalize_native_opcode_call(
+                                            caller_depth,
+                                            caller_ip,
+                                            call_result,
+                                        )?;
                                     }
                                     _ => {
                                         return Err(RuntimeError::new(
@@ -7805,19 +7841,24 @@ impl Vm {
                                         self.push_function_call(data, bound_args, kwargs)?;
                                     }
                                     Object::NativeMethod(native) => {
-                                        match self.call_native_method(
+                                        let caller_depth = self.frames.len();
+                                        let caller_idx = caller_depth.saturating_sub(1);
+                                        let caller_ip = self
+                                            .frames
+                                            .get(caller_idx)
+                                            .map(|frame| frame.ip)
+                                            .unwrap_or(0);
+                                        let call_result = self.call_native_method(
                                             native.kind,
                                             method_data.receiver.clone(),
                                             args,
                                             kwargs,
-                                        )? {
-                                            NativeCallResult::Value(result) => {
-                                                self.push_value(result)
-                                            }
-                                            NativeCallResult::PropagatedException => {
-                                                self.propagate_pending_generator_exception()?;
-                                            }
-                                        }
+                                        );
+                                        self.finalize_native_opcode_call(
+                                            caller_depth,
+                                            caller_ip,
+                                            call_result,
+                                        )?;
                                     }
                                     _ => {
                                         return Err(RuntimeError::new(
@@ -8902,7 +8943,10 @@ impl Vm {
                 frame.filename, frame.line, frame.column, frame.name
             ));
         }
-        output.push_str(&format_value(exc));
+        match exc {
+            Value::Exception(exception) => output.push_str(&self.format_exception_object(exception)),
+            _ => output.push_str(&format_value(exc)),
+        }
         if let Value::Exception(exception) = exc {
             if let Some(cause) = &exception.cause {
                 output.push_str(
@@ -10690,6 +10734,37 @@ impl Vm {
         }
     }
 
+    fn finalize_native_opcode_call(
+        &mut self,
+        caller_depth: usize,
+        caller_ip: usize,
+        result: Result<NativeCallResult, RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        match result {
+            Ok(NativeCallResult::Value(value)) => {
+                if !self.caller_exception_handled(caller_depth, caller_ip) {
+                    let caller_idx = caller_depth.saturating_sub(1);
+                    self.push_value_to_caller_frame(caller_idx, value)?;
+                }
+                Ok(())
+            }
+            Ok(NativeCallResult::PropagatedException) => {
+                if self.caller_exception_handled(caller_depth, caller_ip) {
+                    Ok(())
+                } else {
+                    self.propagate_pending_generator_exception()
+                }
+            }
+            Err(err) => {
+                if self.caller_exception_handled(caller_depth, caller_ip) {
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
     fn call_internal(
         &mut self,
         callable: Value,
@@ -10729,18 +10804,28 @@ impl Vm {
                         self.frames.len() > depth_before
                     }
                     Object::NativeMethod(native) => {
-                        match self.call_native_method(
+                        let native_call = self.call_native_method(
                             native.kind,
                             method_data.receiver.clone(),
                             args,
                             kwargs,
-                        )? {
-                            NativeCallResult::Value(result) => {
+                        );
+                        match native_call {
+                            Ok(NativeCallResult::Value(result)) => {
                                 return Ok(InternalCallOutcome::Value(result));
                             }
-                            NativeCallResult::PropagatedException => {
+                            Ok(NativeCallResult::PropagatedException) => {
+                                if self.caller_exception_handled(caller_depth, caller_ip) {
+                                    return Ok(InternalCallOutcome::CallerExceptionHandled);
+                                }
                                 self.propagate_pending_generator_exception()?;
                                 return Ok(InternalCallOutcome::CallerExceptionHandled);
+                            }
+                            Err(err) => {
+                                if self.caller_exception_handled(caller_depth, caller_ip) {
+                                    return Ok(InternalCallOutcome::CallerExceptionHandled);
+                                }
+                                return Err(err);
                             }
                         }
                     }
@@ -25900,6 +25985,7 @@ impl Vm {
             None
         };
         let fd = self.io_file_fd_from_instance(&instance)?;
+        let binary = Self::io_file_is_binary(&instance);
         let file = self
             .open_files
             .get_mut(&fd)
@@ -25917,8 +26003,25 @@ impl Vm {
             if byte[0] == b'\n' {
                 break;
             }
+            if !binary && byte[0] == b'\r' {
+                if limit.map(|max| out.len() < max).unwrap_or(true) {
+                    let mut next = [0u8; 1];
+                    let next_count = file
+                        .read(&mut next)
+                        .map_err(|err| RuntimeError::new(format!("readline failed: {err}")))?;
+                    if next_count == 1 {
+                        if next[0] == b'\n' {
+                            out.push(next[0]);
+                        } else {
+                            file.seek(SeekFrom::Current(-1))
+                                .map_err(|err| RuntimeError::new(format!("readline failed: {err}")))?;
+                        }
+                    }
+                }
+                break;
+            }
         }
-        if Self::io_file_is_binary(&instance) {
+        if binary {
             Ok(self.heap.alloc_bytes(out))
         } else {
             let text = String::from_utf8(out)
@@ -26246,6 +26349,32 @@ impl Vm {
         Ok(())
     }
 
+    fn stringio_next_line_end(buffer: &[char], pos: usize, limit: Option<usize>) -> usize {
+        let mut end = pos;
+        while end < buffer.len() {
+            let ch = buffer[end];
+            if ch == '\n' {
+                end += 1;
+                break;
+            }
+            if ch == '\r' {
+                end += 1;
+                if end < buffer.len() && buffer[end] == '\n' {
+                    if limit.is_some_and(|max| end - pos >= max) {
+                        break;
+                    }
+                    end += 1;
+                }
+                break;
+            }
+            end += 1;
+            if limit.is_some_and(|max| end - pos >= max) {
+                break;
+            }
+        }
+        end
+    }
+
     fn builtin_stringio_init(
         &mut self,
         mut args: Vec<Value>,
@@ -26334,17 +26463,8 @@ impl Vm {
         if pos >= buffer.len() {
             return Ok(Value::Str(String::new()));
         }
-        let mut end = pos;
-        while end < buffer.len() {
-            if buffer[end] == '\n' {
-                end += 1;
-                break;
-            }
-            end += 1;
-            if limit >= 0 && (end - pos) as i64 >= limit {
-                break;
-            }
-        }
+        let max = if limit < 0 { None } else { Some(limit as usize) };
+        let end = Self::stringio_next_line_end(&buffer, pos, max);
         let out: String = buffer[pos..end].iter().collect();
         self.stringio_store_buffer(&receiver, buffer, end)?;
         Ok(Value::Str(out))
@@ -26431,14 +26551,7 @@ impl Vm {
         if pos >= buffer.len() {
             return Err(RuntimeError::new("StopIteration"));
         }
-        let mut end = pos;
-        while end < buffer.len() {
-            if buffer[end] == '\n' {
-                end += 1;
-                break;
-            }
-            end += 1;
-        }
+        let end = Self::stringio_next_line_end(&buffer, pos, None);
         let out: String = buffer[pos..end].iter().collect();
         self.stringio_store_buffer(&receiver, buffer, end)?;
         Ok(Value::Str(out))
@@ -30114,7 +30227,25 @@ fn parse_csv_reader_float(text: &str) -> Result<f64, RuntimeError> {
         .map_err(|_| RuntimeError::new("could not convert string to float"))
 }
 
-fn csv_record_needs_more_data(
+fn split_csv_line_ending(text: &str) -> (&str, &str) {
+    if let Some(stripped) = text.strip_suffix("\r\n") {
+        return (stripped, "\r\n");
+    }
+    if let Some(stripped) = text.strip_suffix('\n') {
+        return (stripped, "\n");
+    }
+    if let Some(stripped) = text.strip_suffix('\r') {
+        return (stripped, "\r");
+    }
+    (text, "")
+}
+
+struct CsvRecordState {
+    in_quotes: bool,
+    trailing_escape: bool,
+}
+
+fn csv_record_state(
     row: &str,
     delimiter: char,
     quotechar: Option<char>,
@@ -30122,22 +30253,29 @@ fn csv_record_needs_more_data(
     skipinitialspace: bool,
     quoting: i64,
     doublequote: bool,
-) -> bool {
+) -> CsvRecordState {
     if row.is_empty() {
-        return false;
+        return CsvRecordState {
+            in_quotes: false,
+            trailing_escape: false,
+        };
     }
     let active_quotechar = if quoting == 3 { None } else { quotechar };
     let mut in_quotes = false;
     let mut at_field_start = true;
+    let mut trailing_escape = false;
     let mut chars = row.chars().peekable();
     while let Some(ch) = chars.next() {
+        trailing_escape = false;
         if let Some(escape) = escapechar {
             if ch == escape {
                 if chars.peek().is_some() {
                     chars.next();
+                    at_field_start = false;
+                    continue;
                 }
-                at_field_start = false;
-                continue;
+                trailing_escape = true;
+                break;
             }
         }
         if skipinitialspace && !in_quotes && at_field_start && ch == ' ' {
@@ -30167,7 +30305,11 @@ fn csv_record_needs_more_data(
         }
         at_field_start = false;
     }
-    in_quotes
+
+    CsvRecordState {
+        in_quotes,
+        trailing_escape,
+    }
 }
 
 fn parse_csv_row_simple(
@@ -30302,10 +30444,11 @@ fn quote_csv_field(
     doublequote: bool,
     force_quote: bool,
 ) -> Result<String, RuntimeError> {
+    let contains_quote = quotechar.is_some_and(|quote| field.contains(quote));
     let needs_quote = field.contains(delimiter)
         || field.contains('\n')
         || field.contains('\r')
-        || quotechar.is_some_and(|quote| field.contains(quote));
+        || (contains_quote && (doublequote || escapechar.is_none()));
 
     if quoting == 3 {
         let mut out = String::new();
@@ -30313,7 +30456,8 @@ fn quote_csv_field(
             let must_escape = ch == delimiter
                 || ch == '\n'
                 || ch == '\r'
-                || quotechar.is_some_and(|quote| ch == quote);
+                || quotechar.is_some_and(|quote| ch == quote)
+                || escapechar.is_some_and(|escape| ch == escape);
             if must_escape {
                 let Some(escape) = escapechar else {
                     return Err(RuntimeError::new("need to escape, but no escapechar set"));
@@ -30326,6 +30470,25 @@ fn quote_csv_field(
     }
 
     if !force_quote && !needs_quote {
+        if let Some(escape) = escapechar {
+            let mut escaped = String::new();
+            let mut changed = false;
+            for ch in field.chars() {
+                let must_escape_quote =
+                    quotechar.is_some_and(|quote| ch == quote) && !doublequote;
+                let must_escape_escape = ch == escape;
+                if must_escape_quote || must_escape_escape {
+                    escaped.push(escape);
+                    changed = true;
+                }
+                escaped.push(ch);
+            }
+            if changed {
+                return Ok(escaped);
+            }
+        } else if contains_quote && !doublequote {
+            return Err(RuntimeError::new("need to escape quotechar"));
+        }
         return Ok(field.to_string());
     }
     let Some(quotechar) = quotechar else {
@@ -30355,6 +30518,10 @@ fn quote_csv_field(
             } else {
                 return Err(RuntimeError::new("need to escape quotechar"));
             }
+        } else if escapechar.is_some_and(|escape| ch == escape) {
+            let escape = escapechar.expect("checked some");
+            escaped.push(escape);
+            escaped.push(ch);
         } else {
             escaped.push(ch);
         }
@@ -33501,6 +33668,22 @@ fn classify_runtime_error(message: &str) -> &'static str {
         "KeyboardInterrupt",
         "CalledProcessError",
     ];
+    if message.starts_with("Traceback (most recent call last):") {
+        if let Some(last_non_empty_line) = message
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(str::trim)
+        {
+            for exception in DIRECT_PREFIX_EXCEPTIONS {
+                if last_non_empty_line == exception
+                    || last_non_empty_line.starts_with(&format!("{exception}:"))
+                {
+                    return exception;
+                }
+            }
+        }
+    }
     for exception in DIRECT_PREFIX_EXCEPTIONS {
         if message == exception || message.starts_with(&format!("{exception}:")) {
             return exception;
