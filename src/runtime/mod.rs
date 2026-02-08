@@ -5410,4 +5410,67 @@ mod tests {
         heap.collect_cycles(&[]);
         assert_eq!(heap.live_objects_count(), 0);
     }
+
+    #[test]
+    fn gc_preserves_rooted_self_referential_list() {
+        let heap = Heap::new();
+        let list = heap.alloc(Object::List(Vec::new()));
+        if let Object::List(values) = &mut *list.kind_mut() {
+            values.push(Value::List(list.clone()));
+        }
+
+        heap.collect_cycles(&[Value::List(list.clone())]);
+
+        match &*list.kind() {
+            Object::List(values) => {
+                assert_eq!(values.len(), 1);
+                match &values[0] {
+                    Value::List(inner) => assert_eq!(inner.id(), list.id()),
+                    other => panic!("expected rooted list reference, got {other:?}"),
+                }
+            }
+            other => panic!("expected list object after rooted gc, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gc_clears_unrooted_mutual_list_dict_cycle() {
+        let heap = Heap::new();
+        let list = heap.alloc(Object::List(Vec::new()));
+        let dict = heap.alloc(Object::Dict(DictObject::new(Vec::new())));
+
+        if let Object::List(values) = &mut *list.kind_mut() {
+            values.push(Value::Dict(dict.clone()));
+        }
+        if let Object::Dict(entries) = &mut *dict.kind_mut() {
+            entries.insert(Value::Str("list".to_string()), Value::List(list.clone()));
+        }
+
+        heap.collect_cycles(&[]);
+
+        match &*list.kind() {
+            Object::List(values) => assert!(values.is_empty(), "list cycle should be cleared"),
+            other => panic!("expected list object, got {other:?}"),
+        }
+        match &*dict.kind() {
+            Object::Dict(entries) => assert_eq!(entries.len(), 0, "dict cycle should be cleared"),
+            other => panic!("expected dict object, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn immediate_ids_are_stable_for_equal_values() {
+        let heap = Heap::new();
+        let int_a = heap.id_of(&Value::Int(42));
+        let int_b = heap.id_of(&Value::Int(42));
+        let str_a = heap.id_of(&Value::Str("same".to_string()));
+        let str_b = heap.id_of(&Value::Str("same".to_string()));
+        let bool_true = heap.id_of(&Value::Bool(true));
+        let bool_false = heap.id_of(&Value::Bool(false));
+
+        assert_eq!(int_a, int_b);
+        assert_eq!(str_a, str_b);
+        assert_ne!(bool_true, bool_false);
+        assert_ne!(int_a, str_a);
+    }
 }
