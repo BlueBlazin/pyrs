@@ -1909,13 +1909,19 @@ def fallback(obj):
     return {'fallback': 'ok'}
 text = json.dumps({'b': 1, 'a': '\u263A'}, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
 fallback_text = json.dumps(Unknown(), default=fallback, sort_keys=True)
-ok = (text == '{"a":"\\u263a","b":1}' and fallback_text == '{"fallback": "ok"}')
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    assert_eq!(
+        vm.get_global("text"),
+        Some(Value::Str("{\"a\":\"\\u263a\",\"b\":1}".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("fallback_text"),
+        Some(Value::Str("{\"fallback\": \"ok\"}".to_string()))
+    );
 }
 
 #[test]

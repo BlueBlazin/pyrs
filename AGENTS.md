@@ -65,6 +65,7 @@ Current milestone state summary:
 - Maintain correctness first, then performance.
 - Keep dependencies minimal and well‑justified.
 - Prefer clear architecture boundaries: parser, AST, compiler/IR, VM, runtime, stdlib.
+- Commit frequently in small, focused checkpoints to minimize loss on interruption/crash.
 - At the end of every assistant turn, always include the immediate next `3-6` concrete steps.
 
 ## Project Artifacts
