@@ -11449,6 +11449,19 @@ impl Vm {
                 return Ok(self.alloc_native_bound_method(kind, module.clone()));
             }
         }
+        if module_name == "__re_match__" {
+            let kind = match attr_name {
+                "group" => Some(NativeMethodKind::ReMatchGroup),
+                "groups" => Some(NativeMethodKind::ReMatchGroups),
+                "start" => Some(NativeMethodKind::ReMatchStart),
+                "end" => Some(NativeMethodKind::ReMatchEnd),
+                "span" => Some(NativeMethodKind::ReMatchSpan),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                return Ok(self.alloc_native_bound_method(kind, module.clone()));
+            }
+        }
         if let Some(attr) = module_name.split('.').last().and_then(|suffix| {
             if suffix == attr_name {
                 Some(Value::Module(module.clone()))
@@ -13377,22 +13390,19 @@ impl Vm {
                 if args.is_empty() {
                     return Err(RuntimeError::new("pattern method expects string"));
                 }
-                let pattern = re_pattern_from_compiled_module(&receiver)?;
                 let mode = match kind {
                     NativeMethodKind::RePatternSearch => ReMode::Search,
                     NativeMethodKind::RePatternMatch => ReMode::Match,
                     NativeMethodKind::RePatternFullMatch => ReMode::FullMatch,
                     _ => unreachable!(),
                 };
-                let found = re_match_bounds(&pattern, &args[0], mode)?;
-                if let Some((start, end)) = found {
-                    Ok(NativeCallResult::Value(self.heap.alloc_tuple(vec![
-                        Value::Int(start as i64),
-                        Value::Int(end as i64),
-                    ])))
-                } else {
-                    Ok(NativeCallResult::Value(Value::None))
-                }
+                let mut forwarded = vec![Value::Module(receiver.clone())];
+                forwarded.extend(args);
+                Ok(NativeCallResult::Value(self.builtin_re_match_mode(
+                    forwarded,
+                    HashMap::new(),
+                    mode,
+                )?))
             }
             NativeMethodKind::RePatternSub => {
                 if args.len() < 2 || args.len() > 3 {
@@ -13457,6 +13467,21 @@ impl Vm {
                     }
                 }
             }
+            NativeMethodKind::ReMatchGroup => Ok(NativeCallResult::Value(
+                self.native_re_match_group(&receiver, args)?,
+            )),
+            NativeMethodKind::ReMatchGroups => Ok(NativeCallResult::Value(
+                self.native_re_match_groups(&receiver, args)?,
+            )),
+            NativeMethodKind::ReMatchStart => Ok(NativeCallResult::Value(
+                self.native_re_match_start(&receiver, args)?,
+            )),
+            NativeMethodKind::ReMatchEnd => Ok(NativeCallResult::Value(
+                self.native_re_match_end(&receiver, args)?,
+            )),
+            NativeMethodKind::ReMatchSpan => Ok(NativeCallResult::Value(
+                self.native_re_match_span(&receiver, args)?,
+            )),
             NativeMethodKind::ExceptionWithTraceback => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("with_traceback() expects one argument"));
@@ -31114,6 +31139,7 @@ enum ReQuantifier {
     ZeroOrOne,
     ZeroOrMore,
     OneOrMore,
+    Exactly(usize),
 }
 
 #[derive(Clone)]
@@ -31128,6 +31154,10 @@ enum ReAtom {
     Literal(char),
     Any,
     Class(ReCharClass),
+    Group {
+        tokens: Vec<ReToken>,
+        capture: Option<usize>,
+    },
 }
 
 #[derive(Clone)]
@@ -31141,6 +31171,19 @@ struct ParsedSimpleRegex {
     start_anchor: bool,
     end_anchor: bool,
     tokens: Vec<ReToken>,
+    capture_count: usize,
+}
+
+#[derive(Clone)]
+struct ReMatchState {
+    captures: Vec<Option<(usize, usize)>>,
+}
+
+#[derive(Clone)]
+struct ReMatchDetail {
+    start: usize,
+    end: usize,
+    captures: Vec<Option<(usize, usize)>>,
 }
 
 fn digit_class(negated: bool) -> ReCharClass {
@@ -31241,10 +31284,134 @@ fn parse_char_class(chars: &[char], idx: &mut usize) -> Option<ReCharClass> {
     None
 }
 
+fn parse_braced_quantifier(chars: &[char], idx: &mut usize) -> Option<usize> {
+    if *idx >= chars.len() || chars[*idx] != '{' {
+        return None;
+    }
+    let start = *idx;
+    *idx += 1;
+    let digits_start = *idx;
+    while *idx < chars.len() && chars[*idx].is_ascii_digit() {
+        *idx += 1;
+    }
+    if digits_start == *idx || *idx >= chars.len() || chars[*idx] != '}' {
+        *idx = start;
+        return None;
+    }
+    let count: usize = chars[digits_start..*idx]
+        .iter()
+        .collect::<String>()
+        .parse()
+        .ok()?;
+    *idx += 1;
+    Some(count)
+}
+
+fn parse_simple_quantifier(chars: &[char], idx: &mut usize) -> Option<ReQuantifier> {
+    let quantifier = if *idx < chars.len() {
+        match chars[*idx] {
+            '?' => {
+                *idx += 1;
+                ReQuantifier::ZeroOrOne
+            }
+            '*' => {
+                *idx += 1;
+                ReQuantifier::ZeroOrMore
+            }
+            '+' => {
+                *idx += 1;
+                ReQuantifier::OneOrMore
+            }
+            '{' => ReQuantifier::Exactly(parse_braced_quantifier(chars, idx)?),
+            _ => ReQuantifier::One,
+        }
+    } else {
+        ReQuantifier::One
+    };
+    if !matches!(quantifier, ReQuantifier::One) && *idx < chars.len() && chars[*idx] == '?' {
+        // Non-greedy marker accepted but currently ignored.
+        *idx += 1;
+    }
+    Some(quantifier)
+}
+
+fn parse_simple_regex_sequence(
+    chars: &[char],
+    idx: &mut usize,
+    capture_count: &mut usize,
+    stop_on_group_end: bool,
+) -> Option<Vec<ReToken>> {
+    let mut tokens = Vec::new();
+    while *idx < chars.len() {
+        if chars[*idx] == '|' {
+            // Alternation requires a full regex engine; fall back.
+            return None;
+        }
+        if !stop_on_group_end && chars[*idx] == '$' && *idx + 1 == chars.len() {
+            break;
+        }
+        if chars[*idx] == ')' {
+            if stop_on_group_end {
+                break;
+            }
+            return None;
+        }
+
+        let atom = if chars[*idx] == '(' {
+            *idx += 1;
+            let mut capture = None;
+            if *idx < chars.len() && chars[*idx] == '?' {
+                *idx += 1;
+                if *idx < chars.len() && chars[*idx] == ':' {
+                    *idx += 1;
+                } else {
+                    return None;
+                }
+            } else {
+                *capture_count += 1;
+                capture = Some(*capture_count);
+            }
+            let inner = parse_simple_regex_sequence(chars, idx, capture_count, true)?;
+            if *idx >= chars.len() || chars[*idx] != ')' {
+                return None;
+            }
+            *idx += 1;
+            ReAtom::Group {
+                tokens: inner,
+                capture,
+            }
+        } else {
+            match chars[*idx] {
+                '.' => {
+                    *idx += 1;
+                    ReAtom::Any
+                }
+                '[' => parse_char_class(chars, idx).map(ReAtom::Class)?,
+                '\\' => {
+                    *idx += 1;
+                    if *idx >= chars.len() {
+                        return None;
+                    }
+                    let escaped = chars[*idx];
+                    *idx += 1;
+                    parse_simple_escape(escaped)
+                }
+                ch => {
+                    *idx += 1;
+                    ReAtom::Literal(ch)
+                }
+            }
+        };
+
+        let quantifier = parse_simple_quantifier(chars, idx)?;
+        tokens.push(ReToken { atom, quantifier });
+    }
+    Some(tokens)
+}
+
 fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut idx = 0usize;
-    let mut group_depth = 0usize;
     let mut start_anchor = false;
     let mut end_anchor = false;
     if idx < chars.len() && chars[idx] == '^' {
@@ -31252,87 +31419,20 @@ fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
         idx += 1;
     }
 
-    let mut tokens = Vec::new();
-    while idx < chars.len() {
-        if chars[idx] == '|' {
-            // Alternation requires a real regex engine; fall back.
-            return None;
-        }
-
-        if chars[idx] == '(' {
-            if idx + 1 < chars.len() && chars[idx + 1] == '?' {
-                // Non-capturing/named/lookahead groups are out-of-scope here.
-                return None;
-            }
-            group_depth += 1;
-            idx += 1;
-            continue;
-        }
-
-        if chars[idx] == ')' {
-            if group_depth == 0 {
-                return None;
-            }
-            group_depth -= 1;
-            idx += 1;
-            continue;
-        }
-
-        if idx == chars.len() - 1 && chars[idx] == '$' {
-            end_anchor = true;
-            idx += 1;
-            break;
-        }
-
-        let atom = match chars[idx] {
-            '.' => {
-                idx += 1;
-                ReAtom::Any
-            }
-            '[' => parse_char_class(&chars, &mut idx).map(ReAtom::Class)?,
-            '\\' => {
-                idx += 1;
-                if idx >= chars.len() {
-                    return None;
-                }
-                let escaped = chars[idx];
-                idx += 1;
-                parse_simple_escape(escaped)
-            }
-            ch => {
-                idx += 1;
-                ReAtom::Literal(ch)
-            }
-        };
-
-        let quantifier = if idx < chars.len() {
-            match chars[idx] {
-                '?' => {
-                    idx += 1;
-                    ReQuantifier::ZeroOrOne
-                }
-                '*' => {
-                    idx += 1;
-                    ReQuantifier::ZeroOrMore
-                }
-                '+' => {
-                    idx += 1;
-                    ReQuantifier::OneOrMore
-                }
-                _ => ReQuantifier::One,
-            }
-        } else {
-            ReQuantifier::One
-        };
-        tokens.push(ReToken { atom, quantifier });
+    let mut capture_count = 0usize;
+    let tokens = parse_simple_regex_sequence(&chars, &mut idx, &mut capture_count, false)?;
+    if idx < chars.len() && chars[idx] == '$' && idx + 1 == chars.len() {
+        end_anchor = true;
+        idx += 1;
     }
-    if idx != chars.len() || group_depth != 0 {
+    if idx != chars.len() {
         return None;
     }
     Some(ParsedSimpleRegex {
         start_anchor,
         end_anchor,
         tokens,
+        capture_count,
     })
 }
 
@@ -31349,11 +31449,12 @@ fn class_matches(class: &ReCharClass, ch: char) -> bool {
     if class.negated { !matched } else { matched }
 }
 
-fn atom_matches(atom: &ReAtom, ch: char) -> bool {
+fn atom_matches_char(atom: &ReAtom, ch: char) -> bool {
     match atom {
         ReAtom::Literal(expected) => *expected == ch,
         ReAtom::Any => true,
         ReAtom::Class(class) => class_matches(class, ch),
+        ReAtom::Group { .. } => false,
     }
 }
 
@@ -31363,69 +31464,129 @@ fn match_simple_regex_tokens(
     token_idx: usize,
     char_idx: usize,
     require_end: bool,
-) -> Option<usize> {
+    state: ReMatchState,
+) -> Option<(usize, ReMatchState)> {
     if token_idx == tokens.len() {
         if require_end && char_idx != chars.len() {
             return None;
         }
-        return Some(char_idx);
+        return Some((char_idx, state));
+    }
+
+    fn match_atom_once(
+        atom: &ReAtom,
+        chars: &[char],
+        char_idx: usize,
+        state: &ReMatchState,
+    ) -> Option<(usize, ReMatchState)> {
+        match atom {
+            ReAtom::Literal(_) | ReAtom::Any | ReAtom::Class(_) => {
+                if char_idx >= chars.len() || !atom_matches_char(atom, chars[char_idx]) {
+                    return None;
+                }
+                Some((char_idx + 1, state.clone()))
+            }
+            ReAtom::Group { tokens, capture } => {
+                let (end, mut next_state) = match_simple_regex_tokens(
+                    tokens,
+                    chars,
+                    0,
+                    char_idx,
+                    false,
+                    state.clone(),
+                )?;
+                if let Some(index) = capture {
+                    if let Some(slot) = next_state.captures.get_mut(index - 1) {
+                        *slot = Some((char_idx, end));
+                    }
+                }
+                Some((end, next_state))
+            }
+        }
     }
 
     let token = &tokens[token_idx];
     match token.quantifier {
         ReQuantifier::One => {
-            if char_idx < chars.len() && atom_matches(&token.atom, chars[char_idx]) {
-                return match_simple_regex_tokens(
-                    tokens,
-                    chars,
-                    token_idx + 1,
-                    char_idx + 1,
-                    require_end,
-                );
-            }
-            None
+            let (next_idx, next_state) = match_atom_once(&token.atom, chars, char_idx, &state)?;
+            match_simple_regex_tokens(
+                tokens,
+                chars,
+                token_idx + 1,
+                next_idx,
+                require_end,
+                next_state,
+            )
         }
         ReQuantifier::ZeroOrOne => {
-            if char_idx < chars.len() && atom_matches(&token.atom, chars[char_idx]) {
-                if let Some(end) = match_simple_regex_tokens(
+            if let Some((next_idx, next_state)) =
+                match_atom_once(&token.atom, chars, char_idx, &state)
+            {
+                if let Some(result) = match_simple_regex_tokens(
                     tokens,
                     chars,
                     token_idx + 1,
-                    char_idx + 1,
+                    next_idx,
                     require_end,
+                    next_state,
                 ) {
-                    return Some(end);
+                    return Some(result);
                 }
             }
-            match_simple_regex_tokens(tokens, chars, token_idx + 1, char_idx, require_end)
+            match_simple_regex_tokens(
+                tokens,
+                chars,
+                token_idx + 1,
+                char_idx,
+                require_end,
+                state,
+            )
         }
-        ReQuantifier::ZeroOrMore => {
-            let mut max = char_idx;
-            while max < chars.len() && atom_matches(&token.atom, chars[max]) {
-                max += 1;
-            }
-            for candidate in (char_idx..=max).rev() {
-                if let Some(end) =
-                    match_simple_regex_tokens(tokens, chars, token_idx + 1, candidate, require_end)
-                {
-                    return Some(end);
+        ReQuantifier::ZeroOrMore | ReQuantifier::OneOrMore | ReQuantifier::Exactly(_) => {
+            let mut states = Vec::new();
+            states.push((char_idx, state.clone()));
+            let mut cursor_idx = char_idx;
+            let mut cursor_state = state;
+            while let Some((next_idx, next_state)) =
+                match_atom_once(&token.atom, chars, cursor_idx, &cursor_state)
+            {
+                states.push((next_idx, next_state.clone()));
+                if next_idx == cursor_idx {
+                    break;
                 }
+                cursor_idx = next_idx;
+                cursor_state = next_state;
             }
-            None
-        }
-        ReQuantifier::OneOrMore => {
-            if char_idx >= chars.len() || !atom_matches(&token.atom, chars[char_idx]) {
-                return None;
-            }
-            let mut max = char_idx + 1;
-            while max < chars.len() && atom_matches(&token.atom, chars[max]) {
-                max += 1;
-            }
-            for candidate in ((char_idx + 1)..=max).rev() {
-                if let Some(end) =
-                    match_simple_regex_tokens(tokens, chars, token_idx + 1, candidate, require_end)
-                {
-                    return Some(end);
+
+            let max_reps = states.len().saturating_sub(1);
+            let (min_reps, max_reps) = match token.quantifier {
+                ReQuantifier::ZeroOrMore => (0usize, max_reps),
+                ReQuantifier::OneOrMore => {
+                    if max_reps == 0 {
+                        return None;
+                    }
+                    (1usize, max_reps)
+                }
+                ReQuantifier::Exactly(expected) => {
+                    if expected > max_reps {
+                        return None;
+                    }
+                    (expected, expected)
+                }
+                _ => unreachable!(),
+            };
+
+            for reps in (min_reps..=max_reps).rev() {
+                let (candidate_idx, candidate_state) = states[reps].clone();
+                if let Some(result) = match_simple_regex_tokens(
+                    tokens,
+                    chars,
+                    token_idx + 1,
+                    candidate_idx,
+                    require_end,
+                    candidate_state,
+                ) {
+                    return Some(result);
                 }
             }
             None
@@ -31433,7 +31594,7 @@ fn match_simple_regex_tokens(
     }
 }
 
-fn simple_regex_match_bounds(pattern: &str, text: &str, mode: ReMode) -> Option<(usize, usize)> {
+fn simple_regex_match_details(pattern: &str, text: &str, mode: ReMode) -> Option<ReMatchDetail> {
     let parsed = parse_simple_regex(pattern)?;
     let chars: Vec<char> = text.chars().collect();
     let starts: Vec<usize> = match mode {
@@ -31448,9 +31609,31 @@ fn simple_regex_match_bounds(pattern: &str, text: &str, mode: ReMode) -> Option<
         if parsed.start_anchor && start != 0 {
             continue;
         }
-        if let Some(end) = match_simple_regex_tokens(&parsed.tokens, &chars, 0, start, require_end)
-        {
-            return Some((byte_offsets[start], byte_offsets[end]));
+        let state = ReMatchState {
+            captures: vec![None; parsed.capture_count],
+        };
+        if let Some((end, state)) = match_simple_regex_tokens(
+            &parsed.tokens,
+            &chars,
+            0,
+            start,
+            require_end,
+            state,
+        ) {
+            let captures = state
+                .captures
+                .into_iter()
+                .map(|capture| {
+                    capture.map(|(capture_start, capture_end)| {
+                        (byte_offsets[capture_start], byte_offsets[capture_end])
+                    })
+                })
+                .collect();
+            return Some(ReMatchDetail {
+                start: byte_offsets[start],
+                end: byte_offsets[end],
+                captures,
+            });
         }
     }
     None
@@ -31482,11 +31665,11 @@ fn csv_sniffer_doublequote_quote(pattern: &str) -> Option<char> {
     }
 }
 
-fn re_match_bounds(
+fn re_match_details(
     pattern: &RePatternValue,
     text: &Value,
     mode: ReMode,
-) -> Result<Option<(usize, usize)>, RuntimeError> {
+) -> Result<Option<ReMatchDetail>, RuntimeError> {
     match pattern {
         RePatternValue::Str(pattern_text) => {
             let text = match text {
@@ -31502,34 +31685,63 @@ fn re_match_bounds(
                 if let Some(quote) = csv_sniffer_doublequote_quote(pattern_text) {
                     let needle = format!("{quote}{quote}");
                     text.find(&needle)
-                        .map(|start| (start, start + needle.len()))
+                        .map(|start| ReMatchDetail {
+                            start,
+                            end: start + needle.len(),
+                            captures: Vec::new(),
+                        })
                 } else if pattern_text == LOGGING_PERCENT_VALIDATION_PATTERN {
-                    find_logging_percent_style_match(text)
-                } else if let Some(bounds) = simple_regex_match_bounds(pattern_text, text, mode) {
-                    Some(bounds)
+                    find_logging_percent_style_match(text).map(|(start, end)| ReMatchDetail {
+                        start,
+                        end,
+                        captures: Vec::new(),
+                    })
+                } else if let Some(detail) = simple_regex_match_details(pattern_text, text, mode) {
+                    Some(detail)
                 } else {
                     text.find(pattern_text)
-                        .map(|start| (start, start + pattern_text.len()))
+                        .map(|start| ReMatchDetail {
+                            start,
+                            end: start + pattern_text.len(),
+                            captures: Vec::new(),
+                        })
                 }
             } else if pattern_text == LOGGING_PERCENT_VALIDATION_PATTERN {
-                find_logging_percent_style_match(text)
-            } else if let Some(bounds) = simple_regex_match_bounds(pattern_text, text, mode) {
-                Some(bounds)
+                find_logging_percent_style_match(text).map(|(start, end)| ReMatchDetail {
+                    start,
+                    end,
+                    captures: Vec::new(),
+                })
+            } else if let Some(detail) = simple_regex_match_details(pattern_text, text, mode) {
+                Some(detail)
             } else {
                 match mode {
                     ReMode::Search => text
                         .find(pattern_text)
-                        .map(|start| (start, start + pattern_text.len())),
+                        .map(|start| ReMatchDetail {
+                            start,
+                            end: start + pattern_text.len(),
+                            captures: Vec::new(),
+                        }),
                     ReMode::Match => text
                         .starts_with(pattern_text)
-                        .then_some((0, pattern_text.len())),
-                    ReMode::FullMatch => (text == pattern_text).then_some((0, pattern_text.len())),
+                        .then_some(ReMatchDetail {
+                            start: 0,
+                            end: pattern_text.len(),
+                            captures: Vec::new(),
+                        }),
+                    ReMode::FullMatch => (text == pattern_text).then_some(ReMatchDetail {
+                        start: 0,
+                        end: pattern_text.len(),
+                        captures: Vec::new(),
+                    }),
                 }
             };
             let found = match mode {
                 ReMode::Search => found,
-                ReMode::Match => found.filter(|(start, _)| *start == 0),
-                ReMode::FullMatch => found.filter(|(start, end)| *start == 0 && *end == text.len()),
+                ReMode::Match => found.filter(|detail| detail.start == 0),
+                ReMode::FullMatch => found
+                    .filter(|detail| detail.start == 0 && detail.end == text.len()),
             };
             Ok(found)
         }
@@ -31559,20 +31771,41 @@ fn re_match_bounds(
             };
             let found = match mode {
                 ReMode::Search => find_bytes_subslice(&text, pattern_bytes)
-                    .map(|start| (start, start + pattern_bytes.len())),
+                    .map(|start| ReMatchDetail {
+                        start,
+                        end: start + pattern_bytes.len(),
+                        captures: Vec::new(),
+                    }),
                 ReMode::Match => text
                     .starts_with(pattern_bytes)
-                    .then_some((0, pattern_bytes.len())),
-                ReMode::FullMatch => (text == *pattern_bytes).then_some((0, pattern_bytes.len())),
+                    .then_some(ReMatchDetail {
+                        start: 0,
+                        end: pattern_bytes.len(),
+                        captures: Vec::new(),
+                    }),
+                ReMode::FullMatch => (text == *pattern_bytes).then_some(ReMatchDetail {
+                    start: 0,
+                    end: pattern_bytes.len(),
+                    captures: Vec::new(),
+                }),
             };
             let found = match mode {
                 ReMode::Search => found,
-                ReMode::Match => found.filter(|(start, _)| *start == 0),
-                ReMode::FullMatch => found.filter(|(start, end)| *start == 0 && *end == text.len()),
+                ReMode::Match => found.filter(|detail| detail.start == 0),
+                ReMode::FullMatch => found
+                    .filter(|detail| detail.start == 0 && detail.end == text.len()),
             };
             Ok(found)
         }
     }
+}
+
+fn re_match_bounds(
+    pattern: &RePatternValue,
+    text: &Value,
+    mode: ReMode,
+) -> Result<Option<(usize, usize)>, RuntimeError> {
+    Ok(re_match_details(pattern, text, mode)?.map(|detail| (detail.start, detail.end)))
 }
 
 fn bytes_like_from_value(value: Value) -> Result<Vec<u8>, RuntimeError> {

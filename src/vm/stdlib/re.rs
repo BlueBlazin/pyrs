@@ -7,8 +7,306 @@ const CSV_SNIFFER_PATTERN_2: &str =
 const CSV_SNIFFER_PATTERN_3: &str =
     r#"(?P<delim>[^\w\n"\'])(?P<space> ?)(?P<quote>["\']).*?(?P=quote)(?:$|\n)"#;
 const CSV_SNIFFER_PATTERN_4: &str = r#"(?:^|\n)(?P<quote>["\']).*?(?P=quote)(?:$|\n)"#;
+const RE_MATCH_MODULE_NAME: &str = "__re_match__";
 
 impl Vm {
+    fn re_match_groupindex_from_pattern_arg(&self, pattern_arg: &Value) -> Value {
+        let Value::Module(module) = pattern_arg else {
+            return self.heap.alloc_dict(Vec::new());
+        };
+        let Object::Module(module_data) = &*module.kind() else {
+            return self.heap.alloc_dict(Vec::new());
+        };
+        if module_data.name != "__re_pattern__" {
+            return self.heap.alloc_dict(Vec::new());
+        }
+        module_data
+            .globals
+            .get("groupindex")
+            .cloned()
+            .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()))
+    }
+
+    fn alloc_re_match_value(
+        &mut self,
+        source: Value,
+        detail: ReMatchDetail,
+        groupindex: Value,
+    ) -> Result<Value, RuntimeError> {
+        let mut groups = Vec::with_capacity(detail.captures.len());
+        let mut spans = Vec::with_capacity(detail.captures.len());
+        match &source {
+            Value::Str(text) => {
+                for capture in &detail.captures {
+                    match capture {
+                        Some((start, end)) => {
+                            groups.push(Value::Str(text[*start..*end].to_string()));
+                            spans.push(self.heap.alloc_tuple(vec![
+                                Value::Int(*start as i64),
+                                Value::Int(*end as i64),
+                            ]));
+                        }
+                        None => {
+                            groups.push(Value::None);
+                            spans.push(Value::None);
+                        }
+                    }
+                }
+            }
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                let bytes = bytes_like_from_value(source.clone())?;
+                for capture in &detail.captures {
+                    match capture {
+                        Some((start, end)) => {
+                            groups.push(self.heap.alloc_bytes(bytes[*start..*end].to_vec()));
+                            spans.push(self.heap.alloc_tuple(vec![
+                                Value::Int(*start as i64),
+                                Value::Int(*end as i64),
+                            ]));
+                        }
+                        None => {
+                            groups.push(Value::None);
+                            spans.push(Value::None);
+                        }
+                    }
+                }
+            }
+            _ => return Err(RuntimeError::new("re match source is invalid")),
+        }
+
+        let match_obj = match self
+            .heap
+            .alloc_module(ModuleObject::new(RE_MATCH_MODULE_NAME.to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *match_obj.kind_mut() {
+            module_data.globals.insert("_source".to_string(), source);
+            module_data
+                .globals
+                .insert("_start".to_string(), Value::Int(detail.start as i64));
+            module_data
+                .globals
+                .insert("_end".to_string(), Value::Int(detail.end as i64));
+            module_data
+                .globals
+                .insert("_groups".to_string(), self.heap.alloc_tuple(groups));
+            module_data
+                .globals
+                .insert("_spans".to_string(), self.heap.alloc_list(spans));
+            module_data
+                .globals
+                .insert("_groupindex".to_string(), groupindex);
+        }
+        Ok(Value::Module(match_obj))
+    }
+
+    fn re_match_snapshot(
+        &self,
+        receiver: &ObjRef,
+    ) -> Result<(Value, i64, i64, Vec<Value>, Vec<Option<(i64, i64)>>, Option<ObjRef>), RuntimeError>
+    {
+        let Object::Module(module_data) = &*receiver.kind() else {
+            return Err(RuntimeError::new("re match receiver is invalid"));
+        };
+        if module_data.name != RE_MATCH_MODULE_NAME {
+            return Err(RuntimeError::new("re match receiver is invalid"));
+        }
+        let source = module_data
+            .globals
+            .get("_source")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("re match receiver is invalid"))?;
+        let start = match module_data.globals.get("_start") {
+            Some(Value::Int(value)) => *value,
+            _ => return Err(RuntimeError::new("re match receiver is invalid")),
+        };
+        let end = match module_data.globals.get("_end") {
+            Some(Value::Int(value)) => *value,
+            _ => return Err(RuntimeError::new("re match receiver is invalid")),
+        };
+        let groups = match module_data.globals.get("_groups") {
+            Some(Value::Tuple(obj)) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("re match receiver is invalid")),
+            },
+            Some(Value::List(obj)) => match &*obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("re match receiver is invalid")),
+            },
+            _ => return Err(RuntimeError::new("re match receiver is invalid")),
+        };
+        let spans = match module_data.globals.get("_spans") {
+            Some(Value::List(obj)) => match &*obj.kind() {
+                Object::List(values) => values
+                    .iter()
+                    .map(|value| match value {
+                        Value::None => Ok(None),
+                        Value::Tuple(tuple_obj) => {
+                            let Object::Tuple(items) = &*tuple_obj.kind() else {
+                                return Err(RuntimeError::new("re match receiver is invalid"));
+                            };
+                            if items.len() != 2 {
+                                return Err(RuntimeError::new("re match receiver is invalid"));
+                            }
+                            let start = value_to_int(items[0].clone())?;
+                            let end = value_to_int(items[1].clone())?;
+                            Ok(Some((start, end)))
+                        }
+                        _ => Err(RuntimeError::new("re match receiver is invalid")),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                _ => return Err(RuntimeError::new("re match receiver is invalid")),
+            },
+            _ => return Err(RuntimeError::new("re match receiver is invalid")),
+        };
+        let groupindex = match module_data.globals.get("_groupindex") {
+            Some(Value::Dict(dict)) => Some(dict.clone()),
+            _ => None,
+        };
+        Ok((source, start, end, groups, spans, groupindex))
+    }
+
+    fn re_match_group_number(
+        &self,
+        group: Option<Value>,
+        groupindex: Option<&ObjRef>,
+        max_group: usize,
+    ) -> Result<usize, RuntimeError> {
+        let raw_index = match group {
+            None => 0,
+            Some(Value::Str(name)) => {
+                let Some(mapping) = groupindex else {
+                    return Err(RuntimeError::new("no such group"));
+                };
+                let Some(index) = dict_get_value(mapping, &Value::Str(name)) else {
+                    return Err(RuntimeError::new("no such group"));
+                };
+                value_to_int(index)?
+            }
+            Some(other) => value_to_int(other)?,
+        };
+        if raw_index < 0 || raw_index as usize > max_group {
+            return Err(RuntimeError::new("no such group"));
+        }
+        Ok(raw_index as usize)
+    }
+
+    fn re_match_group_value(
+        &mut self,
+        source: &Value,
+        start: i64,
+        end: i64,
+        groups: &[Value],
+        index: usize,
+    ) -> Result<Value, RuntimeError> {
+        if index == 0 {
+            return match source {
+                Value::Str(text) => Ok(Value::Str(
+                    text[start as usize..end as usize].to_string(),
+                )),
+                Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                    let bytes = bytes_like_from_value(source.clone())?;
+                    Ok(self.heap.alloc_bytes(bytes[start as usize..end as usize].to_vec()))
+                }
+                _ => Err(RuntimeError::new("re match receiver is invalid")),
+            };
+        }
+        Ok(groups[index - 1].clone())
+    }
+
+    pub(in crate::vm) fn native_re_match_group(
+        &mut self,
+        receiver: &ObjRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (source, start, end, groups, _spans, groupindex) = self.re_match_snapshot(receiver)?;
+        let max_group = groups.len();
+        if args.is_empty() {
+            return self.re_match_group_value(&source, start, end, &groups, 0);
+        }
+        if args.len() == 1 {
+            let index = self.re_match_group_number(args.first().cloned(), groupindex.as_ref(), max_group)?;
+            return self.re_match_group_value(&source, start, end, &groups, index);
+        }
+        let mut out = Vec::with_capacity(args.len());
+        for value in args {
+            let index = self.re_match_group_number(Some(value), groupindex.as_ref(), max_group)?;
+            out.push(self.re_match_group_value(&source, start, end, &groups, index)?);
+        }
+        Ok(self.heap.alloc_tuple(out))
+    }
+
+    pub(in crate::vm) fn native_re_match_groups(
+        &mut self,
+        receiver: &ObjRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("groups() expects at most one argument"));
+        }
+        let (_source, _start, _end, groups, _spans, _groupindex) = self.re_match_snapshot(receiver)?;
+        let default = args.into_iter().next().unwrap_or(Value::None);
+        let values = groups
+            .into_iter()
+            .map(|value| if value == Value::None { default.clone() } else { value })
+            .collect::<Vec<_>>();
+        Ok(self.heap.alloc_tuple(values))
+    }
+
+    pub(in crate::vm) fn native_re_match_start(
+        &self,
+        receiver: &ObjRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("start() expects at most one argument"));
+        }
+        let (_source, start, _end, groups, spans, groupindex) = self.re_match_snapshot(receiver)?;
+        let index = self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
+        if index == 0 {
+            return Ok(Value::Int(start));
+        }
+        Ok(Value::Int(spans[index - 1].map(|(s, _)| s).unwrap_or(-1)))
+    }
+
+    pub(in crate::vm) fn native_re_match_end(
+        &self,
+        receiver: &ObjRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("end() expects at most one argument"));
+        }
+        let (_source, _start, end, groups, spans, groupindex) = self.re_match_snapshot(receiver)?;
+        let index = self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
+        if index == 0 {
+            return Ok(Value::Int(end));
+        }
+        Ok(Value::Int(spans[index - 1].map(|(_, e)| e).unwrap_or(-1)))
+    }
+
+    pub(in crate::vm) fn native_re_match_span(
+        &self,
+        receiver: &ObjRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("span() expects at most one argument"));
+        }
+        let (_source, start, end, groups, spans, groupindex) = self.re_match_snapshot(receiver)?;
+        let index = self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
+        if index == 0 {
+            return Ok(self.heap.alloc_tuple(vec![Value::Int(start), Value::Int(end)]));
+        }
+        let (group_start, group_end) = spans[index - 1].unwrap_or((-1, -1));
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Int(group_start),
+            Value::Int(group_end),
+        ]))
+    }
+
     pub(in crate::vm) fn builtin_re_search(
         &mut self,
         args: Vec<Value>,
@@ -322,27 +620,11 @@ impl Vm {
             return Err(RuntimeError::new("re function expects pattern and string"));
         }
         let pattern = re_pattern_from_argument(&args[0])?;
-        if let (ReMode::Search, RePatternValue::Str(pattern_text), Value::Str(text)) =
-            (mode, &pattern, &args[1])
-        {
-            if let Some(quote) = csv_sniffer_doublequote_quote(pattern_text) {
-                let needle = format!("{quote}{quote}");
-                if let Some(start) = text.find(&needle) {
-                    return Ok(self.heap.alloc_tuple(vec![
-                        Value::Int(start as i64),
-                        Value::Int((start + needle.len()) as i64),
-                    ]));
-                }
-                return Ok(Value::None);
-            }
-        }
-        let found = re_match_bounds(&pattern, &args[1], mode)?;
-        if let Some((start, end)) = found {
-            Ok(self
-                .heap
-                .alloc_tuple(vec![Value::Int(start as i64), Value::Int(end as i64)]))
-        } else {
-            Ok(Value::None)
+        let groupindex = self.re_match_groupindex_from_pattern_arg(&args[0]);
+        let found = re_match_details(&pattern, &args[1], mode)?;
+        match found {
+            Some(detail) => self.alloc_re_match_value(args[1].clone(), detail, groupindex),
+            None => Ok(Value::None),
         }
     }
 }
@@ -487,31 +769,5 @@ fn csv_sniffer_pattern_findall(pattern: &str, text: &str) -> Option<(usize, Vec<
             Some((1, out))
         }
         _ => None,
-    }
-}
-
-fn csv_sniffer_doublequote_quote(pattern: &str) -> Option<char> {
-    if !pattern.starts_with("((") || !pattern.contains(")|^)") || !pattern.ends_with(")|$)") {
-        return None;
-    }
-    let marker = if pattern.contains(")|^)\\W*") {
-        ")|^)\\W*"
-    } else if pattern.contains(")|^)W*") {
-        ")|^)W*"
-    } else {
-        return None;
-    };
-    let marker_pos = pattern.find(marker)?;
-    let mut rest = &pattern[marker_pos + marker.len()..];
-    if let Some(stripped) = rest.strip_prefix('\\') {
-        rest = stripped;
-    }
-    let mut iter = rest.chars();
-    let first = iter.next()?;
-    let quote = if first == '\\' { iter.next()? } else { first };
-    if quote == '\'' || quote == '"' {
-        Some(quote)
-    } else {
-        None
     }
 }

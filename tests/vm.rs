@@ -1774,6 +1774,9 @@ decoded_replace = codecs.decode(bytes([65, 255, 66]), 'ascii', 'replace')\n\
 m1 = re.match('ab', 'abcd')\n\
 m2 = re.search('bc', 'abcd')\n\
 m3 = re.fullmatch('abcd', 'abcd')\n\
+m1_ok = (m1 is not None and m1.start() == 0 and m1.end() == 2)\n\
+m2_ok = (m2 is not None and m2.start() == 1 and m2.end() == 3)\n\
+m3_ok = (m3 is not None and m3.start() == 0 and m3.end() == 4)\n\
 \n\
 op = operator.add(2, 3)\n\
 contains = operator.contains([1, 2, 3], 2)\n\
@@ -1854,18 +1857,9 @@ m = time.monotonic()\n";
         }
         other => panic!("expected decoded replacement string, got {other:?}"),
     }
-    assert_eq!(
-        tuple_values(vm.get_global("m1")),
-        Some(vec![Value::Int(0), Value::Int(2)])
-    );
-    assert_eq!(
-        tuple_values(vm.get_global("m2")),
-        Some(vec![Value::Int(1), Value::Int(3)])
-    );
-    assert_eq!(
-        tuple_values(vm.get_global("m3")),
-        Some(vec![Value::Int(0), Value::Int(4)])
-    );
+    assert_eq!(vm.get_global("m1_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("m2_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("m3_ok"), Some(Value::Bool(true)));
     match vm.get_global("t") {
         Some(Value::Float(value)) => assert!(value > 0.0),
         other => panic!("expected time float, got {other:?}"),
@@ -4308,6 +4302,30 @@ fn re_match_supports_basic_capturing_parentheses() {
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_match_exposes_group_groups_and_end() {
+    let source = "import re\nm = re.match('([A])([AO]*)', 'AOO')\nok = (m is not None and m.group(1) == 'A' and m.groups() == ('A', 'OO') and m.end() == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn argparse_parse_args_accepts_explicit_positional_list() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "import argparse\np = argparse.ArgumentParser()\np.add_argument('x')\nns = p.parse_args(['hello'])\nok = (ns.x == 'hello')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
