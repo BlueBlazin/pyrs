@@ -1939,6 +1939,20 @@ ok = (a['x'] == 1 and a['y'] == [2, 3] and b == a)
 }
 
 #[test]
+fn json_decoder_scanstring_is_exposed() {
+    let source = r#"import json.decoder as decoder
+value, end = decoder.scanstring('"abc\\n"', 1)
+value2, end2 = decoder.c_scanstring('"abc\\n"', 1)
+ok = (value == "abc\n" and end == 7 and value2 == value and end2 == end)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_path_relpath_is_available_for_unittest_discovery() {
     let source = r#"import os
 p = os.path.relpath('/tmp/a/b', '/tmp')
@@ -2078,6 +2092,32 @@ names = os.listdir('{dir}')\n",
 
     let _ = std::fs::remove_file(file);
     let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
+fn bytesio_supports_tell_and_core_methods() {
+    let source = r#"import io
+buf = io.BytesIO(b"abc")
+pos0 = buf.tell()
+part = buf.read(1)
+pos1 = buf.tell()
+buf.seek(0, 2)
+pos2 = buf.tell()
+buf.write(b"Z")
+data = buf.getvalue()
+buf.close()
+closed_error = False
+try:
+    buf.tell()
+except Exception:
+    closed_error = True
+ok = (pos0 == 0 and part == b"a" and pos1 == 1 and pos2 == 3 and data == b"abcZ" and closed_error)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]

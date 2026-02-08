@@ -1816,6 +1816,7 @@ pub enum BuiltinFunction {
     JsonLoads,
     JsonScannerMakeScanner,
     JsonScannerScanOnce,
+    JsonDecoderScanString,
     MarshalLoads,
     MarshalDumps,
     PyLongIntToDecimalString,
@@ -1996,6 +1997,18 @@ pub enum BuiltinFunction {
     StringIONext,
     StringIOEnter,
     StringIOExit,
+    BytesIOInit,
+    BytesIOWrite,
+    BytesIORead,
+    BytesIOReadLine,
+    BytesIOGetValue,
+    BytesIOSeek,
+    BytesIOTell,
+    BytesIOIter,
+    BytesIONext,
+    BytesIOEnter,
+    BytesIOExit,
+    BytesIOClose,
     DateTimeNow,
     DateToday,
     DateInit,
@@ -2125,6 +2138,18 @@ impl BuiltinFunction {
             | BuiltinFunction::StringIONext
             | BuiltinFunction::StringIOEnter
             | BuiltinFunction::StringIOExit
+            | BuiltinFunction::BytesIOInit
+            | BuiltinFunction::BytesIOWrite
+            | BuiltinFunction::BytesIORead
+            | BuiltinFunction::BytesIOReadLine
+            | BuiltinFunction::BytesIOGetValue
+            | BuiltinFunction::BytesIOSeek
+            | BuiltinFunction::BytesIOTell
+            | BuiltinFunction::BytesIOIter
+            | BuiltinFunction::BytesIONext
+            | BuiltinFunction::BytesIOEnter
+            | BuiltinFunction::BytesIOExit
+            | BuiltinFunction::BytesIOClose
             | BuiltinFunction::RePatternFindAll
             | BuiltinFunction::CollectionsChainMapInit
             | BuiltinFunction::CollectionsChainMapNewChild
@@ -2132,7 +2157,7 @@ impl BuiltinFunction {
             | BuiltinFunction::CollectionsChainMapItems
             | BuiltinFunction::CsvReaderIter
             | BuiltinFunction::CsvReaderNext => Err(RuntimeError::new(
-                "StringIO builtin not available in runtime-only call path",
+                "StringIO/BytesIO builtin not available in runtime-only call path",
             )),
             BuiltinFunction::Len => {
                 if args.len() != 1 {
@@ -3948,6 +3973,7 @@ impl BuiltinFunction {
             | BuiltinFunction::JsonLoads
             | BuiltinFunction::JsonScannerMakeScanner
             | BuiltinFunction::JsonScannerScanOnce
+            | BuiltinFunction::JsonDecoderScanString
             | BuiltinFunction::PyLongIntToDecimalString
             | BuiltinFunction::PyLongIntDivMod
             | BuiltinFunction::PyLongIntFromString

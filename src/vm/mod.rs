@@ -1847,6 +1847,18 @@ impl Vm {
                     "JSONDecodeError".to_string(),
                     Value::ExceptionType("ValueError".to_string()),
                 );
+                module_data.globals.insert(
+                    "scanstring".to_string(),
+                    Value::Builtin(BuiltinFunction::JsonDecoderScanString),
+                );
+                module_data.globals.insert(
+                    "c_scanstring".to_string(),
+                    Value::Builtin(BuiltinFunction::JsonDecoderScanString),
+                );
+                module_data.globals.insert(
+                    "py_scanstring".to_string(),
+                    Value::Builtin(BuiltinFunction::JsonDecoderScanString),
+                );
             }
             if let Object::Module(module_data) = &mut *scanner_module.kind_mut() {
                 module_data.globals.insert(
@@ -3442,11 +3454,64 @@ impl Vm {
                     }
                     ("StringIO", stringio)
                 },
-                (
-                    "BytesIO",
-                    self.heap
-                        .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new())),
-                ),
+                {
+                    let bytesio = self
+                        .heap
+                        .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &bytesio {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            class_data.attrs.insert(
+                                "__iter__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOIter),
+                            );
+                            class_data.attrs.insert(
+                                "__next__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIONext),
+                            );
+                            class_data.attrs.insert(
+                                "__enter__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOEnter),
+                            );
+                            class_data.attrs.insert(
+                                "__exit__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOExit),
+                            );
+                            class_data.attrs.insert(
+                                "close".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOClose),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOWrite),
+                            );
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIORead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "getvalue".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOGetValue),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOTell),
+                            );
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOInit),
+                            );
+                        }
+                    }
+                    ("BytesIO", bytesio)
+                },
                 (
                     "BufferedReader",
                     self.heap
@@ -3694,11 +3759,64 @@ impl Vm {
                     }
                     ("FileIO", fileio)
                 },
-                (
-                    "BytesIO",
-                    self.heap
-                        .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new())),
-                ),
+                {
+                    let bytesio = self
+                        .heap
+                        .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &bytesio {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            class_data.attrs.insert(
+                                "__iter__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOIter),
+                            );
+                            class_data.attrs.insert(
+                                "__next__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIONext),
+                            );
+                            class_data.attrs.insert(
+                                "__enter__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOEnter),
+                            );
+                            class_data.attrs.insert(
+                                "__exit__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOExit),
+                            );
+                            class_data.attrs.insert(
+                                "close".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOClose),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOWrite),
+                            );
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIORead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "getvalue".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOGetValue),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOTell),
+                            );
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOInit),
+                            );
+                        }
+                    }
+                    ("BytesIO", bytesio)
+                },
                 (
                     "BufferedReader",
                     self.heap
@@ -9368,6 +9486,7 @@ impl Vm {
             BuiltinFunction::JsonScannerMakeScanner | BuiltinFunction::JsonScannerScanOnce => {
                 "json.scanner"
             }
+            BuiltinFunction::JsonDecoderScanString => "json.decoder",
             _ => "builtins",
         };
         match attr_name {
@@ -14592,6 +14711,9 @@ impl Vm {
             BuiltinFunction::JsonScannerScanOnce => {
                 self.builtin_json_scanner_scan_once(args, kwargs)
             }
+            BuiltinFunction::JsonDecoderScanString => {
+                self.builtin_json_decoder_scanstring(args, kwargs)
+            }
             BuiltinFunction::PyLongIntToDecimalString => {
                 self.builtin_pylong_int_to_decimal_string(args, kwargs)
             }
@@ -14786,6 +14908,18 @@ impl Vm {
             BuiltinFunction::StringIONext => self.builtin_stringio_next(args, kwargs),
             BuiltinFunction::StringIOEnter => self.builtin_stringio_enter(args, kwargs),
             BuiltinFunction::StringIOExit => self.builtin_stringio_exit(args, kwargs),
+            BuiltinFunction::BytesIOInit => self.builtin_bytesio_init(args, kwargs),
+            BuiltinFunction::BytesIOWrite => self.builtin_bytesio_write(args, kwargs),
+            BuiltinFunction::BytesIORead => self.builtin_bytesio_read(args, kwargs),
+            BuiltinFunction::BytesIOReadLine => self.builtin_bytesio_readline(args, kwargs),
+            BuiltinFunction::BytesIOGetValue => self.builtin_bytesio_getvalue(args, kwargs),
+            BuiltinFunction::BytesIOSeek => self.builtin_bytesio_seek(args, kwargs),
+            BuiltinFunction::BytesIOTell => self.builtin_bytesio_tell(args, kwargs),
+            BuiltinFunction::BytesIOIter => self.builtin_bytesio_iter(args, kwargs),
+            BuiltinFunction::BytesIONext => self.builtin_bytesio_next(args, kwargs),
+            BuiltinFunction::BytesIOEnter => self.builtin_bytesio_enter(args, kwargs),
+            BuiltinFunction::BytesIOExit => self.builtin_bytesio_exit(args, kwargs),
+            BuiltinFunction::BytesIOClose => self.builtin_bytesio_close(args, kwargs),
             BuiltinFunction::StringFormatterParser => {
                 self.builtin_string_formatter_parser(args, kwargs)
             }
@@ -25916,6 +26050,296 @@ impl Vm {
         }
         let _receiver = self.receiver_from_value(&args.remove(0))?;
         Ok(Value::Bool(false))
+    }
+
+    fn bytesio_state_from_instance(
+        &self,
+        instance: &ObjRef,
+    ) -> Result<(Vec<u8>, usize, bool), RuntimeError> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+        };
+        let bytes = match instance_data.attrs.get("_value") {
+            Some(value) => value_to_bytes_payload(value.clone())
+                .map_err(|_| RuntimeError::new("BytesIO internal buffer is invalid"))?,
+            None => Vec::new(),
+        };
+        let pos = match instance_data.attrs.get("_pos") {
+            Some(Value::Int(value)) if *value >= 0 => *value as usize,
+            _ => 0,
+        };
+        let closed = matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true)));
+        Ok((bytes, pos, closed))
+    }
+
+    fn bytesio_store_state(
+        &mut self,
+        instance: &ObjRef,
+        bytes: Vec<u8>,
+        pos: usize,
+        closed: bool,
+    ) -> Result<(), RuntimeError> {
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+        };
+        instance_data
+            .attrs
+            .insert("_value".to_string(), self.heap.alloc_bytes(bytes));
+        instance_data
+            .attrs
+            .insert("_pos".to_string(), Value::Int(pos as i64));
+        instance_data
+            .attrs
+            .insert("_closed".to_string(), Value::Bool(closed));
+        Ok(())
+    }
+
+    fn bytesio_ensure_open(&self, instance: &ObjRef) -> Result<(), RuntimeError> {
+        let (_, _, closed) = self.bytesio_state_from_instance(instance)?;
+        if closed {
+            Err(RuntimeError::new("I/O operation on closed file."))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn builtin_bytesio_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("BytesIO.__init__ expects instance"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let initial = args.pop().or_else(|| kwargs.remove("initial_bytes"));
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("BytesIO.__init__ unexpected keyword"));
+        }
+        let bytes = match initial {
+            None => Vec::new(),
+            Some(value) => bytes_like_from_value(value)?,
+        };
+        self.bytesio_store_state(&receiver, bytes, 0, false)?;
+        Ok(Value::None)
+    }
+
+    fn builtin_bytesio_write(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("BytesIO.write expects 1 argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let payload = bytes_like_from_value(args.remove(0))?;
+        let (mut buffer, mut pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        if pos > buffer.len() {
+            buffer.resize(pos, 0);
+        }
+        let end = pos.saturating_add(payload.len());
+        if end > buffer.len() {
+            buffer.resize(end, 0);
+        }
+        buffer[pos..end].copy_from_slice(&payload);
+        pos = end;
+        self.bytesio_store_state(&receiver, buffer, pos, false)?;
+        Ok(Value::Int(payload.len() as i64))
+    }
+
+    fn builtin_bytesio_read(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("BytesIO.read expects 0-1 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let size = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let (buffer, mut pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        if pos > buffer.len() {
+            pos = buffer.len();
+        }
+        let end = if size < 0 {
+            buffer.len()
+        } else {
+            (pos + size as usize).min(buffer.len())
+        };
+        let out = buffer[pos..end].to_vec();
+        self.bytesio_store_state(&receiver, buffer, end, false)?;
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    fn builtin_bytesio_readline(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("BytesIO.readline expects 0-1 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let limit = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let (buffer, mut pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        if pos > buffer.len() {
+            pos = buffer.len();
+        }
+        if pos >= buffer.len() {
+            return Ok(self.heap.alloc_bytes(Vec::new()));
+        }
+        let mut end = pos;
+        while end < buffer.len() {
+            if buffer[end] == b'\n' {
+                end += 1;
+                break;
+            }
+            end += 1;
+            if limit >= 0 && (end - pos) as i64 >= limit {
+                break;
+            }
+        }
+        let out = buffer[pos..end].to_vec();
+        self.bytesio_store_state(&receiver, buffer, end, false)?;
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    fn builtin_bytesio_getvalue(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.getvalue expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let (buffer, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        Ok(self.heap.alloc_bytes(buffer))
+    }
+
+    fn builtin_bytesio_seek(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new("BytesIO.seek expects 1-2 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let offset = value_to_int(args.remove(0))?;
+        let whence = if args.is_empty() {
+            0
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        let (buffer, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        let base = match whence {
+            0 => 0i64,
+            1 => pos as i64,
+            2 => buffer.len() as i64,
+            _ => return Err(RuntimeError::new("BytesIO.seek invalid whence")),
+        };
+        let new_pos = base + offset;
+        if new_pos < 0 {
+            return Err(RuntimeError::new("negative seek value"));
+        }
+        let new_pos = new_pos as usize;
+        self.bytesio_store_state(&receiver, buffer, new_pos, false)?;
+        Ok(Value::Int(new_pos as i64))
+    }
+
+    fn builtin_bytesio_tell(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.tell expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let (_buffer, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        Ok(Value::Int(pos as i64))
+    }
+
+    fn builtin_bytesio_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.__iter__ expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_bytesio_next(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.__next__ expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let line =
+            self.builtin_bytesio_readline(vec![Value::Instance(receiver)], HashMap::new())?;
+        let is_empty = if let Value::Bytes(obj) = &line {
+            matches!(&*obj.kind(), Object::Bytes(values) if values.is_empty())
+        } else {
+            false
+        };
+        if is_empty {
+            return Err(RuntimeError::new("StopIteration"));
+        }
+        Ok(line)
+    }
+
+    fn builtin_bytesio_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.__enter__ expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_bytesio_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "BytesIO.__exit__ expects up to 3 arguments",
+            ));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let (buffer, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        self.bytesio_store_state(&receiver, buffer, pos, true)?;
+        Ok(Value::Bool(false))
+    }
+
+    fn builtin_bytesio_close(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.close expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let (buffer, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        self.bytesio_store_state(&receiver, buffer, pos, true)?;
+        Ok(Value::None)
     }
 
     fn struct_format_from_receiver(&self, receiver: &ObjRef) -> Result<String, RuntimeError> {

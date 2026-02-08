@@ -167,6 +167,39 @@ impl Vm {
         let value = json_node_to_value(node, &self.heap);
         Ok(self.heap.alloc_tuple(vec![value, Value::Int(end as i64)]))
     }
+
+    pub(in crate::vm) fn builtin_json_decoder_scanstring(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "scanstring() expects string, end, optional strict",
+            ));
+        }
+        let source = match args.remove(0) {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::new("scanstring() expects string input")),
+        };
+        let end = value_to_int(args.remove(0))?;
+        let _strict = if !args.is_empty() {
+            is_truthy(&args.remove(0))
+        } else {
+            true
+        };
+        if end <= 0 || end as usize > source.len() {
+            return Err(RuntimeError::new("scanstring() end index out of range"));
+        }
+        let start = end as usize - 1;
+        let (node, parsed_end) = parse_json_node_from_index(&source, start)?;
+        let JsonNode::String(text) = node else {
+            return Err(RuntimeError::new("scanstring() expected string token"));
+        };
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(text), Value::Int(parsed_end as i64)]))
+    }
 }
 
 fn json_source_text(value: &Value) -> Result<String, RuntimeError> {
