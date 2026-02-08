@@ -1182,6 +1182,7 @@ struct Compiler {
     code: CodeObject,
     temp_counter: usize,
     loop_stack: Vec<LoopContext>,
+    finally_return_stack: Vec<FinallyReturnContext>,
     scope: ScopeInfo,
     current_span: Span,
     cell_index: HashMap<String, u32>,
@@ -1194,6 +1195,13 @@ struct LoopContext {
     break_cleanup_pops: usize,
     breaks: Vec<usize>,
     continues: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct FinallyReturnContext {
+    return_value_name: String,
+    return_flag_name: String,
+    pending_return_jumps: Vec<usize>,
 }
 
 impl Compiler {
@@ -1209,6 +1217,7 @@ impl Compiler {
             code,
             temp_counter: 0,
             loop_stack: Vec::new(),
+            finally_return_stack: Vec::new(),
             scope,
             current_span: Span::unknown(),
             cell_index,
@@ -1402,7 +1411,7 @@ impl Compiler {
                 } else {
                     compiler.emit(Opcode::LoadConst, Some(0));
                 }
-                compiler.emit(Opcode::ReturnValue, None);
+                compiler.emit_return_or_defer()?;
                 Ok(())
             }
             StmtKind::Raise { value, cause } => {
@@ -3607,6 +3616,71 @@ impl Compiler {
         Ok(())
     }
 
+    fn push_finally_return_context(&mut self) -> Result<(), CompileError> {
+        let return_value_name = self.fresh_temp("finally_return_value");
+        let return_flag_name = self.fresh_temp("finally_return_flag");
+        self.emit_const(Value::Bool(false));
+        self.emit_store_name_scoped(&return_flag_name)?;
+        self.finally_return_stack.push(FinallyReturnContext {
+            return_value_name,
+            return_flag_name,
+            pending_return_jumps: Vec::new(),
+        });
+        Ok(())
+    }
+
+    fn pop_finally_return_context(&mut self) -> Result<FinallyReturnContext, CompileError> {
+        self.finally_return_stack
+            .pop()
+            .ok_or_else(|| CompileError::new("missing finally return context"))
+    }
+
+    fn emit_return_or_defer(&mut self) -> Result<(), CompileError> {
+        if self.finally_return_stack.is_empty() {
+            self.emit(Opcode::ReturnValue, None);
+            return Ok(());
+        }
+        let context_index = self.finally_return_stack.len() - 1;
+        let return_value_name = self.finally_return_stack[context_index]
+            .return_value_name
+            .clone();
+        let return_flag_name = self.finally_return_stack[context_index]
+            .return_flag_name
+            .clone();
+        self.emit_store_name_scoped(&return_value_name)?;
+        self.emit_const(Value::Bool(true));
+        self.emit_store_name_scoped(&return_flag_name)?;
+        let jump = self.emit_jump(Opcode::Jump);
+        self.finally_return_stack[context_index]
+            .pending_return_jumps
+            .push(jump);
+        Ok(())
+    }
+
+    fn patch_deferred_returns_to(
+        &mut self,
+        context: &mut FinallyReturnContext,
+        target: usize,
+    ) -> Result<(), CompileError> {
+        for jump in context.pending_return_jumps.drain(..) {
+            self.patch_jump(jump, target)?;
+        }
+        Ok(())
+    }
+
+    fn emit_finally_return_epilogue(
+        &mut self,
+        context: &FinallyReturnContext,
+    ) -> Result<(), CompileError> {
+        self.emit_load_name(&context.return_flag_name)?;
+        let no_return = self.emit_jump(Opcode::JumpIfFalse);
+        self.emit_load_name(&context.return_value_name)?;
+        self.emit_return_or_defer()?;
+        let end = self.current_ip();
+        self.patch_jump(no_return, end)?;
+        Ok(())
+    }
+
     fn compile_try(
         &mut self,
         body: &[Stmt],
@@ -3787,12 +3861,19 @@ impl Compiler {
         orelse: &[Stmt],
         finalbody: &[Stmt],
     ) -> Result<(), CompileError> {
+        self.push_finally_return_context()?;
         let setup_finally = self.emit_jump(Opcode::SetupExcept);
-        self.compile_try_except(body, handlers, orelse)?;
+        let compile_result = self.compile_try_except(body, handlers, orelse);
+        let mut return_context = self.pop_finally_return_context()?;
+        compile_result?;
         self.emit(Opcode::PopBlock, None);
+
+        let finally_start = self.current_ip();
+        self.patch_deferred_returns_to(&mut return_context, finally_start)?;
         for stmt in finalbody {
             self.compile_stmt(stmt)?;
         }
+        self.emit_finally_return_epilogue(&return_context)?;
         let jump_to_end = self.emit_jump(Opcode::Jump);
 
         let handler_start = self.current_ip();
@@ -3815,12 +3896,19 @@ impl Compiler {
         orelse: &[Stmt],
         finalbody: &[Stmt],
     ) -> Result<(), CompileError> {
+        self.push_finally_return_context()?;
         let setup_finally = self.emit_jump(Opcode::SetupExcept);
-        self.compile_try_except_star(body, handlers, orelse)?;
+        let compile_result = self.compile_try_except_star(body, handlers, orelse);
+        let mut return_context = self.pop_finally_return_context()?;
+        compile_result?;
         self.emit(Opcode::PopBlock, None);
+
+        let finally_start = self.current_ip();
+        self.patch_deferred_returns_to(&mut return_context, finally_start)?;
         for stmt in finalbody {
             self.compile_stmt(stmt)?;
         }
+        self.emit_finally_return_epilogue(&return_context)?;
         let jump_to_end = self.emit_jump(Opcode::Jump);
 
         let handler_start = self.current_ip();
@@ -3841,14 +3929,24 @@ impl Compiler {
         body: &[Stmt],
         finalbody: &[Stmt],
     ) -> Result<(), CompileError> {
+        self.push_finally_return_context()?;
         let setup_except = self.emit_jump(Opcode::SetupExcept);
-        for stmt in body {
-            self.compile_stmt(stmt)?;
-        }
+        let compile_result = (|| -> Result<(), CompileError> {
+            for stmt in body {
+                self.compile_stmt(stmt)?;
+            }
+            Ok(())
+        })();
+        let mut return_context = self.pop_finally_return_context()?;
+        compile_result?;
         self.emit(Opcode::PopBlock, None);
+
+        let finally_start = self.current_ip();
+        self.patch_deferred_returns_to(&mut return_context, finally_start)?;
         for stmt in finalbody {
             self.compile_stmt(stmt)?;
         }
+        self.emit_finally_return_epilogue(&return_context)?;
         let jump_to_end = self.emit_jump(Opcode::Jump);
 
         let handler_start = self.current_ip();
