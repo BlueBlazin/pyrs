@@ -47,7 +47,12 @@ fn bytes_values(value: Option<Value>) -> Option<Vec<u8>> {
     }
 }
 
-fn assert_exception_global(vm: &Vm, name: &str, expected_type: &str, expected_message: Option<&str>) {
+fn assert_exception_global(
+    vm: &Vm,
+    name: &str,
+    expected_type: &str,
+    expected_message: Option<&str>,
+) {
     match vm.get_global(name) {
         Some(Value::Exception(exc)) => {
             assert_eq!(exc.name, expected_type);
@@ -5812,6 +5817,36 @@ ok = (names == ['test_a', 'test_b', 'test_c'])\n";
 }
 
 #[test]
+fn list_sort_keeps_list_identity_and_sorts_in_place() {
+    let source = "values = [3, 1, 2]\nident = id(values)\nvalues.sort()\nok = (id(values) == ident and values == [1, 2, 3])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_sort_raises_when_list_is_modified_during_sort() {
+    let source = r#"values = [3, 2, 1]
+def keyf(x):
+    values.append(0)
+    return x
+raised = False
+try:
+    values.sort(key=keyf)
+except ValueError as exc:
+    raised = ('list modified during sort' in str(exc))
+ok = (raised and values == [1, 2, 3])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bound_method_doc_lookup_is_supported() {
     let source = "class T:\n    def test_one(self):\n        'doc'\n        return 1\nm = T().test_one\nok = (m.__doc__ == None)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -6142,6 +6177,35 @@ try:
 except OSError:
     caught = True
 ok = caught
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_dictreader_list_exhaustion_stops_cleanly() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+from textwrap import dedent
+data = dedent('''\
+    FirstName,LastName
+    Eric,Idle
+    Graham,Chapman,Over1,Over2
+
+    Under1
+    John,Cleese
+''').splitlines()
+total = 0
+for _ in range(200):
+    rows = list(csv.DictReader(data))
+    total += len(rows)
+ok = (total == 800 and rows[0]['FirstName'] == 'Eric' and rows[-1]['LastName'] == 'Cleese')
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

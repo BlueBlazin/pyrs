@@ -11521,17 +11521,20 @@ impl Vm {
                     ));
                 }
 
-                let mut sorted_values = {
-                    let receiver_kind = receiver.kind();
-                    let Object::List(values) = &*receiver_kind else {
+                // Follow CPython-style in-place semantics by temporarily taking the list
+                // contents out of the receiver object and restoring them after sorting.
+                let mut working = {
+                    let mut receiver_kind = receiver.kind_mut();
+                    let Object::List(values) = &mut *receiver_kind else {
                         return Err(RuntimeError::new("list.sort() receiver must be list"));
                     };
-                    values.clone()
+                    std::mem::take(values)
                 };
+                let original_values = working.clone();
 
-                if !matches!(key_func, Value::None) {
-                    let mut keyed = Vec::with_capacity(sorted_values.len());
-                    for value in sorted_values {
+                let sorted_values = if !matches!(key_func, Value::None) {
+                    let mut keyed = Vec::with_capacity(working.len());
+                    for value in &working {
                         let key = match self.call_internal(
                             key_func.clone(),
                             vec![value.clone()],
@@ -11539,10 +11542,17 @@ impl Vm {
                         )? {
                             InternalCallOutcome::Value(key) => key,
                             InternalCallOutcome::CallerExceptionHandled => {
+                                let mut receiver_kind = receiver.kind_mut();
+                                let Object::List(values) = &mut *receiver_kind else {
+                                    return Err(RuntimeError::new(
+                                        "list.sort() receiver must be list",
+                                    ));
+                                };
+                                *values = original_values;
                                 return Err(RuntimeError::new("key function raised"));
                             }
                         };
-                        keyed.push((value, key));
+                        keyed.push((value.clone(), key));
                     }
                     let mut compare_error: Option<RuntimeError> = None;
                     keyed.sort_by(|left, right| {
@@ -11555,36 +11565,49 @@ impl Vm {
                         }
                     });
                     if let Some(err) = compare_error {
+                        let mut receiver_kind = receiver.kind_mut();
+                        let Object::List(values) = &mut *receiver_kind else {
+                            return Err(RuntimeError::new("list.sort() receiver must be list"));
+                        };
+                        *values = original_values;
                         return Err(err);
                     }
                     if reverse {
                         keyed.reverse();
                     }
-                    sorted_values = keyed.into_iter().map(|(value, _)| value).collect();
+                    keyed.into_iter().map(|(value, _)| value).collect()
                 } else {
                     let mut compare_error: Option<RuntimeError> = None;
-                    sorted_values.sort_by(|left, right| {
-                        match compare_order(left.clone(), right.clone()) {
-                            Ok(ordering) => ordering,
-                            Err(err) => {
-                                compare_error = Some(err);
-                                Ordering::Equal
-                            }
+                    working.sort_by(|left, right| match compare_order(left.clone(), right.clone()) {
+                        Ok(ordering) => ordering,
+                        Err(err) => {
+                            compare_error = Some(err);
+                            Ordering::Equal
                         }
                     });
                     if let Some(err) = compare_error {
+                        let mut receiver_kind = receiver.kind_mut();
+                        let Object::List(values) = &mut *receiver_kind else {
+                            return Err(RuntimeError::new("list.sort() receiver must be list"));
+                        };
+                        *values = original_values;
                         return Err(err);
                     }
                     if reverse {
-                        sorted_values.reverse();
+                        working.reverse();
                     }
-                }
+                    working
+                };
 
                 let mut receiver_kind = receiver.kind_mut();
                 let Object::List(values) = &mut *receiver_kind else {
                     return Err(RuntimeError::new("list.sort() receiver must be list"));
                 };
+                let modified_during_sort = !values.is_empty();
                 *values = sorted_values;
+                if modified_during_sort {
+                    return Err(RuntimeError::new("list modified during sort"));
+                }
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::IntToBytes => {
@@ -13575,7 +13598,11 @@ impl Vm {
                                 frame.active_exception = caller_active_exception.clone();
                             }
                         }
-                        Ok(GeneratorResumeOutcome::Yield(value))
+                        if exception_is_named(&value, "StopIteration") {
+                            Ok(GeneratorResumeOutcome::Complete(Value::None))
+                        } else {
+                            Ok(GeneratorResumeOutcome::Yield(value))
+                        }
                     }
                     Ok(InternalCallOutcome::CallerExceptionHandled) => {
                         if self.frames.len() == caller_depth {
@@ -13596,10 +13623,8 @@ impl Vm {
                                 self.raise_exception(exception)?;
                                 return Ok(GeneratorResumeOutcome::PropagatedException);
                             }
-                            Ok(GeneratorResumeOutcome::PropagatedException)
-                        } else {
-                            Ok(GeneratorResumeOutcome::PropagatedException)
                         }
+                        Ok(GeneratorResumeOutcome::PropagatedException)
                     }
                     Err(err) => {
                         if self.frames.len() == caller_depth {
@@ -13610,7 +13635,7 @@ impl Vm {
                                 frame.active_exception = caller_active_exception.clone();
                             }
                         }
-                        if classify_runtime_error(&err.message) == "StopIteration" {
+                        if runtime_error_matches_exception(&err.message, "StopIteration") {
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
                         } else {
                             Err(err)
@@ -32158,6 +32183,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("not in list")
         || message.contains("could not convert string to float")
         || message.contains("complex() invalid literal")
+        || message.contains("list modified during sort")
     {
         return "ValueError";
     }
@@ -32176,6 +32202,21 @@ fn classify_runtime_error(message: &str) -> &'static str {
         return "TypeError";
     }
     "RuntimeError"
+}
+
+fn runtime_error_matches_exception(message: &str, expected: &str) -> bool {
+    if classify_runtime_error(message) == expected {
+        return true;
+    }
+    let Some(last_non_empty_line) = message
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim)
+    else {
+        return false;
+    };
+    last_non_empty_line == expected || last_non_empty_line.starts_with(&format!("{expected}:"))
 }
 
 fn slice_indices(
