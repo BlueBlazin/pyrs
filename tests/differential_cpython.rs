@@ -237,3 +237,59 @@ result = {"values": values, "caught": caught}
         "list.sort mutation differential mismatch"
     );
 }
+
+#[test]
+fn differential_json_options_and_default_callback_match_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"import json
+class Unknown:
+    pass
+def fallback(value):
+    return {"kind": value.__class__.__name__, "emoji": "☺"}
+result = {
+    "sorted": json.dumps({"b": 1, "a": "☺"}, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+    "fallback": json.dumps(Unknown(), default=fallback, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+    "loaded": json.loads('{"x": 1, "arr": [2, 3]}'),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(&py),
+        normalize_jsonish(&ours),
+        "json options/default differential mismatch"
+    );
+}
+
+#[test]
+fn differential_container_semantics_match_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"caught = False
+try:
+    d = {}
+    d[[1]] = 1
+except Exception:
+    caught = True
+d1 = {"a": 1, "b": 2}
+d2 = {"b": 2, "a": 1}
+s1 = {1, 2, 3}
+s2 = {3, 2, 1}
+result = {
+    "caught": caught,
+    "dict_eq": (d1 == d2),
+    "set_eq": (s1 == s2),
+    "contains": ("a" in d1 and 2 in s1 and 99 not in s1),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(&py),
+        normalize_jsonish(&ours),
+        "container semantics differential mismatch"
+    );
+}
