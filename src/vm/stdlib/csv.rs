@@ -695,6 +695,9 @@ impl Vm {
             .last_mut()
             .and_then(|frame| frame.active_exception.take());
         match active {
+            Some(Value::Exception(exception)) if exception.name == "Error" => {
+                RuntimeError::new(exception.message.unwrap_or_else(|| exception.name.clone()))
+            }
             Some(value) => RuntimeError::new(format_value(&value)),
             None => RuntimeError::new(fallback),
         }

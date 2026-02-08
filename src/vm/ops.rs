@@ -388,7 +388,9 @@ fn namedtuple_instance_percent_args(value: &Value) -> Option<Vec<Value>> {
         return None;
     };
     let (class, attrs) = match &*instance.kind() {
-        Object::Instance(instance_data) => (instance_data.class.clone(), instance_data.attrs.clone()),
+        Object::Instance(instance_data) => {
+            (instance_data.class.clone(), instance_data.attrs.clone())
+        }
         _ => return None,
     };
     let field_names = match &*class.kind() {
@@ -934,6 +936,12 @@ pub(super) fn compare_order(left: Value, right: Value) -> Result<Ordering, Runti
             (NumericValue::Int(left), NumericValue::Int(right)) => left.cmp(&right),
             (left, right) => numeric_as_f64(left).total_cmp(&numeric_as_f64(right)),
         });
+    }
+    if let (Some(left_values), Some(right_values)) = (
+        namedtuple_instance_percent_args(&left),
+        namedtuple_instance_percent_args(&right),
+    ) {
+        return compare_sequence_order(&left_values, &right_values);
     }
 
     match (left, right) {

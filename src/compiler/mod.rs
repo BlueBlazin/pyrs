@@ -1191,6 +1191,7 @@ struct Compiler {
 struct LoopContext {
     start: usize,
     continue_target: Option<usize>,
+    break_cleanup_pops: usize,
     breaks: Vec<usize>,
     continues: Vec<usize>,
 }
@@ -2124,6 +2125,7 @@ impl Compiler {
         self.loop_stack.push(LoopContext {
             start: loop_start,
             continue_target: Some(loop_start),
+            break_cleanup_pops: 0,
             breaks: Vec::new(),
             continues: Vec::new(),
         });
@@ -3261,6 +3263,7 @@ impl Compiler {
         self.loop_stack.push(LoopContext {
             start: loop_start,
             continue_target: Some(loop_start),
+            break_cleanup_pops: 1,
             breaks: Vec::new(),
             continues: Vec::new(),
         });
@@ -3916,6 +3919,14 @@ impl Compiler {
     }
 
     fn compile_break(&mut self) -> Result<(), CompileError> {
+        let break_cleanup_pops = self
+            .loop_stack
+            .last()
+            .ok_or_else(|| CompileError::new("break outside loop"))?
+            .break_cleanup_pops;
+        for _ in 0..break_cleanup_pops {
+            self.emit(Opcode::PopTop, None);
+        }
         let jump = self.emit_jump(Opcode::Jump);
         let ctx = self
             .loop_stack

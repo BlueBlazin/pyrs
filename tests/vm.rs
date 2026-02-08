@@ -4023,6 +4023,17 @@ fn executes_for_loop_over_range() {
 }
 
 #[test]
+fn executes_nested_for_with_break_continue_without_outer_iterator_corruption() {
+    let source = "pairs = []\nfor i in range(41, 46):\n    row = []\n    for j in [41, 59, 69]:\n        if j < 59:\n            continue\n        if j >= 64:\n            break\n        row.append(j)\n    pairs.append((i, row))\nok = pairs == [(41, [59]), (42, [59]), (43, [59]), (44, [59]), (45, [59])]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_break_in_while_loop() {
     let source = "x = 0\nwhile 1:\n    x = x + 1\n    break\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -5115,6 +5126,16 @@ fn collections_namedtuple_instances_support_iteration_len_and_getitem() {
 #[test]
 fn collections_namedtuple_make_builds_instances_from_iterables() {
     let source = "import collections\nM = collections.namedtuple('M', 'x y')\na = M._make([4, 5])\nb = M._make((6, 7))\nok = isinstance(a, M) and a.x == 4 and a.y == 5 and b.x == 6 and b.y == 7\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collections_namedtuple_supports_ordering_for_sort() {
+    let source = "import collections\nM = collections.namedtuple('M', 'a b c')\nx = M(1, 2, 3)\ny = M(1, 3, 0)\nordered = sorted([y, x])\nok = (x < y) and ordered[0] == x and ordered[1] == y\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
