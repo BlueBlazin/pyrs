@@ -900,6 +900,37 @@ fn parses_try_except_statement() {
 }
 
 #[test]
+fn parses_try_except_with_comma_separated_exception_types() {
+    let source = "try:\n  pass\nexcept FileNotFoundError, PermissionError as err:\n  pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Try { handlers, .. } => {
+            assert_eq!(handlers.len(), 1);
+            let handler = &handlers[0];
+            match &handler.type_expr {
+                Some(expr) => match &expr.node {
+                    ExprKind::Tuple(values) => {
+                        assert_eq!(values.len(), 2);
+                        match &values[0].node {
+                            ExprKind::Name(name) => assert_eq!(name, "FileNotFoundError"),
+                            other => panic!("unexpected first exception type: {other:?}"),
+                        }
+                        match &values[1].node {
+                            ExprKind::Name(name) => assert_eq!(name, "PermissionError"),
+                            other => panic!("unexpected second exception type: {other:?}"),
+                        }
+                    }
+                    other => panic!("unexpected handler type: {other:?}"),
+                },
+                other => panic!("unexpected handler type: {other:?}"),
+            }
+            assert_eq!(handler.name.as_deref(), Some("err"));
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_try_finally_statement() {
     let source = "try:\n  pass\nfinally:\n  pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -1837,9 +1837,37 @@ impl Parser {
             let mut type_expr = None;
             let mut name = None;
             if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
-                let (expr, next) = self.parse_expr_at(pos)?;
-                type_expr = Some(expr);
+                let (first_expr, next) = self.parse_expr_at(pos)?;
                 pos = next;
+
+                // Python 3.14 (PEP 758) accepts comma-separated exception
+                // types without parentheses: `except A, B:`.
+                let mut exception_types = vec![first_expr];
+                while matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                    pos += 1;
+                    if matches!(self.token_at(pos).kind, TokenKind::Colon)
+                        || self.match_keyword(pos, Keyword::As)
+                    {
+                        return Err(self.error_at(pos, "expected exception type"));
+                    }
+                    let (expr, next) = self.parse_expr_at(pos)?;
+                    exception_types.push(expr);
+                    pos = next;
+                }
+
+                type_expr = if exception_types.len() == 1 {
+                    exception_types.into_iter().next()
+                } else {
+                    let span = exception_types
+                        .first()
+                        .map(|expr| expr.span)
+                        .unwrap_or_else(Span::unknown);
+                    Some(Expr {
+                        node: ExprKind::Tuple(exception_types),
+                        span,
+                    })
+                };
+
                 if self.match_keyword(pos, Keyword::As) {
                     pos += 1;
                     let token = self.token_at(pos);
