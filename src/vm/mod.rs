@@ -31410,7 +31410,17 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "RuntimeError" => Some("Exception"),
         "OSError" => Some("Exception"),
         "FileNotFoundError" => Some("OSError"),
+        "FileExistsError" => Some("OSError"),
+        "IsADirectoryError" => Some("OSError"),
         "BlockingIOError" => Some("OSError"),
+        "InterruptedError" => Some("OSError"),
+        "ProcessLookupError" => Some("OSError"),
+        "ChildProcessError" => Some("OSError"),
+        "ConnectionError" => Some("OSError"),
+        "BrokenPipeError" => Some("ConnectionError"),
+        "ConnectionAbortedError" => Some("ConnectionError"),
+        "ConnectionRefusedError" => Some("ConnectionError"),
+        "ConnectionResetError" => Some("ConnectionError"),
         "TimeoutError" => Some("OSError"),
         "NotADirectoryError" => Some("OSError"),
         "PermissionError" => Some("OSError"),
@@ -32355,6 +32365,27 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
                 | "TimeoutError"
                 | "NotADirectoryError"
                 | "PermissionError"
+                | "FileExistsError"
+                | "IsADirectoryError"
+                | "InterruptedError"
+                | "ProcessLookupError"
+                | "ChildProcessError"
+                | "ConnectionError"
+                | "BrokenPipeError"
+                | "ConnectionAbortedError"
+                | "ConnectionRefusedError"
+                | "ConnectionResetError"
+        )
+    {
+        return true;
+    }
+    if expected == "ConnectionError"
+        && matches!(
+            candidate,
+            "BrokenPipeError"
+                | "ConnectionAbortedError"
+                | "ConnectionRefusedError"
+                | "ConnectionResetError"
         )
     {
         return true;

@@ -5049,6 +5049,16 @@ fn collections_namedtuple_make_builds_instances_from_iterables() {
 }
 
 #[test]
+fn exception_hierarchy_matches_oserror_children_expectations() {
+    let source = "errs = [BrokenPipeError, ChildProcessError, ConnectionAbortedError, ConnectionError, ConnectionRefusedError, ConnectionResetError, FileExistsError, InterruptedError, IsADirectoryError, ProcessLookupError]\nok = all(issubclass(e, OSError) for e in errs) and issubclass(BrokenPipeError, ConnectionError)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_atexit_register_unregister_run_and_clear() {
     let source = "import atexit\nout = []\ndef f(x):\n    out.append(x)\ndef g(x):\n    out.append(x)\natexit.register(f, 1)\natexit.register(g, 2)\natexit.unregister(f)\natexit.register(f, 3)\natexit._run_exitfuncs()\natexit._clear()\nok = out == [3, 2]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
