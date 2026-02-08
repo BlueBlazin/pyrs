@@ -133,6 +133,40 @@ impl Vm {
         let node = parse_json_node(&text)?;
         Ok(json_node_to_value(node, &self.heap))
     }
+
+    pub(in crate::vm) fn builtin_json_scanner_make_scanner(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("make_scanner() expects context"));
+        }
+        Ok(Value::Builtin(BuiltinFunction::JsonScannerScanOnce))
+    }
+
+    pub(in crate::vm) fn builtin_json_scanner_scan_once(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("scan_once() expects string and index"));
+        }
+        let source = match &args[0] {
+            Value::Str(text) => text.clone(),
+            _ => return Err(RuntimeError::new("scan_once() expects string and index")),
+        };
+        let idx = value_to_int(args[1].clone())?;
+        if idx < 0 {
+            return Err(RuntimeError::new("StopIteration: 0"));
+        }
+        let idx = idx as usize;
+        let (node, end) = parse_json_node_from_index(&source, idx)
+            .map_err(|_| RuntimeError::new(format!("StopIteration: {idx}")))?;
+        let value = json_node_to_value(node, &self.heap);
+        Ok(self.heap.alloc_tuple(vec![value, Value::Int(end as i64)]))
+    }
 }
 
 fn json_source_text(value: &Value) -> Result<String, RuntimeError> {
@@ -638,6 +672,16 @@ impl<'a> JsonParser<'a> {
 
 fn parse_json_node(source: &str) -> Result<JsonNode, RuntimeError> {
     JsonParser::new(source).parse()
+}
+
+fn parse_json_node_from_index(source: &str, idx: usize) -> Result<(JsonNode, usize), RuntimeError> {
+    if idx > source.len() {
+        return Err(RuntimeError::new("unexpected end of JSON"));
+    }
+    let mut parser = JsonParser::new(source);
+    parser.pos = idx;
+    let node = parser.parse_value()?;
+    Ok((node, parser.pos))
 }
 
 fn json_node_to_value(node: JsonNode, heap: &Heap) -> Value {

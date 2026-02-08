@@ -1813,6 +1813,8 @@ pub enum BuiltinFunction {
     SubprocessCheckCall,
     JsonDumps,
     JsonLoads,
+    JsonScannerMakeScanner,
+    JsonScannerScanOnce,
     MarshalLoads,
     MarshalDumps,
     PyLongIntToDecimalString,
@@ -3854,6 +3856,8 @@ impl BuiltinFunction {
             | BuiltinFunction::SubprocessCheckCall
             | BuiltinFunction::JsonDumps
             | BuiltinFunction::JsonLoads
+            | BuiltinFunction::JsonScannerMakeScanner
+            | BuiltinFunction::JsonScannerScanOnce
             | BuiltinFunction::PyLongIntToDecimalString
             | BuiltinFunction::PyLongIntDivMod
             | BuiltinFunction::PyLongIntFromString

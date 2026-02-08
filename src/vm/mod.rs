@@ -1840,6 +1840,16 @@ impl Vm {
                     Value::ExceptionType("ValueError".to_string()),
                 );
             }
+            if let Object::Module(module_data) = &mut *scanner_module.kind_mut() {
+                module_data.globals.insert(
+                    "make_scanner".to_string(),
+                    Value::Builtin(BuiltinFunction::JsonScannerMakeScanner),
+                );
+                module_data.globals.insert(
+                    "py_make_scanner".to_string(),
+                    Value::Builtin(BuiltinFunction::JsonScannerMakeScanner),
+                );
+            }
             if let Object::Module(module_data) = &mut *json_module.kind_mut() {
                 module_data
                     .globals
@@ -9278,6 +9288,9 @@ impl Vm {
             | BuiltinFunction::CsvDialectValidate
             | BuiltinFunction::CsvReaderIter
             | BuiltinFunction::CsvReaderNext => "_csv",
+            BuiltinFunction::JsonScannerMakeScanner | BuiltinFunction::JsonScannerScanOnce => {
+                "json.scanner"
+            }
             _ => "builtins",
         };
         match attr_name {
@@ -14430,6 +14443,12 @@ impl Vm {
             }
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
+            BuiltinFunction::JsonScannerMakeScanner => {
+                self.builtin_json_scanner_make_scanner(args, kwargs)
+            }
+            BuiltinFunction::JsonScannerScanOnce => {
+                self.builtin_json_scanner_scan_once(args, kwargs)
+            }
             BuiltinFunction::PyLongIntToDecimalString => {
                 self.builtin_pylong_int_to_decimal_string(args, kwargs)
             }
