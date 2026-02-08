@@ -59,6 +59,7 @@ Current milestone state summary:
 11. Remaining milestones 13-16 cover: long-tail language/runtime parity + stdlib/packaging usability closure, performance/observability/runtime hooks, native-extension ecosystem compatibility, and release hardening/certification.
 12. Strict Milestone 13 P0 blockers now explicitly include full `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` semantic closure with robustness/performance proof; these are tracked in `docs/STUB_ACCOUNTING.md`, `docs/ROADMAP.md`, and `docs/PRODUCTION_READINESS.md`.
 13. Curated CPython language and import harness suites currently pass with empty allowlist (including `test_enum.py`, `test_pkgutil.py`, and `test_importlib/resources/test_resource.py` import paths); strict standalone `test_csv` unittest execution remains a P0 blocker, but the prior `_csv`-path `StopIteration` propagation issue is closed (remaining failures are broader unittest/io/re/parity gaps tracked in docs).
+14. Engineering quality-gate policy is now explicit (`docs/ENGINEERING_GATES.md`) with a tracked algorithmic/semantic backlog (`docs/ALGO_AUDIT_BACKLOG.md`); Milestone 13 completion requires all P0 audit items closed.
 
 ## Engineering Principles
 - Maintain correctness first, then performance.
@@ -71,6 +72,8 @@ Current milestone state summary:
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - Production readiness accounting: `docs/PRODUCTION_READINESS.md`
 - Stub and partial implementation ledger: `docs/STUB_ACCOUNTING.md`
+- Engineering quality gates: `docs/ENGINEERING_GATES.md`
+- Algorithmic and semantic audit backlog: `docs/ALGO_AUDIT_BACKLOG.md`
 - Native stdlib VM implementations: `src/vm/stdlib/`
 - P0 critical-path note: `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` are explicit release blockers until full parity + robustness/perf gates are closed.
 - Generated `NoOp` inventory: `docs/NOOP_BUILTIN_INVENTORY.txt` (refresh with `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`)

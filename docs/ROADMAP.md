@@ -59,6 +59,11 @@ We are building a production-grade Python interpreter in Rust with full source a
 - Integrate CPython test suite incrementally with a compatibility tracker.
 - Real-world app smoke tests.
 
+## Engineering gate policy
+- Mandatory quality gates are defined in `docs/ENGINEERING_GATES.md`.
+- Active algorithmic and semantic audit backlog is tracked in `docs/ALGO_AUDIT_BACKLOG.md`.
+- Milestone closure requires these gates for in-scope runtime and stdlib paths; test pass alone is not sufficient.
+
 ## Milestones (Revised for 100% CPython 3.14)
 Acceptance rule for all remaining milestones: no milestone is complete at "basic compat"; completion requires behavior-level parity for in-scope features plus targeted CPython tests.
 Release-complete target: Milestone 16; ecosystem-complete target (including native-extension packages): Milestone 15 + Milestone 16.
@@ -265,6 +270,7 @@ Execution record:
 DoD:
 - Remaining language/runtime long-tail parity closes for production blocking semantics (`__getattribute__`, metaclass precedence/selection, `__slots__` edge layout behavior, full codecs behavior, pattern-family completion, `ExceptionGroup` split semantics, and full PEP 701 behavior).
 - Runtime container semantic parity closes for hash-driven types (`dict`/`set`/`frozenset`) including unhashable rejection behavior.
+- Semantic-contract quality gate is closed for mutation-sensitive core operations (for example `list.sort`/container mutators) with CPython differential coverage and no known contract violations in scope.
 - Stdlib coverage expands to unblock mainstream pure-Python ecosystems (`subprocess`, `socket`, `ssl`, `http`, `urllib`, `typing`, `dataclasses`, `enum`, `contextvars`, and importlib resource/package helpers).
 - `json`/`_csv`/`pickle` stacks close to full CPython semantics with explicit robustness/performance gates (`test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness scope, plus malformed-input/differential coverage and benchmark reporting).
 - Native stdlib VM handlers are isolated and progressively retired in favor of official CPython pure-Python stdlib implementations wherever feasible.
@@ -341,11 +347,13 @@ Progress:
 - Import-suite closure landed for prior `zipfile`/`struct.Struct` constructor blockers: curated import harness now passes with empty allowlist (`test_pkgutil.py` and `test_importlib/resources/test_resource.py` are green).
 - `_csv` reader/dialect hardening landed for strict-parity paths: `register_dialect(..., dialect, **kwargs)` override semantics now merge/validate correctly; reader handles `strict`, `quoting` (`QUOTE_NONE`/`QUOTE_NONNUMERIC`/`QUOTE_STRINGS`/`QUOTE_NOTNULL`), skip-initial-space edge cases, EOF escape behavior, and unquoted-newline error contracts with dedicated regressions.
 - Small-thread-stack sensitivity remains tracked: the `ipaddress` bigint import regression test now runs in a dedicated larger-stack thread; runtime stack-depth hardening for constrained embedding stacks remains an explicit follow-up in `docs/STUB_ACCOUNTING.md`.
+- Engineering audit backlog is now explicit in `docs/ALGO_AUDIT_BACKLOG.md`; current open P0 item includes `list.sort` mutation/clone parity closure (`AQ-001`).
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:
 - Baseline benchmark suite (including pyperformance subset plus project workloads) is automated and tracked for regressions.
 - Production optimization stack is implemented and validated (compiler-level simplifications, VM dispatch/lookup caches, and container/runtime hot-path improvements), with parity gates proving no semantic regressions.
+- Algorithmic-complexity and clone/allocation quality gates from `docs/ENGINEERING_GATES.md` are enforced in CI for hot-path runtime/container operations, and all Milestone 14 items in `docs/ALGO_AUDIT_BACKLOG.md` are closed.
 - VM/runtime codebase is decomposed into cohesive modules (reducing monolithic file hotspots) with no behavior regressions.
 - Debug and profiling hooks (`sys.settrace`, `sys.setprofile`, runtime metrics, profiling workflow) are operational.
 - JIT/embedding hook points in IR/VM boundaries are explicitly documented and covered by non-regression tests.
@@ -366,6 +374,7 @@ DoD:
 
 ## Immediate next steps
 - Execute Milestone 13 closure batches: long-tail language/runtime parity semantics plus stdlib/import/packaging usability blockers.
+- Execute the engineering audit backlog in `docs/ALGO_AUDIT_BACKLOG.md` in priority order (starting with P0 semantic-contract violations).
 - Expand CPython harness breadth beyond current curated suites while preserving empty-allowlist policy for in-scope tests.
 - Harden CI parity policy beyond baseline workflow (`.github/workflows/parity-gate.yml`) for release-branch blocking and multi-platform parity lanes.
 - Keep Milestone 15 and Milestone 16 acceptance criteria visible during architecture choices so extension and release hardening paths remain unblocked.

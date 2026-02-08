@@ -24,6 +24,11 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - Packaging & Distribution -> Milestones 13 and 16
 - Security, Reliability, and Release Engineering -> Milestone 16
 
+**Engineering Quality Gates**
+- [~] P0: Mandatory quality-gate process is defined and active (`docs/ENGINEERING_GATES.md`) with tracked issues in `docs/ALGO_AUDIT_BACKLOG.md`.
+- [ ] P0: All P0 semantic-contract audit items are closed with CPython differential proof (for example mutation-sensitive in-place operations).
+- [ ] P1: Algorithmic complexity and clone/allocation gate automation is enforced in CI for runtime hot paths.
+
 **Language & Grammar**
 - [~] P0: Full 3.14 tokenizer parity (strings, bytes, numeric literals, f‑strings, comments, indents).
 - [~] P0: Full 3.14 grammar coverage (all statements/expressions).
@@ -129,6 +134,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 **Performance & Profiling**
 - [ ] P1: Baseline performance suite (pyperformance subset).
 - [ ] P1: Profiling hooks + flamegraph support.
+- [ ] P1: Close all P1 items in `docs/ALGO_AUDIT_BACKLOG.md` with benchmark-backed evidence.
 - [ ] P2: Adaptive opcodes / inline caches.
 - [ ] P2: GC/allocator tuning and object layout optimizations.
 - [ ] P2: Container hot-path architecture/performance parity (dict/set hash-table internals, growth strategy, and memory behavior).

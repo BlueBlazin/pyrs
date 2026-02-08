@@ -10,6 +10,7 @@ Nothing is allowed to stay "half-implemented" without a tracked owner and closur
 - Inventory traversal is recursive across module/class/instance/container object graphs.
 - Native stdlib VM handlers are being isolated under `src/vm/stdlib/` (`json`, `re`, `_csv`/`csv` extracted) to keep parity audits against CPython implementations targeted and reviewable.
 - Policy: prefer official CPython pure-Python stdlib modules wherever feasible; native VM handlers should remain minimal and every retained native path must stay explicitly tracked in this ledger.
+- Engineering-process gates for semantic/algorithmic issues are tracked in `docs/ENGINEERING_GATES.md` and `docs/ALGO_AUDIT_BACKLOG.md`.
 
 ## P0 Critical Paths (Release Blocking)
 - `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` are strict P0 release blockers.

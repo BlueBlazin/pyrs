@@ -1,0 +1,98 @@
+# Engineering Quality Gates
+
+This document defines mandatory process gates to prevent and detect semantic and algorithmic regressions in core interpreter/runtime code.
+
+These gates are release-relevant, not advisory.
+
+## Scope
+
+Applies to all changes under:
+- `src/runtime/`
+- `src/vm/`
+- `src/compiler/`
+- native stdlib handlers in `src/vm/stdlib/`
+
+## Gate 1: Semantic Contract Conformance (P0)
+
+No operation is considered done until CPython-visible behavior matches for the in-scope contract.
+
+Required for mutable/container APIs:
+- in-place mutation guarantees (`list.sort`, `list.reverse`, `dict.update`, etc.)
+- mutation-during-operation behavior (error type/message/state guarantees)
+- exception ordering/propagation on partial progress
+- aliasing behavior (object identity preservation where required)
+
+Required evidence:
+1. targeted regression tests in `tests/vm.rs`
+2. differential tests against CPython for the exact API surface
+3. explicit edge-case list (empty/singleton/large, mixed comparable types, exceptional callbacks)
+
+## Gate 2: Algorithmic Complexity Conformance (P0/P1)
+
+For fundamental operations, intended complexity must be declared and verified.
+
+Required for core structures:
+- `dict`/`set`/`frozenset` lookup/insert/delete/update/membership
+- `list` mutating operations (`append`, `extend`, `insert`, `pop`, `sort`)
+- bigint conversion/formatting primitives on large values
+
+Required evidence:
+1. operation complexity table in `docs/ALGO_AUDIT_BACKLOG.md`
+2. adversarial-size regression tests (small/medium/large)
+3. benchmark deltas recorded before/after implementation changes
+
+## Gate 3: Clone/Allocation Discipline (P1)
+
+Hot-path code must justify full-data clones.
+
+Rules:
+- cloning a full container/string in hot paths requires explicit justification comment or tracked issue
+- if an operation is in-place by CPython contract, implementations must avoid copy-then-replace unless required for safety and parity
+- avoid hidden quadratic behavior from repeated cloning in loops
+
+Required evidence:
+1. targeted audit entries in `docs/ALGO_AUDIT_BACKLOG.md`
+2. regression/perf tests for clone-sensitive paths
+
+## Gate 4: Native Stdlib Handler Policy (P0)
+
+Default policy is to use official CPython pure-Python stdlib implementations when feasible.
+
+Native VM handlers are allowed only when:
+- needed for bootstrap, performance, or missing runtime capability
+- behavior is tracked in `docs/STUB_ACCOUNTING.md`
+- parity tests exist for the handler surface
+
+## Gate 5: Monolith and Reviewability Control (P1)
+
+Large monolithic files hide semantic defects.
+
+Rules:
+- refactor by concern (ops, containers, import, stdlib handlers)
+- each extraction must be behavior-preserving with regression proof
+- new functionality should target focused modules, not `src/vm/mod.rs` when a focused module exists
+
+## Detection Pipeline
+
+Run this pipeline continuously during Milestone 13 and Milestone 14:
+
+1. `cargo test --quiet`
+2. curated CPython harness suites (`tests/cpython_harness.rs`)
+3. differential corpus tests (`tests/differential_cpython.rs`)
+4. fuzz/no-panic suites (`tests/fuzz_parser_vm.rs`)
+5. targeted algorithmic audits from `docs/ALGO_AUDIT_BACKLOG.md`
+6. stub/no-op drift gate (`tests/noop_inventory.rs`)
+
+## Completion Criteria
+
+A quality item is only closed when all are true:
+1. CPython parity tests pass for the item
+2. algorithmic behavior is documented and validated
+3. no untracked shortcuts remain in implementation/docs
+4. backlog entry is marked closed with commit reference
+
+## Milestone Ownership
+
+- Milestone 13 (P0): semantic contract violations and release blockers in core runtime/stdlib paths.
+- Milestone 14 (P1/P2): algorithmic/perf architecture closure and broad hot-path optimization/verification.
+- Milestone 16 (P0): release certification gates enforce the above in CI policy.
