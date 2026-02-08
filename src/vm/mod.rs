@@ -2662,6 +2662,7 @@ impl Vm {
                 ("RLock", BuiltinFunction::ThreadRLock),
                 ("allocate_lock", BuiltinFunction::ThreadRLock),
                 ("get_ident", BuiltinFunction::ThreadingGetIdent),
+                ("_count", BuiltinFunction::ThreadingActiveCount),
                 ("start_new_thread", BuiltinFunction::ThreadStartNewThread),
             ],
             vec![("TIMEOUT_MAX", Value::Float(f64::MAX))],

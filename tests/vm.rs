@@ -5089,6 +5089,16 @@ fn executes_thread_start_new_thread_baseline() {
 }
 
 #[test]
+fn executes_thread_count_baseline() {
+    let source = "import _thread\nok = isinstance(_thread._count(), int) and _thread._count() >= 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_threading_class_methods_baseline() {
     let source = "import threading\nout = []\ndef worker(x):\n    out.append(x)\nt = threading.Thread(target=worker, args=(7,))\na = t.is_alive()\nt.start()\nt.join()\nb = t.is_alive()\nok = (not a) and (not b) and out == [7]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
