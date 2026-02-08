@@ -1816,7 +1816,14 @@ impl Vm {
         );
         // Presence of _json lets stdlib import helpers detect accelerator availability.
         // Individual speedup symbols intentionally remain absent so pure-Python fallbacks run.
-        self.install_builtin_module("_json", &[], Vec::new());
+        self.install_builtin_module(
+            "_json",
+            &[
+                ("make_scanner", BuiltinFunction::JsonScannerMakeScanner),
+                ("scanstring", BuiltinFunction::JsonDecoderScanString),
+            ],
+            Vec::new(),
+        );
         if let (Some(json_module), Value::Module(decoder_module), Value::Module(scanner_module)) = (
             self.modules.get("json").cloned(),
             self.heap
@@ -1867,6 +1874,10 @@ impl Vm {
                 );
                 module_data.globals.insert(
                     "py_make_scanner".to_string(),
+                    Value::Builtin(BuiltinFunction::JsonScannerPyMakeScanner),
+                );
+                module_data.globals.insert(
+                    "c_make_scanner".to_string(),
                     Value::Builtin(BuiltinFunction::JsonScannerMakeScanner),
                 );
             }
@@ -5120,13 +5131,40 @@ impl Vm {
 
     fn import_module_object(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
         let existing_modules: HashSet<String> = self.modules.keys().cloned().collect();
-        if let Some(module) = self.modules.get(name).cloned() {
-            return Ok(module);
-        }
+        let key = Value::Str(name.to_string());
+        let mut present_in_sys_modules = false;
         if let Some(modules_dict) = self.sys_dict_obj("modules") {
-            let key = Value::Str(name.to_string());
-            if let Some(Value::Module(module)) = dict_get_value(&modules_dict, &key) {
-                self.modules.insert(name.to_string(), module.clone());
+            match dict_get_value(&modules_dict, &key) {
+                Some(Value::Module(module)) => {
+                    present_in_sys_modules = true;
+                    if self.should_prefer_filesystem_module(name, &module) {
+                        self.modules.remove(name);
+                        let _ = dict_remove_value(&modules_dict, &key);
+                    } else {
+                        self.modules.insert(name.to_string(), module.clone());
+                        return Ok(module);
+                    }
+                }
+                Some(Value::None) => {
+                    self.modules.remove(name);
+                    return Err(RuntimeError::new(format!("No module named '{}'", name)));
+                }
+                Some(_) => {
+                    present_in_sys_modules = true;
+                }
+                None => {}
+            }
+        }
+        if !present_in_sys_modules {
+            self.modules.remove(name);
+        }
+        if let Some(module) = self.modules.get(name).cloned() {
+            if self.should_prefer_filesystem_module(name, &module) {
+                self.modules.remove(name);
+                if let Some(modules_dict) = self.sys_dict_obj("modules") {
+                    let _ = dict_remove_value(&modules_dict, &key);
+                }
+            } else {
                 return Ok(module);
             }
         }
@@ -5140,9 +5178,18 @@ impl Vm {
                     }
                     if let Some(modules_dict) = self.sys_dict_obj("modules") {
                         let key = Value::Str(name.to_string());
-                        if let Some(Value::Module(module)) = dict_get_value(&modules_dict, &key) {
-                            self.modules.insert(name.to_string(), module.clone());
-                            return Ok(module);
+                        match dict_get_value(&modules_dict, &key) {
+                            Some(Value::Module(module)) => {
+                                self.modules.insert(name.to_string(), module.clone());
+                                return Ok(module);
+                            }
+                            Some(Value::None) => {
+                                return Err(RuntimeError::new(format!(
+                                    "No module named '{}'",
+                                    name
+                                )));
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -5202,6 +5249,30 @@ impl Vm {
                     | "__path__"
             )
         })
+    }
+
+    fn module_loader_name(module: &ObjRef) -> Option<String> {
+        let module_kind = module.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return None;
+        };
+        match module_data.globals.get("__loader__") {
+            Some(Value::Str(name)) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    fn should_prefer_filesystem_module(&mut self, name: &str, module: &ObjRef) -> bool {
+        if !matches!(
+            name,
+            "json" | "json.decoder" | "json.scanner" | "json.encoder"
+        ) {
+            return false;
+        }
+        if Self::module_loader_name(module).as_deref() != Some(BUILTIN_MODULE_LOADER) {
+            return false;
+        }
+        self.find_module_source(name).is_some()
     }
 
     fn module_for_plain_import(&mut self, name: &str, module: ObjRef) -> ObjRef {
@@ -5758,7 +5829,42 @@ impl Vm {
                                             wrapper,
                                         )
                                     }
+                                    "add_note" => {
+                                        let wrapper =
+                                            match self.heap.alloc_module(ModuleObject::new(
+                                                "__exception_add_note__".to_string(),
+                                            )) {
+                                                Value::Module(obj) => obj,
+                                                _ => unreachable!(),
+                                            };
+                                        if let Object::Module(module_data) =
+                                            &mut *wrapper.kind_mut()
+                                        {
+                                            module_data.globals.insert(
+                                                "exception".to_string(),
+                                                Value::Exception(exception.clone()),
+                                            );
+                                        }
+                                        self.alloc_native_bound_method(
+                                            NativeMethodKind::ExceptionAddNote,
+                                            wrapper,
+                                        )
+                                    }
                                     "__class__" => Value::ExceptionType(exception.name.clone()),
+                                    "__notes__" => {
+                                        if exception.notes.is_empty() {
+                                            Value::None
+                                        } else {
+                                            self.heap.alloc_list(
+                                                exception
+                                                    .notes
+                                                    .iter()
+                                                    .cloned()
+                                                    .map(Value::Str)
+                                                    .collect(),
+                                            )
+                                        }
+                                    }
                                     "__cause__" => exception
                                         .cause
                                         .as_ref()
@@ -8456,6 +8562,7 @@ impl Vm {
     ) -> ExceptionObject {
         let mut clone =
             ExceptionObject::with_members(template.name.clone(), template.message.clone(), members);
+        clone.notes = template.notes.clone();
         clone.cause = template.cause.clone();
         clone.context = template.context.clone();
         clone.suppress_context = template.suppress_context;
@@ -9483,10 +9590,10 @@ impl Vm {
             | BuiltinFunction::CsvDialectValidate
             | BuiltinFunction::CsvReaderIter
             | BuiltinFunction::CsvReaderNext => "_csv",
-            BuiltinFunction::JsonScannerMakeScanner | BuiltinFunction::JsonScannerScanOnce => {
-                "json.scanner"
-            }
-            BuiltinFunction::JsonDecoderScanString => "json.decoder",
+            BuiltinFunction::JsonScannerMakeScanner
+            | BuiltinFunction::JsonScannerScanOnce
+            | BuiltinFunction::JsonDecoderScanString => "_json",
+            BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner",
             _ => "builtins",
         };
         match attr_name {
@@ -13110,6 +13217,25 @@ impl Vm {
                 };
                 Ok(NativeCallResult::Value(Value::Exception(exception.clone())))
             }
+            NativeMethodKind::ExceptionAddNote => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("add_note() expects one argument"));
+                }
+                let note = match args.remove(0) {
+                    Value::Str(value) => value,
+                    _ => return Err(RuntimeError::new("note must be str")),
+                };
+                let mut receiver_kind = receiver.kind_mut();
+                let Object::Module(module_data) = &mut *receiver_kind else {
+                    return Err(RuntimeError::new("exception receiver is invalid"));
+                };
+                let Some(Value::Exception(exception)) = module_data.globals.get_mut("exception")
+                else {
+                    return Err(RuntimeError::new("exception receiver is invalid"));
+                };
+                exception.notes.push(note);
+                Ok(NativeCallResult::Value(Value::None))
+            }
             NativeMethodKind::SetContains => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("__contains__() expects one argument"));
@@ -14706,6 +14832,9 @@ impl Vm {
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
             BuiltinFunction::JsonScannerMakeScanner => {
+                self.builtin_json_scanner_make_scanner(args, kwargs)
+            }
+            BuiltinFunction::JsonScannerPyMakeScanner => {
                 self.builtin_json_scanner_make_scanner(args, kwargs)
             }
             BuiltinFunction::JsonScannerScanOnce => {
@@ -18032,6 +18161,37 @@ impl Vm {
                         NativeMethodKind::ExceptionWithTraceback,
                         wrapper,
                     ))
+                }
+                "add_note" => {
+                    let wrapper = match self.heap.alloc_module(ModuleObject::new(
+                        "__exception_add_note__".to_string(),
+                    )) {
+                        Value::Module(obj) => obj,
+                        _ => unreachable!(),
+                    };
+                    if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                        module_data
+                            .globals
+                            .insert("exception".to_string(), Value::Exception(exception.clone()));
+                    }
+                    Ok(self.alloc_native_bound_method(
+                        NativeMethodKind::ExceptionAddNote,
+                        wrapper,
+                    ))
+                }
+                "__notes__" => {
+                    if exception.notes.is_empty() {
+                        Ok(Value::None)
+                    } else {
+                        Ok(self.heap.alloc_list(
+                            exception
+                                .notes
+                                .iter()
+                                .cloned()
+                                .map(Value::Str)
+                                .collect(),
+                        ))
+                    }
                 }
                 "__cause__" => Ok(exception
                     .cause
@@ -31351,6 +31511,8 @@ fn normalize_codec_errors(value: Value) -> Result<String, RuntimeError> {
     };
     match mode.as_str() {
         "strict" | "ignore" | "replace" | "surrogateescape" => Ok(mode),
+        "surrogatepass" => Ok("strict".to_string()),
+        "backslashreplace" | "namereplace" | "xmlcharrefreplace" => Ok("replace".to_string()),
         _ => Err(RuntimeError::new("unsupported error handler")),
     }
 }
@@ -33054,6 +33216,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
         return "TypeError";
     }
     if message.starts_with("module '") && message.ends_with("' not found") {
+        return "ModuleNotFoundError";
+    }
+    if message.starts_with("No module named '") {
         return "ModuleNotFoundError";
     }
     if message.starts_with("cannot import name '") && message.contains("' from '") {

@@ -236,6 +236,7 @@ pub enum NativeMethodKind {
     RePatternFullMatch,
     RePatternSub,
     ExceptionWithTraceback,
+    ExceptionAddNote,
     ClassRegister,
     PropertyGet,
     PropertySet,
@@ -1447,6 +1448,7 @@ pub struct ExceptionObject {
     pub object_id: u64,
     pub name: String,
     pub message: Option<String>,
+    pub notes: Vec<String>,
     pub exceptions: Vec<ExceptionObject>,
     pub cause: Option<Box<ExceptionObject>>,
     pub context: Option<Box<ExceptionObject>>,
@@ -1459,6 +1461,7 @@ impl ExceptionObject {
             object_id: next_exception_object_id(),
             name: name.into(),
             message,
+            notes: Vec::new(),
             exceptions: Vec::new(),
             cause: None,
             context: None,
@@ -1475,6 +1478,7 @@ impl ExceptionObject {
             object_id: next_exception_object_id(),
             name: name.into(),
             message,
+            notes: Vec::new(),
             exceptions: members,
             cause: None,
             context: None,
@@ -1815,6 +1819,7 @@ pub enum BuiltinFunction {
     JsonDumps,
     JsonLoads,
     JsonScannerMakeScanner,
+    JsonScannerPyMakeScanner,
     JsonScannerScanOnce,
     JsonDecoderScanString,
     MarshalLoads,
@@ -3972,6 +3977,7 @@ impl BuiltinFunction {
             | BuiltinFunction::JsonDumps
             | BuiltinFunction::JsonLoads
             | BuiltinFunction::JsonScannerMakeScanner
+            | BuiltinFunction::JsonScannerPyMakeScanner
             | BuiltinFunction::JsonScannerScanOnce
             | BuiltinFunction::JsonDecoderScanString
             | BuiltinFunction::PyLongIntToDecimalString
@@ -5084,6 +5090,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::RePatternSub => "<bound method Pattern.sub>".to_string(),
                     NativeMethodKind::ExceptionWithTraceback => {
                         "<bound method BaseException.with_traceback>".to_string()
+                    }
+                    NativeMethodKind::ExceptionAddNote => {
+                        "<bound method BaseException.add_note>".to_string()
                     }
                     NativeMethodKind::ClassRegister => "<bound method register>".to_string(),
                     NativeMethodKind::PropertyGet => "<bound method property.__get__>".to_string(),
