@@ -1450,7 +1450,7 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ExceptionObject {
     pub object_id: u64,
     pub name: String,
@@ -1460,6 +1460,7 @@ pub struct ExceptionObject {
     pub cause: Option<Box<ExceptionObject>>,
     pub context: Option<Box<ExceptionObject>>,
     pub suppress_context: bool,
+    pub attrs: Rc<RefCell<HashMap<String, Value>>>,
 }
 
 impl ExceptionObject {
@@ -1473,6 +1474,7 @@ impl ExceptionObject {
             cause: None,
             context: None,
             suppress_context: false,
+            attrs: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -1490,7 +1492,22 @@ impl ExceptionObject {
             cause: None,
             context: None,
             suppress_context: false,
+            attrs: Rc::new(RefCell::new(HashMap::new())),
         }
+    }
+}
+
+impl PartialEq for ExceptionObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.object_id == other.object_id
+    }
+}
+
+impl Eq for ExceptionObject {}
+
+impl Hash for ExceptionObject {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.object_id.hash(state);
     }
 }
 

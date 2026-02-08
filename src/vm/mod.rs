@@ -95,6 +95,44 @@ const LIST_BACKING_STORAGE_ATTR: &str = "__pyrs_list_storage__";
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructEndian {
+    Little,
+    Big,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructFieldKind {
+    Pad,
+    Bytes,
+    Char,
+    Bool,
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
+    F32,
+    F64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StructFieldSpec {
+    kind: StructFieldKind,
+    count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct StructFormatSpec {
+    endian: StructEndian,
+    fields: Vec<StructFieldSpec>,
+    size: usize,
+    value_count: usize,
+}
+
 #[derive(Clone)]
 struct Mt19937 {
     mt: [u32; MT_N],
@@ -6046,10 +6084,16 @@ impl Vm {
                                         self.heap.alloc_tuple(members)
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new(format!(
-                                            "exception has no attribute '{}'",
-                                            attr_name
-                                        )));
+                                        if let Some(value) =
+                                            exception.attrs.borrow().get(&attr_name).cloned()
+                                        {
+                                            value
+                                        } else {
+                                            return Err(RuntimeError::new(format!(
+                                                "exception has no attribute '{}'",
+                                                attr_name
+                                            )));
+                                        }
                                     }
                                 },
                                 Value::ExceptionType(name) => {
@@ -6353,6 +6397,9 @@ impl Vm {
                             }
                             Value::Function(func) => {
                                 self.delete_attr_function(&func, &attr_name)?;
+                            }
+                            Value::Exception(exception) => {
+                                self.delete_attr_exception(&exception, &attr_name)?;
                             }
                             _ => {
                                 return Err(RuntimeError::new(
@@ -8641,7 +8688,16 @@ impl Vm {
                     .exception_class_name_for_instance(&instance)
                     .ok_or_else(|| RuntimeError::new("can only raise Exception types"))?;
                 let message = self.exception_message_for_instance(&instance);
-                Ok(Value::Exception(ExceptionObject::new(class_name, message)))
+                let exception = ExceptionObject::new(class_name, message);
+                if let Object::Instance(instance_data) = &*instance.kind() {
+                    if !instance_data.attrs.is_empty() {
+                        exception
+                            .attrs
+                            .borrow_mut()
+                            .extend(instance_data.attrs.clone());
+                    }
+                }
+                Ok(Value::Exception(exception))
             }
             _ => Err(RuntimeError::new("can only raise Exception types")),
         }
@@ -8759,6 +8815,7 @@ impl Vm {
         clone.cause = template.cause.clone();
         clone.context = template.context.clone();
         clone.suppress_context = template.suppress_context;
+        clone.attrs = template.attrs.clone();
         clone
     }
 
@@ -10479,9 +10536,33 @@ impl Vm {
                 Ok(())
             }
             _ => {
-                // Exception instances allow dynamic attrs in CPython; attr persistence for
-                // exception-value semantics is tracked separately.
+                exception.attrs.borrow_mut().insert(attr_name.to_string(), value);
                 Ok(())
+            }
+        }
+    }
+
+    fn delete_attr_exception(
+        &mut self,
+        exception: &ExceptionObject,
+        attr_name: &str,
+    ) -> Result<(), RuntimeError> {
+        match attr_name {
+            "__cause__" | "__context__" | "__suppress_context__" | "__traceback__" => {
+                Err(RuntimeError::new(format!(
+                    "cannot delete exception attribute '{}'",
+                    attr_name
+                )))
+            }
+            _ => {
+                if exception.attrs.borrow_mut().remove(attr_name).is_some() {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::new(format!(
+                        "exception has no attribute '{}'",
+                        attr_name
+                    )))
+                }
             }
         }
     }
@@ -14915,6 +14996,7 @@ impl Vm {
             BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStreamIsATty => self.builtin_sys_stream_isatty(args, kwargs),
             BuiltinFunction::Int => self.builtin_int(args, kwargs),
+            BuiltinFunction::Str => self.builtin_str(args, kwargs),
             BuiltinFunction::FloatFromHex => self.builtin_float_fromhex(args, kwargs),
             BuiltinFunction::FloatHex => self.builtin_float_hex(args, kwargs),
             BuiltinFunction::StrMakeTrans => self.builtin_str_maketrans(args, kwargs),
@@ -15349,6 +15431,12 @@ impl Vm {
             BuiltinFunction::BytesIOEnter => self.builtin_bytesio_enter(args, kwargs),
             BuiltinFunction::BytesIOExit => self.builtin_bytesio_exit(args, kwargs),
             BuiltinFunction::BytesIOClose => self.builtin_bytesio_close(args, kwargs),
+            BuiltinFunction::StructCalcSize => self.builtin_struct_calcsize(args, kwargs),
+            BuiltinFunction::StructPack => self.builtin_struct_pack(args, kwargs),
+            BuiltinFunction::StructUnpack => self.builtin_struct_unpack(args, kwargs),
+            BuiltinFunction::StructIterUnpack => self.builtin_struct_iter_unpack(args, kwargs),
+            BuiltinFunction::StructPackInto => self.builtin_struct_pack_into(args, kwargs),
+            BuiltinFunction::StructUnpackFrom => self.builtin_struct_unpack_from(args, kwargs),
             BuiltinFunction::StringFormatterParser => {
                 self.builtin_string_formatter_parser(args, kwargs)
             }
@@ -16394,6 +16482,78 @@ impl Vm {
         }
 
         call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)
+    }
+
+    fn builtin_str(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let mut object = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut encoding = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut errors = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new("str() expects at most three arguments"));
+        }
+
+        if let Some(value) = kwargs.remove("object") {
+            if object.is_some() {
+                return Err(RuntimeError::new(
+                    "str() got multiple values for argument 'object'",
+                ));
+            }
+            object = Some(value);
+        }
+        if let Some(value) = kwargs.remove("encoding") {
+            if encoding.is_some() {
+                return Err(RuntimeError::new(
+                    "str() got multiple values for argument 'encoding'",
+                ));
+            }
+            encoding = Some(value);
+        }
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new(
+                    "str() got multiple values for argument 'errors'",
+                ));
+            }
+            errors = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "str() got an unexpected keyword argument",
+            ));
+        }
+
+        let object = object.unwrap_or_else(|| Value::Str(String::new()));
+        if encoding.is_none() && errors.is_none() {
+            return Ok(Value::Str(format_value(&object)));
+        }
+
+        let encoding =
+            normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
+        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        match object {
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                let bytes = bytes_like_from_value(object)?;
+                let decoded = decode_text_bytes(&bytes, &encoding, &errors)?;
+                Ok(Value::Str(decoded))
+            }
+            _ => Err(RuntimeError::new("decoding str is not supported")),
+        }
     }
 
     fn builtin_bytes_maketrans(
@@ -18581,10 +18741,14 @@ impl Vm {
                         .collect::<Vec<_>>();
                     Ok(self.heap.alloc_tuple(members))
                 }
-                _ => Err(RuntimeError::new(format!(
-                    "exception has no attribute '{}'",
-                    name
-                ))),
+                _ => exception
+                    .attrs
+                    .borrow()
+                    .get(&name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        RuntimeError::new(format!("exception has no attribute '{}'", name))
+                    }),
             },
             _ => Err(RuntimeError::new("attribute access unsupported type")),
         };
@@ -18697,6 +18861,7 @@ impl Vm {
                 AttrMutationOutcome::ExceptionHandled => return Ok(Value::None),
             },
             Value::Function(func) => self.delete_attr_function(&func, &name)?,
+            Value::Exception(exception) => self.delete_attr_exception(&exception, &name)?,
             _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
         }
 
@@ -26978,6 +27143,679 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn parse_struct_format(&self, format: &str) -> Result<StructFormatSpec, RuntimeError> {
+        let mut chars = format.chars().peekable();
+        let mut endian = StructEndian::Little;
+        if let Some(prefix) = chars.peek().copied() {
+            match prefix {
+                '<' => {
+                    endian = StructEndian::Little;
+                    chars.next();
+                }
+                '>' | '!' => {
+                    endian = StructEndian::Big;
+                    chars.next();
+                }
+                '@' | '=' => {
+                    endian = StructEndian::Little;
+                    chars.next();
+                }
+                _ => {}
+            }
+        }
+
+        let mut fields = Vec::new();
+        let mut size = 0usize;
+        let mut value_count = 0usize;
+        while let Some(ch) = chars.next() {
+            let mut count = if ch.is_ascii_digit() {
+                let mut digits = String::new();
+                digits.push(ch);
+                while let Some(next) = chars.peek().copied() {
+                    if next.is_ascii_digit() {
+                        digits.push(next);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                digits
+                    .parse::<usize>()
+                    .map_err(|_| RuntimeError::new("bad struct format"))?
+            } else {
+                1
+            };
+            let code = if ch.is_ascii_digit() {
+                chars
+                    .next()
+                    .ok_or_else(|| RuntimeError::new("bad struct format"))?
+            } else {
+                ch
+            };
+            if count == 0 && code != 's' {
+                continue;
+            }
+            let (kind, unit_size, takes_value, repeat_values) = match code {
+                'x' => (StructFieldKind::Pad, 1usize, false, false),
+                's' => (StructFieldKind::Bytes, 1usize, true, false),
+                'c' => (StructFieldKind::Char, 1usize, true, true),
+                '?' => (StructFieldKind::Bool, 1usize, true, true),
+                'b' => (StructFieldKind::I8, 1usize, true, true),
+                'B' => (StructFieldKind::U8, 1usize, true, true),
+                'h' => (StructFieldKind::I16, 2usize, true, true),
+                'H' => (StructFieldKind::U16, 2usize, true, true),
+                'i' | 'l' => (StructFieldKind::I32, 4usize, true, true),
+                'I' | 'L' => (StructFieldKind::U32, 4usize, true, true),
+                'q' => (StructFieldKind::I64, 8usize, true, true),
+                'Q' => (StructFieldKind::U64, 8usize, true, true),
+                'f' => (StructFieldKind::F32, 4usize, true, true),
+                'd' => (StructFieldKind::F64, 8usize, true, true),
+                _ => {
+                    return Err(RuntimeError::new(format!(
+                        "bad char in struct format: {code}"
+                    )));
+                }
+            };
+            if code == 's' && ch.is_ascii_digit() {
+                // count is already parsed from prefix digits.
+            } else if code == 's' && count == 0 {
+                count = 0;
+            }
+            fields.push(StructFieldSpec { kind, count });
+            let field_size = if code == 's' {
+                count
+            } else {
+                unit_size.saturating_mul(count)
+            };
+            size = size.saturating_add(field_size);
+            if takes_value {
+                value_count = value_count.saturating_add(if repeat_values { count } else { 1 });
+            }
+        }
+        Ok(StructFormatSpec {
+            endian,
+            fields,
+            size,
+            value_count,
+        })
+    }
+
+    fn struct_pack_format_values(
+        &mut self,
+        spec: &StructFormatSpec,
+        values: &[Value],
+    ) -> Result<Vec<u8>, RuntimeError> {
+        if values.len() != spec.value_count {
+            return Err(RuntimeError::new(format!(
+                "pack expected {} items for packing (got {})",
+                spec.value_count,
+                values.len()
+            )));
+        }
+        let mut result = Vec::with_capacity(spec.size);
+        let mut value_idx = 0usize;
+        for field in &spec.fields {
+            match field.kind {
+                StructFieldKind::Pad => {
+                    result.extend(std::iter::repeat(0u8).take(field.count));
+                }
+                StructFieldKind::Bytes => {
+                    let bytes = bytes_like_from_value(values[value_idx].clone())?;
+                    value_idx += 1;
+                    if bytes.len() >= field.count {
+                        result.extend_from_slice(&bytes[..field.count]);
+                    } else {
+                        result.extend_from_slice(&bytes);
+                        result.extend(std::iter::repeat(0u8).take(field.count - bytes.len()));
+                    }
+                }
+                StructFieldKind::Char => {
+                    for _ in 0..field.count {
+                        let bytes = bytes_like_from_value(values[value_idx].clone())?;
+                        value_idx += 1;
+                        if bytes.len() != 1 {
+                            return Err(RuntimeError::new("char format requires a bytes object of length 1"));
+                        }
+                        result.push(bytes[0]);
+                    }
+                }
+                StructFieldKind::Bool => {
+                    for _ in 0..field.count {
+                        let flag = is_truthy(&values[value_idx]);
+                        value_idx += 1;
+                        result.push(if flag { 1 } else { 0 });
+                    }
+                }
+                StructFieldKind::I8 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = i8::try_from(raw)
+                            .map_err(|_| RuntimeError::new("byte format requires -128 <= number <= 127"))?;
+                        result.push(value as u8);
+                    }
+                }
+                StructFieldKind::U8 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = u8::try_from(raw)
+                            .map_err(|_| RuntimeError::new("ubyte format requires 0 <= number <= 255"))?;
+                        result.push(value);
+                    }
+                }
+                StructFieldKind::I16 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = i16::try_from(raw).map_err(|_| {
+                            RuntimeError::new("short format requires -32768 <= number <= 32767")
+                        })?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::U16 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = u16::try_from(raw).map_err(|_| {
+                            RuntimeError::new("ushort format requires 0 <= number <= 65535")
+                        })?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::I32 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = i32::try_from(raw).map_err(|_| {
+                            RuntimeError::new(
+                                "int format requires -2147483648 <= number <= 2147483647",
+                            )
+                        })?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::U32 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = u32::try_from(raw).map_err(|_| {
+                            RuntimeError::new(
+                                "uint format requires 0 <= number <= 4294967295",
+                            )
+                        })?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::I64 => {
+                    for _ in 0..field.count {
+                        let value = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::U64 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = u64::try_from(raw)
+                            .map_err(|_| RuntimeError::new("argument out of range"))?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::F32 => {
+                    for _ in 0..field.count {
+                        let value = value_to_f64(values[value_idx].clone())? as f32;
+                        value_idx += 1;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::F64 => {
+                    for _ in 0..field.count {
+                        let value = value_to_f64(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn struct_unpack_format_bytes(
+        &mut self,
+        spec: &StructFormatSpec,
+        bytes: &[u8],
+    ) -> Result<Vec<Value>, RuntimeError> {
+        if bytes.len() != spec.size {
+            return Err(RuntimeError::new(format!(
+                "unpack requires a buffer of {} bytes",
+                spec.size
+            )));
+        }
+        let mut values = Vec::with_capacity(spec.value_count);
+        let mut pos = 0usize;
+        for field in &spec.fields {
+            match field.kind {
+                StructFieldKind::Pad => {
+                    pos += field.count;
+                }
+                StructFieldKind::Bytes => {
+                    values.push(self.heap.alloc_bytes(bytes[pos..pos + field.count].to_vec()));
+                    pos += field.count;
+                }
+                StructFieldKind::Char => {
+                    for _ in 0..field.count {
+                        values.push(self.heap.alloc_bytes(vec![bytes[pos]]));
+                        pos += 1;
+                    }
+                }
+                StructFieldKind::Bool => {
+                    for _ in 0..field.count {
+                        values.push(Value::Bool(bytes[pos] != 0));
+                        pos += 1;
+                    }
+                }
+                StructFieldKind::I8 => {
+                    for _ in 0..field.count {
+                        values.push(Value::Int((bytes[pos] as i8) as i64));
+                        pos += 1;
+                    }
+                }
+                StructFieldKind::U8 => {
+                    for _ in 0..field.count {
+                        values.push(Value::Int(bytes[pos] as i64));
+                        pos += 1;
+                    }
+                }
+                StructFieldKind::I16 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => i16::from_le_bytes([bytes[pos], bytes[pos + 1]]),
+                            StructEndian::Big => i16::from_be_bytes([bytes[pos], bytes[pos + 1]]),
+                        };
+                        values.push(Value::Int(value as i64));
+                        pos += 2;
+                    }
+                }
+                StructFieldKind::U16 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => u16::from_le_bytes([bytes[pos], bytes[pos + 1]]),
+                            StructEndian::Big => u16::from_be_bytes([bytes[pos], bytes[pos + 1]]),
+                        };
+                        values.push(Value::Int(value as i64));
+                        pos += 2;
+                    }
+                }
+                StructFieldKind::I32 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => i32::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                            StructEndian::Big => i32::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                        };
+                        values.push(Value::Int(value as i64));
+                        pos += 4;
+                    }
+                }
+                StructFieldKind::U32 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => u32::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                            StructEndian::Big => u32::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                        };
+                        values.push(Value::Int(value as i64));
+                        pos += 4;
+                    }
+                }
+                StructFieldKind::I64 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => i64::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                            StructEndian::Big => i64::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                        };
+                        values.push(Value::Int(value));
+                        pos += 8;
+                    }
+                }
+                StructFieldKind::U64 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => u64::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                            StructEndian::Big => u64::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                        };
+                        if value <= i64::MAX as u64 {
+                            values.push(Value::Int(value as i64));
+                        } else {
+                            values.push(Value::BigInt(BigInt::from_u64(value)));
+                        }
+                        pos += 8;
+                    }
+                }
+                StructFieldKind::F32 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => f32::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                            StructEndian::Big => f32::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                        };
+                        values.push(Value::Float(value as f64));
+                        pos += 4;
+                    }
+                }
+                StructFieldKind::F64 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => f64::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                            StructEndian::Big => f64::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                        };
+                        values.push(Value::Float(value));
+                        pos += 8;
+                    }
+                }
+            }
+        }
+        Ok(values)
+    }
+
+    fn struct_normalize_offset(
+        &self,
+        offset: i64,
+        buffer_len: usize,
+        needed: usize,
+    ) -> Result<usize, RuntimeError> {
+        let mut start = offset;
+        if start < 0 {
+            start += buffer_len as i64;
+        }
+        if start < 0 {
+            return Err(RuntimeError::new("offset out of range"));
+        }
+        let start = start as usize;
+        if start > buffer_len || start.saturating_add(needed) > buffer_len {
+            return Err(RuntimeError::new("unpack_from requires a buffer of sufficient size"));
+        }
+        Ok(start)
+    }
+
+    fn builtin_struct_calcsize(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("calcsize() expects one argument"));
+        }
+        let format = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("calcsize() format must be str")),
+        };
+        let spec = self.parse_struct_format(&format)?;
+        Ok(Value::Int(spec.size as i64))
+    }
+
+    fn builtin_struct_pack(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() {
+            return Err(RuntimeError::new("pack() expects format string"));
+        }
+        let format = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("pack() format must be str")),
+        };
+        let spec = self.parse_struct_format(&format)?;
+        let packed = self.struct_pack_format_values(&spec, &args)?;
+        Ok(self.heap.alloc_bytes(packed))
+    }
+
+    fn builtin_struct_unpack(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("unpack() expects format and buffer"));
+        }
+        let format = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("unpack() format must be str")),
+        };
+        let spec = self.parse_struct_format(&format)?;
+        let buffer = bytes_like_from_value(args.remove(0))?;
+        let values = self.struct_unpack_format_bytes(&spec, &buffer)?;
+        Ok(self.heap.alloc_tuple(values))
+    }
+
+    fn builtin_struct_iter_unpack(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("iter_unpack() expects format and buffer"));
+        }
+        let format = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("iter_unpack() format must be str")),
+        };
+        let spec = self.parse_struct_format(&format)?;
+        if spec.size == 0 {
+            return Err(RuntimeError::new("iter_unpack() requires a non-empty format"));
+        }
+        let buffer = bytes_like_from_value(args.remove(0))?;
+        if buffer.len() % spec.size != 0 {
+            return Err(RuntimeError::new(
+                "iter_unpack() buffer size must be a multiple of format size",
+            ));
+        }
+        let mut rows = Vec::new();
+        let mut pos = 0usize;
+        while pos < buffer.len() {
+            let chunk = &buffer[pos..pos + spec.size];
+            let unpacked = self.struct_unpack_format_bytes(&spec, chunk)?;
+            rows.push(self.heap.alloc_tuple(unpacked));
+            pos += spec.size;
+        }
+        let list = match self.heap.alloc_list(rows) {
+            Value::List(obj) => obj,
+            _ => unreachable!(),
+        };
+        Ok(Value::Iterator(
+            self.heap.alloc(Object::Iterator(IteratorObject {
+                kind: IteratorKind::List(list),
+                index: 0,
+            })),
+        ))
+    }
+
+    fn builtin_struct_pack_into(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 3 {
+            return Err(RuntimeError::new(
+                "pack_into() expects format, buffer, offset, and values",
+            ));
+        }
+        let format = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("pack_into() format must be str")),
+        };
+        let spec = self.parse_struct_format(&format)?;
+        let target = args.remove(0);
+        let offset = value_to_int(args.remove(0))?;
+        let packed = self.struct_pack_format_values(&spec, &args)?;
+        match target {
+            Value::ByteArray(obj) => {
+                let Object::ByteArray(values) = &mut *obj.kind_mut() else {
+                    return Err(RuntimeError::new("pack_into() requires writable buffer"));
+                };
+                let start = self.struct_normalize_offset(offset, values.len(), packed.len())?;
+                values[start..start + packed.len()].copy_from_slice(&packed);
+                Ok(Value::None)
+            }
+            Value::MemoryView(view_obj) => {
+                let source = match &*view_obj.kind() {
+                    Object::MemoryView(view) => view.source.clone(),
+                    _ => return Err(RuntimeError::new("pack_into() requires writable buffer")),
+                };
+                let Object::ByteArray(values) = &mut *source.kind_mut() else {
+                    return Err(RuntimeError::new("pack_into() requires writable buffer"));
+                };
+                let start = self.struct_normalize_offset(offset, values.len(), packed.len())?;
+                values[start..start + packed.len()].copy_from_slice(&packed);
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::new("pack_into() requires writable buffer")),
+        }
+    }
+
+    fn builtin_struct_unpack_from(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "unpack_from() expects format, buffer, and optional offset",
+            ));
+        }
+        let format = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("unpack_from() format must be str")),
+        };
+        let spec = self.parse_struct_format(&format)?;
+        let buffer = bytes_like_from_value(args.remove(0))?;
+        let offset = if args.is_empty() {
+            0
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        let start = self.struct_normalize_offset(offset, buffer.len(), spec.size)?;
+        let values = self.struct_unpack_format_bytes(&spec, &buffer[start..start + spec.size])?;
+        Ok(self.heap.alloc_tuple(values))
+    }
+
     fn struct_format_from_receiver(&self, receiver: &ObjRef) -> Result<String, RuntimeError> {
         let Object::Instance(instance_data) = &*receiver.kind() else {
             return Err(RuntimeError::new("Struct method expects struct instance"));
@@ -33521,6 +34359,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("quotechar must be set if quoting enabled")
         || message.contains("bad \"quoting\" value")
         || message.contains("argument count mismatch")
+        || message.contains("decoding str is not supported")
         || message.contains("cannot pickle 'Dialect' instances")
     {
         return "TypeError";

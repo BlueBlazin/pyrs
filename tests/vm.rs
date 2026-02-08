@@ -1919,6 +1919,69 @@ fallback_text = json.dumps(Unknown(), default=fallback, sort_keys=True)
 }
 
 #[test]
+fn struct_pack_unpack_and_offset_helpers_work() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping struct test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import struct
+b = struct.pack('<B', 5)
+q = struct.pack('<Q', 258)
+u = struct.unpack('<Q', q)[0]
+buf = bytearray(b'\x00\x00\x00\x00')
+struct.pack_into('<H', buf, 1, 0x1234)
+u2 = struct.unpack_from('<H', buf, 1)[0]
+rows = list(struct.iter_unpack('<H', b'\x01\x00\x02\x00'))
+ok = (b == b'\x05' and u == 258 and u2 == 0x1234 and rows == [(1,), (2,)] and struct.calcsize('<Q') == 8)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_protocol_byte_regression_for_struct_pack_is_fixed() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle protocol regression test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+data = pickle.dumps({'x': 1}, protocol=5)
+first = data[0]
+second = data[1]
+value = pickle.loads(data)['x']
+ok = (first == 0x80 and second == 5 and value == 1)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_builtin_supports_bytes_decoding_signature() {
+    let source = r#"a = str(b'\xff', 'latin-1')
+b = str(bytearray(b'abc'), 'utf-8')
+try:
+    str('already-text', 'utf-8')
+    c = False
+except TypeError:
+    c = True
+ok = (a == 'ÿ' and b == 'abc' and c)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn json_loads_accepts_utf8_bytes_and_bytearray() {
     let source = r#"import json
 a = json.loads(b'{"x": 1, "y": [2, 3]}')
