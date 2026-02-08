@@ -739,3 +739,93 @@ fn json_node_to_value(node: JsonNode, heap: &Heap) -> Value {
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_escape_string_ensure_ascii_uses_lowercase_hex() {
+        let escaped = json_escape_string("A☺😊", true);
+        assert_eq!(escaped, "\"A\\u263a\\ud83d\\ude0a\"");
+    }
+
+    #[test]
+    fn json_source_text_accepts_utf8_bytes_and_bytearray() {
+        let heap = Heap::new();
+        let bytes = heap.alloc_bytes(br#"{"ok":1}"#.to_vec());
+        let bytearray = heap.alloc_bytearray(br#"{"ok":2}"#.to_vec());
+
+        assert_eq!(json_source_text(&bytes).expect("bytes should decode"), "{\"ok\":1}");
+        assert_eq!(
+            json_source_text(&bytearray).expect("bytearray should decode"),
+            "{\"ok\":2}"
+        );
+    }
+
+    #[test]
+    fn json_source_text_rejects_invalid_utf8_bytes() {
+        let heap = Heap::new();
+        let bytes = heap.alloc_bytes(vec![0xFF, 0xFE, 0x00]);
+
+        let err = json_source_text(&bytes).expect_err("invalid bytes should fail");
+        assert!(err.message.contains("valid UTF-8"));
+    }
+
+    #[test]
+    fn parse_json_separators_requires_two_strings() {
+        let ok = parse_json_separators(Value::Tuple(
+            Heap::new().alloc(Object::Tuple(vec![
+                Value::Str(",".to_string()),
+                Value::Str(":".to_string()),
+            ])),
+        ))
+        .expect("tuple separators should parse");
+        assert_eq!(ok, (",".to_string(), ":".to_string()));
+
+        let err = parse_json_separators(Value::Tuple(
+            Heap::new().alloc(Object::Tuple(vec![Value::Str(",".to_string())])),
+        ))
+        .expect_err("one element should fail");
+        assert!(err.message.contains("2-item tuple"));
+
+        let err = parse_json_separators(Value::Tuple(Heap::new().alloc(Object::Tuple(vec![
+            Value::Int(1),
+            Value::Str(":".to_string()),
+        ]))))
+        .expect_err("non-string separator should fail");
+        assert!(err.message.contains("must be strings"));
+    }
+
+    #[test]
+    fn parse_json_node_from_index_respects_offsets() {
+        let source = "  [1,2] {\"a\":3}";
+        let (array_node, array_end) = parse_json_node_from_index(source, 2).expect("array parse");
+        let (object_node, object_end) =
+            parse_json_node_from_index(source, 8).expect("object parse");
+
+        match array_node {
+            JsonNode::Array(values) => assert_eq!(values.len(), 2),
+            other => panic!("expected array node, got {other:?}"),
+        }
+        assert_eq!(array_end, 7);
+
+        match object_node {
+            JsonNode::Object(values) => {
+                assert_eq!(values.len(), 1);
+                assert_eq!(values[0].0, "a");
+            }
+            other => panic!("expected object node, got {other:?}"),
+        }
+        assert_eq!(object_end, 15);
+    }
+
+    #[test]
+    fn parse_json_node_decodes_surrogate_pair_escape() {
+        let node = parse_json_node("\"\\ud83d\\ude0a\"").expect("surrogate pair should decode");
+        match node {
+            JsonNode::String(value) => assert_eq!(value, "😊"),
+            other => panic!("expected string node, got {other:?}"),
+        }
+    }
+}

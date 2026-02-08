@@ -1376,3 +1376,570 @@ impl Vm {
         }
     }
 }
+
+fn csv_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::None => "NoneType",
+        Value::Bool(_) => "bool",
+        Value::Int(_) => "int",
+        Value::Float(_) => "float",
+        Value::Str(_) => "str",
+        Value::Bytes(_) => "bytes",
+        Value::ByteArray(_) => "bytearray",
+        Value::MemoryView(_) => "memoryview",
+        Value::Complex { .. } => "complex",
+        Value::List(_) => "list",
+        Value::Tuple(_) => "tuple",
+        Value::Dict(_) => "dict",
+        Value::DictKeys(_) => "dict_keys",
+        Value::Set(_) => "set",
+        Value::FrozenSet(_) => "frozenset",
+        Value::BigInt(_) => "int",
+        Value::Module(_) => "module",
+        Value::Class(_) => "type",
+        Value::Instance(_) => "object",
+        Value::Super(_) => "super",
+        Value::BoundMethod(_) => "method",
+        Value::Exception(_) => "BaseException",
+        Value::ExceptionType(_) => "type",
+        Value::Code(_) => "code",
+        Value::Function(_) => "function",
+        Value::Builtin(_) => "builtin_function_or_method",
+        Value::Cell(_) => "cell",
+        Value::Iterator(_) => "iterator",
+        Value::Generator(_) => "generator",
+        Value::Slice { .. } => "slice",
+    }
+}
+
+fn csv_char_from_value(value: Value, name: &str) -> Result<char, RuntimeError> {
+    match value {
+        Value::Str(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => Ok(ch),
+                _ => Err(RuntimeError::new(format!(
+                    "\"{name}\" must be a unicode character, not a string of length {}",
+                    text.chars().count()
+                ))),
+            }
+        }
+        other => Err(RuntimeError::new(format!(
+            "\"{name}\" must be a unicode character, not {}",
+            csv_type_name(&other)
+        ))),
+    }
+}
+
+fn csv_optional_char_from_value(value: Value, name: &str) -> Result<Option<char>, RuntimeError> {
+    match value {
+        Value::None => Ok(None),
+        Value::Str(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => Ok(Some(ch)),
+                _ => Err(RuntimeError::new(format!(
+                    "\"{name}\" must be a unicode character or None, not a string of length {}",
+                    text.chars().count()
+                ))),
+            }
+        }
+        other => Err(RuntimeError::new(format!(
+            "\"{name}\" must be a unicode character or None, not {}",
+            csv_type_name(&other)
+        ))),
+    }
+}
+
+fn validate_csv_parameter_consistency(
+    delimiter: char,
+    quotechar: Option<char>,
+    escapechar: Option<char>,
+    skipinitialspace: bool,
+    lineterminator: &str,
+    quoting: i64,
+) -> Result<(), RuntimeError> {
+    if !(0..=5).contains(&quoting) {
+        return Err(RuntimeError::new("bad \"quoting\" value"));
+    }
+    if quotechar.is_none() && quoting != 3 {
+        return Err(RuntimeError::new(
+            "quotechar must be set if quoting enabled",
+        ));
+    }
+    if delimiter == '\n' || delimiter == '\r' {
+        return Err(RuntimeError::new("delimiter cannot be a newline"));
+    }
+    if quotechar.is_some_and(|ch| ch == '\n' || ch == '\r') {
+        return Err(RuntimeError::new("quotechar cannot be a newline"));
+    }
+    if escapechar.is_some_and(|ch| ch == '\n' || ch == '\r') {
+        return Err(RuntimeError::new("escapechar cannot be a newline"));
+    }
+    if skipinitialspace && quotechar == Some(' ') {
+        return Err(RuntimeError::new(
+            "quotechar cannot be a space when skipinitialspace is true",
+        ));
+    }
+    if skipinitialspace && escapechar == Some(' ') {
+        return Err(RuntimeError::new(
+            "escapechar cannot be a space when skipinitialspace is true",
+        ));
+    }
+    if quotechar == Some(delimiter) || escapechar == Some(delimiter) {
+        return Err(RuntimeError::new(
+            "delimiter cannot be the same as quotechar or escapechar",
+        ));
+    }
+    if let (Some(quote), Some(escape)) = (quotechar, escapechar) {
+        if quote == escape {
+            return Err(RuntimeError::new(
+                "quotechar cannot be the same as escapechar",
+            ));
+        }
+    }
+    if lineterminator.is_empty() {
+        return Err(RuntimeError::new("lineterminator must not be empty"));
+    }
+    if lineterminator.contains(delimiter)
+        || quotechar.is_some_and(|ch| lineterminator.contains(ch))
+        || escapechar.is_some_and(|ch| lineterminator.contains(ch))
+    {
+        return Err(RuntimeError::new(
+            "lineterminator cannot contain delimiter, quotechar, or escapechar",
+        ));
+    }
+    Ok(())
+}
+
+fn value_to_bool_flag(value: Value, name: &str) -> Result<bool, RuntimeError> {
+    match value {
+        Value::Bool(flag) => Ok(flag),
+        Value::Int(number) => Ok(number != 0),
+        Value::BigInt(number) => Ok(!number.is_zero()),
+        _ => Err(RuntimeError::new(format!("{name} must be bool"))),
+    }
+}
+
+#[derive(Debug)]
+struct CsvParsedField {
+    value: String,
+    quoted: bool,
+}
+
+fn csv_reader_value_for_field(field: CsvParsedField, quoting: i64) -> Result<Value, RuntimeError> {
+    match quoting {
+        2 if !field.quoted && !field.value.is_empty() => {
+            Ok(Value::Float(parse_csv_reader_float(&field.value)?))
+        }
+        4 if !field.quoted && field.value.is_empty() => Ok(Value::None),
+        4 if !field.quoted => Ok(Value::Float(parse_csv_reader_float(&field.value)?)),
+        5 if !field.quoted && field.value.is_empty() => Ok(Value::None),
+        _ => Ok(Value::Str(field.value)),
+    }
+}
+
+fn parse_csv_reader_float(text: &str) -> Result<f64, RuntimeError> {
+    text.trim()
+        .parse::<f64>()
+        .map_err(|_| RuntimeError::new("could not convert string to float"))
+}
+
+fn split_csv_line_ending(text: &str) -> (&str, &str) {
+    if let Some(stripped) = text.strip_suffix("\r\n") {
+        return (stripped, "\r\n");
+    }
+    if let Some(stripped) = text.strip_suffix('\n') {
+        return (stripped, "\n");
+    }
+    if let Some(stripped) = text.strip_suffix('\r') {
+        return (stripped, "\r");
+    }
+    (text, "")
+}
+
+struct CsvRecordState {
+    in_quotes: bool,
+    trailing_escape: bool,
+}
+
+fn csv_record_state(
+    row: &str,
+    delimiter: char,
+    quotechar: Option<char>,
+    escapechar: Option<char>,
+    skipinitialspace: bool,
+    quoting: i64,
+    doublequote: bool,
+) -> CsvRecordState {
+    if row.is_empty() {
+        return CsvRecordState {
+            in_quotes: false,
+            trailing_escape: false,
+        };
+    }
+    let active_quotechar = if quoting == 3 { None } else { quotechar };
+    let mut in_quotes = false;
+    let mut at_field_start = true;
+    let mut trailing_escape = false;
+    let mut chars = row.chars().peekable();
+    while let Some(ch) = chars.next() {
+        trailing_escape = false;
+        if let Some(escape) = escapechar {
+            if ch == escape {
+                if chars.peek().is_some() {
+                    chars.next();
+                    at_field_start = false;
+                    continue;
+                }
+                trailing_escape = true;
+                break;
+            }
+        }
+        if skipinitialspace && !in_quotes && at_field_start && ch == ' ' {
+            continue;
+        }
+        if let Some(quote) = active_quotechar {
+            if ch == quote {
+                if in_quotes {
+                    if doublequote && chars.peek().is_some_and(|next| *next == quote) {
+                        chars.next();
+                        at_field_start = false;
+                    } else {
+                        in_quotes = false;
+                    }
+                } else if at_field_start {
+                    in_quotes = true;
+                    at_field_start = false;
+                } else {
+                    at_field_start = false;
+                }
+                continue;
+            }
+        }
+        if ch == delimiter && !in_quotes {
+            at_field_start = true;
+            continue;
+        }
+        at_field_start = false;
+    }
+
+    CsvRecordState {
+        in_quotes,
+        trailing_escape,
+    }
+}
+
+fn parse_csv_row_simple(
+    row: &str,
+    delimiter: char,
+    quotechar: Option<char>,
+    escapechar: Option<char>,
+    skipinitialspace: bool,
+    quoting: i64,
+    doublequote: bool,
+    strict: bool,
+    field_limit: Option<usize>,
+) -> Result<Vec<CsvParsedField>, RuntimeError> {
+    if row.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut field_quoted = false;
+    let mut in_quotes = false;
+    let mut just_closed_quote = false;
+    let active_quotechar = if quoting == 3 { None } else { quotechar };
+    let mut chars = row.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if !in_quotes && just_closed_quote {
+            if ch == delimiter {
+                fields.push(CsvParsedField {
+                    value: std::mem::take(&mut current),
+                    quoted: field_quoted,
+                });
+                field_quoted = false;
+                just_closed_quote = false;
+                if skipinitialspace {
+                    while chars.peek().is_some_and(|next| *next == ' ') {
+                        chars.next();
+                    }
+                }
+                continue;
+            }
+            if strict {
+                return Err(RuntimeError::new("',' expected after '\"'"));
+            }
+            just_closed_quote = false;
+        }
+        if let Some(quote) = active_quotechar {
+            if ch == quote {
+                if in_quotes {
+                    if doublequote && chars.peek().is_some_and(|next| *next == quote) {
+                        current.push(quote);
+                        chars.next();
+                    } else {
+                        in_quotes = false;
+                        just_closed_quote = true;
+                    }
+                } else if current.is_empty() {
+                    field_quoted = true;
+                    in_quotes = true;
+                    just_closed_quote = false;
+                } else {
+                    if strict {
+                        return Err(RuntimeError::new("',' expected after '\"'"));
+                    }
+                    current.push(quote);
+                    just_closed_quote = false;
+                }
+                continue;
+            }
+        }
+        if let Some(escape) = escapechar {
+            if ch == escape {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                } else if strict {
+                    return Err(RuntimeError::new("unexpected end of data"));
+                } else if in_quotes || current.is_empty() {
+                    current.push('\n');
+                } else {
+                    current.push(escape);
+                }
+                continue;
+            }
+        }
+        if skipinitialspace && !in_quotes && current.is_empty() && ch == ' ' {
+            continue;
+        }
+        if (ch == '\n' || ch == '\r') && !in_quotes {
+            return Err(RuntimeError::new(
+                "new-line character seen in unquoted field - do you need to open the file with newline=''?",
+            ));
+        }
+        if ch == delimiter && !in_quotes {
+            fields.push(CsvParsedField {
+                value: std::mem::take(&mut current),
+                quoted: field_quoted,
+            });
+            field_quoted = false;
+            just_closed_quote = false;
+            if skipinitialspace {
+                while chars.peek().is_some_and(|next| *next == ' ') {
+                    chars.next();
+                }
+            }
+            continue;
+        }
+        current.push(ch);
+        just_closed_quote = false;
+        if let Some(limit) = field_limit {
+            if current.chars().count() > limit {
+                return Err(RuntimeError::new("field larger than field limit"));
+            }
+        }
+    }
+    if in_quotes && strict {
+        return Err(RuntimeError::new("unexpected end of data"));
+    }
+    fields.push(CsvParsedField {
+        value: current,
+        quoted: field_quoted,
+    });
+    Ok(fields)
+}
+
+fn quote_csv_field(
+    field: &str,
+    delimiter: char,
+    quotechar: Option<char>,
+    escapechar: Option<char>,
+    quoting: i64,
+    doublequote: bool,
+    force_quote: bool,
+) -> Result<String, RuntimeError> {
+    let contains_quote = quotechar.is_some_and(|quote| field.contains(quote));
+    let needs_quote = field.contains(delimiter)
+        || field.contains('\n')
+        || field.contains('\r')
+        || (contains_quote && (doublequote || escapechar.is_none()));
+
+    if quoting == 3 {
+        let mut out = String::new();
+        for ch in field.chars() {
+            let must_escape = ch == delimiter
+                || ch == '\n'
+                || ch == '\r'
+                || quotechar.is_some_and(|quote| ch == quote)
+                || escapechar.is_some_and(|escape| ch == escape);
+            if must_escape {
+                let Some(escape) = escapechar else {
+                    return Err(RuntimeError::new("need to escape, but no escapechar set"));
+                };
+                out.push(escape);
+            }
+            out.push(ch);
+        }
+        return Ok(out);
+    }
+
+    if !force_quote && !needs_quote {
+        if let Some(escape) = escapechar {
+            let mut escaped = String::new();
+            let mut changed = false;
+            for ch in field.chars() {
+                let must_escape_quote =
+                    quotechar.is_some_and(|quote| ch == quote) && !doublequote;
+                let must_escape_escape = ch == escape;
+                if must_escape_quote || must_escape_escape {
+                    escaped.push(escape);
+                    changed = true;
+                }
+                escaped.push(ch);
+            }
+            if changed {
+                return Ok(escaped);
+            }
+        } else if contains_quote && !doublequote {
+            return Err(RuntimeError::new("need to escape quotechar"));
+        }
+        return Ok(field.to_string());
+    }
+
+    let Some(quotechar) = quotechar else {
+        let mut out = String::new();
+        for ch in field.chars() {
+            let must_escape = ch == delimiter || ch == '\n' || ch == '\r';
+            if must_escape {
+                let Some(escape) = escapechar else {
+                    return Err(RuntimeError::new("need to escape, but no escapechar set"));
+                };
+                out.push(escape);
+            }
+            out.push(ch);
+        }
+        return Ok(out);
+    };
+
+    let mut escaped = String::new();
+    for ch in field.chars() {
+        if ch == quotechar {
+            if doublequote {
+                escaped.push(quotechar);
+                escaped.push(quotechar);
+            } else if let Some(escape) = escapechar {
+                escaped.push(escape);
+                escaped.push(quotechar);
+            } else {
+                return Err(RuntimeError::new("need to escape quotechar"));
+            }
+        } else if escapechar.is_some_and(|escape| ch == escape) {
+            let escape = escapechar.expect("checked some");
+            escaped.push(escape);
+            escaped.push(ch);
+        } else {
+            escaped.push(ch);
+        }
+    }
+    Ok(format!("{quotechar}{escaped}{quotechar}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_char_parsers_validate_lengths_and_types() {
+        assert_eq!(
+            csv_char_from_value(Value::Str(",".to_string()), "delimiter").expect("single char"),
+            ','
+        );
+        assert_eq!(
+            csv_optional_char_from_value(Value::None, "quotechar").expect("none is valid"),
+            None
+        );
+        assert_eq!(
+            csv_optional_char_from_value(Value::Str("\"".to_string()), "quotechar")
+                .expect("single quotechar"),
+            Some('"')
+        );
+
+        let err = csv_char_from_value(Value::Str("::".to_string()), "delimiter")
+            .expect_err("multi-char should fail");
+        assert!(err.message.contains("string of length 2"));
+
+        let err = csv_optional_char_from_value(Value::Int(1), "quotechar")
+            .expect_err("non-string should fail");
+        assert!(err.message.contains("unicode character or None"));
+    }
+
+    #[test]
+    fn validate_csv_parameter_consistency_rejects_invalid_combinations() {
+        let err = validate_csv_parameter_consistency(',', None, None, false, "\n", 0)
+            .expect_err("QUOTE_MINIMAL with no quotechar should fail");
+        assert!(err.message.contains("quotechar must be set"));
+
+        let err = validate_csv_parameter_consistency(',', Some('"'), Some('"'), false, "\n", 0)
+            .expect_err("quotechar and escapechar cannot match");
+        assert!(err.message.contains("quotechar cannot be the same as escapechar"));
+
+        let err = validate_csv_parameter_consistency(',', Some('"'), None, false, "", 0)
+            .expect_err("empty lineterminator should fail");
+        assert!(err.message.contains("lineterminator must not be empty"));
+
+        assert!(
+            validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, "\n", 0).is_ok()
+        );
+    }
+
+    #[test]
+    fn split_csv_line_ending_detects_common_endings() {
+        assert_eq!(split_csv_line_ending("a,b\r\n"), ("a,b", "\r\n"));
+        assert_eq!(split_csv_line_ending("a,b\n"), ("a,b", "\n"));
+        assert_eq!(split_csv_line_ending("a,b\r"), ("a,b", "\r"));
+        assert_eq!(split_csv_line_ending("a,b"), ("a,b", ""));
+    }
+
+    #[test]
+    fn csv_record_state_tracks_quote_and_escape_state() {
+        let state = csv_record_state("a,\"b", ',', Some('"'), None, false, 0, true);
+        assert!(state.in_quotes);
+        assert!(!state.trailing_escape);
+
+        let state = csv_record_state("a,\\", ',', Some('"'), Some('\\'), false, 0, true);
+        assert!(!state.in_quotes);
+        assert!(state.trailing_escape);
+    }
+
+    #[test]
+    fn parse_csv_row_simple_honors_strict_mode_and_field_limit() {
+        let fields = parse_csv_row_simple("a,\"b,c\",d", ',', Some('"'), None, false, 0, true, true, None)
+            .expect("valid quoted row");
+        let values: Vec<String> = fields.into_iter().map(|field| field.value).collect();
+        assert_eq!(values, vec!["a".to_string(), "b,c".to_string(), "d".to_string()]);
+
+        let err = parse_csv_row_simple("a,\"", ',', Some('"'), None, false, 0, true, true, None)
+            .expect_err("strict unterminated quote should fail");
+        assert!(err.message.contains("unexpected end of data"));
+
+        let err = parse_csv_row_simple("abcd", ',', Some('"'), None, false, 0, true, false, Some(3))
+            .expect_err("field limit should fail");
+        assert!(err.message.contains("field larger than field limit"));
+    }
+
+    #[test]
+    fn quote_csv_field_handles_minimal_and_quote_none_modes() {
+        let quoted =
+            quote_csv_field("a,b", ',', Some('"'), None, 0, true, false).expect("minimal quote");
+        assert_eq!(quoted, "\"a,b\"");
+
+        let quote_none = quote_csv_field("a,b", ',', None, Some('\\'), 3, false, false)
+            .expect("quote none with escapechar");
+        assert_eq!(quote_none, "a\\,b");
+
+        let err = quote_csv_field("a,b", ',', None, None, 3, false, false)
+            .expect_err("quote none without escapechar should fail");
+        assert!(err.message.contains("need to escape"));
+    }
+}
