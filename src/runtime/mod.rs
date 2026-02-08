@@ -238,6 +238,7 @@ pub enum NativeMethodKind {
     RePatternSub,
     ExceptionWithTraceback,
     ExceptionAddNote,
+    ComplexReduceEx,
     ClassRegister,
     PropertyGet,
     PropertySet,
@@ -2007,7 +2008,9 @@ pub enum BuiltinFunction {
     BytesIOWrite,
     BytesIORead,
     BytesIOReadLine,
+    BytesIOReadInto,
     BytesIOGetValue,
+    BytesIOGetBuffer,
     BytesIOSeek,
     BytesIOTell,
     BytesIOIter,
@@ -2148,7 +2151,9 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOWrite
             | BuiltinFunction::BytesIORead
             | BuiltinFunction::BytesIOReadLine
+            | BuiltinFunction::BytesIOReadInto
             | BuiltinFunction::BytesIOGetValue
+            | BuiltinFunction::BytesIOGetBuffer
             | BuiltinFunction::BytesIOSeek
             | BuiltinFunction::BytesIOTell
             | BuiltinFunction::BytesIOIter
@@ -5097,6 +5102,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::ExceptionAddNote => {
                         "<bound method BaseException.add_note>".to_string()
+                    }
+                    NativeMethodKind::ComplexReduceEx => {
+                        "<bound method complex.__reduce_ex__>".to_string()
                     }
                     NativeMethodKind::ClassRegister => "<bound method register>".to_string(),
                     NativeMethodKind::PropertyGet => "<bound method property.__get__>".to_string(),

@@ -206,7 +206,7 @@ enum RePatternValue {
 
 const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
-const LOCAL_SHIM_MODULES: &[&str] = &["enum", "pkgutil", "importlib.resources"];
+const LOCAL_SHIM_MODULES: &[&str] = &["enum", "pkgutil", "importlib.resources", "_json"];
 
 struct Frame {
     code: Rc<CodeObject>,
@@ -3504,8 +3504,16 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::BytesIOReadLine),
                             );
                             class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOReadInto),
+                            );
+                            class_data.attrs.insert(
                                 "getvalue".to_string(),
                                 Value::Builtin(BuiltinFunction::BytesIOGetValue),
+                            );
+                            class_data.attrs.insert(
+                                "getbuffer".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOGetBuffer),
                             );
                             class_data.attrs.insert(
                                 "seek".to_string(),
@@ -3809,8 +3817,16 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::BytesIOReadLine),
                             );
                             class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOReadInto),
+                            );
+                            class_data.attrs.insert(
                                 "getvalue".to_string(),
                                 Value::Builtin(BuiltinFunction::BytesIOGetValue),
+                            );
+                            class_data.attrs.insert(
+                                "getbuffer".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOGetBuffer),
                             );
                             class_data.attrs.insert(
                                 "seek".to_string(),
@@ -4447,9 +4463,33 @@ impl Vm {
             Some(module) => module,
             None => return,
         };
+        let existing_modules = match &*sys_module.kind() {
+            Object::Module(module_data) => module_data.globals.get("modules").cloned(),
+            _ => None,
+        };
         let mut entries = Vec::with_capacity(self.modules.len());
         for (name, module) in self.modules.iter() {
             entries.push((Value::Str(name.clone()), Value::Module(module.clone())));
+        }
+        if let Some(Value::Dict(existing)) = existing_modules {
+            if let Object::Dict(existing_entries) = &*existing.kind() {
+                for (key, value) in existing_entries.iter() {
+                    let Value::Str(name) = key else {
+                        continue;
+                    };
+                    let preserve = match value {
+                        // Preserve explicit import blockers and user overrides.
+                        Value::None => true,
+                        // Preserve sys.modules module entries unknown to `self.modules`.
+                        Value::Module(_) => !self.modules.contains_key(name),
+                        // Preserve non-module sentinels/extensions installed by user code.
+                        _ => true,
+                    };
+                    if preserve {
+                        entries.push((Value::Str(name.clone()), value.clone()));
+                    }
+                }
+            }
         }
         let modules_dict = self.heap.alloc_dict(entries);
         if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
@@ -4900,11 +4940,34 @@ impl Vm {
             _ => return None,
         };
         let full_name = format!("{}.{}", parent_name, attr_name);
-        if let Some(module) = self.modules.get(&full_name).cloned() {
+        let key = Value::Str(full_name.clone());
+        let mut missing_from_sys_modules = false;
+        if let Some(modules_dict) = self.sys_dict_obj("modules") {
+            match dict_get_value(&modules_dict, &key) {
+                Some(Value::Module(module)) => {
+                    self.modules.insert(full_name.clone(), module.clone());
+                    return Some(module);
+                }
+                Some(Value::None) => {
+                    self.modules.remove(&full_name);
+                    return None;
+                }
+                Some(_) => {
+                    self.modules.remove(&full_name);
+                    return None;
+                }
+                None => {
+                    missing_from_sys_modules = true;
+                }
+            }
+        }
+        if missing_from_sys_modules {
+            self.modules.remove(&full_name);
+        } else if let Some(module) = self.modules.get(&full_name).cloned() {
             return Some(module);
         }
         if self.find_module_file(&full_name).is_some() {
-            if let Ok(module) = self.load_module(&full_name) {
+            if let Ok(module) = self.import_module_object(&full_name) {
                 if let Object::Module(module_data) = &mut *parent.kind_mut() {
                     module_data
                         .globals
@@ -5134,7 +5197,9 @@ impl Vm {
         let key = Value::Str(name.to_string());
         let mut present_in_sys_modules = false;
         if let Some(modules_dict) = self.sys_dict_obj("modules") {
-            match dict_get_value(&modules_dict, &key) {
+            self.prune_module_cache_for_removed_sys_modules(&modules_dict);
+            let sys_entry = dict_get_value(&modules_dict, &key);
+            match sys_entry {
                 Some(Value::Module(module)) => {
                     present_in_sys_modules = true;
                     if self.should_prefer_filesystem_module(name, &module) {
@@ -5156,9 +5221,12 @@ impl Vm {
             }
         }
         if !present_in_sys_modules {
-            let keep_cached_builtin = self.modules.get(name).is_some_and(|module| {
-                Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER)
-            });
+            let keep_cached_builtin = if let Some(module) = self.modules.get(name).cloned() {
+                Self::module_loader_name(&module).as_deref() == Some(BUILTIN_MODULE_LOADER)
+                    && !self.should_prefer_filesystem_module(name, &module)
+            } else {
+                false
+            };
             if !keep_cached_builtin {
                 self.modules.remove(name);
             }
@@ -5201,6 +5269,43 @@ impl Vm {
                 self.cleanup_partial_modules(&existing_modules);
                 Err(load_err)
             }
+        }
+    }
+
+    fn prune_module_cache_for_removed_sys_modules(&mut self, modules_dict: &ObjRef) {
+        let Object::Dict(entries) = &*modules_dict.kind() else {
+            return;
+        };
+        let mut present = HashSet::with_capacity(entries.len());
+        for (key, _) in entries.iter() {
+            if let Value::Str(name) = key {
+                present.insert(name.clone());
+            }
+        }
+        let module_entries = self
+            .modules
+            .iter()
+            .map(|(name, module)| (name.clone(), module.clone()))
+            .collect::<Vec<_>>();
+        let stale = module_entries
+            .iter()
+            .filter_map(|(name, module)| {
+                if present.contains(name) {
+                    return None;
+                }
+                let is_builtin =
+                    Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER);
+                let preserve_builtin =
+                    is_builtin && !self.should_prefer_filesystem_module(name, module);
+                if preserve_builtin {
+                    None
+                } else {
+                    Some(name.clone())
+                }
+            })
+            .collect::<Vec<_>>();
+        for name in stale {
+            self.modules.remove(&name);
         }
     }
 
@@ -5270,7 +5375,7 @@ impl Vm {
     fn should_prefer_filesystem_module(&mut self, name: &str, module: &ObjRef) -> bool {
         if !matches!(
             name,
-            "json" | "json.decoder" | "json.scanner" | "json.encoder"
+            "json" | "json.decoder" | "json.scanner" | "json.encoder" | "_json"
         ) {
             return false;
         }
@@ -5716,6 +5821,37 @@ impl Vm {
                                 Value::Bool(value) => {
                                     self.load_attr_int_method(Value::Bool(value), &attr_name)?
                                 }
+                                Value::Complex { real, imag } => match attr_name.as_str() {
+                                    "__reduce_ex__" | "__reduce__" => {
+                                        let wrapper =
+                                            match self.heap.alloc_module(ModuleObject::new(
+                                                "__complex_reduce_ex__".to_string(),
+                                            )) {
+                                                Value::Module(obj) => obj,
+                                                _ => unreachable!(),
+                                            };
+                                        if let Object::Module(module_data) =
+                                            &mut *wrapper.kind_mut()
+                                        {
+                                            module_data.globals.insert(
+                                                "value".to_string(),
+                                                Value::Complex { real, imag },
+                                            );
+                                        }
+                                        self.alloc_native_bound_method(
+                                            NativeMethodKind::ComplexReduceEx,
+                                            wrapper,
+                                        )
+                                    }
+                                    "real" => Value::Float(real),
+                                    "imag" => Value::Float(imag),
+                                    _ => {
+                                        return Err(RuntimeError::new(format!(
+                                            "complex has no attribute '{}'",
+                                            attr_name
+                                        )));
+                                    }
+                                },
                                 Value::Str(text) => self.load_attr_str_method(text, &attr_name)?,
                                 Value::Bytes(obj) => match &*obj.kind() {
                                     Object::Bytes(values) => {
@@ -8407,6 +8543,17 @@ impl Vm {
                     self.generator_resume_outcome =
                         Some(GeneratorResumeOutcome::PropagatedException);
                     return Ok(());
+                }
+            }
+
+            // Preserve the caller frame for internal Rust-managed calls (e.g.
+            // descriptor/builtin helper dispatch). The caller should receive
+            // the exception as a regular error value instead of being silently
+            // unwound beneath the internal call boundary.
+            if let Some(stop_depth) = self.run_stop_depth {
+                if self.frames.len() <= stop_depth {
+                    let message = self.format_traceback(&traceback, &exc);
+                    return Err(RuntimeError::new(message));
                 }
             }
 
@@ -13257,6 +13404,26 @@ impl Vm {
                 exception.notes.push(note);
                 Ok(NativeCallResult::Value(Value::None))
             }
+            NativeMethodKind::ComplexReduceEx => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "__reduce_ex__() takes at most one protocol argument",
+                    ));
+                }
+                let receiver_kind = receiver.kind();
+                let Object::Module(module_data) = &*receiver_kind else {
+                    return Err(RuntimeError::new("complex reduce receiver is invalid"));
+                };
+                let Some(value) = module_data.globals.get("value").cloned() else {
+                    return Err(RuntimeError::new("complex reduce receiver is invalid"));
+                };
+                let mut forwarded = vec![value];
+                if let Some(protocol) = args.first() {
+                    forwarded.push(protocol.clone());
+                }
+                let reduced = self.builtin_object_reduce_ex(forwarded, HashMap::new())?;
+                Ok(NativeCallResult::Value(reduced))
+            }
             NativeMethodKind::SetContains => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("__contains__() expects one argument"));
@@ -15062,7 +15229,9 @@ impl Vm {
             BuiltinFunction::BytesIOWrite => self.builtin_bytesio_write(args, kwargs),
             BuiltinFunction::BytesIORead => self.builtin_bytesio_read(args, kwargs),
             BuiltinFunction::BytesIOReadLine => self.builtin_bytesio_readline(args, kwargs),
+            BuiltinFunction::BytesIOReadInto => self.builtin_bytesio_readinto(args, kwargs),
             BuiltinFunction::BytesIOGetValue => self.builtin_bytesio_getvalue(args, kwargs),
+            BuiltinFunction::BytesIOGetBuffer => self.builtin_bytesio_getbuffer(args, kwargs),
             BuiltinFunction::BytesIOSeek => self.builtin_bytesio_seek(args, kwargs),
             BuiltinFunction::BytesIOTell => self.builtin_bytesio_tell(args, kwargs),
             BuiltinFunction::BytesIOIter => self.builtin_bytesio_iter(args, kwargs),
@@ -16462,6 +16631,37 @@ impl Vm {
         }
     }
 
+    fn builtin_is_type_object(&self, builtin: BuiltinFunction) -> bool {
+        matches!(
+            builtin,
+            BuiltinFunction::Type
+                | BuiltinFunction::Bool
+                | BuiltinFunction::Int
+                | BuiltinFunction::Float
+                | BuiltinFunction::Str
+                | BuiltinFunction::List
+                | BuiltinFunction::Tuple
+                | BuiltinFunction::Dict
+                | BuiltinFunction::Set
+                | BuiltinFunction::FrozenSet
+                | BuiltinFunction::Bytes
+                | BuiltinFunction::ByteArray
+                | BuiltinFunction::MemoryView
+                | BuiltinFunction::Complex
+                | BuiltinFunction::Slice
+                | BuiltinFunction::Range
+                | BuiltinFunction::Enumerate
+                | BuiltinFunction::Zip
+                | BuiltinFunction::ClassMethod
+                | BuiltinFunction::StaticMethod
+                | BuiltinFunction::Property
+                | BuiltinFunction::ObjectNew
+                | BuiltinFunction::Super
+                | BuiltinFunction::Map
+                | BuiltinFunction::Filter
+        )
+    }
+
     fn builtin_type(
         &self,
         args: Vec<Value>,
@@ -16476,9 +16676,13 @@ impl Vm {
             let value = &args[0];
             let special = match value {
                 Value::Function(_) => self.types_module_class("FunctionType").map(Value::Class),
-                Value::Builtin(_) => self
-                    .types_module_class("BuiltinFunctionType")
-                    .map(Value::Class),
+                Value::Builtin(builtin) => {
+                    if self.builtin_is_type_object(*builtin) {
+                        Some(Value::Builtin(BuiltinFunction::Type))
+                    } else {
+                        self.types_module_class("BuiltinFunctionType").map(Value::Class)
+                    }
+                }
                 Value::Code(_) => self.types_module_class("CodeType").map(Value::Class),
                 Value::None => self.types_module_class("NoneType").map(Value::Class),
                 _ => None,
@@ -18171,6 +18375,32 @@ impl Vm {
                 let bound = BoundMethod::new(native, generator);
                 Ok(self.heap.alloc_bound_method(bound))
             }
+            Value::Complex { real, imag } => match name.as_str() {
+                "__reduce_ex__" | "__reduce__" => {
+                    let wrapper = match self.heap.alloc_module(ModuleObject::new(
+                        "__complex_reduce_ex__".to_string(),
+                    )) {
+                        Value::Module(obj) => obj,
+                        _ => unreachable!(),
+                    };
+                    if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                        module_data.globals.insert(
+                            "value".to_string(),
+                            Value::Complex {
+                                real,
+                                imag,
+                            },
+                        );
+                    }
+                    Ok(self.alloc_native_bound_method(NativeMethodKind::ComplexReduceEx, wrapper))
+                }
+                "real" => Ok(Value::Float(real)),
+                "imag" => Ok(Value::Float(imag)),
+                _ => Err(RuntimeError::new(format!(
+                    "complex has no attribute '{}'",
+                    name
+                ))),
+            },
             Value::Exception(exception) => match name.as_str() {
                 "with_traceback" => {
                     let wrapper = match self.heap.alloc_module(ModuleObject::new(
@@ -26271,7 +26501,7 @@ impl Vm {
         };
         instance_data
             .attrs
-            .insert("_value".to_string(), self.heap.alloc_bytes(bytes));
+            .insert("_value".to_string(), self.heap.alloc_bytearray(bytes));
         instance_data
             .attrs
             .insert("_pos".to_string(), Value::Int(pos as i64));
@@ -26395,6 +26625,61 @@ impl Vm {
         Ok(self.heap.alloc_bytes(out))
     }
 
+    fn builtin_bytesio_readinto(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("BytesIO.readinto expects 1 argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let target = args.remove(0);
+        let (buffer, mut pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        if pos > buffer.len() {
+            pos = buffer.len();
+        }
+        let remaining = &buffer[pos..];
+        let copied = match target {
+            Value::ByteArray(obj) => {
+                let Object::ByteArray(values) = &mut *obj.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let count = values.len().min(remaining.len());
+                values[..count].copy_from_slice(&remaining[..count]);
+                count
+            }
+            Value::MemoryView(view_obj) => {
+                let source = match &*view_obj.kind() {
+                    Object::MemoryView(view) => view.source.clone(),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "readinto() argument must be read-write bytes-like object",
+                        ));
+                    }
+                };
+                let Object::ByteArray(values) = &mut *source.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let count = values.len().min(remaining.len());
+                values[..count].copy_from_slice(&remaining[..count]);
+                count
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    "readinto() argument must be read-write bytes-like object",
+                ));
+            }
+        };
+        self.bytesio_store_state(&receiver, buffer, pos + copied, false)?;
+        Ok(Value::Int(copied as i64))
+    }
+
     fn builtin_bytesio_getvalue(
         &mut self,
         mut args: Vec<Value>,
@@ -26407,6 +26692,32 @@ impl Vm {
         self.bytesio_ensure_open(&receiver)?;
         let (buffer, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
         Ok(self.heap.alloc_bytes(buffer))
+    }
+
+    fn builtin_bytesio_getbuffer(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.getbuffer expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let source = {
+            let Object::Instance(instance_data) = &*receiver.kind() else {
+                return Err(RuntimeError::new("BytesIO receiver must be instance"));
+            };
+            match instance_data.attrs.get("_value") {
+                Some(Value::ByteArray(obj)) => obj.clone(),
+                Some(Value::Bytes(obj)) => obj.clone(),
+                _ => match self.heap.alloc_bytearray(Vec::new()) {
+                    Value::ByteArray(obj) => obj,
+                    _ => unreachable!(),
+                },
+            }
+        };
+        Ok(self.heap.alloc_memoryview(source))
     }
 
     fn builtin_bytesio_seek(
@@ -33314,6 +33625,23 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("list modified during sort")
     {
         return "ValueError";
+    }
+    if message.contains("open failed:") {
+        if message.contains("File exists") || message.contains("os error 17") {
+            return "FileExistsError";
+        }
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Is a directory") || message.contains("os error 21") {
+            return "IsADirectoryError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
     }
     if message.contains("bad file descriptor")
         || message.contains("open failed:")

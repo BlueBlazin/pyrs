@@ -4999,6 +4999,40 @@ ok = st.st_mtime >= 2 and caught
 }
 
 #[test]
+fn executes_os_open_exclusive_raises_file_exists_error() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_excl_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let file = temp_dir.join("exclusive.txt");
+
+    let source = format!(
+        r#"import os
+path = '{path}'
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.close(fd)
+caught = False
+try:
+    os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+except FileExistsError:
+    caught = True
+ok = caught
+"#,
+        path = file.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
 fn handles_except_tuple_types() {
     let source = "caught = False\ntry:\n    raise AttributeError\nexcept (ImportError, AttributeError):\n    caught = True\nok = caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");
