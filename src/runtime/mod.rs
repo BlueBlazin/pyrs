@@ -179,6 +179,7 @@ pub enum NativeMethodKind {
     DictUpdateMethod,
     DictSetDefault,
     DictGet,
+    DictGetItem,
     DictPop,
     DictCopy,
     ListAppend,
@@ -5016,6 +5017,9 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method dict.setdefault>".to_string()
                     }
                     NativeMethodKind::DictGet => "<bound method dict.get>".to_string(),
+                    NativeMethodKind::DictGetItem => {
+                        "<bound method dict.__getitem__>".to_string()
+                    }
                     NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
                     NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
                     NativeMethodKind::ListAppend => "<bound method list.append>".to_string(),
@@ -5136,7 +5140,10 @@ pub fn format_value(value: &Value) -> String {
             _ => "<bound method ?>".to_string(),
         },
         Value::Cell(_) => "<cell>".to_string(),
-        Value::Exception(exception) => exception.message.clone().unwrap_or_default(),
+        Value::Exception(exception) => match &exception.message {
+            Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
+            _ => exception.name.clone(),
+        },
         Value::ExceptionType(name) => format!("<class '{}'>", name),
         Value::Slice { lower, upper, step } => {
             let lower = lower.map_or("None".to_string(), |value| value.to_string());

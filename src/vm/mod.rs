@@ -5156,7 +5156,12 @@ impl Vm {
             }
         }
         if !present_in_sys_modules {
-            self.modules.remove(name);
+            let keep_cached_builtin = self.modules.get(name).is_some_and(|module| {
+                Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER)
+            });
+            if !keep_cached_builtin {
+                self.modules.remove(name);
+            }
         }
         if let Some(module) = self.modules.get(name).cloned() {
             if self.should_prefer_filesystem_module(name, &module) {
@@ -9832,6 +9837,7 @@ impl Vm {
             "update" => NativeMethodKind::DictUpdateMethod,
             "setdefault" => NativeMethodKind::DictSetDefault,
             "get" => NativeMethodKind::DictGet,
+            "__getitem__" => NativeMethodKind::DictGetItem,
             "pop" => NativeMethodKind::DictPop,
             _ => {
                 return Err(RuntimeError::new(format!(
@@ -11748,6 +11754,21 @@ impl Vm {
                     return Ok(NativeCallResult::Value(value));
                 }
                 Ok(NativeCallResult::Value(default))
+            }
+            NativeMethodKind::DictGetItem => {
+                if args.len() != 1 || !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "dict.__getitem__() expects one argument",
+                    ));
+                }
+                let key = args.first().cloned().expect("checked len");
+                ensure_hashable(&key)?;
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
+                    return Err(RuntimeError::new("dict.__getitem__() receiver must be dict"));
+                }
+                dict_get_value(&receiver, &key)
+                    .map(NativeCallResult::Value)
+                    .ok_or_else(|| RuntimeError::new("key not found"))
             }
             NativeMethodKind::DictPop => {
                 if args.is_empty() || args.len() > 2 || !kwargs.is_empty() {
@@ -18071,17 +18092,23 @@ impl Vm {
             Value::Module(module) => self.load_attr_module(&module, &name),
             Value::Class(class) => match self.load_attr_class(&class, &name) {
                 Ok(AttrAccessOutcome::Value(value)) => Ok(value),
-                Ok(AttrAccessOutcome::ExceptionHandled) => Ok(Value::None),
+                Ok(AttrAccessOutcome::ExceptionHandled) => {
+                    Err(self.runtime_error_from_active_exception("getattr() failed"))
+                }
                 Err(err) => Err(err),
             },
             Value::Instance(instance) => match self.load_attr_instance(&instance, &name) {
                 Ok(AttrAccessOutcome::Value(value)) => Ok(value),
-                Ok(AttrAccessOutcome::ExceptionHandled) => Ok(Value::None),
+                Ok(AttrAccessOutcome::ExceptionHandled) => {
+                    Err(self.runtime_error_from_active_exception("getattr() failed"))
+                }
                 Err(err) => Err(err),
             },
             Value::Super(super_obj) => match self.load_attr_super(&super_obj, &name) {
                 Ok(AttrAccessOutcome::Value(value)) => Ok(value),
-                Ok(AttrAccessOutcome::ExceptionHandled) => Ok(Value::None),
+                Ok(AttrAccessOutcome::ExceptionHandled) => {
+                    Err(self.runtime_error_from_active_exception("getattr() failed"))
+                }
                 Err(err) => Err(err),
             },
             Value::List(list) => self.load_attr_list_method(list, &name),
@@ -31398,6 +31425,32 @@ fn simple_regex_match_bounds(pattern: &str, text: &str, mode: ReMode) -> Option<
     None
 }
 
+fn csv_sniffer_doublequote_quote(pattern: &str) -> Option<char> {
+    if !pattern.starts_with("((") || !pattern.contains(")|^)") || !pattern.ends_with(")|$)") {
+        return None;
+    }
+    let marker = if pattern.contains(")|^)\\W*") {
+        ")|^)\\W*"
+    } else if pattern.contains(")|^)W*") {
+        ")|^)W*"
+    } else {
+        return None;
+    };
+    let marker_pos = pattern.find(marker)?;
+    let mut rest = &pattern[marker_pos + marker.len()..];
+    if let Some(stripped) = rest.strip_prefix('\\') {
+        rest = stripped;
+    }
+    let mut chars = rest.chars();
+    let first = chars.next()?;
+    let quote = if first == '\\' { chars.next()? } else { first };
+    if quote == '\'' || quote == '"' {
+        Some(quote)
+    } else {
+        None
+    }
+}
+
 fn re_match_bounds(
     pattern: &RePatternValue,
     text: &Value,
@@ -31414,7 +31467,20 @@ fn re_match_bounds(
                 }
                 _ => return Err(RuntimeError::new("string must be string")),
             };
-            let found = if pattern_text == LOGGING_PERCENT_VALIDATION_PATTERN {
+            let found = if matches!(mode, ReMode::Search) {
+                if let Some(quote) = csv_sniffer_doublequote_quote(pattern_text) {
+                    let needle = format!("{quote}{quote}");
+                    text.find(&needle)
+                        .map(|start| (start, start + needle.len()))
+                } else if pattern_text == LOGGING_PERCENT_VALIDATION_PATTERN {
+                    find_logging_percent_style_match(text)
+                } else if let Some(bounds) = simple_regex_match_bounds(pattern_text, text, mode) {
+                    Some(bounds)
+                } else {
+                    text.find(pattern_text)
+                        .map(|start| (start, start + pattern_text.len()))
+                }
+            } else if pattern_text == LOGGING_PERCENT_VALIDATION_PATTERN {
                 find_logging_percent_style_match(text)
             } else if let Some(bounds) = simple_regex_match_bounds(pattern_text, text, mode) {
                 Some(bounds)

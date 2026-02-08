@@ -1,3 +1,6 @@
 # strict unittest-backed stdlib harness allowlist
 # format: <suite entry>|<category>|<owner>
 test/test_csv.py|stdlib-strict|pyrs-core
+test/test_json/__init__.py|stdlib-strict|pyrs-core
+test/test_pickle.py|stdlib-strict|pyrs-core
+test/test_pickletools.py|stdlib-strict|pyrs-core

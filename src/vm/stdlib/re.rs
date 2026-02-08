@@ -1,5 +1,13 @@
 use super::super::*;
 
+const CSV_SNIFFER_PATTERN_1: &str =
+    r#"(?P<delim>[^\w\n"\'])(?P<space> ?)(?P<quote>["\']).*?(?P=quote)(?P=delim)"#;
+const CSV_SNIFFER_PATTERN_2: &str =
+    r#"(?:^|\n)(?P<quote>["\']).*?(?P=quote)(?P<delim>[^\w\n"\'])(?P<space> ?)"#;
+const CSV_SNIFFER_PATTERN_3: &str =
+    r#"(?P<delim>[^\w\n"\'])(?P<space> ?)(?P<quote>["\']).*?(?P=quote)(?:$|\n)"#;
+const CSV_SNIFFER_PATTERN_4: &str = r#"(?:^|\n)(?P<quote>["\']).*?(?P=quote)(?:$|\n)"#;
+
 impl Vm {
     pub(in crate::vm) fn builtin_re_search(
         &mut self,
@@ -86,6 +94,24 @@ impl Vm {
             module_data
                 .globals
                 .insert("pattern".to_string(), pattern_value);
+            let groupindex = if let Some(pattern) = module_data.globals.get("pattern") {
+                match pattern {
+                    Value::Str(text) => {
+                        let entries = csv_sniffer_groupindex_entries(text)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(name, idx)| (Value::Str(name.to_string()), Value::Int(idx)))
+                            .collect();
+                        self.heap.alloc_dict(entries)
+                    }
+                    _ => self.heap.alloc_dict(Vec::new()),
+                }
+            } else {
+                self.heap.alloc_dict(Vec::new())
+            };
+            module_data
+                .globals
+                .insert("groupindex".to_string(), groupindex);
         }
         Ok(Value::Module(compiled))
     }
@@ -156,6 +182,27 @@ impl Vm {
                     return Err(RuntimeError::new(
                         "cannot use a bytes pattern on a string-like object",
                     ));
+                }
+                if let RePatternValue::Str(pattern_text) = &pattern {
+                    if let Some((group_count, matches)) =
+                        csv_sniffer_pattern_findall(pattern_text, &text)
+                    {
+                        if group_count == 1 {
+                            let out = matches
+                                .into_iter()
+                                .map(|row| Value::Str(row[0].clone()))
+                                .collect::<Vec<_>>();
+                            return Ok(self.heap.alloc_list(out));
+                        }
+                        let out = matches
+                            .into_iter()
+                            .map(|row| {
+                                self.heap
+                                    .alloc_tuple(row.into_iter().map(Value::Str).collect())
+                            })
+                            .collect::<Vec<_>>();
+                        return Ok(self.heap.alloc_list(out));
+                    }
                 }
                 let raw_pos = if let Some(value) = args.first() {
                     value_to_int(value.clone())?
@@ -275,6 +322,20 @@ impl Vm {
             return Err(RuntimeError::new("re function expects pattern and string"));
         }
         let pattern = re_pattern_from_argument(&args[0])?;
+        if let (ReMode::Search, RePatternValue::Str(pattern_text), Value::Str(text)) =
+            (mode, &pattern, &args[1])
+        {
+            if let Some(quote) = csv_sniffer_doublequote_quote(pattern_text) {
+                let needle = format!("{quote}{quote}");
+                if let Some(start) = text.find(&needle) {
+                    return Ok(self.heap.alloc_tuple(vec![
+                        Value::Int(start as i64),
+                        Value::Int((start + needle.len()) as i64),
+                    ]));
+                }
+                return Ok(Value::None);
+            }
+        }
         let found = re_match_bounds(&pattern, &args[1], mode)?;
         if let Some((start, end)) = found {
             Ok(self
@@ -283,5 +344,174 @@ impl Vm {
         } else {
             Ok(Value::None)
         }
+    }
+}
+
+fn csv_sniffer_groupindex_entries(pattern: &str) -> Option<Vec<(&'static str, i64)>> {
+    match pattern {
+        CSV_SNIFFER_PATTERN_1 => Some(vec![("delim", 1), ("space", 2), ("quote", 3)]),
+        CSV_SNIFFER_PATTERN_2 => Some(vec![("quote", 1), ("delim", 2), ("space", 3)]),
+        CSV_SNIFFER_PATTERN_3 => Some(vec![("delim", 1), ("space", 2), ("quote", 3)]),
+        CSV_SNIFFER_PATTERN_4 => Some(vec![("quote", 1)]),
+        _ => None,
+    }
+}
+
+fn csv_sniffer_is_word_char(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+fn csv_sniffer_is_delim_candidate(ch: char) -> bool {
+    !csv_sniffer_is_word_char(ch) && ch != '\n' && ch != '\'' && ch != '"'
+}
+
+fn csv_sniffer_pattern_findall(pattern: &str, text: &str) -> Option<(usize, Vec<Vec<String>>)> {
+    let chars: Vec<char> = text.chars().collect();
+    match pattern {
+        CSV_SNIFFER_PATTERN_1 => {
+            let mut out = Vec::new();
+            for i in 0..chars.len() {
+                let delim = chars[i];
+                if !csv_sniffer_is_delim_candidate(delim) {
+                    continue;
+                }
+                let mut quote_idx = i + 1;
+                let space = if quote_idx < chars.len() && chars[quote_idx] == ' ' {
+                    quote_idx += 1;
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
+                if quote_idx >= chars.len() {
+                    continue;
+                }
+                let quote = chars[quote_idx];
+                if quote != '\'' && quote != '"' {
+                    continue;
+                }
+                let mut close = quote_idx + 1;
+                while close < chars.len() {
+                    if chars[close] == quote && close + 1 < chars.len() && chars[close + 1] == delim
+                    {
+                        out.push(vec![delim.to_string(), space.clone(), quote.to_string()]);
+                        break;
+                    }
+                    close += 1;
+                }
+            }
+            Some((3, out))
+        }
+        CSV_SNIFFER_PATTERN_2 => {
+            let mut out = Vec::new();
+            for start in 0..chars.len() {
+                if start != 0 && chars[start - 1] != '\n' {
+                    continue;
+                }
+                let quote = chars[start];
+                if quote != '\'' && quote != '"' {
+                    continue;
+                }
+                let mut close = start + 1;
+                while close < chars.len() {
+                    if chars[close] == quote
+                        && close + 1 < chars.len()
+                        && csv_sniffer_is_delim_candidate(chars[close + 1])
+                    {
+                        let delim = chars[close + 1];
+                        let space = if close + 2 < chars.len() && chars[close + 2] == ' ' {
+                            " ".to_string()
+                        } else {
+                            String::new()
+                        };
+                        out.push(vec![quote.to_string(), delim.to_string(), space]);
+                        break;
+                    }
+                    close += 1;
+                }
+            }
+            Some((3, out))
+        }
+        CSV_SNIFFER_PATTERN_3 => {
+            let mut out = Vec::new();
+            for i in 0..chars.len() {
+                let delim = chars[i];
+                if !csv_sniffer_is_delim_candidate(delim) {
+                    continue;
+                }
+                let mut quote_idx = i + 1;
+                let space = if quote_idx < chars.len() && chars[quote_idx] == ' ' {
+                    quote_idx += 1;
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
+                if quote_idx >= chars.len() {
+                    continue;
+                }
+                let quote = chars[quote_idx];
+                if quote != '\'' && quote != '"' {
+                    continue;
+                }
+                let mut close = quote_idx + 1;
+                while close < chars.len() {
+                    if chars[close] == quote && (close + 1 == chars.len() || chars[close + 1] == '\n')
+                    {
+                        out.push(vec![delim.to_string(), space.clone(), quote.to_string()]);
+                        break;
+                    }
+                    close += 1;
+                }
+            }
+            Some((3, out))
+        }
+        CSV_SNIFFER_PATTERN_4 => {
+            let mut out = Vec::new();
+            for start in 0..chars.len() {
+                if start != 0 && chars[start - 1] != '\n' {
+                    continue;
+                }
+                let quote = chars[start];
+                if quote != '\'' && quote != '"' {
+                    continue;
+                }
+                let mut close = start + 1;
+                while close < chars.len() {
+                    if chars[close] == quote && (close + 1 == chars.len() || chars[close + 1] == '\n')
+                    {
+                        out.push(vec![quote.to_string()]);
+                        break;
+                    }
+                    close += 1;
+                }
+            }
+            Some((1, out))
+        }
+        _ => None,
+    }
+}
+
+fn csv_sniffer_doublequote_quote(pattern: &str) -> Option<char> {
+    if !pattern.starts_with("((") || !pattern.contains(")|^)") || !pattern.ends_with(")|$)") {
+        return None;
+    }
+    let marker = if pattern.contains(")|^)\\W*") {
+        ")|^)\\W*"
+    } else if pattern.contains(")|^)W*") {
+        ")|^)W*"
+    } else {
+        return None;
+    };
+    let marker_pos = pattern.find(marker)?;
+    let mut rest = &pattern[marker_pos + marker.len()..];
+    if let Some(stripped) = rest.strip_prefix('\\') {
+        rest = stripped;
+    }
+    let mut iter = rest.chars();
+    let first = iter.next()?;
+    let quote = if first == '\\' { iter.next()? } else { first };
+    if quote == '\'' || quote == '"' {
+        Some(quote)
+    } else {
+        None
     }
 }
