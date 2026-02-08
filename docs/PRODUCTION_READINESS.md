@@ -103,7 +103,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [ ] P0: Full `json` parity and hardening (`test_json` closure, differential malformed-input coverage, performance baselines).
 - [ ] P0: Full `_csv`/`csv` parity and hardening (`test_csv` closure, malformed-input coverage, performance baselines).
 - [ ] P0: Full `pickle`/`pickletools`/`copyreg` parity and hardening (`test_pickle`, `test_pickletools`, `test_copyreg` closure, protocol coverage, performance baselines).
-- [~] P0: Prefer official CPython pure-Python stdlib implementations wherever feasible and keep native VM handlers minimal/isolated (`src/vm/stdlib/` extraction in progress).
+- [~] P0: Prefer official CPython pure-Python stdlib implementations wherever feasible and keep native VM handlers minimal/isolated (`src/vm/stdlib/` extraction in progress; `json`/`re`/`_csv` plus pickle object-protocol helpers are isolated).
 - [~] P1: `re`, `math`, `decimal`, `fractions`, `collections`, `functools`, `itertools`, `operator` (`math` core stub surface removed; long-tail parity still pending).
 - [~] P1: `threading`, `multiprocessing`, `asyncio`, `concurrent.futures` (`asyncio`/`threading` foundations implemented; broader module parity pending).
 - [ ] P1: `subprocess`, `socket`, `ssl`, `http`, `urllib`.

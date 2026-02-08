@@ -1828,7 +1828,10 @@ m = time.monotonic()\n";
     assert_eq!(vm.get_global("is_gen"), Some(Value::Bool(true)));
 
     match vm.get_global("encoded") {
-        Some(Value::Str(text)) => assert!(text.contains("\"a\":1")),
+        Some(Value::Str(text)) => {
+            assert!(text.contains("\"a\": 1"));
+            assert!(text.contains("\"b\": [2, 3]"));
+        }
         other => panic!("expected encoded JSON string, got {other:?}"),
     }
     assert_eq!(
@@ -1895,6 +1898,38 @@ m = time.monotonic()\n";
         list_values(vm.get_global("dq")),
         Some(vec![Value::Int(4), Value::Int(5)])
     );
+}
+
+#[test]
+fn json_dumps_supports_sort_keys_separators_and_default() {
+    let source = r#"import json
+class Unknown:
+    pass
+def fallback(obj):
+    return {'fallback': 'ok'}
+text = json.dumps({'b': 1, 'a': '\u263A'}, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+fallback_text = json.dumps(Unknown(), default=fallback, sort_keys=True)
+ok = (text == '{"a":"\\u263a","b":1}' and fallback_text == '{"fallback": "ok"}')
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn json_loads_accepts_utf8_bytes_and_bytearray() {
+    let source = r#"import json
+a = json.loads(b'{"x": 1, "y": [2, 3]}')
+b = json.loads(bytearray(b'{"x": 1, "y": [2, 3]}'))
+ok = (a['x'] == 1 and a['y'] == [2, 3] and b == a)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -5838,6 +5873,23 @@ try:
 except ValueError as exc:
     raised = ('list modified during sort' in str(exc))
 ok = (raised and values == [1, 2, 3])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn object_reduce_ex_reconstructs_builtin_payloads() {
+    let source = r#"lst = [1, 2, 3]
+dct = {'a': 1, 'b': 2}
+lst_ctor, lst_args, lst_state = object.__reduce_ex__(lst, 4)
+dct_ctor, dct_args, dct_state = object.__reduce_ex__(dct, 4)
+lst_roundtrip = lst_ctor(*lst_args)
+dct_roundtrip = dct_ctor(*dct_args)
+ok = (lst_roundtrip == lst and dct_roundtrip == dct and lst_state is None and dct_state is None)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
