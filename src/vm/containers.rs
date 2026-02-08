@@ -205,4 +205,82 @@ mod tests {
         assert!(deduped.contains(&Value::Int(2)));
         assert!(deduped.contains(&Value::Str("x".to_string())));
     }
+
+    #[test]
+    fn dict_bulk_insert_remove_keeps_hash_index_consistent() {
+        let heap = Heap::new();
+        let dict = empty_dict_obj(&heap);
+        const COUNT: i64 = 3000;
+
+        for value in 0..COUNT {
+            dict_set_value_checked(&dict, Value::Int(value), Value::Int(value * 10))
+                .expect("bulk insert should succeed");
+        }
+        for value in 0..COUNT {
+            assert_eq!(
+                dict_get_value(&dict, &Value::Int(value)),
+                Some(Value::Int(value * 10))
+            );
+        }
+
+        for value in (0..COUNT).step_by(3) {
+            assert_eq!(
+                dict_remove_value(&dict, &Value::Int(value)),
+                Some(Value::Int(value * 10))
+            );
+        }
+
+        for value in 0..COUNT {
+            let expected = if value % 3 == 0 {
+                None
+            } else {
+                Some(Value::Int(value * 10))
+            };
+            assert_eq!(dict_get_value(&dict, &Value::Int(value)), expected);
+        }
+    }
+
+    #[test]
+    fn set_bulk_insert_remove_keeps_membership_consistent() {
+        const COUNT: i64 = 4000;
+        let mut set = SetObject::new(Vec::new());
+
+        for value in 0..COUNT {
+            assert!(set.insert(Value::Int(value)));
+        }
+        for value in 0..COUNT {
+            assert!(set.contains(&Value::Int(value)));
+        }
+
+        for value in (0..COUNT).step_by(4) {
+            assert!(set.remove_value(&Value::Int(value)));
+        }
+
+        for value in 0..COUNT {
+            let present = value % 4 != 0;
+            assert_eq!(set.contains(&Value::Int(value)), present);
+        }
+    }
+
+    #[test]
+    fn dict_numeric_equivalent_keys_share_single_entry() {
+        let heap = Heap::new();
+        let dict = empty_dict_obj(&heap);
+        dict_set_value_checked(&dict, Value::Int(1), Value::Str("int".to_string()))
+            .expect("int key should insert");
+        dict_set_value_checked(&dict, Value::Bool(true), Value::Str("bool".to_string()))
+            .expect("bool key should update");
+        dict_set_value_checked(&dict, Value::Float(1.0), Value::Str("float".to_string()))
+            .expect("float key should update");
+
+        let kind = dict.kind();
+        let Object::Dict(entries) = &*kind else {
+            panic!("expected dict object");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries.find(&Value::Int(1)),
+            Some(&Value::Str("float".to_string()))
+        );
+    }
 }

@@ -293,3 +293,93 @@ result = {
         "container semantics differential mismatch"
     );
 }
+
+#[test]
+fn differential_json_malformed_input_contract_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"import json
+cases = [
+    '{"a": 1,,}',
+    '{"a": [1 2]}',
+    '"\\x20"',
+    '{"a": "unterminated}',
+]
+raised = []
+for payload in cases:
+    failed = False
+    try:
+        json.loads(payload)
+    except Exception:
+        failed = True
+    raised.append(failed)
+result = raised
+"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(&py),
+        normalize_jsonish(&ours),
+        "json malformed-input contract differential mismatch"
+    );
+}
+
+#[test]
+fn differential_csv_malformed_input_contract_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"import _csv
+cases = [
+    ('a,b', False),
+    ('"unterminated', True),
+    ('a,"b', True),
+]
+raised = []
+for text, strict in cases:
+    failed = False
+    try:
+        list(_csv.reader([text], strict=strict))
+    except Exception:
+        failed = True
+    raised.append(failed)
+result = raised
+"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(&py),
+        normalize_jsonish(&ours),
+        "csv malformed-input contract differential mismatch"
+    );
+}
+
+#[test]
+fn differential_pickle_object_protocol_malformed_contract_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"cases = [
+    lambda: object.__reduce_ex__(),
+    lambda: object.__reduce_ex__(object(), "bad"),
+    lambda: object.__reduce_ex__(object(), 4, 5),
+]
+raised = []
+for fn in cases:
+    failed = False
+    try:
+        fn()
+    except Exception:
+        failed = True
+    raised.append(failed)
+result = raised
+"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(&py),
+        normalize_jsonish(&ours),
+        "pickle object-protocol malformed-input contract differential mismatch"
+    );
+}
