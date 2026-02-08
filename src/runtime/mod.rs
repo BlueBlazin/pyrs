@@ -1791,12 +1791,14 @@ pub enum BuiltinFunction {
     OsPathSplitRootEx,
     OsPathDirName,
     OsPathBaseName,
+    OsPathIsAbs,
     OsPathIsDir,
     OsPathIsFile,
     OsPathSplitExt,
     OsPathAbsPath,
     OsPathExpandUser,
     OsPathRealPath,
+    OsPathRelPath,
     OsPathCommonPrefix,
     OsWaitPid,
     PosixSubprocessForkExec,
@@ -1962,8 +1964,10 @@ pub enum BuiltinFunction {
     IoReadText,
     IoWriteText,
     IoTextEncoding,
+    IoTextIOWrapperInit,
     IoFileRead,
     IoFileReadLine,
+    IoFileReadLines,
     IoFileWrite,
     IoFileSeek,
     IoFileTell,
@@ -3828,12 +3832,14 @@ impl BuiltinFunction {
             | BuiltinFunction::OsPathSplitRootEx
             | BuiltinFunction::OsPathDirName
             | BuiltinFunction::OsPathBaseName
+            | BuiltinFunction::OsPathIsAbs
             | BuiltinFunction::OsPathIsDir
             | BuiltinFunction::OsPathIsFile
             | BuiltinFunction::OsPathSplitExt
             | BuiltinFunction::OsPathAbsPath
             | BuiltinFunction::OsPathExpandUser
             | BuiltinFunction::OsPathRealPath
+            | BuiltinFunction::OsPathRelPath
             | BuiltinFunction::OsPathCommonPrefix
             | BuiltinFunction::OsWaitPid
             | BuiltinFunction::PosixSubprocessForkExec
@@ -3949,8 +3955,10 @@ impl BuiltinFunction {
             | BuiltinFunction::IoReadText
             | BuiltinFunction::IoWriteText
             | BuiltinFunction::IoTextEncoding
+            | BuiltinFunction::IoTextIOWrapperInit
             | BuiltinFunction::IoFileRead
             | BuiltinFunction::IoFileReadLine
+            | BuiltinFunction::IoFileReadLines
             | BuiltinFunction::IoFileWrite
             | BuiltinFunction::IoFileSeek
             | BuiltinFunction::IoFileTell

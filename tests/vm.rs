@@ -1939,6 +1939,20 @@ ok = (a['x'] == 1 and a['y'] == [2, 3] and b == a)
 }
 
 #[test]
+fn os_path_relpath_is_available_for_unittest_discovery() {
+    let source = r#"import os
+p = os.path.relpath('/tmp/a/b', '/tmp')
+q = os.path.relpath('/tmp/a', '/tmp/a')
+ok = (p == 'a/b' and q == '.' and os.path.isabs('/tmp') and not os.path.isabs('tmp'))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_datetime_date_constructor() {
     let source = "import datetime\nitem = datetime.date(2024, 1, 2)\nok = item.year == 2024 and item.month == 1 and item.day == 2\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -4790,6 +4804,34 @@ fn exposes_object_new_lookuperror_and_open_builtin() {
 fn exposes_io_textiowrapper_and_sys_platform() {
     let source = "import io\nimport sys\nok = hasattr(io, 'TextIOWrapper') and isinstance(sys.platform, str)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_textiowrapper_init_wraps_binary_buffer_for_readline() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_textiowrapper_{unique}.txt"));
+    std::fs::write(&temp, b"alpha\nbeta\n").expect("write sample file");
+
+    let source = format!(
+        "import io\n\
+path = {path:?}\n\
+raw = io.open(path, 'rb')\n\
+text = io.TextIOWrapper(raw, 'utf-8')\n\
+line = text.readline()\n\
+text.seek(0)\n\
+lines = text.readlines()\n\
+text.close()\n\
+ok = (line == 'alpha\\n' and lines == ['alpha\\n', 'beta\\n'])\n",
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");

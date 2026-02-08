@@ -1755,8 +1755,10 @@ impl Vm {
                 ("abspath", BuiltinFunction::OsPathAbsPath),
                 ("expanduser", BuiltinFunction::OsPathExpandUser),
                 ("realpath", BuiltinFunction::OsPathRealPath),
+                ("relpath", BuiltinFunction::OsPathRelPath),
                 ("dirname", BuiltinFunction::OsPathDirName),
                 ("basename", BuiltinFunction::OsPathBaseName),
+                ("isabs", BuiltinFunction::OsPathIsAbs),
                 ("isdir", BuiltinFunction::OsPathIsDir),
                 ("isfile", BuiltinFunction::OsPathIsFile),
                 ("splitext", BuiltinFunction::OsPathSplitExt),
@@ -1814,6 +1816,24 @@ impl Vm {
             self.heap
                 .alloc_module(ModuleObject::new("json.scanner".to_string())),
         ) {
+            self.set_module_metadata(
+                &decoder_module,
+                "json.decoder",
+                None,
+                Some(BUILTIN_MODULE_LOADER),
+                false,
+                Vec::new(),
+                false,
+            );
+            self.set_module_metadata(
+                &scanner_module,
+                "json.scanner",
+                None,
+                Some(BUILTIN_MODULE_LOADER),
+                false,
+                Vec::new(),
+                false,
+            );
             if let Object::Module(module_data) = &mut *decoder_module.kind_mut() {
                 module_data.globals.insert(
                     "JSONDecodeError".to_string(),
@@ -1823,11 +1843,13 @@ impl Vm {
             if let Object::Module(module_data) = &mut *json_module.kind_mut() {
                 module_data
                     .globals
-                    .insert("decoder".to_string(), Value::Module(decoder_module));
+                    .insert("decoder".to_string(), Value::Module(decoder_module.clone()));
                 module_data
                     .globals
-                    .insert("scanner".to_string(), Value::Module(scanner_module));
+                    .insert("scanner".to_string(), Value::Module(scanner_module.clone()));
             }
+            self.register_module("json.decoder", decoder_module);
+            self.register_module("json.scanner", scanner_module);
         }
         self.install_builtin_module(
             "marshal",
@@ -3276,12 +3298,20 @@ impl Vm {
                     if let Value::Class(class_ref) = &textio {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoTextIOWrapperInit),
+                            );
+                            class_data.attrs.insert(
                                 "read".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileRead),
                             );
                             class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "readlines".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadLines),
                             );
                             class_data.attrs.insert(
                                 "write".to_string(),
@@ -3500,12 +3530,20 @@ impl Vm {
                     if let Value::Class(class_ref) = &textio {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoTextIOWrapperInit),
+                            );
+                            class_data.attrs.insert(
                                 "read".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileRead),
                             );
                             class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "readlines".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadLines),
                             );
                             class_data.attrs.insert(
                                 "write".to_string(),
@@ -3576,6 +3614,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "readlines".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadLines),
                             );
                             class_data.attrs.insert(
                                 "write".to_string(),
@@ -14349,12 +14391,14 @@ impl Vm {
             BuiltinFunction::OsPathSplitRootEx => self.builtin_os_path_splitroot_ex(args, kwargs),
             BuiltinFunction::OsPathDirName => self.builtin_os_path_dirname(args, kwargs),
             BuiltinFunction::OsPathBaseName => self.builtin_os_path_basename(args, kwargs),
+            BuiltinFunction::OsPathIsAbs => self.builtin_os_path_isabs(args, kwargs),
             BuiltinFunction::OsPathIsDir => self.builtin_os_path_isdir(args, kwargs),
             BuiltinFunction::OsPathIsFile => self.builtin_os_path_isfile(args, kwargs),
             BuiltinFunction::OsPathSplitExt => self.builtin_os_path_splitext(args, kwargs),
             BuiltinFunction::OsPathAbsPath => self.builtin_os_path_abspath(args, kwargs),
             BuiltinFunction::OsPathExpandUser => self.builtin_os_path_expanduser(args, kwargs),
             BuiltinFunction::OsPathRealPath => self.builtin_os_path_realpath(args, kwargs),
+            BuiltinFunction::OsPathRelPath => self.builtin_os_path_relpath(args, kwargs),
             BuiltinFunction::OsPathCommonPrefix => self.builtin_os_path_commonprefix(args, kwargs),
             BuiltinFunction::PosixSubprocessForkExec => {
                 self.builtin_posixsubprocess_fork_exec(args, kwargs)
@@ -14550,8 +14594,12 @@ impl Vm {
             BuiltinFunction::IoReadText => self.builtin_io_read_text(args, kwargs),
             BuiltinFunction::IoWriteText => self.builtin_io_write_text(args, kwargs),
             BuiltinFunction::IoTextEncoding => self.builtin_io_text_encoding(args, kwargs),
+            BuiltinFunction::IoTextIOWrapperInit => {
+                self.builtin_io_textiowrapper_init(args, kwargs)
+            }
             BuiltinFunction::IoFileRead => self.builtin_io_file_read(args, kwargs),
             BuiltinFunction::IoFileReadLine => self.builtin_io_file_readline(args, kwargs),
+            BuiltinFunction::IoFileReadLines => self.builtin_io_file_readlines(args, kwargs),
             BuiltinFunction::IoFileWrite => self.builtin_io_file_write(args, kwargs),
             BuiltinFunction::IoFileSeek => self.builtin_io_file_seek(args, kwargs),
             BuiltinFunction::IoFileTell => self.builtin_io_file_tell(args, kwargs),
@@ -21207,6 +21255,18 @@ impl Vm {
         Ok(Value::Str(path[idx..].to_string()))
     }
 
+    fn builtin_os_path_isabs(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("isabs() expects one argument"));
+        }
+        let path = value_to_path(&args[0])?;
+        Ok(Value::Bool(path.starts_with('/')))
+    }
+
     fn builtin_os_path_isdir(
         &mut self,
         args: Vec<Value>,
@@ -21312,6 +21372,54 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         self.builtin_os_path_abspath(args, kwargs)
+    }
+
+    fn builtin_os_path_relpath(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("relpath() expects path and optional start"));
+        }
+
+        let path = value_to_path(&args.remove(0))?;
+        let start = if let Some(value) = args.pop() {
+            value_to_path(&value)?
+        } else {
+            ".".to_string()
+        };
+        let path_abs = match self.builtin_os_path_abspath(vec![Value::Str(path)], HashMap::new())? {
+            Value::Str(path) => path,
+            _ => return Err(RuntimeError::new("relpath() internal error")),
+        };
+        let start_abs =
+            match self.builtin_os_path_abspath(vec![Value::Str(start)], HashMap::new())? {
+                Value::Str(path) => path,
+                _ => return Err(RuntimeError::new("relpath() internal error")),
+            };
+
+        let mut path_parts: Vec<&str> = path_abs.split('/').filter(|part| !part.is_empty()).collect();
+        let mut start_parts: Vec<&str> =
+            start_abs.split('/').filter(|part| !part.is_empty()).collect();
+
+        let mut common = 0usize;
+        let max_common = path_parts.len().min(start_parts.len());
+        while common < max_common && path_parts[common] == start_parts[common] {
+            common += 1;
+        }
+
+        path_parts.drain(0..common);
+        start_parts.drain(0..common);
+        let mut rel_parts: Vec<String> = Vec::new();
+        rel_parts.extend(std::iter::repeat("..".to_string()).take(start_parts.len()));
+        rel_parts.extend(path_parts.into_iter().map(ToOwned::to_owned));
+
+        if rel_parts.is_empty() {
+            Ok(Value::Str(".".to_string()))
+        } else {
+            Ok(Value::Str(rel_parts.join("/")))
+        }
     }
 
     fn builtin_os_path_commonprefix(
@@ -24677,6 +24785,124 @@ impl Vm {
         }
     }
 
+    fn builtin_io_textiowrapper_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = match args.first() {
+            Some(Value::Instance(instance)) => instance.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TextIOWrapper.__init__() expects self and buffer",
+                ));
+            }
+        };
+        args.remove(0);
+        let buffer_value = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("buffer") {
+            value
+        } else {
+            return Err(RuntimeError::new(
+                "TextIOWrapper.__init__() missing required buffer argument",
+            ));
+        };
+        let buffer_instance = match buffer_value {
+            Value::Instance(instance) => instance,
+            _ => return Err(RuntimeError::new("TextIOWrapper() argument 1 must be file object")),
+        };
+
+        let encoding = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("encoding")
+        };
+        let errors = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("errors")
+        };
+        let newline = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("newline")
+        };
+        if !args.is_empty() {
+            args.remove(0);
+        }
+        if !args.is_empty() {
+            args.remove(0);
+        }
+        for key in kwargs.keys() {
+            if !matches!(
+                key.as_str(),
+                "encoding"
+                    | "errors"
+                    | "newline"
+                    | "line_buffering"
+                    | "write_through"
+                    | "buffer"
+            ) {
+                return Err(RuntimeError::new(
+                    "TextIOWrapper.__init__() got unexpected keyword argument",
+                ));
+            }
+        }
+
+        let fd = self.io_file_fd_from_instance(&buffer_instance)?;
+        let source_mode = Self::io_file_mode(&buffer_instance).unwrap_or_else(|| "r".to_string());
+        let mut mode = source_mode.replace('b', "");
+        if mode.is_empty() {
+            mode = "r".to_string();
+        }
+        let closefd = !matches!(
+            Self::instance_attr_get(&buffer_instance, "_closefd"),
+            Some(Value::Bool(false))
+        );
+        let closed = matches!(
+            Self::instance_attr_get(&buffer_instance, "_closed"),
+            Some(Value::Bool(true))
+        );
+
+        Self::instance_attr_set(&instance, "_fd", Value::Int(fd))?;
+        Self::instance_attr_set(&instance, "_mode", Value::Str(mode))?;
+        Self::instance_attr_set(&instance, "_binary", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "_closed", Value::Bool(closed))?;
+        Self::instance_attr_set(&instance, "closed", Value::Bool(closed))?;
+        Self::instance_attr_set(&instance, "_closefd", Value::Bool(closefd))?;
+        Self::instance_attr_set(
+            &instance,
+            "_encoding",
+            match encoding.unwrap_or(Value::None) {
+                Value::None => Value::None,
+                Value::Str(value) => Value::Str(value),
+                _ => return Err(RuntimeError::new("TextIOWrapper encoding must be str or None")),
+            },
+        )?;
+        Self::instance_attr_set(
+            &instance,
+            "_errors",
+            match errors.unwrap_or(Value::None) {
+                Value::None => Value::None,
+                Value::Str(value) => Value::Str(value),
+                _ => return Err(RuntimeError::new("TextIOWrapper errors must be str or None")),
+            },
+        )?;
+        Self::instance_attr_set(
+            &instance,
+            "_newline",
+            match newline.unwrap_or(Value::None) {
+                Value::None => Value::None,
+                Value::Str(value) => Value::Str(value),
+                _ => return Err(RuntimeError::new("TextIOWrapper newline must be str or None")),
+            },
+        )?;
+        Self::instance_attr_set(&instance, "buffer", Value::Instance(buffer_instance.clone()))?;
+        Self::instance_attr_set(&instance, "raw", Value::Instance(buffer_instance))?;
+        Ok(Value::None)
+    }
+
     fn io_class_ref(&self, class_name: &str) -> Result<ObjRef, RuntimeError> {
         let module = self
             .modules
@@ -24757,6 +24983,17 @@ impl Vm {
     }
 
     fn io_file_fd_from_instance(&self, instance: &ObjRef) -> Result<i64, RuntimeError> {
+        self.io_file_fd_from_instance_inner(instance, 0)
+    }
+
+    fn io_file_fd_from_instance_inner(
+        &self,
+        instance: &ObjRef,
+        depth: usize,
+    ) -> Result<i64, RuntimeError> {
+        if depth > 8 {
+            return Err(RuntimeError::new("invalid file object"));
+        }
         let closed = matches!(
             Self::instance_attr_get(instance, "_closed"),
             Some(Value::Bool(true))
@@ -24766,7 +25003,16 @@ impl Vm {
         }
         match Self::instance_attr_get(instance, "_fd") {
             Some(Value::Int(fd)) => Ok(fd),
-            _ => Err(RuntimeError::new("invalid file object")),
+            _ => {
+                for key in ["buffer", "raw"] {
+                    if let Some(Value::Instance(inner)) = Self::instance_attr_get(instance, key) {
+                        if inner.id() != instance.id() {
+                            return self.io_file_fd_from_instance_inner(&inner, depth + 1);
+                        }
+                    }
+                }
+                Err(RuntimeError::new("invalid file object"))
+            }
         }
     }
 
@@ -24905,6 +25151,46 @@ impl Vm {
                 .map_err(|_| RuntimeError::new("readline() encountered non-UTF-8 bytes"))?;
             Ok(Value::Str(text))
         }
+    }
+
+    fn builtin_io_file_readlines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("readlines() expects optional hint"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "readlines")?;
+        let hint = if let Some(value) = args.pop() {
+            let parsed = value_to_int(value)?;
+            if parsed <= 0 { None } else { Some(parsed as usize) }
+        } else {
+            None
+        };
+        let mut lines = Vec::new();
+        let mut consumed = 0usize;
+        loop {
+            let line =
+                self.builtin_io_file_readline(vec![Value::Instance(instance.clone())], HashMap::new())?;
+            let bytes = match &line {
+                Value::Str(text) => text.as_bytes().len(),
+                Value::Bytes(obj) => match &*obj.kind() {
+                    Object::Bytes(values) => values.len(),
+                    _ => 0,
+                },
+                _ => 0,
+            };
+            if bytes == 0 {
+                break;
+            }
+            consumed = consumed.saturating_add(bytes);
+            lines.push(line);
+            if hint.map(|limit| consumed >= limit).unwrap_or(false) {
+                break;
+            }
+        }
+        Ok(self.heap.alloc_list(lines))
     }
 
     fn builtin_io_file_write(
