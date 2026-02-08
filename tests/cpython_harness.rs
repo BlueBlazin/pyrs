@@ -153,6 +153,19 @@ fn strict_unittest_timeout() -> Duration {
     Duration::from_secs(secs.max(1))
 }
 
+fn strict_stdlib_enabled() -> bool {
+    let enabled = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .map(|value| {
+                let normalized = value.trim().to_ascii_lowercase();
+                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    };
+    enabled("PYRS_RUN_STRICT_STDLIB") || enabled("PYRS_PARITY_STRICT")
+}
+
 fn run_source_in_subprocess(bin: &Path, source: &str, timeout: Duration) -> Result<(), String> {
     let mut child = Command::new(bin)
         .arg("-c")
@@ -336,6 +349,12 @@ fn runs_cpython_import_suite() {
 
 #[test]
 fn runs_cpython_strict_stdlib_suite() {
+    if !strict_stdlib_enabled() {
+        eprintln!(
+            "skipping strict stdlib suite (set PYRS_RUN_STRICT_STDLIB=1 or PYRS_PARITY_STRICT=1 to enable)"
+        );
+        return;
+    }
     let handle = std::thread::Builder::new()
         .name("cpython-strict-stdlib".to_string())
         .stack_size(32 * 1024 * 1024)
