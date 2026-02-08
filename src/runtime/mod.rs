@@ -192,6 +192,7 @@ pub enum NativeMethodKind {
     IntToBytes,
     IntBitLengthMethod,
     StrStartsWith,
+    StrEndsWith,
     StrReplace,
     StrUpper,
     StrLower,
@@ -199,6 +200,8 @@ pub enum NativeMethodKind {
     StrEncode,
     StrDecode,
     BytesDecode,
+    BytesStartsWith,
+    BytesEndsWith,
     StrRemovePrefix,
     StrRemoveSuffix,
     StrFormat,
@@ -214,6 +217,7 @@ pub enum NativeMethodKind {
     StrRSplit,
     StrPartition,
     StrRPartition,
+    StrCount,
     StrFind,
     StrRFind,
     StrLStrip,
@@ -1077,9 +1081,9 @@ impl Heap {
             | Value::Function(obj)
             | Value::BoundMethod(obj)
             | Value::Cell(obj) => obj.id(),
-            Value::Exception(exception) => self.id_for_immediate(ImmediateKey::Exception(
-                exception.object_id,
-            )),
+            Value::Exception(exception) => {
+                self.id_for_immediate(ImmediateKey::Exception(exception.object_id))
+            }
             Value::ExceptionType(name) => {
                 self.id_for_immediate(ImmediateKey::ExceptionType(name.clone()))
             }
@@ -1273,52 +1277,62 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
 }
 
 fn clear_object_refs(obj: &ObjRef) {
-    match &mut *obj.kind_mut() {
+    let mut kind = obj.kind_mut();
+    let replacement = match &mut *kind {
         Object::List(values) | Object::Tuple(values) => {
             values.clear();
+            None
         }
         Object::Dict(entries) => {
             entries.clear();
+            None
         }
-        Object::DictKeysView(_) => {}
+        Object::DictKeysView(_) => Some(Object::Bytes(Vec::new())),
         Object::Set(values) | Object::FrozenSet(values) => {
             values.clear();
+            None
         }
         Object::Bytes(values) | Object::ByteArray(values) => {
             values.clear();
+            None
         }
-        Object::MemoryView(_) => {}
-        Object::Iterator(iterator) => match &mut iterator.kind {
-            IteratorKind::List(_)
-            | IteratorKind::Tuple(_)
-            | IteratorKind::Dict(_)
-            | IteratorKind::Set(_)
-            | IteratorKind::Bytes(_)
-            | IteratorKind::ByteArray(_)
-            | IteratorKind::MemoryView(_) => {
-                iterator.kind = IteratorKind::Str(String::new());
-                iterator.index = 0;
+        Object::MemoryView(_) => Some(Object::Bytes(Vec::new())),
+        Object::Iterator(iterator) => {
+            match &mut iterator.kind {
+                IteratorKind::List(_)
+                | IteratorKind::Tuple(_)
+                | IteratorKind::Dict(_)
+                | IteratorKind::Set(_)
+                | IteratorKind::Bytes(_)
+                | IteratorKind::ByteArray(_)
+                | IteratorKind::MemoryView(_) => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Str(value) => {
+                    value.clear();
+                    iterator.index = 0;
+                }
+                IteratorKind::Count { .. } => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Range { .. } => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
             }
-            IteratorKind::Str(value) => {
-                value.clear();
-                iterator.index = 0;
-            }
-            IteratorKind::Count { .. } => {
-                iterator.kind = IteratorKind::Str(String::new());
-                iterator.index = 0;
-            }
-            IteratorKind::Range { .. } => {
-                iterator.kind = IteratorKind::Str(String::new());
-                iterator.index = 0;
-            }
-        },
+            None
+        }
         Object::Generator(generator) => {
             generator.started = false;
             generator.running = false;
             generator.closed = true;
+            None
         }
         Object::Module(module) => {
             module.globals.clear();
+            None
         }
         Object::Class(class) => {
             class.bases.clear();
@@ -1326,23 +1340,31 @@ fn clear_object_refs(obj: &ObjRef) {
             class.attrs.clear();
             class.slots = None;
             class.metaclass = None;
+            None
         }
         Object::Instance(instance) => {
             instance.attrs.clear();
+            None
         }
-        Object::Super(_) => {}
+        Object::Super(_) => Some(Object::Bytes(Vec::new())),
         Object::Function(func) => {
             func.defaults.clear();
             func.kwonly_defaults.clear();
             func.closure.clear();
             func.annotations = None;
             func.dict = None;
+            None
         }
-        Object::BoundMethod(_) => {}
-        Object::NativeMethod(_) => {}
+        Object::BoundMethod(_) => Some(Object::Bytes(Vec::new())),
+        Object::NativeMethod(_) => None,
         Object::Cell(cell) => {
             cell.value = None;
+            None
         }
+    };
+
+    if let Some(replacement) = replacement {
+        *kind = replacement;
     }
 }
 
@@ -1806,6 +1828,7 @@ pub enum BuiltinFunction {
     ReFullMatch,
     ReCompile,
     ReEscape,
+    RePatternFindAll,
     OperatorAdd,
     OperatorSub,
     OperatorMul,
@@ -1902,7 +1925,18 @@ pub enum BuiltinFunction {
     TypingTypeVarTuple,
     TypingTypeAliasType,
     InspectIsFunction,
+    InspectIsMethod,
+    InspectIsRoutine,
+    InspectIsMethodDescriptor,
+    InspectIsMethodWrapper,
+    InspectIsTraceback,
+    InspectIsFrame,
+    InspectIsCode,
+    InspectUnwrap,
     InspectSignature,
+    InspectGetModule,
+    InspectGetFile,
+    InspectGetSourceFile,
     InspectIsClass,
     InspectIsModule,
     InspectIsGenerator,
@@ -1952,6 +1986,8 @@ pub enum BuiltinFunction {
     StringIOTell,
     StringIOIter,
     StringIONext,
+    StringIOEnter,
+    StringIOExit,
     DateTimeNow,
     DateToday,
     DateInit,
@@ -2079,6 +2115,9 @@ impl BuiltinFunction {
             | BuiltinFunction::StringIOTell
             | BuiltinFunction::StringIOIter
             | BuiltinFunction::StringIONext
+            | BuiltinFunction::StringIOEnter
+            | BuiltinFunction::StringIOExit
+            | BuiltinFunction::RePatternFindAll
             | BuiltinFunction::CollectionsChainMapInit
             | BuiltinFunction::CollectionsChainMapNewChild
             | BuiltinFunction::CollectionsChainMapRepr
@@ -3120,9 +3159,9 @@ impl BuiltinFunction {
             | BuiltinFunction::StructClassUnpack
             | BuiltinFunction::StructClassIterUnpack
             | BuiltinFunction::StructClassPackInto
-            | BuiltinFunction::StructClassUnpackFrom => {
-                Err(RuntimeError::new("struct.Struct methods require VM context"))
-            }
+            | BuiltinFunction::StructClassUnpackFrom => Err(RuntimeError::new(
+                "struct.Struct methods require VM context",
+            )),
             BuiltinFunction::ImpAcquireLock => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("acquire_lock() expects no arguments"));
@@ -3418,7 +3457,8 @@ impl BuiltinFunction {
                 class
                     .attrs
                     .insert("__name__".to_string(), Value::Str(type_name));
-                let field_tuple = heap.alloc_tuple(fields.iter().cloned().map(Value::Str).collect());
+                let field_tuple =
+                    heap.alloc_tuple(fields.iter().cloned().map(Value::Str).collect());
                 class
                     .attrs
                     .insert("_fields".to_string(), field_tuple.clone());
@@ -3873,7 +3913,18 @@ impl BuiltinFunction {
             | BuiltinFunction::CollectionsDeque
             | BuiltinFunction::CollectionsDefaultDict
             | BuiltinFunction::InspectIsFunction
+            | BuiltinFunction::InspectIsMethod
+            | BuiltinFunction::InspectIsRoutine
+            | BuiltinFunction::InspectIsMethodDescriptor
+            | BuiltinFunction::InspectIsMethodWrapper
+            | BuiltinFunction::InspectIsTraceback
+            | BuiltinFunction::InspectIsFrame
+            | BuiltinFunction::InspectIsCode
+            | BuiltinFunction::InspectUnwrap
             | BuiltinFunction::InspectSignature
+            | BuiltinFunction::InspectGetModule
+            | BuiltinFunction::InspectGetFile
+            | BuiltinFunction::InspectGetSourceFile
             | BuiltinFunction::InspectIsClass
             | BuiltinFunction::InspectIsModule
             | BuiltinFunction::InspectIsGenerator
@@ -4846,15 +4897,20 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method int.bit_length>".to_string()
                     }
                     NativeMethodKind::StrStartsWith => "<bound method str.startswith>".to_string(),
+                    NativeMethodKind::StrEndsWith => "<bound method str.endswith>".to_string(),
                     NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),
                     NativeMethodKind::StrUpper => "<bound method str.upper>".to_string(),
                     NativeMethodKind::StrLower => "<bound method str.lower>".to_string(),
-                    NativeMethodKind::StrCapitalize => {
-                        "<bound method str.capitalize>".to_string()
-                    }
+                    NativeMethodKind::StrCapitalize => "<bound method str.capitalize>".to_string(),
                     NativeMethodKind::StrEncode => "<bound method str.encode>".to_string(),
                     NativeMethodKind::StrDecode => "<bound method str.decode>".to_string(),
                     NativeMethodKind::BytesDecode => "<bound method bytes.decode>".to_string(),
+                    NativeMethodKind::BytesStartsWith => {
+                        "<bound method bytes.startswith>".to_string()
+                    }
+                    NativeMethodKind::BytesEndsWith => {
+                        "<bound method bytes.endswith>".to_string()
+                    }
                     NativeMethodKind::StrRemovePrefix => {
                         "<bound method str.removeprefix>".to_string()
                     }
@@ -4874,6 +4930,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrRSplit => "<bound method str.rsplit>".to_string(),
                     NativeMethodKind::StrPartition => "<bound method str.partition>".to_string(),
                     NativeMethodKind::StrRPartition => "<bound method str.rpartition>".to_string(),
+                    NativeMethodKind::StrCount => "<bound method str.count>".to_string(),
                     NativeMethodKind::StrFind => "<bound method str.find>".to_string(),
                     NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
                     NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
@@ -5134,5 +5191,74 @@ impl RuntimeError {
         Self {
             message: message.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gc_collects_self_referential_dict_keys_view() {
+        let heap = Heap::new();
+        let view = heap.alloc(Object::DictKeysView(DictKeysView::new(
+            heap.alloc(Object::List(Vec::new())),
+        )));
+        if let Object::DictKeysView(data) = &mut *view.kind_mut() {
+            data.dict = view.clone();
+        }
+        drop(view);
+        heap.collect_cycles(&[]);
+        assert_eq!(heap.live_objects_count(), 0);
+    }
+
+    #[test]
+    fn gc_collects_self_referential_memory_view() {
+        let heap = Heap::new();
+        let view = heap.alloc(Object::MemoryView(MemoryViewObject {
+            source: heap.alloc(Object::ByteArray(vec![])),
+        }));
+        if let Object::MemoryView(data) = &mut *view.kind_mut() {
+            data.source = view.clone();
+        }
+        drop(view);
+        heap.collect_cycles(&[]);
+        assert_eq!(heap.live_objects_count(), 0);
+    }
+
+    #[test]
+    fn gc_collects_self_referential_super_object() {
+        let heap = Heap::new();
+        let super_obj = heap.alloc(Object::Super(SuperObject::new(
+            heap.alloc(Object::List(Vec::new())),
+            heap.alloc(Object::Tuple(Vec::new())),
+            heap.alloc(Object::Dict(DictObject::new(Vec::new()))),
+        )));
+        if let Object::Super(data) = &mut *super_obj.kind_mut() {
+            data.start_class = super_obj.clone();
+            data.object = super_obj.clone();
+            data.object_type = super_obj.clone();
+        }
+        drop(super_obj);
+        heap.collect_cycles(&[]);
+        assert_eq!(heap.live_objects_count(), 0);
+    }
+
+    #[test]
+    fn gc_collects_self_referential_bound_method() {
+        let heap = Heap::new();
+        let method = heap.alloc(Object::BoundMethod(BoundMethod::new(
+            heap.alloc(Object::Class(ClassObject::new("Placeholder", Vec::new()))),
+            heap.alloc(Object::Instance(InstanceObject::new(
+                heap.alloc(Object::Class(ClassObject::new("Receiver", Vec::new()))),
+            ))),
+        )));
+        if let Object::BoundMethod(data) = &mut *method.kind_mut() {
+            data.function = method.clone();
+            data.receiver = method.clone();
+        }
+        drop(method);
+        heap.collect_cycles(&[]);
+        assert_eq!(heap.live_objects_count(), 0);
     }
 }
