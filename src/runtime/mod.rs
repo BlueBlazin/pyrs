@@ -4667,6 +4667,18 @@ fn value_to_bytes_with_encoding(
             Object::ByteArray(values) => Ok(values.clone()),
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
+        Value::Instance(obj) => match &*obj.kind() {
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get("__pyrs_bytes_storage__") {
+                    Some(Value::Bytes(storage)) => match &*storage.kind() {
+                        Object::Bytes(values) => Ok(values.clone()),
+                        _ => Err(RuntimeError::new("bytes() unsupported type")),
+                    },
+                    _ => Err(RuntimeError::new("bytes() unsupported type")),
+                }
+            }
+            _ => Err(RuntimeError::new("bytes() unsupported type")),
+        },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => match &*view.source.kind() {
                 Object::Bytes(values) | Object::ByteArray(values) => Ok(values.clone()),
@@ -4885,7 +4897,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
             _ => Value::Str("generator".to_string()),
         },
         Value::Module(_) => Value::Str("module".to_string()),
-        Value::Class(class) => Value::Class(class.clone()),
+        Value::Class(_) => Value::Builtin(BuiltinFunction::Type),
         Value::Instance(instance) => match &*instance.kind() {
             Object::Instance(obj) => Value::Class(obj.class.clone()),
             _ => Value::Str("object".to_string()),

@@ -6286,6 +6286,64 @@ ok = (lst_roundtrip == lst and dct_roundtrip == dct and lst_state is None and dc
 }
 
 #[test]
+fn object_reduce_ex_honors_custom_reduce_tuple_payloads() {
+    let source = r#"class REXSix:
+    def __init__(self, items=None):
+        self.items = [] if items is None else list(items)
+    def append(self, item):
+        self.items.append(item)
+    def __reduce__(self):
+        return type(self), (), None, iter(self.items), None
+
+class REXSeven:
+    def __init__(self, table=None):
+        self.table = {} if table is None else dict(table)
+    def __setitem__(self, key, value):
+        self.table[key] = value
+    def __reduce__(self):
+        return type(self), (), None, None, iter(self.table.items())
+
+six = REXSix([1, 2, 3])
+seven = REXSeven({'a': 1, 'b': 2})
+r6 = object.__reduce_ex__(six, 0)
+r7 = object.__reduce_ex__(seven, 0)
+ctor6, args6, state6, list_items, dict_items6 = r6
+ctor7, args7, state7, list_items7, dict_items = r7
+round6 = ctor6(*args6)
+for item in list_items:
+    round6.append(item)
+round7 = ctor7(*args7)
+for key, value in dict_items:
+    round7[key] = value
+ok = (len(r6) == 5 and len(r7) == 5
+      and state6 is None and state7 is None
+      and dict_items6 is None and list_items7 is None
+      and round6.items == [1, 2, 3]
+      and round7.table == {'a': 1, 'b': 2})
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_subclass_constructor_accepts_payload_and_roundtrips_bytes() {
+    let source = r#"class AuthenticationString(bytes):
+    pass
+
+value = AuthenticationString(b'abc')
+ok = isinstance(value, AuthenticationString) and bytes(value) == b'abc'
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bound_method_doc_lookup_is_supported() {
     let source = "class T:\n    def test_one(self):\n        'doc'\n        return 1\nm = T().test_one\nok = (m.__doc__ == None)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -6376,6 +6434,17 @@ except Exception:
     caught = True
 ok = caught
 "#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn subprocess_args_from_interpreter_flags_returns_list() {
+    let source =
+        "import subprocess\nflags = subprocess._args_from_interpreter_flags()\nok = isinstance(flags, list)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

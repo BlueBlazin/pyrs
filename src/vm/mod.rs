@@ -92,6 +92,7 @@ const SIGNAL_SIGINT: i64 = 2;
 const SIGNAL_SIGTERM: i64 = 15;
 const PY_TPFLAGS_HEAPTYPE: i64 = 1 << 9;
 const LIST_BACKING_STORAGE_ATTR: &str = "__pyrs_list_storage__";
+const BYTES_BACKING_STORAGE_ATTR: &str = "__pyrs_bytes_storage__";
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 
@@ -740,6 +741,9 @@ impl Vm {
                 "getfilesystemencodeerrors".to_string(),
                 Value::Builtin(BuiltinFunction::SysGetFilesystemEncodeErrors),
             );
+            module_data
+                .globals
+                .insert("intern".to_string(), Value::Builtin(BuiltinFunction::Str));
             module_data
                 .globals
                 .insert("audit".to_string(), Value::Builtin(BuiltinFunction::NoOp));
@@ -4078,6 +4082,7 @@ impl Vm {
             &[
                 ("_cleanup", BuiltinFunction::SubprocessCleanup),
                 ("check_call", BuiltinFunction::SubprocessCheckCall),
+                ("_args_from_interpreter_flags", BuiltinFunction::List),
             ],
             vec![
                 ("PIPE", Value::Int(-1)),
@@ -6571,12 +6576,14 @@ impl Vm {
                     Opcode::CompareEq => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(Value::Bool(left == right));
+                        let result = self.compare_eq_runtime(left, right)?;
+                        self.push_value(result);
                     }
                     Opcode::CompareNe => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(Value::Bool(left != right));
+                        let result = self.compare_ne_runtime(left, right)?;
+                        self.push_value(result);
                     }
                     Opcode::CompareLt => {
                         let right = self.pop_value()?;
@@ -9703,8 +9710,11 @@ impl Vm {
                 _ => None,
             },
             Value::Class(class) => match &*class.kind() {
-                Object::Class(class_data) => class_data.metaclass.clone().or(Some(class.clone())),
-                _ => Some(class.clone()),
+                Object::Class(class_data) => class_data
+                    .metaclass
+                    .clone()
+                    .or_else(|| self.default_type_metaclass()),
+                _ => self.default_type_metaclass(),
             },
             Value::Super(super_obj) => match &*super_obj.kind() {
                 Object::Super(data) => Some(data.object_type.clone()),
@@ -9712,6 +9722,16 @@ impl Vm {
             },
             _ => None,
         }
+    }
+
+    fn default_type_metaclass(&self) -> Option<ObjRef> {
+        let Value::Class(object_class) = self.builtins.get("object")? else {
+            return None;
+        };
+        let Object::Class(class_data) = &*object_class.kind() else {
+            return None;
+        };
+        class_data.metaclass.clone()
     }
 
     fn alloc_native_bound_method(&self, kind: NativeMethodKind, receiver: ObjRef) -> Value {
@@ -11219,6 +11239,18 @@ impl Vm {
                                 "exception instance construction failed",
                             ));
                         }
+                    } else if self.class_has_builtin_bytes_base(&class) {
+                        let bytes_value = self.call_builtin(BuiltinFunction::Bytes, args, kwargs)?;
+                        let Value::Bytes(_) = bytes_value else {
+                            return Err(RuntimeError::new("bytes constructor returned non-bytes"));
+                        };
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert(BYTES_BACKING_STORAGE_ATTR.to_string(), bytes_value);
+                        } else {
+                            return Err(RuntimeError::new("bytes instance construction failed"));
+                        }
                     } else if !kwargs.is_empty() || !args.is_empty() {
                         return Err(RuntimeError::new("class constructor takes no arguments"));
                     }
@@ -11373,6 +11405,15 @@ impl Vm {
             })
     }
 
+    fn class_has_builtin_bytes_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "bytes",
+                _ => false,
+            })
+    }
+
     fn alloc_instance_for_class(&mut self, class: &ObjRef) -> ObjRef {
         let instance = match self.heap.alloc_instance(InstanceObject::new(class.clone())) {
             Value::Instance(obj) => obj,
@@ -11383,6 +11424,14 @@ impl Vm {
                 instance_data.attrs.insert(
                     LIST_BACKING_STORAGE_ATTR.to_string(),
                     self.heap.alloc_list(Vec::new()),
+                );
+            }
+        }
+        if self.class_has_builtin_bytes_base(class) {
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data.attrs.insert(
+                    BYTES_BACKING_STORAGE_ATTR.to_string(),
+                    self.heap.alloc_bytes(Vec::new()),
                 );
             }
         }
@@ -18496,14 +18545,21 @@ impl Vm {
         method: &str,
         argument: Value,
     ) -> Result<Option<bool>, RuntimeError> {
-        let method_name = Value::Str(method.to_string());
-        let callable = match self.builtin_getattr(vec![receiver, method_name], HashMap::new()) {
-            Ok(callable) => callable,
-            Err(err) => {
-                if runtime_error_matches_exception(&err.message, "AttributeError") {
-                    return Ok(None);
+        let callable = if method.starts_with("__") && method.ends_with("__") {
+            match self.lookup_bound_special_method(&receiver, method)? {
+                Some(callable) => callable,
+                None => return Ok(None),
+            }
+        } else {
+            let method_name = Value::Str(method.to_string());
+            match self.builtin_getattr(vec![receiver, method_name], HashMap::new()) {
+                Ok(callable) => callable,
+                Err(err) => {
+                    if runtime_error_matches_exception(&err.message, "AttributeError") {
+                        return Ok(None);
+                    }
+                    return Err(err);
                 }
-                return Err(err);
             }
         };
         let result = match self.call_internal(callable, vec![argument], HashMap::new())? {
@@ -18525,6 +18581,46 @@ impl Vm {
             ),
             Err(err) => Err(err),
         }
+    }
+
+    fn compare_eq_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if matches!(left, Value::Instance(_) | Value::Class(_)) {
+            if let Some(result) =
+                self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
+            {
+                return Ok(Value::Bool(result));
+            }
+        }
+        if matches!(right, Value::Instance(_) | Value::Class(_)) {
+            if let Some(result) =
+                self.call_compare_method_bool(right.clone(), "__eq__", left.clone())?
+            {
+                return Ok(Value::Bool(result));
+            }
+        }
+        Ok(Value::Bool(left == right))
+    }
+
+    fn compare_ne_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if matches!(left, Value::Instance(_) | Value::Class(_)) {
+            if let Some(result) =
+                self.call_compare_method_bool(left.clone(), "__ne__", right.clone())?
+            {
+                return Ok(Value::Bool(result));
+            }
+        }
+        if matches!(right, Value::Instance(_) | Value::Class(_)) {
+            if let Some(result) =
+                self.call_compare_method_bool(right.clone(), "__ne__", left.clone())?
+            {
+                return Ok(Value::Bool(result));
+            }
+        }
+        let eq = match self.compare_eq_runtime(left, right)? {
+            Value::Bool(value) => value,
+            _ => false,
+        };
+        Ok(Value::Bool(!eq))
     }
 
     fn compare_le_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
@@ -31049,6 +31145,47 @@ impl Vm {
                 "__reduce_ex__".to_string(),
                 Value::Builtin(BuiltinFunction::ObjectReduceEx),
             );
+            class_data.attrs.insert(
+                "__reduce__".to_string(),
+                Value::Builtin(BuiltinFunction::ObjectReduceEx),
+            );
+        }
+        let type_class = match self.heap.alloc_class(ClassObject::new(
+            "type".to_string(),
+            vec![object_class.clone()],
+        )) {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(type_data) = &mut *type_class.kind_mut() {
+            type_data.mro = vec![type_class.clone(), object_class.clone()];
+            type_data.metaclass = Some(type_class.clone());
+            type_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str("type".to_string()));
+            type_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str("type".to_string()));
+            type_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("builtins".to_string()));
+            type_data.attrs.insert(
+                "__bases__".to_string(),
+                self.heap.alloc_tuple(vec![Value::Class(object_class.clone())]),
+            );
+            type_data.attrs.insert(
+                "__mro__".to_string(),
+                self.heap.alloc_tuple(vec![
+                    Value::Class(type_class.clone()),
+                    Value::Class(object_class.clone()),
+                ]),
+            );
+            type_data
+                .attrs
+                .insert("__flags__".to_string(), Value::Int(0));
+        }
+        if let Object::Class(class_data) = &mut *object_class.kind_mut() {
+            class_data.metaclass = Some(type_class.clone());
         }
         self.builtins
             .insert("object".to_string(), Value::Class(object_class));
@@ -31540,7 +31677,9 @@ impl Vm {
         match base {
             Value::Class(class) => Ok(class),
             Value::ExceptionType(name) => Ok(self.alloc_synthetic_class(&name)),
-            Value::Builtin(BuiltinFunction::Type) => Ok(self.alloc_synthetic_class("type")),
+            Value::Builtin(BuiltinFunction::Type) => self
+                .default_type_metaclass()
+                .ok_or_else(|| RuntimeError::new("class base must be a class object")),
             Value::Builtin(BuiltinFunction::Bool) => Ok(self.alloc_synthetic_class("bool")),
             Value::Builtin(BuiltinFunction::Int) => Ok(self.alloc_synthetic_class("int")),
             Value::Builtin(BuiltinFunction::Float) => Ok(self.alloc_synthetic_class("float")),

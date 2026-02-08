@@ -1,6 +1,65 @@
 use super::super::*;
 
 impl Vm {
+    fn instance_has_non_object_reduce(&self, instance: &ObjRef) -> bool {
+        let class = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return false,
+        };
+        for entry in self.class_mro_entries(&class) {
+            let Object::Class(class_data) = &*entry.kind() else {
+                continue;
+            };
+            let Some(attr) = class_data.attrs.get("__reduce__") else {
+                continue;
+            };
+            return !matches!(
+                attr,
+                Value::Builtin(BuiltinFunction::ObjectReduceEx) if class_data.name == "object"
+            );
+        }
+        false
+    }
+
+    fn object_reduce_ex_custom_reduce(
+        &mut self,
+        value: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Value::Instance(instance) = value else {
+            return Ok(None);
+        };
+        if !self.instance_has_non_object_reduce(instance) {
+            return Ok(None);
+        }
+        let Some(reduce_callable) = self.lookup_bound_special_method(value, "__reduce__")? else {
+            return Ok(None);
+        };
+        let reduced = match self.call_internal(reduce_callable, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(RuntimeError::new("__reduce__ callback failed"));
+            }
+        };
+        if matches!(reduced, Value::Str(_)) {
+            return Ok(Some(reduced));
+        }
+        if let Value::Tuple(obj) = &reduced {
+            let tuple_len = {
+                let Object::Tuple(values) = &*obj.kind() else {
+                    return Err(RuntimeError::new("__reduce__ must return a tuple"));
+                };
+                values.len()
+            };
+            if !(2..=6).contains(&tuple_len) {
+                return Err(RuntimeError::new(
+                    "tuple returned by __reduce__ must contain 2 through 6 elements",
+                ));
+            }
+            return Ok(Some(reduced));
+        }
+        Err(RuntimeError::new("__reduce__ must return a string or tuple"))
+    }
+
     pub(in crate::vm) fn builtin_object_getstate(
         &self,
         args: Vec<Value>,
@@ -102,6 +161,9 @@ impl Vm {
                     return Err(RuntimeError::new("cannot pickle 'Dialect' instances"));
                 }
             }
+        }
+        if let Some(reduced) = self.object_reduce_ex_custom_reduce(&value)? {
+            return Ok(reduced);
         }
 
         let (constructor, constructor_args) = self.reduce_ex_constructor_and_args(&value);
