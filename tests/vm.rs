@@ -1024,6 +1024,17 @@ fn executes_generator_yield_from() {
 }
 
 #[test]
+fn executes_generator_yield_tuple_values() {
+    let source =
+        "def gen():\n    yield 1, 2, 3\ng = gen()\nv = g.__next__()\nok = (v == (1, 2, 3))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_generator_yield_from_send_delegation() {
     let source = "def sub():\n    x = yield 1\n    yield x\n\ndef outer():\n    yield from sub()\n\ng = outer()\na = g.send(None)\nb = g.send(9)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1938,6 +1949,22 @@ ok = (b == b'\x05' and u == 258 and u2 == 0x1234 and rows == [(1,), (2,)] and st
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn struct_helpers_accept_bytes_like_format_values() {
+    let source = r#"import _struct as struct
+fmt = b"<4s4H2LH"
+a = struct.calcsize(fmt)
+b = struct.calcsize(memoryview(fmt))
+packed = struct.pack(fmt, b"ABCD", 1, 2, 3, 4, 5, 6, 7)
+ok = (a == 22 and b == 22 and isinstance(packed, bytes))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
@@ -5210,6 +5237,16 @@ fn executes_str_encode_decode_and_unicode_subclass_handling() {
 }
 
 #[test]
+fn executes_unicode_escape_codec_variants() {
+    let source = "text = '\\\\x\\n\\t\\u263A'\nraw = text.encode('raw-unicode-escape')\nuni = text.encode('unicode-escape')\nraw_roundtrip = raw.decode('raw-unicode-escape')\nuni_roundtrip = uni.decode('unicode-escape')\nok = (raw == b'\\\\x\\n\\t\\\\u263a' and uni == b'\\\\\\\\x\\\\n\\\\t\\\\u263a' and raw_roundtrip == text and uni_roundtrip == text)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_itertools_batched_builtin() {
     let source = "import itertools\nchunks = itertools.batched([1, 2, 3, 4, 5], 2)\nok = chunks == [(1, 2), (3, 4), (5,)]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -5485,6 +5522,27 @@ fn executes_set_and_frozenset_union_operator() {
 fn executes_sorted_on_tuple_items() {
     let source =
         "items = {'b': 2, 'a': 1}.items()\nout = sorted(items)\nok = out == [('a', 1), ('b', 2)]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sorted_and_list_sort_use_instance_lt_methods() {
+    let source = "\
+class K:
+    def __init__(self, x):
+        self.x = x
+    def __lt__(self, other):
+        return self.x < other.x
+
+vals = [K(3), K(1), K(2)]
+sorted_vals = sorted(vals)
+vals.sort()
+ok = (sorted_vals[0].x, sorted_vals[1].x, sorted_vals[2].x) == (1, 2, 3) and (vals[0].x, vals[1].x, vals[2].x) == (1, 2, 3)
+";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -6593,6 +6651,18 @@ ok = caught
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_error_is_exception_subclass() {
+    let source = r#"import _csv
+ok = issubclass(_csv.Error, Exception)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
