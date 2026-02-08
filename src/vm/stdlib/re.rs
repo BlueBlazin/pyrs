@@ -610,6 +610,158 @@ impl Vm {
         }
     }
 
+    pub(in crate::vm) fn builtin_re_pattern_finditer(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "Pattern.finditer() expects string and optional pos/endpos",
+            ));
+        }
+        let pattern_arg = args.remove(0);
+        let receiver = self.receiver_from_value(&pattern_arg)?;
+        let pattern = re_pattern_from_compiled_module(&receiver)?;
+        let target = args.remove(0);
+        let groupindex = self.re_match_groupindex_from_pattern_arg(&pattern_arg);
+
+        let clamp_index = |len: usize, raw: i64| -> usize {
+            if raw < 0 {
+                (len as i64 + raw).max(0) as usize
+            } else {
+                (raw as usize).min(len)
+            }
+        };
+
+        let match_values = match target {
+            Value::Str(text) => {
+                if !matches!(pattern, RePatternValue::Str(_)) {
+                    return Err(RuntimeError::new(
+                        "cannot use a bytes pattern on a string-like object",
+                    ));
+                }
+                let raw_pos = if let Some(value) = args.first() {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let raw_end = if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    text.len() as i64
+                };
+                let mut start = clamp_index(text.len(), raw_pos);
+                let mut stop = clamp_index(text.len(), raw_end);
+                while start > 0 && !text.is_char_boundary(start) {
+                    start -= 1;
+                }
+                while stop > 0 && !text.is_char_boundary(stop) {
+                    stop -= 1;
+                }
+                if stop < start {
+                    stop = start;
+                }
+
+                let source = Value::Str(text.clone());
+                let mut out = Vec::new();
+                let mut cursor = start;
+                while cursor <= stop {
+                    let segment = Value::Str(text[cursor..stop].to_string());
+                    let Some(mut detail) = re_match_details(&pattern, &segment, ReMode::Search)?
+                    else {
+                        break;
+                    };
+                    detail.start += cursor;
+                    detail.end += cursor;
+                    for capture in &mut detail.captures {
+                        if let Some((capture_start, capture_end)) = capture.as_mut() {
+                            *capture_start += cursor;
+                            *capture_end += cursor;
+                        }
+                    }
+                    let absolute_start = detail.start;
+                    let absolute_end = detail.end;
+                    out.push(self.alloc_re_match_value(source.clone(), detail, groupindex.clone())?);
+                    if absolute_end == absolute_start {
+                        if absolute_end >= stop {
+                            break;
+                        }
+                        let mut next = absolute_end + 1;
+                        while next < stop && !text.is_char_boundary(next) {
+                            next += 1;
+                        }
+                        cursor = next;
+                    } else {
+                        cursor = absolute_end;
+                    }
+                }
+                out
+            }
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                if !matches!(pattern, RePatternValue::Bytes(_)) {
+                    return Err(RuntimeError::new(
+                        "cannot use a string pattern on a bytes-like object",
+                    ));
+                }
+                let bytes = bytes_like_from_value(target)?;
+                let raw_pos = if let Some(value) = args.first() {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let raw_end = if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    bytes.len() as i64
+                };
+                let start = clamp_index(bytes.len(), raw_pos);
+                let mut stop = clamp_index(bytes.len(), raw_end);
+                if stop < start {
+                    stop = start;
+                }
+
+                let source = self.heap.alloc_bytes(bytes.clone());
+                let mut out = Vec::new();
+                let mut cursor = start;
+                while cursor <= stop {
+                    let segment = self.heap.alloc_bytes(bytes[cursor..stop].to_vec());
+                    let Some(mut detail) = re_match_details(&pattern, &segment, ReMode::Search)?
+                    else {
+                        break;
+                    };
+                    detail.start += cursor;
+                    detail.end += cursor;
+                    for capture in &mut detail.captures {
+                        if let Some((capture_start, capture_end)) = capture.as_mut() {
+                            *capture_start += cursor;
+                            *capture_end += cursor;
+                        }
+                    }
+                    let absolute_start = detail.start;
+                    let absolute_end = detail.end;
+                    out.push(self.alloc_re_match_value(source.clone(), detail, groupindex.clone())?);
+                    if absolute_end == absolute_start {
+                        if absolute_end >= stop {
+                            break;
+                        }
+                        cursor = absolute_end + 1;
+                    } else {
+                        cursor = absolute_end;
+                    }
+                }
+                out
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    "Pattern.finditer() expects string or bytes-like object",
+                ));
+            }
+        };
+
+        self.builtin_iter(vec![self.heap.alloc_list(match_values)], HashMap::new())
+    }
+
     pub(in crate::vm) fn builtin_re_match_mode(
         &mut self,
         args: Vec<Value>,

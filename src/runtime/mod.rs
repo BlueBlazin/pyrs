@@ -188,6 +188,7 @@ pub enum NativeMethodKind {
     ListRemove,
     ListPop,
     ListCount,
+    ListIndex,
     ListReverse,
     ListSort,
     IntToBytes,
@@ -203,6 +204,7 @@ pub enum NativeMethodKind {
     BytesDecode,
     BytesStartsWith,
     BytesEndsWith,
+    BytesFind,
     StrRemovePrefix,
     StrRemoveSuffix,
     StrFormat,
@@ -1612,6 +1614,17 @@ impl Eq for Value {}
 pub enum BuiltinFunction {
     Print,
     Repr,
+    Ascii,
+    DictTypeRepr,
+    ListTypeRepr,
+    TupleTypeRepr,
+    SetTypeRepr,
+    FrozenSetTypeRepr,
+    StrTypeRepr,
+    BytesTypeRepr,
+    ByteArrayTypeRepr,
+    MappingProxyTypeRepr,
+    SimpleNamespaceTypeRepr,
     NoOp,
     Len,
     Range,
@@ -1855,6 +1868,7 @@ pub enum BuiltinFunction {
     PyLongDecStrToIntInner,
     CodecsEncode,
     CodecsDecode,
+    CodecsEscapeDecode,
     CodecsLookup,
     CodecsRegister,
     UnicodedataNormalize,
@@ -1864,6 +1878,7 @@ pub enum BuiltinFunction {
     ReCompile,
     ReEscape,
     RePatternFindAll,
+    RePatternFindIter,
     OperatorAdd,
     OperatorSub,
     OperatorMul,
@@ -1913,10 +1928,18 @@ pub enum BuiltinFunction {
     FunctoolsLruCache,
     CollectionsCounter,
     CollectionsDeque,
+    CollectionsOrderedDict,
     CollectionsChainMapInit,
     CollectionsChainMapNewChild,
     CollectionsChainMapRepr,
     CollectionsChainMapItems,
+    CollectionsOrderedDictTypeRepr,
+    CollectionsDefaultDictTypeRepr,
+    CollectionsCounterTypeRepr,
+    CollectionsDequeTypeRepr,
+    CollectionsUserDictTypeRepr,
+    CollectionsUserListTypeRepr,
+    CollectionsUserStringTypeRepr,
     CollectionsNamedTuple,
     CollectionsNamedTupleMake,
     CollectionsDefaultDict,
@@ -2157,6 +2180,34 @@ impl BuiltinFunction {
                 }
                 Ok(Value::Str(format_repr(&args[0])))
             }
+            BuiltinFunction::Ascii => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("ascii() expects one argument"));
+                }
+                Ok(Value::Str(format_ascii(&args[0])))
+            }
+            BuiltinFunction::DictTypeRepr
+            | BuiltinFunction::ListTypeRepr
+            | BuiltinFunction::TupleTypeRepr
+            | BuiltinFunction::SetTypeRepr
+            | BuiltinFunction::FrozenSetTypeRepr
+            | BuiltinFunction::StrTypeRepr
+            | BuiltinFunction::BytesTypeRepr
+            | BuiltinFunction::ByteArrayTypeRepr
+            | BuiltinFunction::MappingProxyTypeRepr
+            | BuiltinFunction::SimpleNamespaceTypeRepr
+            | BuiltinFunction::CollectionsOrderedDictTypeRepr
+            | BuiltinFunction::CollectionsDefaultDictTypeRepr
+            | BuiltinFunction::CollectionsCounterTypeRepr
+            | BuiltinFunction::CollectionsDequeTypeRepr
+            | BuiltinFunction::CollectionsUserDictTypeRepr
+            | BuiltinFunction::CollectionsUserListTypeRepr
+            | BuiltinFunction::CollectionsUserStringTypeRepr => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("__repr__() expects one argument"));
+                }
+                Ok(Value::Str(format_repr(&args[0])))
+            }
             BuiltinFunction::NoOp => Ok(Value::None),
             BuiltinFunction::StringIOInit
             | BuiltinFunction::StringIOWrite
@@ -2184,6 +2235,7 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOExit
             | BuiltinFunction::BytesIOClose
             | BuiltinFunction::RePatternFindAll
+            | BuiltinFunction::RePatternFindIter
             | BuiltinFunction::CollectionsChainMapInit
             | BuiltinFunction::CollectionsChainMapNewChild
             | BuiltinFunction::CollectionsChainMapRepr
@@ -2336,7 +2388,7 @@ impl BuiltinFunction {
                  -> Result<Value, RuntimeError> {
                     let trimmed = text.trim();
                     if trimmed.is_empty() {
-                        return Err(RuntimeError::new("int() invalid literal"));
+                        return Err(RuntimeError::new("invalid literal for int()"));
                     }
                     let (is_negative, body) = if let Some(rest) = trimmed.strip_prefix('-') {
                         (true, rest)
@@ -2346,7 +2398,7 @@ impl BuiltinFunction {
                         (false, trimmed)
                     };
                     if body.is_empty() {
-                        return Err(RuntimeError::new("int() invalid literal"));
+                        return Err(RuntimeError::new("invalid literal for int()"));
                     }
 
                     let mut base = explicit_base.unwrap_or(10);
@@ -2408,18 +2460,18 @@ impl BuiltinFunction {
                     }
 
                     let normalized = normalize_int_digits_for_base(digits, base as u32, saw_prefix)
-                        .ok_or_else(|| RuntimeError::new("int() invalid literal"))?;
+                        .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
                     if explicit_base == Some(0)
                         && !saw_prefix
                         && normalized.len() > 1
                         && normalized.starts_with('0')
                         && normalized.chars().any(|ch| ch != '0')
                     {
-                        return Err(RuntimeError::new("int() invalid literal"));
+                        return Err(RuntimeError::new("invalid literal for int()"));
                     }
 
                     let mut parsed = BigInt::from_str_radix(&normalized, base as u32)
-                        .ok_or_else(|| RuntimeError::new("int() invalid literal"))?;
+                        .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
                     if is_negative {
                         parsed = parsed.negated();
                     }
@@ -2459,7 +2511,7 @@ impl BuiltinFunction {
                         }
                         let truncated = value.trunc();
                         let bigint = BigInt::from_f64_integral(truncated)
-                            .ok_or_else(|| RuntimeError::new("int() invalid literal"))?;
+                            .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
                         Ok(match bigint.to_i64() {
                             Some(value) => Value::Int(value),
                             None => Value::BigInt(bigint),
@@ -2469,7 +2521,7 @@ impl BuiltinFunction {
                     Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
                         Object::Bytes(bytes) | Object::ByteArray(bytes) => {
                             let text = std::str::from_utf8(bytes)
-                                .map_err(|_| RuntimeError::new("int() invalid literal"))?;
+                                .map_err(|_| RuntimeError::new("invalid literal for int()"))?;
                             parse_with_base(text, explicit_base)
                         }
                         _ => Err(RuntimeError::new("int() unsupported type")),
@@ -2783,7 +2835,7 @@ impl BuiltinFunction {
                     _ => Err(RuntimeError::new("tuple() unsupported type")),
                 }
             }
-            BuiltinFunction::Dict => {
+            BuiltinFunction::Dict | BuiltinFunction::CollectionsOrderedDict => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new("dict() expects at most one argument"));
                 }
@@ -4015,6 +4067,7 @@ impl BuiltinFunction {
             | BuiltinFunction::PyLongDecStrToIntInner
             | BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
+            | BuiltinFunction::CodecsEscapeDecode
             | BuiltinFunction::CodecsLookup
             | BuiltinFunction::CodecsRegister
             | BuiltinFunction::UnicodedataNormalize
@@ -4867,25 +4920,49 @@ fn format_float(value: f64) -> String {
     text
 }
 
+fn format_complex_component(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+        return (value as i64).to_string();
+    }
+    format_float(value)
+}
+
+fn format_complex(real: f64, imag: f64) -> String {
+    if real == 0.0 {
+        return format!("{}j", format_complex_component(imag));
+    }
+    let sign = if imag.is_sign_negative() { "-" } else { "+" };
+    let imag_abs = if imag.is_sign_negative() { -imag } else { imag };
+    format!(
+        "({}{}{}j)",
+        format_complex_component(real),
+        sign,
+        format_complex_component(imag_abs)
+    )
+}
+
 fn format_bytes(values: &[u8], mutable: bool) -> String {
     let mut out = String::new();
     if mutable {
         out.push_str("bytearray(");
     }
+    let use_double_quotes = values.contains(&b'\'') && !values.contains(&b'"');
+    let quote = if use_double_quotes { '"' } else { '\'' };
     out.push('b');
-    out.push('\'');
+    out.push(quote);
     for byte in values {
         match *byte {
             b'\n' => out.push_str("\\n"),
             b'\r' => out.push_str("\\r"),
             b'\t' => out.push_str("\\t"),
             b'\\' => out.push_str("\\\\"),
-            b'\'' => out.push_str("\\'"),
+            b'\'' if quote == '\'' => out.push_str("\\'"),
+            b'"' if quote == '"' => out.push_str("\\\""),
             32..=126 => out.push(*byte as char),
             _ => out.push_str(&format!("\\x{:02x}", byte)),
         }
     }
-    out.push('\'');
+    out.push(quote);
     if mutable {
         out.push(')');
     }
@@ -4905,13 +4982,7 @@ pub fn format_value(value: &Value) -> String {
         Value::Int(value) => value.to_string(),
         Value::BigInt(value) => value.to_string(),
         Value::Float(value) => format_float(*value),
-        Value::Complex { real, imag } => {
-            if *real == 0.0 {
-                format!("{}j", format_float(*imag))
-            } else {
-                format!("({}+{}j)", format_float(*real), format_float(*imag))
-            }
-        }
+        Value::Complex { real, imag } => format_complex(*real, *imag),
         Value::Str(value) => value.clone(),
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => {
@@ -5055,6 +5126,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
                     NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
+                    NativeMethodKind::ListIndex => "<bound method list.index>".to_string(),
                     NativeMethodKind::ListReverse => "<bound method list.reverse>".to_string(),
                     NativeMethodKind::ListSort => "<bound method list.sort>".to_string(),
                     NativeMethodKind::IntToBytes => "<bound method int.to_bytes>".to_string(),
@@ -5076,6 +5148,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::BytesEndsWith => {
                         "<bound method bytes.endswith>".to_string()
                     }
+                    NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
                     NativeMethodKind::StrRemovePrefix => {
                         "<bound method str.removeprefix>".to_string()
                     }
@@ -5199,16 +5272,23 @@ fn format_repr_string(value: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if c.is_control() => {
-                for escaped in c.escape_default() {
-                    out.push(escaped);
-                }
-            }
+            c if c.is_control() => append_python_char_escape(&mut out, c),
             c => out.push(c),
         }
     }
     out.push('\'');
     out
+}
+
+fn append_python_char_escape(out: &mut String, ch: char) {
+    let code = ch as u32;
+    if code <= 0xFF {
+        out.push_str(&format!("\\x{code:02x}"));
+    } else if code <= 0xFFFF {
+        out.push_str(&format!("\\u{code:04x}"));
+    } else {
+        out.push_str(&format!("\\U{code:08x}"));
+    }
 }
 
 pub fn format_repr(value: &Value) -> String {
@@ -5285,8 +5365,34 @@ pub fn format_repr(value: &Value) -> String {
             }
             _ => "<frozenset>".to_string(),
         },
+        Value::Instance(obj) => match &*obj.kind() {
+            Object::Instance(instance_data) => {
+                if let Object::Class(class_data) = &*instance_data.class.kind() {
+                    if class_data.name == "StackObject" {
+                        if let Some(Value::Str(name)) = instance_data.attrs.get("name") {
+                            return name.clone();
+                        }
+                    }
+                }
+                format_value(value)
+            }
+            _ => format_value(value),
+        },
         _ => format_value(value),
     }
+}
+
+pub fn format_ascii(value: &Value) -> String {
+    let repr = format_repr(value);
+    let mut out = String::with_capacity(repr.len());
+    for ch in repr.chars() {
+        if ch.is_ascii() {
+            out.push(ch);
+            continue;
+        }
+        append_python_char_escape(&mut out, ch);
+    }
+    out
 }
 
 fn is_truthy_value(value: &Value) -> bool {

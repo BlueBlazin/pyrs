@@ -1048,7 +1048,7 @@ impl Parser {
             return Ok((self.make_expr(start, ExprKind::Yield { value: None }), pos));
         }
 
-        let (value, next) = self.parse_if_expr(pos)?;
+        let (value, next) = self.parse_expr_with_tuple_tail(pos)?;
         Ok((
             self.make_expr(
                 start,

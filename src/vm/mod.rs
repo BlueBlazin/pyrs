@@ -1960,6 +1960,7 @@ impl Vm {
             &[
                 ("encode", BuiltinFunction::CodecsEncode),
                 ("decode", BuiltinFunction::CodecsDecode),
+                ("escape_decode", BuiltinFunction::CodecsEscapeDecode),
                 ("lookup", BuiltinFunction::CodecsLookup),
                 ("register", BuiltinFunction::CodecsRegister),
             ],
@@ -2504,6 +2505,69 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::CollectionsChainMapItems),
             );
         }
+        let user_dict_class = match self
+            .heap
+            .alloc_class(ClassObject::new("UserDict".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *user_dict_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserDictTypeRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserDictTypeRepr),
+            );
+        }
+        let user_list_class = match self
+            .heap
+            .alloc_class(ClassObject::new("UserList".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *user_list_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserListTypeRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserListTypeRepr),
+            );
+        }
+        let user_string_class = match self
+            .heap
+            .alloc_class(ClassObject::new("UserString".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *user_string_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserStringTypeRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserStringTypeRepr),
+            );
+        }
         self.install_builtin_module(
             "collections",
             &[
@@ -2512,12 +2576,17 @@ impl Vm {
                 ("namedtuple", BuiltinFunction::CollectionsNamedTuple),
                 ("defaultdict", BuiltinFunction::CollectionsDefaultDict),
                 ("_count_elements", BuiltinFunction::CollectionsCountElements),
-                ("OrderedDict", BuiltinFunction::Dict),
-                ("UserDict", BuiltinFunction::Dict),
-                ("UserList", BuiltinFunction::List),
-                ("UserString", BuiltinFunction::Str),
             ],
-            vec![("ChainMap", Value::Class(chain_map_class))],
+            vec![
+                ("ChainMap", Value::Class(chain_map_class)),
+                (
+                    "OrderedDict",
+                    Value::Builtin(BuiltinFunction::CollectionsOrderedDict),
+                ),
+                ("UserDict", Value::Class(user_dict_class)),
+                ("UserList", Value::Class(user_list_class)),
+                ("UserString", Value::Class(user_string_class)),
+            ],
         );
         self.install_builtin_module(
             "collections.abc",
@@ -2657,11 +2726,14 @@ impl Vm {
             if let Object::Class(class_data) = &mut *class_obj.kind_mut() {
                 class_data.attrs.insert(
                     "__repr__".to_string(),
-                    Value::Builtin(BuiltinFunction::Repr),
+                    Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
                 );
                 class_data
                     .attrs
-                    .insert("__str__".to_string(), Value::Builtin(BuiltinFunction::Repr));
+                    .insert(
+                        "__str__".to_string(),
+                        Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
+                    );
             }
         }
         self.install_builtin_module(
@@ -6509,22 +6581,26 @@ impl Vm {
                     Opcode::CompareLt => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(compare_lt(left, right)?);
+                        let result = self.compare_lt_runtime(left, right)?;
+                        self.push_value(result);
                     }
                     Opcode::CompareLe => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(compare_le(left, right)?);
+                        let result = self.compare_le_runtime(left, right)?;
+                        self.push_value(result);
                     }
                     Opcode::CompareGt => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(compare_gt(left, right)?);
+                        let result = self.compare_gt_runtime(left, right)?;
+                        self.push_value(result);
                     }
                     Opcode::CompareGe => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(compare_ge(left, right)?);
+                        let result = self.compare_ge_runtime(left, right)?;
+                        self.push_value(result);
                     }
                     Opcode::CompareIn => {
                         let right = self.pop_value()?;
@@ -6870,9 +6946,26 @@ impl Vm {
                                         self.push_value(Value::MemoryView(obj));
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new(
-                                            "store subscript unsupported type",
-                                        ));
+                                        let target_value = target.clone();
+                                        if let Some(setitem) =
+                                            self.lookup_bound_special_method(&target, "__setitem__")?
+                                        {
+                                            match self.call_internal(
+                                                setitem,
+                                                vec![index, value],
+                                                HashMap::new(),
+                                            )? {
+                                                InternalCallOutcome::Value(_) => {}
+                                                InternalCallOutcome::CallerExceptionHandled => {
+                                                    return Ok(None);
+                                                }
+                                            }
+                                            self.push_value(target_value);
+                                        } else {
+                                            return Err(RuntimeError::new(
+                                                "store subscript unsupported type",
+                                            ));
+                                        }
                                     }
                                 },
                             },
@@ -6881,12 +6974,26 @@ impl Vm {
                     Opcode::DeleteSubscript => {
                         let index = self.pop_value()?;
                         let target = self.pop_value()?;
-                        match index {
-                            Value::Slice { .. } => {
-                                return Err(RuntimeError::new("slice deletion not supported"));
-                            }
-                            index => match target {
-                                Value::List(obj) => {
+                        match target {
+                            Value::List(obj) => match index {
+                                Value::Slice { lower, upper, step } => {
+                                    if let Object::List(values) = &mut *obj.kind_mut() {
+                                        let step_value = step.unwrap_or(1);
+                                        if step_value == 1 {
+                                            let (start, stop) =
+                                                slice_bounds_for_step_one(values.len(), lower, upper);
+                                            values.drain(start..stop);
+                                        } else {
+                                            let mut indices =
+                                                slice_indices(values.len(), lower, upper, step)?;
+                                            indices.sort_unstable();
+                                            for idx in indices.into_iter().rev() {
+                                                values.remove(idx);
+                                            }
+                                        }
+                                    }
+                                }
+                                index => {
                                     if let Object::List(values) = &mut *obj.kind_mut() {
                                         let mut idx = value_to_int(index)? as isize;
                                         if idx < 0 {
@@ -6900,31 +7007,53 @@ impl Vm {
                                         values.remove(idx as usize);
                                     }
                                 }
-                                Value::Dict(obj) => {
-                                    ensure_hashable(&index)?;
-                                    if dict_remove_value(&obj, &index).is_none() {
-                                        return Err(RuntimeError::new("key not found"));
-                                    }
-                                }
-                                Value::ByteArray(obj) => {
-                                    if let Object::ByteArray(values) = &mut *obj.kind_mut() {
-                                        let mut idx = value_to_int(index)? as isize;
-                                        if idx < 0 {
-                                            idx += values.len() as isize;
-                                        }
-                                        if idx < 0 || idx as usize >= values.len() {
-                                            return Err(RuntimeError::new("index out of range"));
-                                        }
-                                        values.remove(idx as usize);
-                                    }
-                                }
-                                _ => {
-                                    return Err(RuntimeError::new(
-                                        "subscript deletion unsupported type",
-                                    ));
-                                }
                             },
-                        }
+                            target => match index {
+                                Value::Slice { .. } => {
+                                    return Err(RuntimeError::new("slice deletion not supported"));
+                                }
+                                index => match target {
+                                    Value::Dict(obj) => {
+                                        ensure_hashable(&index)?;
+                                        if dict_remove_value(&obj, &index).is_none() {
+                                            return Err(RuntimeError::new("key not found"));
+                                        }
+                                    }
+                                    Value::ByteArray(obj) => {
+                                        if let Object::ByteArray(values) = &mut *obj.kind_mut() {
+                                            let mut idx = value_to_int(index)? as isize;
+                                            if idx < 0 {
+                                                idx += values.len() as isize;
+                                            }
+                                            if idx < 0 || idx as usize >= values.len() {
+                                                return Err(RuntimeError::new("index out of range"));
+                                            }
+                                            values.remove(idx as usize);
+                                        }
+                                    }
+                                    _ => {
+                                        if let Some(delitem) = self
+                                            .lookup_bound_special_method(&target, "__delitem__")?
+                                        {
+                                            match self.call_internal(
+                                                delitem,
+                                                vec![index],
+                                                HashMap::new(),
+                                            )? {
+                                                InternalCallOutcome::Value(_) => {}
+                                                InternalCallOutcome::CallerExceptionHandled => {
+                                                    return Ok(None);
+                                                }
+                                            }
+                                        } else {
+                                            return Err(RuntimeError::new(
+                                                "subscript deletion unsupported type",
+                                            ));
+                                        }
+                                    }
+                                },
+                            },
+                        };
                     }
                     Opcode::MakeFunction => {
                         let idx = instr
@@ -9775,6 +9904,7 @@ impl Vm {
     fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
         match builtin {
             BuiltinFunction::Type => "type",
+            BuiltinFunction::Ascii => "ascii",
             BuiltinFunction::Bool => "bool",
             BuiltinFunction::Int => "int",
             BuiltinFunction::Float => "float",
@@ -9782,6 +9912,7 @@ impl Vm {
             BuiltinFunction::List => "list",
             BuiltinFunction::Tuple => "tuple",
             BuiltinFunction::Dict => "dict",
+            BuiltinFunction::CollectionsOrderedDict => "OrderedDict",
             BuiltinFunction::Set => "set",
             BuiltinFunction::FrozenSet => "frozenset",
             BuiltinFunction::Bytes => "bytes",
@@ -9878,6 +10009,55 @@ impl Vm {
             "hex" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatHex))
             }
+            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Dict => {
+                Ok(Value::Builtin(BuiltinFunction::DictTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::List => {
+                Ok(Value::Builtin(BuiltinFunction::ListTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Tuple => {
+                Ok(Value::Builtin(BuiltinFunction::TupleTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Set => {
+                Ok(Value::Builtin(BuiltinFunction::SetTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::FrozenSet => {
+                Ok(Value::Builtin(BuiltinFunction::FrozenSetTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Str => {
+                Ok(Value::Builtin(BuiltinFunction::StrTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Bytes => {
+                Ok(Value::Builtin(BuiltinFunction::BytesTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::ByteArray => {
+                Ok(Value::Builtin(BuiltinFunction::ByteArrayTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__"
+                if builtin == BuiltinFunction::TypesMappingProxy =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::MappingProxyTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__"
+                if builtin == BuiltinFunction::CollectionsDefaultDict =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::CollectionsDefaultDictTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__"
+                if builtin == BuiltinFunction::CollectionsOrderedDict =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::CollectionsOrderedDictTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__"
+                if builtin == BuiltinFunction::CollectionsCounter =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::CollectionsCounterTypeRepr))
+            }
+            "__repr__" | "__str__" | "__format__"
+                if builtin == BuiltinFunction::CollectionsDeque =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::CollectionsDequeTypeRepr))
+            }
             "__repr__" | "__str__" | "__format__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
             "__reduce_ex__" => Ok(Value::Builtin(BuiltinFunction::ObjectReduceEx)),
             "bit_length" if builtin == BuiltinFunction::Int => {
@@ -9916,6 +10096,7 @@ impl Vm {
             "remove" => NativeMethodKind::ListRemove,
             "pop" => NativeMethodKind::ListPop,
             "count" => NativeMethodKind::ListCount,
+            "index" => NativeMethodKind::ListIndex,
             "reverse" => NativeMethodKind::ListReverse,
             "sort" => NativeMethodKind::ListSort,
             _ => {
@@ -10015,6 +10196,7 @@ impl Vm {
             "decode" => NativeMethodKind::BytesDecode,
             "startswith" => NativeMethodKind::BytesStartsWith,
             "endswith" => NativeMethodKind::BytesEndsWith,
+            "find" => NativeMethodKind::BytesFind,
             _ => {
                 return Err(RuntimeError::new(format!(
                     "bytes has no attribute '{}'",
@@ -11524,6 +11706,7 @@ impl Vm {
                 "fullmatch" => Some(NativeMethodKind::RePatternFullMatch),
                 "sub" => Some(NativeMethodKind::RePatternSub),
                 "findall" => Some(NativeMethodKind::Builtin(BuiltinFunction::RePatternFindAll)),
+                "finditer" => Some(NativeMethodKind::Builtin(BuiltinFunction::RePatternFindIter)),
                 _ => None,
             };
             if let Some(kind) = kind {
@@ -12216,6 +12399,46 @@ impl Vm {
                 let count = values.iter().filter(|value| **value == target).count() as i64;
                 Ok(NativeCallResult::Value(Value::Int(count)))
             }
+            NativeMethodKind::ListIndex => {
+                if !(1..=3).contains(&args.len()) {
+                    return Err(RuntimeError::new(
+                        "list.index() expects one to three arguments",
+                    ));
+                }
+                let target = args.remove(0);
+                let receiver_kind = receiver.kind();
+                let Object::List(values) = &*receiver_kind else {
+                    return Err(RuntimeError::new("list.index() receiver must be list"));
+                };
+                let len = values.len() as i64;
+                let mut start = if args.is_empty() {
+                    0
+                } else {
+                    value_to_int(args.remove(0))?
+                };
+                let mut stop = if args.is_empty() {
+                    len
+                } else {
+                    value_to_int(args.remove(0))?
+                };
+                if start < 0 {
+                    start += len;
+                }
+                if stop < 0 {
+                    stop += len;
+                }
+                start = start.clamp(0, len);
+                stop = stop.clamp(0, len);
+                if stop < start {
+                    stop = start;
+                }
+                for idx in (start as usize)..(stop as usize) {
+                    if values[idx] == target {
+                        return Ok(NativeCallResult::Value(Value::Int(idx as i64)));
+                    }
+                }
+                Err(RuntimeError::new("list.index(x): x not in list"))
+            }
             NativeMethodKind::ListReverse => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("list.reverse() expects no arguments"));
@@ -12301,11 +12524,13 @@ impl Vm {
                     keyed.into_iter().map(|(value, _)| value).collect()
                 } else {
                     let mut compare_error: Option<RuntimeError> = None;
-                    working.sort_by(|left, right| match compare_order(left.clone(), right.clone()) {
-                        Ok(ordering) => ordering,
-                        Err(err) => {
-                            compare_error = Some(err);
-                            Ordering::Equal
+                    working.sort_by(|left, right| {
+                        match self.compare_order_with_fallback(left.clone(), right.clone()) {
+                            Ok(ordering) => ordering,
+                            Err(err) => {
+                                compare_error = Some(err);
+                                Ordering::Equal
+                            }
                         }
                     });
                     if let Some(err) = compare_error {
@@ -12705,6 +12930,51 @@ impl Vm {
                     }
                 };
                 Ok(NativeCallResult::Value(Value::Bool(matches)))
+            }
+            NativeMethodKind::BytesFind => {
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "find() expects sub, optional start, optional end",
+                    ));
+                }
+                let bytes = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(value) => bytes_like_from_value(value.clone())?,
+                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let needle = bytes_like_from_value(args.remove(0))?;
+                let len = bytes.len() as i64;
+                let mut start = if let Some(value) = args.first() {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let mut end = if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    len
+                };
+                if start < 0 {
+                    start += len;
+                }
+                if end < 0 {
+                    end += len;
+                }
+                start = start.clamp(0, len);
+                end = end.clamp(0, len);
+                if end < start {
+                    return Ok(NativeCallResult::Value(Value::Int(-1)));
+                }
+                let haystack = &bytes[start as usize..end as usize];
+                let found = if needle.is_empty() {
+                    Some(0usize)
+                } else {
+                    find_bytes_subslice(haystack, &needle)
+                };
+                let index = found.map(|idx| idx as i64 + start).unwrap_or(-1);
+                Ok(NativeCallResult::Value(Value::Int(index)))
             }
             NativeMethodKind::StrRemovePrefix => {
                 if args.len() != 1 {
@@ -14974,6 +15244,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         match builtin {
+            BuiltinFunction::Print => self.builtin_print(args, kwargs),
+            BuiltinFunction::Repr => self.builtin_repr(args, kwargs),
+            BuiltinFunction::Ascii => self.builtin_ascii(args, kwargs),
             BuiltinFunction::Len => self.builtin_len(args, kwargs),
             BuiltinFunction::Locals => self.builtin_locals(args, kwargs),
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
@@ -15238,6 +15511,7 @@ impl Vm {
             }
             BuiltinFunction::CodecsEncode => self.builtin_codecs_encode(args, kwargs),
             BuiltinFunction::CodecsDecode => self.builtin_codecs_decode(args, kwargs),
+            BuiltinFunction::CodecsEscapeDecode => self.builtin_codecs_escape_decode(args, kwargs),
             BuiltinFunction::CodecsLookup => self.builtin_codecs_lookup(args, kwargs),
             BuiltinFunction::CodecsRegister => self.builtin_codecs_register(args, kwargs),
             BuiltinFunction::UnicodedataNormalize => {
@@ -15250,6 +15524,7 @@ impl Vm {
             BuiltinFunction::ReCompile => self.builtin_re_compile(args, kwargs),
             BuiltinFunction::ReEscape => self.builtin_re_escape(args, kwargs),
             BuiltinFunction::RePatternFindAll => self.builtin_re_pattern_findall(args, kwargs),
+            BuiltinFunction::RePatternFindIter => self.builtin_re_pattern_finditer(args, kwargs),
             BuiltinFunction::OperatorAdd => self.builtin_operator_add(args, kwargs),
             BuiltinFunction::OperatorSub => self.builtin_operator_sub(args, kwargs),
             BuiltinFunction::OperatorMul => self.builtin_operator_mul(args, kwargs),
@@ -15318,6 +15593,7 @@ impl Vm {
             }
             BuiltinFunction::CollectionsCounter => self.builtin_collections_counter(args, kwargs),
             BuiltinFunction::CollectionsDeque => self.builtin_collections_deque(args, kwargs),
+            BuiltinFunction::CollectionsOrderedDict => self.builtin_dict(args, kwargs),
             BuiltinFunction::CollectionsChainMapInit => {
                 self.builtin_collections_chainmap_init(args, kwargs)
             }
@@ -15599,6 +15875,205 @@ impl Vm {
                 }
             }
         }
+    }
+
+    fn builtin_print(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let sep = kwargs
+            .remove("sep")
+            .map(|value| format_value(&value))
+            .unwrap_or_else(|| " ".to_string());
+        let end = kwargs
+            .remove("end")
+            .map(|value| format_value(&value))
+            .unwrap_or_else(|| "\n".to_string());
+        let file = kwargs.remove("file").unwrap_or(Value::None);
+        let flush_requested = kwargs
+            .remove("flush")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "print() got an unexpected keyword argument",
+            ));
+        }
+
+        let mut parts = Vec::with_capacity(args.len());
+        for value in args {
+            parts.push(format_value(&value));
+        }
+        let rendered = format!("{}{}", parts.join(&sep), end);
+
+        if matches!(file, Value::None) {
+            print!("{rendered}");
+            if flush_requested {
+                let _ = std::io::stdout().flush();
+            }
+            return Ok(Value::None);
+        }
+
+        let write = self.builtin_getattr(
+            vec![file.clone(), Value::Str("write".to_string())],
+            HashMap::new(),
+        )?;
+        match self.call_internal(write, vec![Value::Str(rendered)], HashMap::new())? {
+            InternalCallOutcome::Value(_) => {}
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("print() write failed"));
+            }
+        }
+        if flush_requested {
+            if let Ok(flush) = self.builtin_getattr(
+                vec![file, Value::Str("flush".to_string())],
+                HashMap::new(),
+            ) {
+                match self.call_internal(flush, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(_) => {}
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "print() flush failed",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_repr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("repr() expects one argument"));
+        }
+        let value = args.remove(0);
+        if matches!(&value, Value::Instance(_) | Value::Exception(_)) {
+            match self.builtin_getattr(
+                vec![value.clone(), Value::Str("__repr__".to_string())],
+                HashMap::new(),
+            ) {
+                Ok(repr_method) => match self.call_internal(repr_method, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(Value::Str(text)) => return Ok(Value::Str(text)),
+                    InternalCallOutcome::Value(_) => {
+                        return Err(RuntimeError::new("__repr__ returned non-string"));
+                    }
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception("repr() failed"));
+                    }
+                },
+                Err(err) => {
+                    if !is_missing_attribute_error(&err) {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+        let render_nested = |vm: &mut Vm, nested: Value| -> Result<String, RuntimeError> {
+            match vm.builtin_repr(vec![nested], HashMap::new())? {
+                Value::Str(text) => Ok(text),
+                _ => Err(RuntimeError::new("__repr__ returned non-string")),
+            }
+        };
+
+        match value {
+            Value::List(obj) => {
+                let values = match &*obj.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => return Ok(Value::Str("<list>".to_string())),
+                };
+                let mut parts = Vec::with_capacity(values.len());
+                for item in values {
+                    parts.push(render_nested(self, item)?);
+                }
+                Ok(Value::Str(format!("[{}]", parts.join(", "))))
+            }
+            Value::Tuple(obj) => {
+                let values = match &*obj.kind() {
+                    Object::Tuple(values) => values.clone(),
+                    _ => return Ok(Value::Str("<tuple>".to_string())),
+                };
+                let mut parts = Vec::with_capacity(values.len());
+                for item in values {
+                    parts.push(render_nested(self, item)?);
+                }
+                if parts.len() == 1 {
+                    Ok(Value::Str(format!("({},)", parts[0])))
+                } else {
+                    Ok(Value::Str(format!("({})", parts.join(", "))))
+                }
+            }
+            Value::Dict(obj) => {
+                let values = match &*obj.kind() {
+                    Object::Dict(values) => values.clone(),
+                    _ => return Ok(Value::Str("<dict>".to_string())),
+                };
+                let mut parts = Vec::with_capacity(values.len());
+                for (key, value) in values {
+                    let key_repr = render_nested(self, key)?;
+                    let value_repr = render_nested(self, value)?;
+                    parts.push(format!("{key_repr}: {value_repr}"));
+                }
+                Ok(Value::Str(format!("{{{}}}", parts.join(", "))))
+            }
+            Value::Set(obj) => {
+                let values = match &*obj.kind() {
+                    Object::Set(values) => values.clone(),
+                    _ => return Ok(Value::Str("<set>".to_string())),
+                };
+                if values.is_empty() {
+                    return Ok(Value::Str("set()".to_string()));
+                }
+                let mut parts = Vec::with_capacity(values.len());
+                for value in values {
+                    parts.push(render_nested(self, value)?);
+                }
+                Ok(Value::Str(format!("{{{}}}", parts.join(", "))))
+            }
+            Value::FrozenSet(obj) => {
+                let values = match &*obj.kind() {
+                    Object::FrozenSet(values) => values.clone(),
+                    _ => return Ok(Value::Str("<frozenset>".to_string())),
+                };
+                let mut parts = Vec::with_capacity(values.len());
+                for value in values {
+                    parts.push(render_nested(self, value)?);
+                }
+                Ok(Value::Str(format!("frozenset({{{}}})", parts.join(", "))))
+            }
+            other => Ok(Value::Str(format_repr(&other))),
+        }
+    }
+
+    fn builtin_ascii(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let repr = self.builtin_repr(args, kwargs)?;
+        let Value::Str(text) = repr else {
+            return Err(RuntimeError::new("ascii() expects one argument"));
+        };
+        let mut out = String::with_capacity(text.len());
+        for ch in text.chars() {
+            if ch.is_ascii() {
+                out.push(ch);
+                continue;
+            }
+            let code = ch as u32;
+            if code <= 0xFF {
+                out.push_str(&format!("\\x{code:02x}"));
+            } else if code <= 0xFFFF {
+                out.push_str(&format!("\\u{code:04x}"));
+            } else {
+                out.push_str(&format!("\\U{code:08x}"));
+            }
+        }
+        Ok(Value::Str(out))
     }
 
     fn builtin_locals(
@@ -17895,15 +18370,15 @@ impl Vm {
             values = keyed.into_iter().map(|(value, _)| value).collect();
         } else {
             let mut compare_error: Option<RuntimeError> = None;
-            values.sort_by(
-                |left, right| match compare_order(left.clone(), right.clone()) {
+            values.sort_by(|left, right| {
+                match self.compare_order_with_fallback(left.clone(), right.clone()) {
                     Ok(ordering) => ordering,
                     Err(err) => {
                         compare_error = Some(err);
                         Ordering::Equal
                     }
-                },
-            );
+                }
+            });
             if let Some(err) = compare_error {
                 return Err(err);
             }
@@ -17918,7 +18393,168 @@ impl Vm {
         if let Some(ordering) = self.compare_cmp_to_key_wrappers(&left, &right)? {
             return Ok(ordering);
         }
-        compare_order(left, right)
+        self.compare_order_with_fallback(left, right)
+    }
+
+    fn compare_order_with_fallback(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Ordering, RuntimeError> {
+        match compare_order(left.clone(), right.clone()) {
+            Ok(ordering) => Ok(ordering),
+            Err(_) => {
+                if let Some((left_values, right_values)) =
+                    self.sequence_values_for_compare(&left, &right)
+                {
+                    return self.compare_sequence_order_with_fallback(&left_values, &right_values);
+                }
+                self.compare_order_via_richcmp(left, right)?
+                    .ok_or_else(|| RuntimeError::new("unsupported operand type for comparison"))
+            }
+        }
+    }
+
+    fn sequence_values_for_compare(&self, left: &Value, right: &Value) -> Option<(Vec<Value>, Vec<Value>)> {
+        match (left, right) {
+            (Value::Tuple(left), Value::Tuple(right)) => match (&*left.kind(), &*right.kind()) {
+                (Object::Tuple(left_values), Object::Tuple(right_values)) => {
+                    Some((left_values.clone(), right_values.clone()))
+                }
+                _ => None,
+            },
+            (Value::List(left), Value::List(right)) => match (&*left.kind(), &*right.kind()) {
+                (Object::List(left_values), Object::List(right_values)) => {
+                    Some((left_values.clone(), right_values.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn compare_sequence_order_with_fallback(
+        &mut self,
+        left: &[Value],
+        right: &[Value],
+    ) -> Result<Ordering, RuntimeError> {
+        for (left_item, right_item) in left.iter().zip(right.iter()) {
+            let ordering = self.compare_order_with_fallback(left_item.clone(), right_item.clone())?;
+            if ordering != Ordering::Equal {
+                return Ok(ordering);
+            }
+        }
+        Ok(left.len().cmp(&right.len()))
+    }
+
+    fn compare_order_via_richcmp(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Option<Ordering>, RuntimeError> {
+        if let Some(result) = self.call_compare_method_bool(left.clone(), "__lt__", right.clone())?
+        {
+            if result {
+                return Ok(Some(Ordering::Less));
+            }
+        }
+        if let Some(result) = self.call_compare_method_bool(left.clone(), "__gt__", right.clone())?
+        {
+            if result {
+                return Ok(Some(Ordering::Greater));
+            }
+        }
+        if let Some(result) = self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
+        {
+            if result {
+                return Ok(Some(Ordering::Equal));
+            }
+        }
+        if let Some(result) = self.call_compare_method_bool(right.clone(), "__gt__", left.clone())?
+        {
+            if result {
+                return Ok(Some(Ordering::Less));
+            }
+        }
+        if let Some(result) = self.call_compare_method_bool(right.clone(), "__lt__", left.clone())?
+        {
+            if result {
+                return Ok(Some(Ordering::Greater));
+            }
+        }
+        if let Some(result) = self.call_compare_method_bool(right, "__eq__", left)? {
+            if result {
+                return Ok(Some(Ordering::Equal));
+            }
+        }
+        Ok(None)
+    }
+
+    fn call_compare_method_bool(
+        &mut self,
+        receiver: Value,
+        method: &str,
+        argument: Value,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let method_name = Value::Str(method.to_string());
+        let callable = match self.builtin_getattr(vec![receiver, method_name], HashMap::new()) {
+            Ok(callable) => callable,
+            Err(err) => {
+                if runtime_error_matches_exception(&err.message, "AttributeError") {
+                    return Ok(None);
+                }
+                return Err(err);
+            }
+        };
+        let result = match self.call_internal(callable, vec![argument], HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(
+                    "comparison method raised",
+                ));
+            }
+        };
+        Ok(Some(is_truthy(&result)))
+    }
+
+    fn compare_lt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        match compare_lt(left.clone(), right.clone()) {
+            Ok(value) => Ok(value),
+            Err(err) if err.message == "unsupported operand type for comparison" => Ok(
+                Value::Bool(self.compare_order_with_fallback(left, right)? == Ordering::Less),
+            ),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn compare_le_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        match compare_le(left.clone(), right.clone()) {
+            Ok(value) => Ok(value),
+            Err(err) if err.message == "unsupported operand type for comparison" => Ok(
+                Value::Bool(self.compare_order_with_fallback(left, right)? != Ordering::Greater),
+            ),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn compare_gt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        match compare_gt(left.clone(), right.clone()) {
+            Ok(value) => Ok(value),
+            Err(err) if err.message == "unsupported operand type for comparison" => Ok(
+                Value::Bool(self.compare_order_with_fallback(left, right)? == Ordering::Greater),
+            ),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn compare_ge_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        match compare_ge(left.clone(), right.clone()) {
+            Ok(value) => Ok(value),
+            Err(err) if err.message == "unsupported operand type for comparison" => Ok(
+                Value::Bool(self.compare_order_with_fallback(left, right)? != Ordering::Less),
+            ),
+            Err(err) => Err(err),
+        }
     }
 
     fn compare_cmp_to_key_wrappers(
@@ -18223,7 +18859,13 @@ impl Vm {
                 Value::ExceptionType(candidate_name) => {
                     Ok(exception_type_is_subclass(candidate_name, expected_name))
                 }
-                _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
+                Value::Class(class) => {
+                    let Object::Class(class_data) = &*class.kind() else {
+                        return Ok(false);
+                    };
+                    Ok(self.exception_inherits(&class_data.name, expected_name))
+                }
+                _ => Ok(false),
             },
             _ => Err(RuntimeError::new(
                 "issubclass() arg 2 must be a type or tuple of types",
@@ -22839,6 +23481,47 @@ impl Vm {
         let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
         let decoded = decode_text_bytes(&bytes, &encoding, &errors)?;
         Ok(Value::Str(decoded))
+    }
+
+    fn builtin_codecs_escape_decode(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "escape_decode() expects object, optional errors",
+            ));
+        }
+        let mut errors = if args.len() == 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new(
+                    "escape_decode() got multiple values for errors",
+                ));
+            }
+            errors = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "escape_decode() got an unexpected keyword argument",
+            ));
+        }
+        let source = args.remove(0);
+        let bytes = match source {
+            Value::Str(text) => text.into_bytes(),
+            other => bytes_like_from_value(other)?,
+        };
+        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        let decoded = decode_escape_bytes(&bytes, &errors)?;
+        Ok(self.heap.alloc_tuple(vec![
+            self.heap.alloc_bytes(decoded),
+            Value::Int(bytes.len() as i64),
+        ]))
     }
 
     fn builtin_codecs_lookup(
@@ -27662,10 +28345,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("calcsize() expects one argument"));
         }
-        let format = match args.remove(0) {
-            Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("calcsize() format must be str")),
-        };
+        let format = self.struct_format_from_value(args.remove(0), "calcsize")?;
         let spec = self.parse_struct_format(&format)?;
         Ok(Value::Int(spec.size as i64))
     }
@@ -27678,10 +28358,7 @@ impl Vm {
         if !kwargs.is_empty() || args.is_empty() {
             return Err(RuntimeError::new("pack() expects format string"));
         }
-        let format = match args.remove(0) {
-            Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("pack() format must be str")),
-        };
+        let format = self.struct_format_from_value(args.remove(0), "pack")?;
         let spec = self.parse_struct_format(&format)?;
         let packed = self.struct_pack_format_values(&spec, &args)?;
         Ok(self.heap.alloc_bytes(packed))
@@ -27695,10 +28372,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("unpack() expects format and buffer"));
         }
-        let format = match args.remove(0) {
-            Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("unpack() format must be str")),
-        };
+        let format = self.struct_format_from_value(args.remove(0), "unpack")?;
         let spec = self.parse_struct_format(&format)?;
         let buffer = bytes_like_from_value(args.remove(0))?;
         let values = self.struct_unpack_format_bytes(&spec, &buffer)?;
@@ -27713,10 +28387,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("iter_unpack() expects format and buffer"));
         }
-        let format = match args.remove(0) {
-            Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("iter_unpack() format must be str")),
-        };
+        let format = self.struct_format_from_value(args.remove(0), "iter_unpack")?;
         let spec = self.parse_struct_format(&format)?;
         if spec.size == 0 {
             return Err(RuntimeError::new("iter_unpack() requires a non-empty format"));
@@ -27757,10 +28428,7 @@ impl Vm {
                 "pack_into() expects format, buffer, offset, and values",
             ));
         }
-        let format = match args.remove(0) {
-            Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("pack_into() format must be str")),
-        };
+        let format = self.struct_format_from_value(args.remove(0), "pack_into")?;
         let spec = self.parse_struct_format(&format)?;
         let target = args.remove(0);
         let offset = value_to_int(args.remove(0))?;
@@ -27800,10 +28468,7 @@ impl Vm {
                 "unpack_from() expects format, buffer, and optional offset",
             ));
         }
-        let format = match args.remove(0) {
-            Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("unpack_from() format must be str")),
-        };
+        let format = self.struct_format_from_value(args.remove(0), "unpack_from")?;
         let spec = self.parse_struct_format(&format)?;
         let buffer = bytes_like_from_value(args.remove(0))?;
         let offset = if args.is_empty() {
@@ -27823,6 +28488,22 @@ impl Vm {
         match instance_data.attrs.get("format") {
             Some(Value::Str(format)) => Ok(format.clone()),
             _ => Err(RuntimeError::new("Struct instance is missing format")),
+        }
+    }
+
+    fn struct_format_from_value(
+        &self,
+        value: Value,
+        func_name: &str,
+    ) -> Result<String, RuntimeError> {
+        match value {
+            Value::Str(text) => Ok(text),
+            other => {
+                let bytes = bytes_like_from_value(other)
+                    .map_err(|_| RuntimeError::new(format!("{func_name}() format must be str")))?;
+                String::from_utf8(bytes)
+                    .map_err(|_| RuntimeError::new(format!("{func_name}() format must be str")))
+            }
         }
     }
 
@@ -27859,10 +28540,7 @@ impl Vm {
             return Err(RuntimeError::new("Struct() expects format string"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        let format = match args.remove(0) {
-            Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("Struct() format must be str")),
-        };
+        let format = self.struct_format_from_value(args.remove(0), "Struct")?;
         let size = self
             .call_builtin(
                 BuiltinFunction::StructCalcSize,
@@ -30203,6 +30881,8 @@ impl Vm {
         self.builtins
             .insert("repr".to_string(), Value::Builtin(BuiltinFunction::Repr));
         self.builtins
+            .insert("ascii".to_string(), Value::Builtin(BuiltinFunction::Ascii));
+        self.builtins
             .insert("len".to_string(), Value::Builtin(BuiltinFunction::Len));
         self.builtins
             .insert("range".to_string(), Value::Builtin(BuiltinFunction::Range));
@@ -30531,6 +31211,10 @@ impl Vm {
             Value::ExceptionType("TabError".to_string()),
         );
         self.builtins.insert(
+            "_IncompleteInputError".to_string(),
+            Value::ExceptionType("_IncompleteInputError".to_string()),
+        );
+        self.builtins.insert(
             "BaseExceptionGroup".to_string(),
             Value::ExceptionType("BaseExceptionGroup".to_string()),
         );
@@ -30585,6 +31269,10 @@ impl Vm {
         self.builtins.insert(
             "RuntimeError".to_string(),
             Value::ExceptionType("RuntimeError".to_string()),
+        );
+        self.builtins.insert(
+            "PythonFinalizationError".to_string(),
+            Value::ExceptionType("PythonFinalizationError".to_string()),
         );
         self.builtins.insert(
             "BufferError".to_string(),
@@ -30705,6 +31393,10 @@ impl Vm {
         self.builtins.insert(
             "UnicodeWarning".to_string(),
             Value::ExceptionType("UnicodeWarning".to_string()),
+        );
+        self.builtins.insert(
+            "EncodingWarning".to_string(),
+            Value::ExceptionType("EncodingWarning".to_string()),
         );
         self.builtins.insert(
             "UnicodeError".to_string(),
@@ -32668,6 +33360,8 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
         "utf-32-be" | "utf32-be" | "utf-32be" | "utf32be" => Ok("utf-32-be".to_string()),
         "ascii" => Ok("ascii".to_string()),
         "latin-1" | "latin1" => Ok("latin-1".to_string()),
+        "raw-unicode-escape" | "raw_unicode_escape" => Ok("raw-unicode-escape".to_string()),
+        "unicode-escape" | "unicode_escape" => Ok("unicode-escape".to_string()),
         _ => Err(RuntimeError::new("unsupported encoding")),
     }
 }
@@ -32683,6 +33377,107 @@ fn normalize_codec_errors(value: Value) -> Result<String, RuntimeError> {
         "backslashreplace" | "namereplace" | "xmlcharrefreplace" => Ok("replace".to_string()),
         _ => Err(RuntimeError::new("unsupported error handler")),
     }
+}
+
+fn push_escape_decode_error(
+    errors: &str,
+    out: &mut Vec<u8>,
+    message: &str,
+) -> Result<(), RuntimeError> {
+    match errors {
+        "strict" => Err(RuntimeError::new(message)),
+        "ignore" => Ok(()),
+        "replace" | "surrogateescape" => {
+            out.push(b'?');
+            Ok(())
+        }
+        _ => Err(RuntimeError::new("unsupported error handler")),
+    }
+}
+
+fn decode_escape_bytes(input: &[u8], errors: &str) -> Result<Vec<u8>, RuntimeError> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut i = 0usize;
+    while i < input.len() {
+        let byte = input[i];
+        if byte != b'\\' {
+            out.push(byte);
+            i += 1;
+            continue;
+        }
+        if i + 1 >= input.len() {
+            push_escape_decode_error(errors, &mut out, "invalid trailing escape in bytes literal")?;
+            break;
+        }
+        let esc = input[i + 1];
+        match esc {
+            b'\\' | b'\'' | b'"' => {
+                out.push(esc);
+                i += 2;
+            }
+            b'a' => {
+                out.push(0x07);
+                i += 2;
+            }
+            b'b' => {
+                out.push(0x08);
+                i += 2;
+            }
+            b'f' => {
+                out.push(0x0C);
+                i += 2;
+            }
+            b'n' => {
+                out.push(b'\n');
+                i += 2;
+            }
+            b'r' => {
+                out.push(b'\r');
+                i += 2;
+            }
+            b't' => {
+                out.push(b'\t');
+                i += 2;
+            }
+            b'v' => {
+                out.push(0x0B);
+                i += 2;
+            }
+            b'x' => {
+                if i + 3 < input.len() {
+                    let hi = (input[i + 2] as char).to_digit(16);
+                    let lo = (input[i + 3] as char).to_digit(16);
+                    if let (Some(hi), Some(lo)) = (hi, lo) {
+                        out.push(((hi << 4) as u8) | (lo as u8));
+                        i += 4;
+                        continue;
+                    }
+                }
+                push_escape_decode_error(errors, &mut out, "invalid \\x escape in bytes literal")?;
+                i += 2;
+            }
+            b'0'..=b'7' => {
+                let mut value = (esc - b'0') as u32;
+                let mut consumed = 1usize;
+                while consumed < 3 && i + 1 + consumed < input.len() {
+                    let next = input[i + 1 + consumed];
+                    if !(b'0'..=b'7').contains(&next) {
+                        break;
+                    }
+                    value = (value << 3) | ((next - b'0') as u32);
+                    consumed += 1;
+                }
+                out.push((value & 0xFF) as u8);
+                i += 1 + consumed;
+            }
+            _ => {
+                // CPython keeps unknown escapes by discarding the backslash.
+                out.push(esc);
+                i += 2;
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>, RuntimeError> {
@@ -32770,6 +33565,8 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
             }
             Ok(out)
         }
+        "raw-unicode-escape" => Ok(encode_raw_unicode_escape(text)),
+        "unicode-escape" => Ok(encode_unicode_escape(text)),
         _ => Err(RuntimeError::new("unsupported encoding")),
     }
 }
@@ -32822,8 +33619,227 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
             }
             Ok(out)
         }
+        "raw-unicode-escape" => decode_raw_unicode_escape(bytes, errors),
+        "unicode-escape" => decode_unicode_escape(bytes, errors),
         _ => Err(RuntimeError::new("unsupported encoding")),
     }
+}
+
+fn decode_raw_unicode_escape(bytes: &[u8], errors: &str) -> Result<String, RuntimeError> {
+    let mut out = String::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'\\' && index + 1 < bytes.len() {
+            let kind = bytes[index + 1];
+            if kind == b'u' && index + 5 < bytes.len() {
+                let hex = &bytes[index + 2..index + 6];
+                let parsed = std::str::from_utf8(hex)
+                    .ok()
+                    .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+                    .and_then(char::from_u32);
+                if let Some(ch) = parsed {
+                    out.push(ch);
+                    index += 6;
+                    continue;
+                }
+                if errors == "strict" {
+                    return Err(RuntimeError::new("unicode escape decode failed"));
+                }
+            } else if kind == b'U' && index + 9 < bytes.len() {
+                let hex = &bytes[index + 2..index + 10];
+                let parsed = std::str::from_utf8(hex)
+                    .ok()
+                    .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+                    .and_then(char::from_u32);
+                if let Some(ch) = parsed {
+                    out.push(ch);
+                    index += 10;
+                    continue;
+                }
+                if errors == "strict" {
+                    return Err(RuntimeError::new("unicode escape decode failed"));
+                }
+            }
+        }
+        out.push(byte as char);
+        index += 1;
+    }
+    Ok(out)
+}
+
+fn decode_unicode_escape(bytes: &[u8], errors: &str) -> Result<String, RuntimeError> {
+    let mut out = String::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte != b'\\' || index + 1 >= bytes.len() {
+            out.push(byte as char);
+            index += 1;
+            continue;
+        }
+
+        let esc = bytes[index + 1];
+        let mut push_error = |errors: &str| -> Result<(), RuntimeError> {
+            match errors {
+                "strict" => Err(RuntimeError::new("unicode escape decode failed")),
+                "ignore" => Ok(()),
+                "replace" | "surrogateescape" => {
+                    out.push('\u{FFFD}');
+                    Ok(())
+                }
+                _ => Err(RuntimeError::new("unsupported error handler")),
+            }
+        };
+        match esc {
+            b'\\' => {
+                out.push('\\');
+                index += 2;
+            }
+            b'\'' => {
+                out.push('\'');
+                index += 2;
+            }
+            b'"' => {
+                out.push('"');
+                index += 2;
+            }
+            b'a' => {
+                out.push('\u{0007}');
+                index += 2;
+            }
+            b'b' => {
+                out.push('\u{0008}');
+                index += 2;
+            }
+            b'f' => {
+                out.push('\u{000c}');
+                index += 2;
+            }
+            b'n' => {
+                out.push('\n');
+                index += 2;
+            }
+            b'r' => {
+                out.push('\r');
+                index += 2;
+            }
+            b't' => {
+                out.push('\t');
+                index += 2;
+            }
+            b'v' => {
+                out.push('\u{000b}');
+                index += 2;
+            }
+            b'x' => {
+                if index + 3 < bytes.len() {
+                    let hi = (bytes[index + 2] as char).to_digit(16);
+                    let lo = (bytes[index + 3] as char).to_digit(16);
+                    if let (Some(hi), Some(lo)) = (hi, lo) {
+                        out.push(((hi << 4) | lo) as u8 as char);
+                        index += 4;
+                        continue;
+                    }
+                }
+                push_error(errors)?;
+                index += 2;
+            }
+            b'u' => {
+                if index + 5 < bytes.len() {
+                    let hex = &bytes[index + 2..index + 6];
+                    let parsed = std::str::from_utf8(hex)
+                        .ok()
+                        .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+                        .and_then(char::from_u32);
+                    if let Some(ch) = parsed {
+                        out.push(ch);
+                        index += 6;
+                        continue;
+                    }
+                }
+                push_error(errors)?;
+                index += 2;
+            }
+            b'U' => {
+                if index + 9 < bytes.len() {
+                    let hex = &bytes[index + 2..index + 10];
+                    let parsed = std::str::from_utf8(hex)
+                        .ok()
+                        .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+                        .and_then(char::from_u32);
+                    if let Some(ch) = parsed {
+                        out.push(ch);
+                        index += 10;
+                        continue;
+                    }
+                }
+                push_error(errors)?;
+                index += 2;
+            }
+            b'0'..=b'7' => {
+                let mut value = (esc - b'0') as u32;
+                let mut consumed = 1usize;
+                while consumed < 3 && index + 1 + consumed < bytes.len() {
+                    let next = bytes[index + 1 + consumed];
+                    if !(b'0'..=b'7').contains(&next) {
+                        break;
+                    }
+                    value = (value << 3) | ((next - b'0') as u32);
+                    consumed += 1;
+                }
+                out.push((value & 0xFF) as u8 as char);
+                index += 1 + consumed;
+            }
+            _ => {
+                out.push(esc as char);
+                index += 2;
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn encode_raw_unicode_escape(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        let code = ch as u32;
+        if code <= 0x7f {
+            out.push(code as u8);
+        } else if code <= 0xffff {
+            out.extend_from_slice(format!("\\u{code:04x}").as_bytes());
+        } else {
+            out.extend_from_slice(format!("\\U{code:08x}").as_bytes());
+        }
+    }
+    out
+}
+
+fn encode_unicode_escape(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.extend_from_slice(b"\\\\"),
+            '\u{0007}' => out.extend_from_slice(b"\\a"),
+            '\u{0008}' => out.extend_from_slice(b"\\b"),
+            '\u{0009}' => out.extend_from_slice(b"\\t"),
+            '\u{000a}' => out.extend_from_slice(b"\\n"),
+            '\u{000b}' => out.extend_from_slice(b"\\v"),
+            '\u{000c}' => out.extend_from_slice(b"\\f"),
+            '\u{000d}' => out.extend_from_slice(b"\\r"),
+            _ => {
+                let code = ch as u32;
+                if (0x20..=0x7e).contains(&code) {
+                    out.push(code as u8);
+                } else if code <= 0xffff {
+                    out.extend_from_slice(format!("\\u{code:04x}").as_bytes());
+                } else {
+                    out.extend_from_slice(format!("\\U{code:08x}").as_bytes());
+                }
+            }
+        }
+    }
+    out
 }
 
 fn decode_utf16_bytes(
@@ -33286,6 +34302,8 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "ImportError" => Some("Exception"),
         "ModuleNotFoundError" => Some("ImportError"),
         "RuntimeError" => Some("Exception"),
+        "PythonFinalizationError" => Some("RuntimeError"),
+        "_IncompleteInputError" => Some("SyntaxError"),
         "OSError" => Some("Exception"),
         "FileNotFoundError" => Some("OSError"),
         "FileExistsError" => Some("OSError"),
@@ -33304,12 +34322,14 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "PermissionError" => Some("OSError"),
         "TypeError" => Some("Exception"),
         "ValueError" => Some("Exception"),
+        "Error" => Some("Exception"),
         "UnicodeError" => Some("ValueError"),
         "UnicodeEncodeError" => Some("UnicodeError"),
         "UnicodeDecodeError" => Some("UnicodeError"),
         "UnicodeTranslateError" => Some("UnicodeError"),
+        "EncodingWarning" => Some("Warning"),
         "ZeroDivisionError" => Some("Exception"),
-        _ => Some("Exception"),
+        _ => None,
     }
 }
 
@@ -34235,6 +35255,14 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
     if expected == "ImportError" && candidate == "ModuleNotFoundError" {
         return true;
     }
+    if expected == "SyntaxError"
+        && matches!(candidate, "IndentationError" | "TabError" | "_IncompleteInputError")
+    {
+        return true;
+    }
+    if expected == "RuntimeError" && candidate == "PythonFinalizationError" {
+        return true;
+    }
     if expected == "OSError"
         && matches!(
             candidate,
@@ -34272,10 +35300,11 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
 }
 
 fn classify_runtime_error(message: &str) -> &'static str {
-    const DIRECT_PREFIX_EXCEPTIONS: [&str; 18] = [
+    const DIRECT_PREFIX_EXCEPTIONS: [&str; 19] = [
         "TypeError",
         "ValueError",
         "RuntimeError",
+        "PythonFinalizationError",
         "AttributeError",
         "IndexError",
         "KeyError",
@@ -34428,6 +35457,8 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("tolerances must be non-negative")
         || message.contains("inputs are not the same length")
         || message.contains("not in list")
+        || message.contains("invalid literal for int")
+        || message.contains("int() invalid literal")
         || message.contains("could not convert string to float")
         || message.contains("complex() invalid literal")
         || message.contains("list modified during sort")
@@ -34451,8 +35482,23 @@ fn classify_runtime_error(message: &str) -> &'static str {
             return "NotADirectoryError";
         }
     }
+    if message.contains("remove failed:") {
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Is a directory") || message.contains("os error 21") {
+            return "IsADirectoryError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+    }
     if message.contains("bad file descriptor")
         || message.contains("open failed:")
+        || message.contains("remove failed:")
         || message.contains("close failed:")
         || message.contains("stat failed:")
         || message.contains("lstat failed:")
