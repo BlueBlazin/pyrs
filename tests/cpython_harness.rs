@@ -129,7 +129,7 @@ fn run_entry(lib: &Path, entry: &str, mode: SuiteMode) -> Result<(), String> {
             "import sys\nimport importlib\nsys.path = [{lib_path:?}]\nimportlib.import_module({import_name:?})\n"
         ),
         SuiteMode::StrictUnittest => format!(
-            "import sys\nimport importlib\nimport unittest\nsys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nsuite = unittest.defaultTestLoader.loadTestsFromModule(module)\nresult = unittest.TextTestRunner(verbosity=0).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
+            "import sys\nimport importlib\nimport unittest\nsys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nresult = unittest.TextTestRunner(verbosity=0, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
         ),
     };
     let module =

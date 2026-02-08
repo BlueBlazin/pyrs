@@ -307,6 +307,14 @@ pub struct Vm {
     atexit_handlers: Vec<AtexitHandler>,
 }
 
+impl Drop for Vm {
+    fn drop(&mut self) {
+        // Break reference cycles before field teardown so per-VM object graphs
+        // do not accumulate across harness runs.
+        self.heap.collect_cycles(&[]);
+    }
+}
+
 impl Vm {
     pub fn new() -> Self {
         let heap = Heap::new();
@@ -4993,6 +5001,7 @@ impl Vm {
     }
 
     fn import_module_object(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
+        let existing_modules: HashSet<String> = self.modules.keys().cloned().collect();
         if let Some(module) = self.modules.get(name).cloned() {
             return Ok(module);
         }
@@ -5019,9 +5028,62 @@ impl Vm {
                         }
                     }
                 }
+                self.cleanup_partial_modules(&existing_modules);
                 Err(load_err)
             }
         }
+    }
+
+    fn cleanup_partial_modules(&mut self, existing_modules: &HashSet<String>) {
+        let added: Vec<String> = self
+            .modules
+            .keys()
+            .filter(|name| !existing_modules.contains(*name))
+            .cloned()
+            .collect();
+        for name in added {
+            let should_remove = self
+                .modules
+                .get(&name)
+                .map(Self::module_is_uninitialized)
+                .unwrap_or(false);
+            if !should_remove {
+                continue;
+            }
+            self.modules.remove(&name);
+            if let Some(modules_dict) = self.sys_dict_obj("modules") {
+                let _ = dict_remove_value(&modules_dict, &Value::Str(name.clone()));
+            }
+            if let Some((parent, child)) = name.rsplit_once('.') {
+                if let Some(parent_module) = self.modules.get(parent) {
+                    if let Object::Module(parent_data) = &mut *parent_module.kind_mut() {
+                        parent_data.globals.remove(child);
+                    }
+                }
+            }
+        }
+    }
+
+    fn module_is_uninitialized(module: &ObjRef) -> bool {
+        let module_kind = module.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return false;
+        };
+        if module_data.globals.contains_key("__builtins__") {
+            return false;
+        }
+        module_data.globals.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "__name__"
+                    | "__doc__"
+                    | "__package__"
+                    | "__loader__"
+                    | "__spec__"
+                    | "__file__"
+                    | "__path__"
+            )
+        })
     }
 
     fn module_for_plain_import(&mut self, name: &str, module: ObjRef) -> ObjRef {
@@ -9442,6 +9504,7 @@ impl Vm {
             "lstrip" => NativeMethodKind::StrLStrip,
             "rstrip" => NativeMethodKind::StrRStrip,
             "strip" => NativeMethodKind::StrStrip,
+            "expandtabs" => NativeMethodKind::StrExpandTabs,
             _ => {
                 return Err(RuntimeError::new(format!(
                     "str has no attribute '{}'",
@@ -12784,6 +12847,50 @@ impl Vm {
                     Some(_) => return Err(RuntimeError::new("strip() chars must be str or None")),
                 };
                 Ok(NativeCallResult::Value(Value::Str(stripped)))
+            }
+            NativeMethodKind::StrExpandTabs => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "expandtabs() expects at most one argument",
+                    ));
+                }
+                let tabsize = if let Some(value) = args.first() {
+                    value_to_int(value.clone())?
+                } else {
+                    8
+                };
+                let tabsize = if tabsize < 0 { 0 } else { tabsize as usize };
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let mut out = String::with_capacity(text.len());
+                let mut column = 0usize;
+                for ch in text.chars() {
+                    match ch {
+                        '\t' => {
+                            if tabsize > 0 {
+                                let spaces = tabsize - (column % tabsize);
+                                for _ in 0..spaces {
+                                    out.push(' ');
+                                }
+                                column += spaces;
+                            }
+                        }
+                        '\n' | '\r' => {
+                            out.push(ch);
+                            column = 0;
+                        }
+                        _ => {
+                            out.push(ch);
+                            column += 1;
+                        }
+                    }
+                }
+                Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::RePatternSearch
             | NativeMethodKind::RePatternMatch
@@ -18043,6 +18150,7 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let caller_depth = self.frames.len();
         if args.len() > 5 {
             return Err(RuntimeError::new("__import__() takes at most 5 arguments"));
         }
@@ -18117,6 +18225,7 @@ impl Vm {
 
         let resolved_name = self.resolve_import_name(&name, level as usize)?;
         let module = self.import_module_object(&resolved_name)?;
+        self.run_pending_import_frames(caller_depth)?;
         let result = if self.fromlist_requested(&fromlist) {
             module
         } else {
@@ -18130,6 +18239,7 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let caller_depth = self.frames.len();
         if args.len() > 2 {
             return Err(RuntimeError::new(
                 "import_module() takes at most 2 arguments",
@@ -18194,7 +18304,20 @@ impl Vm {
             self.resolve_import_name_from_package(&package, &requested, level)?
         };
         let module = self.import_module_object(&resolved_name)?;
+        self.run_pending_import_frames(caller_depth)?;
         Ok(Value::Module(module))
+    }
+
+    fn run_pending_import_frames(&mut self, caller_depth: usize) -> Result<(), RuntimeError> {
+        if self.frames.len() <= caller_depth {
+            return Ok(());
+        }
+        let previous_stop = self.run_stop_depth;
+        self.run_stop_depth = Some(caller_depth);
+        let run_result = self.run();
+        self.run_stop_depth = previous_stop;
+        run_result?;
+        Ok(())
     }
 
     fn builtin_find_spec(
