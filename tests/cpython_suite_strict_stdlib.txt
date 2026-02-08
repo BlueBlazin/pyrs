@@ -1,0 +1,8 @@
+# CPython Lib/test strict unittest-backed stdlib parity suite (source path relative to Lib/).
+# This suite executes `unittest` for each module entry. Expected failures are tracked in
+# tests/cpython_allowlist_strict.txt.
+test/test_copyreg.py
+test/test_csv.py
+test/test_json/__init__.py
+test/test_pickle.py
+test/test_pickletools.py

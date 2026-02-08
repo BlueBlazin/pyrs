@@ -3216,7 +3216,21 @@ impl Vm {
             "inspect",
             &[
                 ("signature", BuiltinFunction::InspectSignature),
+                ("getmodule", BuiltinFunction::InspectGetModule),
+                ("getfile", BuiltinFunction::InspectGetFile),
+                ("getsourcefile", BuiltinFunction::InspectGetSourceFile),
                 ("isfunction", BuiltinFunction::InspectIsFunction),
+                ("ismethod", BuiltinFunction::InspectIsMethod),
+                ("isroutine", BuiltinFunction::InspectIsRoutine),
+                (
+                    "ismethoddescriptor",
+                    BuiltinFunction::InspectIsMethodDescriptor,
+                ),
+                ("ismethodwrapper", BuiltinFunction::InspectIsMethodWrapper),
+                ("istraceback", BuiltinFunction::InspectIsTraceback),
+                ("isframe", BuiltinFunction::InspectIsFrame),
+                ("iscode", BuiltinFunction::InspectIsCode),
+                ("unwrap", BuiltinFunction::InspectUnwrap),
                 ("isclass", BuiltinFunction::InspectIsClass),
                 ("ismodule", BuiltinFunction::InspectIsModule),
                 ("isgenerator", BuiltinFunction::InspectIsGenerator),
@@ -8313,11 +8327,7 @@ impl Vm {
         args: &[Value],
         kwargs: &HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "keyword arguments not supported for exceptions",
-            ));
-        }
+        let _ = kwargs;
 
         if self.exception_inherits(name, "BaseExceptionGroup") {
             let message = args.first().map(format_value);
@@ -9334,6 +9344,7 @@ impl Vm {
     fn load_attr_str_method(&self, text: String, attr_name: &str) -> Result<Value, RuntimeError> {
         let kind = match attr_name {
             "startswith" => NativeMethodKind::StrStartsWith,
+            "endswith" => NativeMethodKind::StrEndsWith,
             "replace" => NativeMethodKind::StrReplace,
             "upper" => NativeMethodKind::StrUpper,
             "lower" => NativeMethodKind::StrLower,
@@ -9390,6 +9401,8 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let kind = match attr_name {
             "decode" => NativeMethodKind::BytesDecode,
+            "startswith" => NativeMethodKind::BytesStartsWith,
+            "endswith" => NativeMethodKind::BytesEndsWith,
             _ => {
                 return Err(RuntimeError::new(format!(
                     "bytes has no attribute '{}'",
@@ -10328,15 +10341,13 @@ impl Vm {
                             }
                         }
                     } else if self.class_is_exception_class(&class) {
-                        if !kwargs.is_empty() {
-                            return Err(RuntimeError::new(
-                                "keyword arguments not supported for exceptions",
-                            ));
-                        }
                         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                             instance_data
                                 .attrs
                                 .insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
+                            for (name, value) in kwargs {
+                                instance_data.attrs.insert(name, value);
+                            }
                         } else {
                             return Err(RuntimeError::new(
                                 "exception instance construction failed",
@@ -11659,39 +11670,86 @@ impl Vm {
                     value.bit_length() as i64
                 )))
             }
-            NativeMethodKind::StrStartsWith => {
-                if args.len() != 1 {
-                    return Err(RuntimeError::new("startswith() expects one argument"));
+            NativeMethodKind::StrStartsWith | NativeMethodKind::StrEndsWith => {
+                let method_name = if matches!(kind, NativeMethodKind::StrStartsWith) {
+                    "startswith"
+                } else {
+                    "endswith"
+                };
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects prefix/suffix, optional start, optional end"
+                    )));
                 }
-                let value = match &*receiver.kind() {
+                let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
                         _ => return Err(RuntimeError::new("str receiver is invalid")),
                     },
                     _ => return Err(RuntimeError::new("str receiver is invalid")),
                 };
+                let len = text.len() as i64;
+                let mut start = if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let mut end = if let Some(value) = args.get(2) {
+                    value_to_int(value.clone())?
+                } else {
+                    len
+                };
+                if start < 0 {
+                    start += len;
+                }
+                if end < 0 {
+                    end += len;
+                }
+                start = start.clamp(0, len);
+                end = end.clamp(0, len);
+                if end < start {
+                    return Ok(NativeCallResult::Value(Value::Bool(false)));
+                }
+                let Some(slice) = text.get(start as usize..end as usize) else {
+                    return Ok(NativeCallResult::Value(Value::Bool(false)));
+                };
+                let match_candidate = |candidate: &str| {
+                    if matches!(kind, NativeMethodKind::StrStartsWith) {
+                        slice.starts_with(candidate)
+                    } else {
+                        slice.ends_with(candidate)
+                    }
+                };
                 let matches = match args.first().expect("checked len") {
-                    Value::Str(prefix) => value.starts_with(prefix),
+                    Value::Str(prefix_or_suffix) => match_candidate(prefix_or_suffix),
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(items) => {
                             let mut any = false;
                             for item in items {
-                                if let Value::Str(prefix) = item {
-                                    if value.starts_with(prefix) {
+                                if let Value::Str(text) = item {
+                                    if match_candidate(text) {
                                         any = true;
                                         break;
                                     }
                                 } else {
-                                    return Err(RuntimeError::new(
-                                        "startswith() tuple prefixes must be str",
-                                    ));
+                                    return Err(RuntimeError::new(format!(
+                                        "{method_name}() tuple entries must be str"
+                                    )));
                                 }
                             }
                             any
                         }
-                        _ => return Err(RuntimeError::new("startswith() argument must be str")),
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "{method_name}() argument must be str or tuple of str"
+                            )))
+                        }
                     },
-                    _ => return Err(RuntimeError::new("startswith() argument must be str")),
+                    _ => {
+                        return Err(RuntimeError::new(format!(
+                            "{method_name}() argument must be str or tuple of str"
+                        )))
+                    }
                 };
                 Ok(NativeCallResult::Value(Value::Bool(matches)))
             }
@@ -11861,6 +11919,80 @@ impl Vm {
                 )?;
                 let text = decode_text_bytes(&bytes, &encoding, &errors)?;
                 Ok(NativeCallResult::Value(Value::Str(text)))
+            }
+            NativeMethodKind::BytesStartsWith | NativeMethodKind::BytesEndsWith => {
+                let method_name = if matches!(kind, NativeMethodKind::BytesStartsWith) {
+                    "startswith"
+                } else {
+                    "endswith"
+                };
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects prefix/suffix, optional start, optional end"
+                    )));
+                }
+                let bytes = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(value) => bytes_like_from_value(value.clone())?,
+                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let len = bytes.len() as i64;
+                let mut start = if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let mut end = if let Some(value) = args.get(2) {
+                    value_to_int(value.clone())?
+                } else {
+                    len
+                };
+                if start < 0 {
+                    start += len;
+                }
+                if end < 0 {
+                    end += len;
+                }
+                start = start.clamp(0, len);
+                end = end.clamp(0, len);
+                if end < start {
+                    return Ok(NativeCallResult::Value(Value::Bool(false)));
+                }
+                let slice = &bytes[start as usize..end as usize];
+                let match_candidate = |candidate: &[u8]| {
+                    if matches!(kind, NativeMethodKind::BytesStartsWith) {
+                        slice.starts_with(candidate)
+                    } else {
+                        slice.ends_with(candidate)
+                    }
+                };
+                let matches = match args.first().expect("checked len") {
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(items) => {
+                            let mut any = false;
+                            for item in items {
+                                let candidate = bytes_like_from_value(item.clone())?;
+                                if match_candidate(&candidate) {
+                                    any = true;
+                                    break;
+                                }
+                            }
+                            any
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "{method_name}() argument must be bytes-like or tuple of bytes-like"
+                            )))
+                        }
+                    },
+                    value => {
+                        let candidate = bytes_like_from_value(value.clone())?;
+                        match_candidate(&candidate)
+                    }
+                };
+                Ok(NativeCallResult::Value(Value::Bool(matches)))
             }
             NativeMethodKind::StrRemovePrefix => {
                 if args.len() != 1 {
@@ -14368,7 +14500,24 @@ impl Vm {
                 self.builtin_collections_count_elements(args, kwargs)
             }
             BuiltinFunction::InspectSignature => self.builtin_inspect_signature(args, kwargs),
+            BuiltinFunction::InspectGetModule => self.builtin_inspect_getmodule(args, kwargs),
+            BuiltinFunction::InspectGetFile => self.builtin_inspect_getfile(args, kwargs),
+            BuiltinFunction::InspectGetSourceFile => {
+                self.builtin_inspect_getsourcefile(args, kwargs)
+            }
             BuiltinFunction::InspectIsFunction => self.builtin_inspect_isfunction(args, kwargs),
+            BuiltinFunction::InspectIsMethod => self.builtin_inspect_ismethod(args, kwargs),
+            BuiltinFunction::InspectIsRoutine => self.builtin_inspect_isroutine(args, kwargs),
+            BuiltinFunction::InspectIsMethodDescriptor => {
+                self.builtin_inspect_ismethoddescriptor(args, kwargs)
+            }
+            BuiltinFunction::InspectIsMethodWrapper => {
+                self.builtin_inspect_ismethodwrapper(args, kwargs)
+            }
+            BuiltinFunction::InspectIsTraceback => self.builtin_inspect_istraceback(args, kwargs),
+            BuiltinFunction::InspectIsFrame => self.builtin_inspect_isframe(args, kwargs),
+            BuiltinFunction::InspectIsCode => self.builtin_inspect_iscode(args, kwargs),
+            BuiltinFunction::InspectUnwrap => self.builtin_inspect_unwrap(args, kwargs),
             BuiltinFunction::InspectIsClass => self.builtin_inspect_isclass(args, kwargs),
             BuiltinFunction::InspectIsModule => self.builtin_inspect_ismodule(args, kwargs),
             BuiltinFunction::InspectIsGenerator => self.builtin_inspect_isgenerator(args, kwargs),
@@ -23543,6 +23692,137 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn inspect_module_for_value(&self, value: &Value) -> Option<Value> {
+        match value {
+            Value::Module(module) => Some(Value::Module(module.clone())),
+            Value::Function(function) => match &*function.kind() {
+                Object::Function(function_data) => Some(Value::Module(function_data.module.clone())),
+                _ => None,
+            },
+            Value::BoundMethod(method) => match &*method.kind() {
+                Object::BoundMethod(bound_method) => match &*bound_method.function.kind() {
+                    Object::Function(function_data) => {
+                        Some(Value::Module(function_data.module.clone()))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            },
+            Value::Class(class_ref) => match &*class_ref.kind() {
+                Object::Class(class_data) => match class_data.attrs.get("__module__") {
+                    Some(Value::Str(module_name)) => self
+                        .modules
+                        .get(module_name)
+                        .map(|module| Value::Module(module.clone())),
+                    _ => None,
+                },
+                _ => None,
+            },
+            Value::Instance(instance_ref) => match &*instance_ref.kind() {
+                Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                    Object::Class(class_data) => match class_data.attrs.get("__module__") {
+                        Some(Value::Str(module_name)) => self
+                            .modules
+                            .get(module_name)
+                            .map(|module| Value::Module(module.clone())),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            Value::Builtin(_) | Value::ExceptionType(_) => self
+                .modules
+                .get("builtins")
+                .map(|module| Value::Module(module.clone())),
+            _ => None,
+        }
+    }
+
+    fn inspect_file_for_value(&self, value: &Value) -> Option<String> {
+        match value {
+            Value::Module(module) => match &*module.kind() {
+                Object::Module(module_data) => match module_data.globals.get("__file__") {
+                    Some(Value::Str(path)) => Some(path.clone()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            Value::Function(function) => match &*function.kind() {
+                Object::Function(function_data) => Some(function_data.code.filename.clone()),
+                _ => None,
+            },
+            Value::BoundMethod(method) => match &*method.kind() {
+                Object::BoundMethod(bound_method) => match &*bound_method.function.kind() {
+                    Object::Function(function_data) => Some(function_data.code.filename.clone()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            Value::Code(code) => Some(code.filename.clone()),
+            Value::Class(class_ref) => self
+                .inspect_module_for_value(&Value::Class(class_ref.clone()))
+                .and_then(|module| self.inspect_file_for_value(&module)),
+            Value::Instance(instance_ref) => self
+                .inspect_module_for_value(&Value::Instance(instance_ref.clone()))
+                .and_then(|module| self.inspect_file_for_value(&module)),
+            _ => None,
+        }
+    }
+
+    fn builtin_inspect_getmodule(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "getmodule() expects object and optional _filename",
+            ));
+        }
+        let value = args.remove(0);
+        Ok(self.inspect_module_for_value(&value).unwrap_or(Value::None))
+    }
+
+    fn builtin_inspect_getfile(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("getfile() expects one object argument"));
+        }
+        let value = args.remove(0);
+        let Some(path) = self.inspect_file_for_value(&value) else {
+            return Err(RuntimeError::new(
+                "TypeError: module, class, method, function, traceback, frame, or code object was expected",
+            ));
+        };
+        Ok(Value::Str(path))
+    }
+
+    fn builtin_inspect_getsourcefile(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("getsourcefile() expects one object argument"));
+        }
+        let value = args.remove(0);
+        let path = match self.builtin_inspect_getfile(vec![value], HashMap::new())? {
+            Value::Str(path) => path,
+            _ => return Ok(Value::None),
+        };
+        if path.ends_with(".pyc") {
+            let mut source_path = path;
+            source_path.pop();
+            Ok(Value::Str(source_path))
+        } else {
+            Ok(Value::Str(path))
+        }
+    }
+
     fn builtin_inspect_signature(
         &mut self,
         mut args: Vec<Value>,
@@ -23747,6 +24027,85 @@ impl Vm {
         unary_predicate(args, kwargs, |value| {
             matches!(value, Value::Function(_) | Value::BoundMethod(_))
         })
+    }
+
+    fn builtin_inspect_ismethod(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| matches!(value, Value::BoundMethod(_)))
+    }
+
+    fn builtin_inspect_isroutine(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| {
+            matches!(
+                value,
+                Value::Function(_) | Value::Builtin(_) | Value::BoundMethod(_)
+            )
+        })
+    }
+
+    fn builtin_inspect_ismethoddescriptor(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| matches!(value, Value::Builtin(_)))
+    }
+
+    fn builtin_inspect_ismethodwrapper(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |_value| false)
+    }
+
+    fn builtin_inspect_istraceback(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |_value| false)
+    }
+
+    fn builtin_inspect_isframe(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |_value| false)
+    }
+
+    fn builtin_inspect_iscode(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        unary_predicate(args, kwargs, |value| matches!(value, Value::Code(_)))
+    }
+
+    fn builtin_inspect_unwrap(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if kwargs.remove("stop").is_some() {
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new("unwrap() got an unexpected keyword argument"));
+            }
+        } else if !kwargs.is_empty() {
+            return Err(RuntimeError::new("unwrap() got an unexpected keyword argument"));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new("unwrap() expects one argument"));
+        }
+        Ok(args.remove(0))
     }
 
     fn builtin_inspect_isclass(

@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 use pyrs::{compiler, parser, vm::Vm};
 
 const ALLOWLIST_FILE: &str = "tests/cpython_allowlist.txt";
+const STRICT_ALLOWLIST_FILE: &str = "tests/cpython_allowlist_strict.txt";
 const LANGUAGE_SUITE: &str = "tests/cpython_suite_language.txt";
 const IMPORT_SUITE: &str = "tests/cpython_suite_imports.txt";
+const STRICT_STDLIB_SUITE: &str = "tests/cpython_suite_strict_stdlib.txt";
 
 #[derive(Debug, Clone)]
 struct AllowEntry {
@@ -112,13 +114,24 @@ fn module_name(entry: &str) -> Option<String> {
     }
 }
 
-fn run_entry(lib: &Path, entry: &str) -> Result<(), String> {
+#[derive(Clone, Copy)]
+enum SuiteMode {
+    ImportOnly,
+    StrictUnittest,
+}
+
+fn run_entry(lib: &Path, entry: &str, mode: SuiteMode) -> Result<(), String> {
     let _path = module_path(lib, entry).ok_or_else(|| "missing module".to_string())?;
     let import_name = module_name(entry).ok_or_else(|| "invalid module entry".to_string())?;
     let lib_path = lib.to_string_lossy();
-    let source = format!(
-        "import sys\nimport importlib\nsys.path = [{lib_path:?}]\nimportlib.import_module({import_name:?})\n"
-    );
+    let source = match mode {
+        SuiteMode::ImportOnly => format!(
+            "import sys\nimport importlib\nsys.path = [{lib_path:?}]\nimportlib.import_module({import_name:?})\n"
+        ),
+        SuiteMode::StrictUnittest => format!(
+            "import sys\nimport importlib\nimport unittest\nsys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nsuite = unittest.defaultTestLoader.loadTestsFromModule(module)\nresult = unittest.TextTestRunner(verbosity=0).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
+        ),
+    };
     let module =
         parser::parse_module(&source).map_err(|err| format!("parse error {}", err.message))?;
     let code = compiler::compile_module_with_filename(&module, "<cpython_harness>")
@@ -130,13 +143,13 @@ fn run_entry(lib: &Path, entry: &str) -> Result<(), String> {
         .map_err(|err| format!("runtime error {}", err.message))
 }
 
-fn run_suite_file(suite_file: &str) {
+fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
     let lib = cpython_lib_or_panic();
     if lib.as_os_str().is_empty() {
         return;
     }
     let suite = read_list(suite_file);
-    let allow = read_allowlist(ALLOWLIST_FILE);
+    let allow = read_allowlist(allowlist_file);
 
     let mut unexpected_failures = Vec::new();
     let mut stale_allowlist = Vec::new();
@@ -144,7 +157,7 @@ fn run_suite_file(suite_file: &str) {
     let mut allowed = 0usize;
 
     for entry in &suite {
-        match run_entry(&lib, entry) {
+        match run_entry(&lib, entry, mode) {
             Ok(()) => {
                 if let Some(allow_entry) = allow.get(entry) {
                     stale_allowlist.push(format!(
@@ -185,15 +198,18 @@ fn run_suite_file(suite_file: &str) {
 
 #[test]
 fn allowlist_entries_are_referenced_by_suites() {
-    let allow = read_allowlist(ALLOWLIST_FILE);
     let suite_entries: HashSet<String> = read_list(LANGUAGE_SUITE)
         .into_iter()
         .chain(read_list(IMPORT_SUITE))
+        .chain(read_list(STRICT_STDLIB_SUITE))
         .collect();
     let mut unused = Vec::new();
-    for key in allow.keys() {
-        if !suite_entries.contains(key) {
-            unused.push(key.clone());
+    for allowlist_path in [ALLOWLIST_FILE, STRICT_ALLOWLIST_FILE] {
+        let allow = read_allowlist(allowlist_path);
+        for key in allow.keys() {
+            if !suite_entries.contains(key) {
+                unused.push(format!("{allowlist_path}: {key}"));
+            }
         }
     }
     if !unused.is_empty() {
@@ -206,10 +222,28 @@ fn allowlist_entries_are_referenced_by_suites() {
 
 #[test]
 fn runs_cpython_language_suite() {
-    run_suite_file(LANGUAGE_SUITE);
+    run_suite_file(LANGUAGE_SUITE, ALLOWLIST_FILE, SuiteMode::ImportOnly);
 }
 
 #[test]
 fn runs_cpython_import_suite() {
-    run_suite_file(IMPORT_SUITE);
+    run_suite_file(IMPORT_SUITE, ALLOWLIST_FILE, SuiteMode::ImportOnly);
+}
+
+#[test]
+fn runs_cpython_strict_stdlib_suite() {
+    let handle = std::thread::Builder::new()
+        .name("cpython-strict-stdlib".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            run_suite_file(
+                STRICT_STDLIB_SUITE,
+                STRICT_ALLOWLIST_FILE,
+                SuiteMode::StrictUnittest,
+            );
+        })
+        .expect("spawn strict stdlib harness thread");
+    handle
+        .join()
+        .expect("strict stdlib harness thread should complete");
 }

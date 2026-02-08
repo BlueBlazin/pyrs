@@ -6313,3 +6313,75 @@ fn os_getenv_handles_default_and_none() {
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn str_endswith_supports_tuple_and_start_end() {
+    let source = r#"text = "alpha-beta-gamma"
+ok = (
+    text.endswith(("gamma", "delta"))
+    and text.endswith("beta", 0, 10)
+    and not text.endswith("beta", 0, 9)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_startswith_and_endswith_support_basic_slices() {
+    let source = r#"payload = b"prefix-body-suffix"
+ok = (
+    payload.startswith((b"prefix", b"zzz"))
+    and payload.endswith(b"suffix")
+    and payload.endswith(b"body", 7, 11)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn inspect_helpers_cover_getmodule_file_and_predicates() {
+    let source = r#"import inspect
+def sample():
+    return 1
+class C:
+    pass
+method = C().__str__
+module = inspect.getmodule(sample)
+source_file = inspect.getsourcefile(sample)
+code_file = inspect.getfile(sample)
+ok = (
+    module is not None
+    and isinstance(source_file, str)
+    and isinstance(code_file, str)
+    and inspect.ismethod(method)
+    and inspect.isroutine(sample)
+    and inspect.iscode(sample.__code__)
+    and inspect.unwrap(sample) is sample
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exceptions_accept_keyword_attributes() {
+    let source = r#"err = ImportError("boom", name="pkg.mod", path="/tmp/pkg/mod.py")
+ok = (err is not None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
