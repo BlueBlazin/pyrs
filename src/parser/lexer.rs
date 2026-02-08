@@ -835,7 +835,9 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 let escaped = self.consume_escaped_char(start_offset, start_line, start_column)?;
-                content.push(escaped);
+                if let Some(escaped) = escaped {
+                    content.push(escaped);
+                }
                 continue;
             }
 
@@ -904,7 +906,9 @@ impl<'a> Lexer<'a> {
             if ch == '\\' {
                 self.advance();
                 let escaped = self.consume_escaped_char(start_offset, start_line, start_column)?;
-                content.push(escaped);
+                if let Some(escaped) = escaped {
+                    content.push(escaped);
+                }
                 continue;
             }
 
@@ -925,31 +929,31 @@ impl<'a> Lexer<'a> {
         start_offset: usize,
         start_line: usize,
         start_column: usize,
-    ) -> Result<char, LexError> {
+    ) -> Result<Option<char>, LexError> {
         match self.peek_char() {
             Some('n') => {
                 self.advance();
-                Ok('\n')
+                Ok(Some('\n'))
             }
             Some('t') => {
                 self.advance();
-                Ok('\t')
+                Ok(Some('\t'))
             }
             Some('r') => {
                 self.advance();
-                Ok('\r')
+                Ok(Some('\r'))
             }
             Some('\\') => {
                 self.advance();
-                Ok('\\')
+                Ok(Some('\\'))
             }
             Some('\'') => {
                 self.advance();
-                Ok('\'')
+                Ok(Some('\''))
             }
             Some('"') => {
                 self.advance();
-                Ok('"')
+                Ok(Some('"'))
             }
             Some('x') => {
                 self.advance();
@@ -989,11 +993,24 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 let value =
                     ((high.to_digit(16).unwrap_or(0) << 4) | low.to_digit(16).unwrap_or(0)) as u8;
-                Ok(value as char)
+                Ok(Some(value as char))
+            }
+            Some('\n') => {
+                // In non-raw strings, backslash-newline is a line continuation.
+                self.advance();
+                Ok(None)
+            }
+            Some('\r') => {
+                // Handle CRLF continuations as a single escaped newline sequence.
+                self.advance();
+                if self.peek_char() == Some('\n') {
+                    self.advance();
+                }
+                Ok(None)
             }
             Some(other) => {
                 self.advance();
-                Ok(other)
+                Ok(Some(other))
             }
             None => Err(LexError::new(
                 "unterminated escape sequence",

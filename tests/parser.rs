@@ -2202,7 +2202,8 @@ fn rejects_positional_after_keyword_in_class_pattern() {
     let source = "match value:\n    case Point(x=1, 2):\n        out = 1\n";
     let err = parser::parse_module(source).expect_err("parse should fail");
     assert!(
-        err.message.contains("positional patterns follow keyword patterns"),
+        err.message
+            .contains("positional patterns follow keyword patterns"),
         "unexpected message: {}",
         err.message
     );

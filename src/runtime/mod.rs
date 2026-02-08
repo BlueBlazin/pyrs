@@ -9,6 +9,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::rc::{Rc, Weak};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::bytecode::CodeObject;
 pub use bigint::BigInt;
@@ -174,6 +175,7 @@ pub enum NativeMethodKind {
     DictKeys,
     DictValues,
     DictItems,
+    DictClear,
     DictUpdateMethod,
     DictSetDefault,
     DictGet,
@@ -193,6 +195,7 @@ pub enum NativeMethodKind {
     StrReplace,
     StrUpper,
     StrLower,
+    StrCapitalize,
     StrEncode,
     StrDecode,
     BytesDecode,
@@ -218,6 +221,7 @@ pub enum NativeMethodKind {
     StrStrip,
     SetContains,
     SetAdd,
+    SetDiscard,
     SetUpdate,
     SetIsSuperset,
     SetIsSubset,
@@ -226,6 +230,7 @@ pub enum NativeMethodKind {
     RePatternMatch,
     RePatternFullMatch,
     RePatternSub,
+    ExceptionWithTraceback,
     ClassRegister,
     PropertyGet,
     PropertySet,
@@ -926,10 +931,16 @@ enum ImmediateKey {
     Complex(u64, u64),
     Str(String),
     Code(u64),
-    Exception(String, Option<String>),
+    Exception(u64),
     ExceptionType(String),
     Slice(Option<i64>, Option<i64>, Option<i64>),
     Builtin(BuiltinFunction),
+}
+
+static NEXT_EXCEPTION_OBJECT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_exception_object_id() -> u64 {
+    NEXT_EXCEPTION_OBJECT_ID.fetch_add(1, AtomicOrdering::Relaxed)
 }
 
 impl Heap {
@@ -1067,8 +1078,7 @@ impl Heap {
             | Value::BoundMethod(obj)
             | Value::Cell(obj) => obj.id(),
             Value::Exception(exception) => self.id_for_immediate(ImmediateKey::Exception(
-                exception.name.clone(),
-                exception.message.clone(),
+                exception.object_id,
             )),
             Value::ExceptionType(name) => {
                 self.id_for_immediate(ImmediateKey::ExceptionType(name.clone()))
@@ -1411,6 +1421,7 @@ impl Value {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExceptionObject {
+    pub object_id: u64,
     pub name: String,
     pub message: Option<String>,
     pub exceptions: Vec<ExceptionObject>,
@@ -1422,6 +1433,7 @@ pub struct ExceptionObject {
 impl ExceptionObject {
     pub fn new(name: impl Into<String>, message: Option<String>) -> Self {
         Self {
+            object_id: next_exception_object_id(),
             name: name.into(),
             message,
             exceptions: Vec::new(),
@@ -1437,6 +1449,7 @@ impl ExceptionObject {
         members: Vec<ExceptionObject>,
     ) -> Self {
         Self {
+            object_id: next_exception_object_id(),
             name: name.into(),
             message,
             exceptions: members,
@@ -1630,6 +1643,7 @@ pub enum BuiltinFunction {
     Globals,
     SysGetFrame,
     SysException,
+    SysExcInfo,
     SysExit,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
@@ -1724,8 +1738,12 @@ pub enum BuiltinFunction {
     OsGetTerminalSize,
     OsTerminalSize,
     OsOpen,
+    OsPipe,
+    OsRead,
     OsWrite,
+    OsDup,
     OsClose,
+    OsKill,
     OsIsATty,
     OsURandom,
     OsStat,
@@ -1760,6 +1778,15 @@ pub enum BuiltinFunction {
     OsPathCommonPrefix,
     OsWaitPid,
     PosixSubprocessForkExec,
+    SubprocessPopenInit,
+    SubprocessPopenCommunicate,
+    SubprocessPopenWait,
+    SubprocessPopenKill,
+    SubprocessPopenPoll,
+    SubprocessPopenEnter,
+    SubprocessPopenExit,
+    SubprocessCleanup,
+    SubprocessCheckCall,
     JsonDumps,
     JsonLoads,
     MarshalLoads,
@@ -1828,6 +1855,10 @@ pub enum BuiltinFunction {
     FunctoolsLruCache,
     CollectionsCounter,
     CollectionsDeque,
+    CollectionsChainMapInit,
+    CollectionsChainMapNewChild,
+    CollectionsChainMapRepr,
+    CollectionsChainMapItems,
     CollectionsNamedTuple,
     CollectionsDefaultDict,
     TokenizeTokenizerIter,
@@ -1838,6 +1869,12 @@ pub enum BuiltinFunction {
     StructPackInto,
     StructUnpackFrom,
     StructClearCache,
+    StructClassInit,
+    StructClassPack,
+    StructClassUnpack,
+    StructClassIterUnpack,
+    StructClassPackInto,
+    StructClassUnpackFrom,
     SelectSelect,
     StringFormatterParser,
     StringFormatterFieldNameSplit,
@@ -1891,6 +1928,21 @@ pub enum BuiltinFunction {
     IoReadText,
     IoWriteText,
     IoTextEncoding,
+    IoFileRead,
+    IoFileReadLine,
+    IoFileWrite,
+    IoFileSeek,
+    IoFileTell,
+    IoFileClose,
+    IoFileFlush,
+    IoFileIter,
+    IoFileNext,
+    IoFileEnter,
+    IoFileExit,
+    IoFileFileno,
+    IoFileReadable,
+    IoFileWritable,
+    IoFileSeekable,
     StringIOInit,
     StringIOWrite,
     StringIORead,
@@ -2015,7 +2067,7 @@ impl BuiltinFunction {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("repr() expects one argument"));
                 }
-                Ok(Value::Str(format_value(&args[0])))
+                Ok(Value::Str(format_repr(&args[0])))
             }
             BuiltinFunction::NoOp => Ok(Value::None),
             BuiltinFunction::StringIOInit
@@ -2027,6 +2079,10 @@ impl BuiltinFunction {
             | BuiltinFunction::StringIOTell
             | BuiltinFunction::StringIOIter
             | BuiltinFunction::StringIONext
+            | BuiltinFunction::CollectionsChainMapInit
+            | BuiltinFunction::CollectionsChainMapNewChild
+            | BuiltinFunction::CollectionsChainMapRepr
+            | BuiltinFunction::CollectionsChainMapItems
             | BuiltinFunction::CsvReaderIter
             | BuiltinFunction::CsvReaderNext => Err(RuntimeError::new(
                 "StringIO builtin not available in runtime-only call path",
@@ -3059,6 +3115,14 @@ impl BuiltinFunction {
                 }
                 Ok(Value::None)
             }
+            BuiltinFunction::StructClassInit
+            | BuiltinFunction::StructClassPack
+            | BuiltinFunction::StructClassUnpack
+            | BuiltinFunction::StructClassIterUnpack
+            | BuiltinFunction::StructClassPackInto
+            | BuiltinFunction::StructClassUnpackFrom => {
+                Err(RuntimeError::new("struct.Struct methods require VM context"))
+            }
             BuiltinFunction::ImpAcquireLock => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("acquire_lock() expects no arguments"));
@@ -3354,10 +3418,13 @@ impl BuiltinFunction {
                 class
                     .attrs
                     .insert("__name__".to_string(), Value::Str(type_name));
-                class.attrs.insert(
-                    "_fields".to_string(),
-                    heap.alloc_tuple(fields.iter().cloned().map(Value::Str).collect()),
-                );
+                let field_tuple = heap.alloc_tuple(fields.iter().cloned().map(Value::Str).collect());
+                class
+                    .attrs
+                    .insert("_fields".to_string(), field_tuple.clone());
+                class
+                    .attrs
+                    .insert("__pyrs_namedtuple_fields__".to_string(), field_tuple);
                 for field in &fields {
                     let descriptor = match heap
                         .alloc_module(ModuleObject::new(format!("__namedtuple_field_{field}")))
@@ -3504,10 +3571,11 @@ impl BuiltinFunction {
                 let itemsize = match typecode.chars().next().expect("checked empty") {
                     'b' | 'B' => 1,
                     'u' | 'h' | 'H' => 2,
-                    'i' | 'I' | 'l' | 'L' | 'f' => 4,
+                    'i' | 'I' | 'l' | 'L' | 'f' | 'w' => 4,
                     'q' | 'Q' | 'd' => 8,
                     _ => 1,
                 };
+                let is_wide_char = typecode.starts_with('w');
                 let mut values = Vec::new();
                 if let Some(initializer) = args.get(1) {
                     match initializer {
@@ -3538,7 +3606,11 @@ impl BuiltinFunction {
                             }
                         },
                         Value::Str(text) => {
-                            values.extend(text.chars().map(|ch| Value::Int(ch as i64)));
+                            if is_wide_char {
+                                values.extend(text.chars().map(|ch| Value::Str(ch.to_string())));
+                            } else {
+                                values.extend(text.chars().map(|ch| Value::Int(ch as i64)));
+                            }
                         }
                         Value::None => {}
                         _ => return Err(RuntimeError::new("array() initializer must be iterable")),
@@ -3604,6 +3676,7 @@ impl BuiltinFunction {
             | BuiltinFunction::Exec
             | BuiltinFunction::SysGetFrame
             | BuiltinFunction::SysException
+            | BuiltinFunction::SysExcInfo
             | BuiltinFunction::SysExit
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
@@ -3684,8 +3757,12 @@ impl BuiltinFunction {
             | BuiltinFunction::OsGetTerminalSize
             | BuiltinFunction::OsTerminalSize
             | BuiltinFunction::OsOpen
+            | BuiltinFunction::OsPipe
+            | BuiltinFunction::OsRead
             | BuiltinFunction::OsWrite
+            | BuiltinFunction::OsDup
             | BuiltinFunction::OsClose
+            | BuiltinFunction::OsKill
             | BuiltinFunction::OsIsATty
             | BuiltinFunction::OsURandom
             | BuiltinFunction::OsStat
@@ -3720,6 +3797,15 @@ impl BuiltinFunction {
             | BuiltinFunction::OsPathCommonPrefix
             | BuiltinFunction::OsWaitPid
             | BuiltinFunction::PosixSubprocessForkExec
+            | BuiltinFunction::SubprocessPopenInit
+            | BuiltinFunction::SubprocessPopenCommunicate
+            | BuiltinFunction::SubprocessPopenWait
+            | BuiltinFunction::SubprocessPopenKill
+            | BuiltinFunction::SubprocessPopenPoll
+            | BuiltinFunction::SubprocessPopenEnter
+            | BuiltinFunction::SubprocessPopenExit
+            | BuiltinFunction::SubprocessCleanup
+            | BuiltinFunction::SubprocessCheckCall
             | BuiltinFunction::JsonDumps
             | BuiltinFunction::JsonLoads
             | BuiltinFunction::PyLongIntToDecimalString
@@ -3812,6 +3898,21 @@ impl BuiltinFunction {
             | BuiltinFunction::IoReadText
             | BuiltinFunction::IoWriteText
             | BuiltinFunction::IoTextEncoding
+            | BuiltinFunction::IoFileRead
+            | BuiltinFunction::IoFileReadLine
+            | BuiltinFunction::IoFileWrite
+            | BuiltinFunction::IoFileSeek
+            | BuiltinFunction::IoFileTell
+            | BuiltinFunction::IoFileClose
+            | BuiltinFunction::IoFileFlush
+            | BuiltinFunction::IoFileIter
+            | BuiltinFunction::IoFileNext
+            | BuiltinFunction::IoFileEnter
+            | BuiltinFunction::IoFileExit
+            | BuiltinFunction::IoFileFileno
+            | BuiltinFunction::IoFileReadable
+            | BuiltinFunction::IoFileWritable
+            | BuiltinFunction::IoFileSeekable
             | BuiltinFunction::DateTimeNow
             | BuiltinFunction::DateToday
             | BuiltinFunction::DateInit
@@ -4527,7 +4628,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::BoundMethod(_) => Value::Str("method".to_string()),
         Value::Function(_) => Value::Str("function".to_string()),
         Value::Cell(_) => Value::Str("cell".to_string()),
-        Value::Exception(_) => Value::ExceptionType("BaseException".to_string()),
+        Value::Exception(exception) => Value::ExceptionType(exception.name.clone()),
         Value::ExceptionType(_) => Value::Str("type".to_string()),
         Value::Slice { .. } => Value::Builtin(BuiltinFunction::Slice),
         Value::Code(_) => Value::Str("code".to_string()),
@@ -4638,7 +4739,7 @@ pub fn format_value(value: &Value) -> String {
                 Object::Dict(values) => {
                     let mut parts = Vec::new();
                     for (key, _) in values {
-                        parts.push(format_value(key));
+                        parts.push(format_repr(key));
                     }
                     format!("dict_keys([{}])", parts.join(", "))
                 }
@@ -4653,7 +4754,7 @@ pub fn format_value(value: &Value) -> String {
                 } else {
                     let mut parts = Vec::new();
                     for value in values {
-                        parts.push(format_value(value));
+                        parts.push(format_repr(value));
                     }
                     format!("{{{}}}", parts.join(", "))
                 }
@@ -4664,7 +4765,7 @@ pub fn format_value(value: &Value) -> String {
             Object::FrozenSet(values) => {
                 let mut parts = Vec::new();
                 for value in values {
-                    parts.push(format_value(value));
+                    parts.push(format_repr(value));
                 }
                 format!("frozenset({{{}}})", parts.join(", "))
             }
@@ -4724,6 +4825,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::DictKeys => "<bound method dict.keys>".to_string(),
                     NativeMethodKind::DictValues => "<bound method dict.values>".to_string(),
                     NativeMethodKind::DictItems => "<bound method dict.items>".to_string(),
+                    NativeMethodKind::DictClear => "<bound method dict.clear>".to_string(),
                     NativeMethodKind::DictUpdateMethod => "<bound method dict.update>".to_string(),
                     NativeMethodKind::DictSetDefault => {
                         "<bound method dict.setdefault>".to_string()
@@ -4747,6 +4849,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),
                     NativeMethodKind::StrUpper => "<bound method str.upper>".to_string(),
                     NativeMethodKind::StrLower => "<bound method str.lower>".to_string(),
+                    NativeMethodKind::StrCapitalize => {
+                        "<bound method str.capitalize>".to_string()
+                    }
                     NativeMethodKind::StrEncode => "<bound method str.encode>".to_string(),
                     NativeMethodKind::StrDecode => "<bound method str.decode>".to_string(),
                     NativeMethodKind::BytesDecode => "<bound method bytes.decode>".to_string(),
@@ -4776,6 +4881,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
+                    NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
                     NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
                     NativeMethodKind::SetIsSuperset => "<bound method set.issuperset>".to_string(),
                     NativeMethodKind::SetIsSubset => "<bound method set.issubset>".to_string(),
@@ -4788,6 +4894,9 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method Pattern.fullmatch>".to_string()
                     }
                     NativeMethodKind::RePatternSub => "<bound method Pattern.sub>".to_string(),
+                    NativeMethodKind::ExceptionWithTraceback => {
+                        "<bound method BaseException.with_traceback>".to_string()
+                    }
                     NativeMethodKind::ClassRegister => "<bound method register>".to_string(),
                     NativeMethodKind::PropertyGet => "<bound method property.__get__>".to_string(),
                     NativeMethodKind::PropertySet => "<bound method property.__set__>".to_string(),
@@ -4844,6 +4953,106 @@ pub fn format_value(value: &Value) -> String {
         Value::Code(_) => "<code>".to_string(),
         Value::Function(_) => "<function>".to_string(),
         Value::Builtin(_) => "<builtin>".to_string(),
+    }
+}
+
+fn format_repr_string(value: &str) -> String {
+    let mut out = String::new();
+    out.push('\'');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                for escaped in c.escape_default() {
+                    out.push(escaped);
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+pub fn format_repr(value: &Value) -> String {
+    match value {
+        Value::Str(value) => format_repr_string(value),
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => {
+                let mut parts = Vec::new();
+                for value in values {
+                    parts.push(format_repr(value));
+                }
+                format!("[{}]", parts.join(", "))
+            }
+            _ => "<list>".to_string(),
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => {
+                let mut parts = Vec::new();
+                for value in values {
+                    parts.push(format_repr(value));
+                }
+                if parts.len() == 1 {
+                    format!("({},)", parts[0])
+                } else {
+                    format!("({})", parts.join(", "))
+                }
+            }
+            _ => "<tuple>".to_string(),
+        },
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(values) => {
+                let mut parts = Vec::new();
+                for (key, value) in values {
+                    parts.push(format!("{}: {}", format_repr(key), format_repr(value)));
+                }
+                format!("{{{}}}", parts.join(", "))
+            }
+            _ => "<dict>".to_string(),
+        },
+        Value::DictKeys(obj) => match &*obj.kind() {
+            Object::DictKeysView(view) => match &*view.dict.kind() {
+                Object::Dict(values) => {
+                    let mut parts = Vec::new();
+                    for (key, _) in values {
+                        parts.push(format_repr(key));
+                    }
+                    format!("dict_keys([{}])", parts.join(", "))
+                }
+                _ => "dict_keys([])".to_string(),
+            },
+            _ => "<dict_keys>".to_string(),
+        },
+        Value::Set(obj) => match &*obj.kind() {
+            Object::Set(values) => {
+                if values.is_empty() {
+                    "set()".to_string()
+                } else {
+                    let mut parts = Vec::new();
+                    for value in values {
+                        parts.push(format_repr(value));
+                    }
+                    format!("{{{}}}", parts.join(", "))
+                }
+            }
+            _ => "<set>".to_string(),
+        },
+        Value::FrozenSet(obj) => match &*obj.kind() {
+            Object::FrozenSet(values) => {
+                let mut parts = Vec::new();
+                for value in values {
+                    parts.push(format_repr(value));
+                }
+                format!("frozenset({{{}}})", parts.join(", "))
+            }
+            _ => "<frozenset>".to_string(),
+        },
+        _ => format_value(value),
     }
 }
 

@@ -13,7 +13,11 @@ def get_data(package, resource):
         return None
     path = os.path.join(locations[0], resource)
     try:
-        return open(path, 'rb')
+        handle = open(path, 'rb')
+        try:
+            return handle.read()
+        finally:
+            handle.close()
     except Exception:
         return None
 

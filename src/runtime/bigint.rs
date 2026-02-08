@@ -165,11 +165,7 @@ impl BigInt {
         for limb in self.limbs.iter().rev() {
             value = value * 4_294_967_296.0 + (*limb as f64);
         }
-        if self.sign < 0 {
-            -value
-        } else {
-            value
-        }
+        if self.sign < 0 { -value } else { value }
     }
 
     pub fn add(&self, other: &Self) -> Self {

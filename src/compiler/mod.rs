@@ -480,10 +480,7 @@ fn collect_pattern_locals(pattern: &Pattern, locals: &mut HashSet<String>) {
         Pattern::Star(Some(name)) => {
             locals.insert(name.clone());
         }
-        Pattern::Wildcard
-        | Pattern::Constant(_)
-        | Pattern::Value(_)
-        | Pattern::Star(None) => {}
+        Pattern::Wildcard | Pattern::Constant(_) | Pattern::Value(_) | Pattern::Star(None) => {}
     }
 }
 
@@ -2382,12 +2379,18 @@ impl Compiler {
                 Self::insert_pattern_binding(&mut bound, name)?;
             }
             Pattern::As { pattern, name } => {
-                Self::merge_pattern_bindings(&mut bound, Self::validate_pattern_bindings(pattern)?)?;
+                Self::merge_pattern_bindings(
+                    &mut bound,
+                    Self::validate_pattern_bindings(pattern)?,
+                )?;
                 Self::insert_pattern_binding(&mut bound, name)?;
             }
             Pattern::Sequence(items) => {
                 for item in items {
-                    Self::merge_pattern_bindings(&mut bound, Self::validate_pattern_bindings(item)?)?;
+                    Self::merge_pattern_bindings(
+                        &mut bound,
+                        Self::validate_pattern_bindings(item)?,
+                    )?;
                 }
             }
             Pattern::Mapping { entries, rest } => {
@@ -2433,14 +2436,13 @@ impl Compiler {
                         if option_bindings != *expected {
                             let mut expected_names = expected.iter().cloned().collect::<Vec<_>>();
                             expected_names.sort();
-                            let mut option_names = option_bindings.iter().cloned().collect::<Vec<_>>();
+                            let mut option_names =
+                                option_bindings.iter().cloned().collect::<Vec<_>>();
                             option_names.sort();
-                            return Err(CompileError::new(
-                                format!(
-                                    "alternative patterns bind different names: expected {:?}, got {:?}",
-                                    expected_names, option_names
-                                ),
-                            ));
+                            return Err(CompileError::new(format!(
+                                "alternative patterns bind different names: expected {:?}, got {:?}",
+                                expected_names, option_names
+                            )));
                         }
                     } else {
                         expected_bindings = Some(option_bindings);
@@ -2541,7 +2543,9 @@ impl Compiler {
                 self.emit_store_name_scoped(name)?;
             }
             Pattern::Sequence(items) => {
-                let star_index = items.iter().position(|item| matches!(item, Pattern::Star(_)));
+                let star_index = items
+                    .iter()
+                    .position(|item| matches!(item, Pattern::Star(_)));
                 for (idx, item) in items.iter().enumerate() {
                     match item {
                         Pattern::Star(Some(name)) => {
@@ -3288,6 +3292,7 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         let span = iter.span;
         let iter_temp = self.fresh_temp("aiter");
+        let exhausted_temp = self.fresh_temp("async_for_exhausted");
         let iter_assign = Stmt::new(
             StmtKind::Assign {
                 targets: vec![AssignTarget::Name(iter_temp.clone())],
@@ -3302,6 +3307,14 @@ impl Compiler {
             span,
         );
         self.compile_stmt(&iter_assign)?;
+        let exhausted_assign = Stmt::new(
+            StmtKind::Assign {
+                targets: vec![AssignTarget::Name(exhausted_temp.clone())],
+                value: Expr::new(ExprKind::Constant(Constant::Bool(false)), span),
+            },
+            span,
+        );
+        self.compile_stmt(&exhausted_assign)?;
 
         let fetch_stmt = Stmt::new(
             StmtKind::Assign {
@@ -3338,25 +3351,51 @@ impl Compiler {
                     )),
                     name: None,
                     is_star: false,
-                    body: vec![Stmt::new(StmtKind::Break, span)],
+                    body: vec![Stmt::new(
+                        StmtKind::Assign {
+                            targets: vec![AssignTarget::Name(exhausted_temp.clone())],
+                            value: Expr::new(ExprKind::Constant(Constant::Bool(true)), span),
+                        },
+                        span,
+                    )],
                 }],
                 orelse: Vec::new(),
                 finalbody: Vec::new(),
             },
             span,
         );
+        let break_if_exhausted = Stmt::new(
+            StmtKind::If {
+                test: Expr::new(ExprKind::Name(exhausted_temp.clone()), span),
+                body: vec![Stmt::new(StmtKind::Break, span)],
+                orelse: Vec::new(),
+            },
+            span,
+        );
 
-        let mut while_body = vec![fetch_try];
+        let mut while_body = vec![fetch_try, break_if_exhausted];
         while_body.extend(body.iter().cloned());
         let while_stmt = Stmt::new(
             StmtKind::While {
                 test: Expr::new(ExprKind::Constant(Constant::Bool(true)), span),
                 body: while_body,
-                orelse: orelse.to_vec(),
+                orelse: Vec::new(),
             },
             span,
         );
-        self.compile_stmt(&while_stmt)
+        self.compile_stmt(&while_stmt)?;
+        if !orelse.is_empty() {
+            let orelse_stmt = Stmt::new(
+                StmtKind::If {
+                    test: Expr::new(ExprKind::Name(exhausted_temp), span),
+                    body: orelse.to_vec(),
+                    orelse: Vec::new(),
+                },
+                span,
+            );
+            self.compile_stmt(&orelse_stmt)?;
+        }
+        Ok(())
     }
 
     fn compile_with(
@@ -3366,6 +3405,7 @@ impl Compiler {
         body: &[Stmt],
     ) -> Result<(), CompileError> {
         let ctx_temp = self.fresh_temp("ctx");
+        let exc_temp = self.fresh_temp("ctx_exc");
         self.compile_expr(context)?;
         self.emit_store_name(&ctx_temp);
 
@@ -3389,12 +3429,28 @@ impl Compiler {
 
         let handler_start = self.current_ip();
         self.patch_jump(setup_except, handler_start)?;
-        self.emit(Opcode::PopTop, None);
-        self.emit_with_exit(&ctx_temp)?;
-        self.emit(Opcode::Raise, Some(0));
+        self.emit_store_name(&exc_temp);
+        self.emit_load_name(&ctx_temp)?;
+        let exit_idx = self.code.add_name("__exit__".to_string());
+        self.emit(Opcode::LoadAttr, Some(exit_idx << 1));
+        self.emit_load_name(&exc_temp)?;
+        let class_idx = self.code.add_name("__class__".to_string());
+        self.emit(Opcode::LoadAttr, Some(class_idx << 1));
+        self.emit_load_name(&exc_temp)?;
+        self.emit(Opcode::LoadConst, Some(0));
+        self.emit(Opcode::CallFunction, Some(3));
+        let jump_if_not_suppressed = self.emit_jump(Opcode::JumpIfFalse);
+        self.emit(Opcode::ClearException, None);
+        let suppressed_jump = self.emit_jump(Opcode::Jump);
+        let reraise_target = self.current_ip();
+        self.patch_jump(jump_if_not_suppressed, reraise_target)?;
+        self.emit(Opcode::ClearException, None);
+        self.emit_load_name(&exc_temp)?;
+        self.emit(Opcode::Raise, Some(1));
 
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
+        self.patch_jump(suppressed_jump, end_target)?;
         Ok(())
     }
 

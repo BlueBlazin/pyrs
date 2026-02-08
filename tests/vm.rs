@@ -1,6 +1,6 @@
 use pyrs::{
     compiler, parser,
-    runtime::{BuiltinFunction, ExceptionObject, Object, Value},
+    runtime::{BuiltinFunction, Object, Value},
     vm::Vm,
 };
 use std::path::PathBuf;
@@ -44,6 +44,22 @@ fn bytes_values(value: Option<Value>) -> Option<Vec<u8>> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn assert_exception_global(vm: &Vm, name: &str, expected_type: &str, expected_message: Option<&str>) {
+    match vm.get_global(name) {
+        Some(Value::Exception(exc)) => {
+            assert_eq!(exc.name, expected_type);
+            match (exc.message.as_deref(), expected_message) {
+                (Some(actual), Some(expected)) => assert_eq!(actual, expected),
+                (None, None) => {}
+                (actual, expected) => {
+                    panic!("unexpected exception message for {name}: {actual:?} != {expected:?}")
+                }
+            }
+        }
+        other => panic!("expected exception global {name}, got {other:?}"),
     }
 }
 
@@ -461,17 +477,24 @@ fn imports_ipaddress_and_executes_ipv6_bigint_paths() {
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    let source = "\
+    let handle = std::thread::Builder::new()
+        .name("ipaddress-parity".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = "\
 import ipaddress\n\
 maxv = int(ipaddress.IPv6Address('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')) >> 120\n\
 num = ipaddress.IPv6Network('2001:db8::/64').num_addresses\n\
 ok = maxv == 255 and num == (1 << 64)\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn ipaddress thread");
+    handle.join().expect("ipaddress thread should complete");
 }
 
 #[test]
@@ -760,7 +783,8 @@ fn exposes_object_dunder_ne_and_float_getformat() {
 
 #[test]
 fn executes_dict_attribute_methods() {
-    let source = "d = {'a': 1, 'b': 2}\nks = d.keys()\nvs = d.values()\nis_ = d.items()\n";
+    let source =
+        "d = {'a': 1, 'b': 2}\nks = list(d.keys())\nvs = list(d.values())\nis_ = list(d.items())\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1969,7 +1993,9 @@ fn executes_io_module_helpers() {
 import os\n\
 io.write_text('{path}', 'hello')\n\
 txt = io.read_text('{path}')\n\
-raw = io.open('{path}', 'rb')\n\
+fd = os.open('{path}', os.O_RDONLY)\n\
+raw = os.read(fd, 5)\n\
+os.close(fd)\n\
 names = os.listdir('{dir}')\n",
         dir = temp_dir.to_string_lossy().replace('\\', "\\\\"),
     );
@@ -2097,13 +2123,7 @@ fn executes_try_except_statement() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
-    assert_eq!(
-        vm.get_global("err"),
-        Some(Value::Exception(ExceptionObject::new(
-            "ValueError",
-            Some("bad".to_string()),
-        )))
-    );
+    assert_exception_global(&vm, "err", "ValueError", Some("bad"));
 }
 
 #[test]
@@ -2181,13 +2201,7 @@ fn executes_raise_from_and_exception_chaining_metadata() {
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(
-        vm.get_global("cause"),
-        Some(Value::Exception(ExceptionObject::new(
-            "ValueError",
-            Some("inner".to_string()),
-        )))
-    );
+    assert_exception_global(&vm, "cause", "ValueError", Some("inner"));
     assert_eq!(vm.get_global("context"), Some(Value::None));
     assert_eq!(vm.get_global("suppressed"), Some(Value::Bool(true)));
 }
@@ -2201,13 +2215,7 @@ fn executes_implicit_exception_context_metadata() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("cause"), Some(Value::None));
-    assert_eq!(
-        vm.get_global("context"),
-        Some(Value::Exception(ExceptionObject::new(
-            "ValueError",
-            Some("inner".to_string()),
-        )))
-    );
+    assert_exception_global(&vm, "context", "ValueError", Some("inner"));
     assert_eq!(vm.get_global("suppressed"), Some(Value::Bool(false)));
 }
 
@@ -4794,7 +4802,10 @@ os.close(fd)\n\
 fdw = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)\n\
 written = os.write(fdw, b'xyz')\n\
 os.close(fdw)\n\
-written_ok = (written == 3 and open(out, 'rb') == b'xyz')\n\
+fdr = os.open(out, os.O_RDONLY)\n\
+written_bytes = os.read(fdr, 16)\n\
+os.close(fdr)\n\
+written_ok = (written == 3 and written_bytes == b'xyz')\n\
 st = os.stat(path)\n\
 lst = os.lstat(path)\n\
 pst = posix.stat(path)\n\
@@ -4902,6 +4913,26 @@ fn executes_collections_defaultdict_factory_on_getitem() {
 #[test]
 fn executes_collections_count_elements_builtin() {
     let source = "import collections\ncounts = {}\ncollections._count_elements(counts, ['a', 'b', 'a'])\nok = counts['a'] == 2 and counts['b'] == 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collections_namedtuple_constructor_accepts_positional_and_keyword_fields() {
+    let source = "import collections\nT = collections.namedtuple('T', 'a b c')\nx = T(1, 2, 3)\ny = T(a=4, b=5, c=6)\nok = (x.a == 1 and x.b == 2 and x.c == 3 and y.a == 4 and y.b == 5 and y.c == 6)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collections_namedtuple_supports_percent_tuple_formatting() {
+    let source = "import collections\nM = collections.namedtuple('M', 'a b c')\nm = M(1, 2, 'x')\ns = 'First has %d, Second has %d:  %r' % m\nok = (s == \"First has 1, Second has 2:  'x'\")\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -5033,6 +5064,26 @@ fn executes_binascii_crc32() {
 #[test]
 fn executes_string_startswith_and_replace_methods() {
     let source = "name = 'token'\na = name.startswith('to')\nb = name.replace('to', 'bro')\nok = a and b == 'broken'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_string_capitalize_method() {
+    let source = "a = 'hELLo world'.capitalize()\nb = ''.capitalize()\nok = (a == 'Hello world') and (b == '')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn string_backslash_newline_continuation_matches_python_behavior() {
+    let source = "s = '''\\\nA\nB'''\nok = (s == 'A\\nB')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -5969,6 +6020,99 @@ try:
 except Exception:
     limit_raised = True
 ok = (rows == [['a', 'b', 'c']] and rows2 == [['a,b', 'c']] and ''.join(sink.parts) == 'a\\,b,c\n' and limit_raised)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_reader_treats_empty_line_as_empty_row() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+rows = list(csv.reader(['a,b', '', 'c,d']))
+ok = (rows == [['a', 'b'], [], ['c', 'd']])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_reader_supports_quote_modes_and_dialect_overrides() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+class Base(csv.Dialect):
+    delimiter = "\t"
+    quotechar = '"'
+    doublequote = True
+    skipinitialspace = False
+    lineterminator = "\r\n"
+    quoting = csv.QUOTE_MINIMAL
+csv.register_dialect(
+    "x",
+    Base,
+    delimiter=";",
+    quotechar="'",
+    doublequote=False,
+    skipinitialspace=True,
+    lineterminator="\n",
+    quoting=csv.QUOTE_ALL,
+)
+d = csv.get_dialect("x")
+rows_quote_none = list(csv.reader(['1,",3,",5'], quoting=csv.QUOTE_NONE, escapechar='\\'))
+rows_quote_strings = list(csv.reader([',3,"5",7.3, 9'], quoting=csv.QUOTE_STRINGS))
+rows_quote_notnull = list(csv.reader([',,"",'], quoting=csv.QUOTE_NOTNULL))
+rows_escape_eof = list(csv.reader(['^'], escapechar='^'))
+strict_raised = False
+try:
+    list(csv.reader(['a,"'], strict=True))
+except Exception:
+    strict_raised = True
+ok = (
+    d.delimiter == ';'
+    and d.quotechar == "'"
+    and d.doublequote is False
+    and d.skipinitialspace is True
+    and d.lineterminator == '\n'
+    and d.quoting == csv.QUOTE_ALL
+    and rows_quote_none == [['1', '"', '3', '"', '5']]
+    and rows_quote_strings == [[None, 3, '5', 7.3, 9]]
+    and rows_quote_notnull == [[None, None, '', None]]
+    and rows_escape_eof == [['\n']]
+    and strict_raised
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn contextlib_exit_allows_exception_traceback_assignment() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"from test.support.warnings_helper import save_restore_warnings_filters
+ok = False
+try:
+    with save_restore_warnings_filters():
+        import numpy
+except ModuleNotFoundError:
+    ok = True
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

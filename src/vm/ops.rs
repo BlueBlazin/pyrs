@@ -3,10 +3,12 @@ use std::cmp::Ordering;
 use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, ensure_hashable};
 use super::{
-    mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod,
-    value_to_int, NumericValue,
+    NumericValue, mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div,
+    python_mod, value_to_int,
 };
-use crate::runtime::{format_value, BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value};
+use crate::runtime::{
+    BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,
+};
 
 fn int_like_to_bigint(value: &Value) -> Option<BigInt> {
     match value {
@@ -36,11 +38,9 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     }
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return match (left, right) {
-            (NumericValue::Int(left), NumericValue::Int(right)) => {
-                Ok(bigint_to_value(
-                    BigInt::from_i64(left).add(&BigInt::from_i64(right)),
-                ))
-            }
+            (NumericValue::Int(left), NumericValue::Int(right)) => Ok(bigint_to_value(
+                BigInt::from_i64(left).add(&BigInt::from_i64(right)),
+            )),
             (left, right) => Ok(Value::Float(numeric_as_f64(left) + numeric_as_f64(right))),
         };
     }
@@ -60,6 +60,30 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                 let mut result = left.clone();
                 result.extend(right.clone());
                 Ok(heap.alloc_bytes(result))
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for +")),
+        },
+        (Value::Bytes(a), Value::ByteArray(b)) => match (&*a.kind(), &*b.kind()) {
+            (Object::Bytes(left), Object::ByteArray(right)) => {
+                let mut result = left.clone();
+                result.extend(right.clone());
+                Ok(heap.alloc_bytes(result))
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for +")),
+        },
+        (Value::ByteArray(a), Value::Bytes(b)) => match (&*a.kind(), &*b.kind()) {
+            (Object::ByteArray(left), Object::Bytes(right)) => {
+                let mut result = left.clone();
+                result.extend(right.clone());
+                Ok(heap.alloc_bytearray(result))
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for +")),
+        },
+        (Value::ByteArray(a), Value::ByteArray(b)) => match (&*a.kind(), &*b.kind()) {
+            (Object::ByteArray(left), Object::ByteArray(right)) => {
+                let mut result = left.clone();
+                result.extend(right.clone());
+                Ok(heap.alloc_bytearray(result))
             }
             _ => Err(RuntimeError::new("unsupported operand type for +")),
         },
@@ -84,6 +108,19 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
 }
 
 pub(super) fn sub_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
+    if let Value::DictKeys(_) = left {
+        if let (Some(left_values), Some(right_values)) =
+            (as_set_values(&left), iterable_values_for_setop(&right))
+        {
+            let mut difference = Vec::new();
+            for value in left_values {
+                if !right_values.iter().any(|candidate| *candidate == value) {
+                    difference.push(value);
+                }
+            }
+            return Ok(heap.alloc_set(dedup_hashable_values(difference)?));
+        }
+    }
     if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
         let mut difference = Vec::new();
         for value in left_values {
@@ -97,11 +134,9 @@ pub(super) fn sub_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         return Ok(bigint_to_value(left.sub(&right)));
     }
     match numeric_pair(&left, &right) {
-        Some((NumericValue::Int(left), NumericValue::Int(right))) => {
-            Ok(bigint_to_value(
-                BigInt::from_i64(left).sub(&BigInt::from_i64(right)),
-            ))
-        }
+        Some((NumericValue::Int(left), NumericValue::Int(right))) => Ok(bigint_to_value(
+            BigInt::from_i64(left).sub(&BigInt::from_i64(right)),
+        )),
         Some((left, right)) => Ok(Value::Float(numeric_as_f64(left) - numeric_as_f64(right))),
         None => Err(RuntimeError::new("unsupported operand type for -")),
     }
@@ -169,6 +204,9 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             Object::Tuple(values) => values.clone(),
             _ => vec![right.clone()],
         },
+        Value::Instance(_) => {
+            namedtuple_instance_percent_args(&right).unwrap_or_else(|| vec![right.clone()])
+        }
         _ => vec![right.clone()],
     };
     let mapping = match &right {
@@ -215,9 +253,22 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             idx += 1;
         }
 
+        let mut left_align = false;
+        let mut zero_pad = false;
+        let mut force_sign = false;
+        let mut space_sign = false;
         while idx < chars.len() && "#0- +".contains(chars[idx]) {
+            match chars[idx] {
+                '-' => left_align = true,
+                '0' => zero_pad = true,
+                '+' => force_sign = true,
+                ' ' => space_sign = true,
+                _ => {}
+            }
             idx += 1;
         }
+
+        let mut width: Option<usize> = None;
         if idx < chars.len() && chars[idx] == '*' {
             if mapping_key.is_some() {
                 return Err(RuntimeError::new("format requires a mapping"));
@@ -225,13 +276,32 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             if arg_idx >= positional_args.len() {
                 return Err(RuntimeError::new("not enough arguments for format string"));
             }
+            let width_value = value_to_int(positional_args[arg_idx].clone())?;
             arg_idx += 1;
             idx += 1;
+            if width_value < 0 {
+                left_align = true;
+                width = Some(width_value.unsigned_abs() as usize);
+            } else {
+                width = Some(width_value as usize);
+            }
         } else {
+            let width_start = idx;
             while idx < chars.len() && chars[idx].is_ascii_digit() {
                 idx += 1;
             }
+            if idx > width_start {
+                width = Some(
+                    chars[width_start..idx]
+                        .iter()
+                        .collect::<String>()
+                        .parse::<usize>()
+                        .map_err(|_| RuntimeError::new("invalid width in format string"))?,
+                );
+            }
         }
+
+        let mut precision: Option<usize> = None;
         if idx < chars.len() && chars[idx] == '.' {
             idx += 1;
             if idx < chars.len() && chars[idx] == '*' {
@@ -241,12 +311,27 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                 if arg_idx >= positional_args.len() {
                     return Err(RuntimeError::new("not enough arguments for format string"));
                 }
+                let precision_value = value_to_int(positional_args[arg_idx].clone())?;
                 arg_idx += 1;
                 idx += 1;
+                if precision_value >= 0 {
+                    precision = Some(precision_value as usize);
+                }
             } else {
+                let precision_start = idx;
                 while idx < chars.len() && chars[idx].is_ascii_digit() {
                     idx += 1;
                 }
+                let precision_text = chars[precision_start..idx].iter().collect::<String>();
+                precision = if precision_text.is_empty() {
+                    Some(0)
+                } else {
+                    Some(
+                        precision_text
+                            .parse::<usize>()
+                            .map_err(|_| RuntimeError::new("invalid precision in format string"))?,
+                    )
+                };
             }
         }
         while idx < chars.len() && "hlL".contains(chars[idx]) {
@@ -278,7 +363,15 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             arg_idx += 1;
             value
         };
-        out.push_str(&format_percent_value(value, conversion)?);
+
+        let formatted = format_percent_value(value, conversion, precision, force_sign, space_sign)?;
+        out.push_str(&apply_percent_width(
+            formatted,
+            width,
+            left_align,
+            zero_pad && !left_align,
+            conversion,
+        ));
     }
 
     if !used_mapping && arg_idx < positional_args.len() {
@@ -286,23 +379,120 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             "not all arguments converted during string formatting",
         ));
     }
-
-    // Keep borrow checker simple when right was a tuple by avoiding accidental future use.
     positional_args.clear();
     Ok(out)
 }
 
-fn format_percent_value(value: Value, conversion: char) -> Result<String, RuntimeError> {
+fn namedtuple_instance_percent_args(value: &Value) -> Option<Vec<Value>> {
+    let Value::Instance(instance) = value else {
+        return None;
+    };
+    let (class, attrs) = match &*instance.kind() {
+        Object::Instance(instance_data) => (instance_data.class.clone(), instance_data.attrs.clone()),
+        _ => return None,
+    };
+    let field_names = match &*class.kind() {
+        Object::Class(class_data) => {
+            let fields = class_data.attrs.get("__pyrs_namedtuple_fields__")?;
+            match fields {
+                Value::Tuple(obj) => match &*obj.kind() {
+                    Object::Tuple(values) => values
+                        .iter()
+                        .map(|value| match value {
+                            Value::Str(name) => Some(name.clone()),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                    _ => return None,
+                },
+                Value::List(obj) => match &*obj.kind() {
+                    Object::List(values) => values
+                        .iter()
+                        .map(|value| match value {
+                            Value::Str(name) => Some(name.clone()),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                    _ => return None,
+                },
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+
+    let mut out = Vec::with_capacity(field_names.len());
+    for field in field_names {
+        out.push(attrs.get(&field)?.clone());
+    }
+    Some(out)
+}
+
+fn format_percent_value(
+    value: Value,
+    conversion: char,
+    precision: Option<usize>,
+    force_sign: bool,
+    space_sign: bool,
+) -> Result<String, RuntimeError> {
     match conversion {
-        's' => Ok(match value {
-            Value::Str(text) => text,
-            other => format_value(&other),
-        }),
-        'r' | 'a' => Ok(format_value(&value)),
+        's' => {
+            let raw = match value {
+                Value::Str(text) => text,
+                other => format_value(&other),
+            };
+            Ok(match precision {
+                Some(limit) => raw.chars().take(limit).collect(),
+                None => raw,
+            })
+        }
+        'r' | 'a' => {
+            let raw = format_repr(&value);
+            Ok(match precision {
+                Some(limit) => raw.chars().take(limit).collect(),
+                None => raw,
+            })
+        }
         'd' | 'i' | 'u' => {
             let integer =
                 int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
-            Ok(integer.to_string())
+            let mut text = integer.to_string();
+            if !text.starts_with('-') {
+                if force_sign {
+                    text.insert(0, '+');
+                } else if space_sign {
+                    text.insert(0, ' ');
+                }
+            }
+            Ok(text)
+        }
+        'f' | 'F' => {
+            let number = match value {
+                Value::Bool(flag) => {
+                    if flag {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                Value::Int(number) => number as f64,
+                Value::BigInt(number) => number.to_f64(),
+                Value::Float(number) => number,
+                _ => return Err(RuntimeError::new("must be real number")),
+            };
+            let precision = precision.unwrap_or(6);
+            let mut text = format!("{number:.precision$}");
+            if conversion == 'F' {
+                text = text.to_ascii_uppercase();
+            }
+            if !text.starts_with('-') {
+                if force_sign {
+                    text.insert(0, '+');
+                } else if space_sign {
+                    text.insert(0, ' ');
+                }
+            }
+            Ok(text)
         }
         'x' => {
             let integer =
@@ -348,6 +538,53 @@ fn format_percent_value(value: Value, conversion: char) -> Result<String, Runtim
         },
         _ => Err(RuntimeError::new("unsupported format character")),
     }
+}
+
+fn apply_percent_width(
+    text: String,
+    width: Option<usize>,
+    left_align: bool,
+    zero_pad: bool,
+    conversion: char,
+) -> String {
+    let Some(width) = width else {
+        return text;
+    };
+    let len = text.chars().count();
+    if len >= width {
+        return text;
+    }
+    let pad_count = width - len;
+    let pad_char = if zero_pad && is_numeric_percent_conversion(conversion) {
+        '0'
+    } else {
+        ' '
+    };
+    if left_align {
+        let mut out = text;
+        out.extend(std::iter::repeat_n(' ', pad_count));
+        out
+    } else if pad_char == '0'
+        && (text.starts_with('-') || text.starts_with('+') || text.starts_with(' '))
+    {
+        let mut chars = text.chars();
+        let sign = chars.next().unwrap_or('+');
+        let rest = chars.collect::<String>();
+        let mut out = String::new();
+        out.push(sign);
+        out.extend(std::iter::repeat_n('0', pad_count));
+        out.push_str(&rest);
+        out
+    } else {
+        let mut out = String::new();
+        out.extend(std::iter::repeat_n(pad_char, pad_count));
+        out.push_str(&text);
+        out
+    }
+}
+
+fn is_numeric_percent_conversion(conversion: char) -> bool {
+    matches!(conversion, 'd' | 'i' | 'u' | 'x' | 'X' | 'o' | 'f' | 'F')
 }
 
 pub(super) fn pow_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
@@ -422,6 +659,19 @@ pub(super) fn and_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
         return Ok(Value::Bool(*left & *right));
     }
+    if let Value::DictKeys(_) = left {
+        if let (Some(left_values), Some(right_values)) =
+            (as_set_values(&left), iterable_values_for_setop(&right))
+        {
+            let mut intersection = Vec::new();
+            for value in left_values {
+                if right_values.iter().any(|candidate| *candidate == value) {
+                    intersection.push(value);
+                }
+            }
+            return Ok(heap.alloc_set(dedup_hashable_values(intersection)?));
+        }
+    }
     if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
         let mut intersection = Vec::new();
         for value in left_values {
@@ -431,14 +681,32 @@ pub(super) fn and_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         }
         return set_op_result(left, intersection, heap);
     }
-    let (left, right) =
-        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for &"))?;
+    let (left, right) = integer_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for &"))?;
     Ok(bigint_to_value(left.bitand(&right)))
 }
 
 pub(super) fn xor_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
         return Ok(Value::Bool(*left ^ *right));
+    }
+    if let Value::DictKeys(_) = left {
+        if let (Some(left_values), Some(right_values)) =
+            (as_set_values(&left), iterable_values_for_setop(&right))
+        {
+            let mut out = Vec::new();
+            for value in &left_values {
+                if !right_values.iter().any(|candidate| candidate == value) {
+                    out.push(value.clone());
+                }
+            }
+            for value in &right_values {
+                if !left_values.iter().any(|candidate| candidate == value) {
+                    out.push(value.clone());
+                }
+            }
+            return Ok(heap.alloc_set(dedup_hashable_values(out)?));
+        }
     }
     if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
         let mut out = Vec::new();
@@ -454,14 +722,26 @@ pub(super) fn xor_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         }
         return set_op_result(left, out, heap);
     }
-    let (left, right) =
-        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for ^"))?;
+    let (left, right) = integer_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for ^"))?;
     Ok(bigint_to_value(left.bitxor(&right)))
 }
 
 pub(super) fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let (Value::Bool(left), Value::Bool(right)) = (&left, &right) {
         return Ok(Value::Bool(*left | *right));
+    }
+    if let Value::DictKeys(_) = left {
+        if let (Some(mut merged), Some(right_values)) =
+            (as_set_values(&left), iterable_values_for_setop(&right))
+        {
+            for value in right_values {
+                if !merged.iter().any(|existing| *existing == value) {
+                    merged.push(value);
+                }
+            }
+            return Ok(heap.alloc_set(dedup_hashable_values(merged)?));
+        }
     }
     if let (Some(mut merged), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
         for value in right_values {
@@ -498,7 +778,8 @@ pub(super) fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value,
         append_type_union_members(right, &mut members);
         return Ok(heap.alloc_tuple(members));
     }
-    if (matches!(left, Value::None) && !matches!(right, Value::Int(_) | Value::Bool(_) | Value::BigInt(_)))
+    if (matches!(left, Value::None)
+        && !matches!(right, Value::Int(_) | Value::Bool(_) | Value::BigInt(_)))
         || (matches!(right, Value::None)
             && !matches!(left, Value::Int(_) | Value::Bool(_) | Value::BigInt(_)))
     {
@@ -507,8 +788,8 @@ pub(super) fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value,
         append_type_union_members(right, &mut members);
         return Ok(heap.alloc_tuple(members));
     }
-    let (left, right) =
-        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for |"))?;
+    let (left, right) = integer_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for |"))?;
     Ok(bigint_to_value(left.bitor(&right)))
 }
 
@@ -579,8 +860,8 @@ fn append_type_union_members(value: Value, members: &mut Vec<Value>) {
 }
 
 pub(super) fn lshift_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
-    let (left, right) =
-        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for <<"))?;
+    let (left, right) = integer_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for <<"))?;
     if right.is_negative() {
         return Err(RuntimeError::new("negative shift count"));
     }
@@ -592,8 +873,8 @@ pub(super) fn lshift_values(left: Value, right: Value) -> Result<Value, RuntimeE
 }
 
 pub(super) fn rshift_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
-    let (left, right) =
-        integer_pair(&left, &right).ok_or_else(|| RuntimeError::new("unsupported operand type for >>"))?;
+    let (left, right) = integer_pair(&left, &right)
+        .ok_or_else(|| RuntimeError::new("unsupported operand type for >>"))?;
     if right.is_negative() {
         return Err(RuntimeError::new("negative shift count"));
     }
@@ -689,6 +970,33 @@ fn as_set_values(value: &Value) -> Option<Vec<Value>> {
             Object::FrozenSet(values) => Some(values.to_vec()),
             _ => None,
         },
+        Value::DictKeys(obj) => match &*obj.kind() {
+            Object::DictKeysView(view) => match &*view.dict.kind() {
+                Object::Dict(values) => Some(values.iter().map(|(key, _)| key.clone()).collect()),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn iterable_values_for_setop(value: &Value) -> Option<Vec<Value>> {
+    match value {
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => Some(values.clone()),
+            _ => None,
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => Some(values.clone()),
+            _ => None,
+        },
+        Value::Str(value) => Some(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(values) => Some(values.iter().map(|(key, _)| key.clone()).collect()),
+            _ => None,
+        },
+        Value::Set(_) | Value::FrozenSet(_) | Value::DictKeys(_) => as_set_values(value),
         _ => None,
     }
 }
@@ -760,6 +1068,16 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
             }
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
+        Value::DictKeys(obj) => match &*obj.kind() {
+            Object::DictKeysView(view) => match &*view.dict.kind() {
+                Object::Dict(entries) => {
+                    ensure_hashable(left)?;
+                    Ok(entries.contains_key(left))
+                }
+                _ => Err(RuntimeError::new("unsupported operand type for in")),
+            },
+            _ => Err(RuntimeError::new("unsupported operand type for in")),
+        },
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => {
                 ensure_hashable(left)?;
@@ -821,11 +1139,9 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     }
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return match (left, right) {
-            (NumericValue::Int(left), NumericValue::Int(right)) => {
-                Ok(bigint_to_value(
-                    BigInt::from_i64(left).mul(&BigInt::from_i64(right)),
-                ))
-            }
+            (NumericValue::Int(left), NumericValue::Int(right)) => Ok(bigint_to_value(
+                BigInt::from_i64(left).mul(&BigInt::from_i64(right)),
+            )),
             (left, right) => Ok(Value::Float(numeric_as_f64(left) * numeric_as_f64(right))),
         };
     }

@@ -55,18 +55,10 @@ fn cli_imports_site_by_default_when_stdlib_is_available() {
     let root = temp_root("cli_site_default");
     let stdlib = root.join("Lib");
     fs::create_dir_all(&stdlib).expect("create stdlib");
-    fs::write(
-        stdlib.join("site.py"),
-        "started = True\n",
-    )
-    .expect("write site.py");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
 
     let script = root.join("main.py");
-    fs::write(
-        &script,
-        "import sys\nassert 'site' in sys.modules\n",
-    )
-    .expect("write script");
+    fs::write(&script, "import sys\nassert 'site' in sys.modules\n").expect("write script");
 
     let script_arg = script.to_string_lossy();
     let (code, _stdout, stderr) = run_pyrs(
@@ -82,18 +74,10 @@ fn cli_no_site_flag_skips_startup_site_import() {
     let root = temp_root("cli_site_no_site");
     let stdlib = root.join("Lib");
     fs::create_dir_all(&stdlib).expect("create stdlib");
-    fs::write(
-        stdlib.join("site.py"),
-        "started = True\n",
-    )
-    .expect("write site.py");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
 
     let script = root.join("main.py");
-    fs::write(
-        &script,
-        "import sys\nassert 'site' not in sys.modules\n",
-    )
-    .expect("write script");
+    fs::write(&script, "import sys\nassert 'site' not in sys.modules\n").expect("write script");
 
     let script_arg = script.to_string_lossy();
     let (code, _stdout, stderr) = run_pyrs(

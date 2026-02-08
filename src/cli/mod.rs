@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::VERSION;
 use crate::compiler;
 use crate::parser;
+use crate::runtime::Value;
 use crate::stdlib;
 use crate::vm::Vm;
 
@@ -110,7 +111,11 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn configure_vm_for_execution(vm: &mut Vm, script_path: &str, import_site: bool) -> Result<(), String> {
+fn configure_vm_for_execution(
+    vm: &mut Vm,
+    script_path: &str,
+    import_site: bool,
+) -> Result<(), String> {
     let (stdlib_paths, strict_site_import) = detect_cpython_stdlib_paths();
     for stdlib_path in &stdlib_paths {
         vm.add_module_path(stdlib_path.clone());
@@ -197,6 +202,19 @@ fn run_bytecode(path: &str) -> Result<(), String> {
     })?;
     let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
-    println!("{}", code.disassemble());
+    print_code_recursive(&code, 0);
     Ok(())
+}
+
+fn print_code_recursive(code: &crate::bytecode::CodeObject, depth: usize) {
+    let indent = "  ".repeat(depth);
+    println!("{indent}code {}:", code.name);
+    for line in code.disassemble().lines() {
+        println!("{indent}  {line}");
+    }
+    for constant in &code.constants {
+        if let Value::Code(code_obj) = constant {
+            print_code_recursive(code_obj, depth + 1);
+        }
+    }
 }

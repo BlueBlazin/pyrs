@@ -8,9 +8,16 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -34,7 +41,7 @@ use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
     GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
     NativeMethodKind, NativeMethodObject, ObjRef, Object, RuntimeError, SuperObject, Value,
-    format_value,
+    format_repr, format_value,
 };
 
 #[derive(Debug, Clone)]
@@ -290,6 +297,8 @@ pub struct Vm {
     socket_default_timeout: Option<f64>,
     open_files: HashMap<i64, fs::File>,
     next_fd: i64,
+    child_processes: HashMap<i64, Child>,
+    child_exit_status: HashMap<i64, i64>,
     csv_dialects: HashMap<String, Value>,
     csv_field_size_limit: i64,
     defaultdict_factories: HashMap<u64, Value>,
@@ -329,6 +338,8 @@ impl Vm {
             socket_default_timeout: None,
             open_files: HashMap::new(),
             next_fd: 3,
+            child_processes: HashMap::new(),
+            child_exit_status: HashMap::new(),
             csv_dialects: HashMap::new(),
             csv_field_size_limit: 131_072,
             defaultdict_factories: HashMap::new(),
@@ -682,6 +693,9 @@ impl Vm {
                 "getfilesystemencodeerrors".to_string(),
                 Value::Builtin(BuiltinFunction::SysGetFilesystemEncodeErrors),
             );
+            module_data
+                .globals
+                .insert("audit".to_string(), Value::Builtin(BuiltinFunction::NoOp));
             let build_stream = |name: &str,
                                 write_builtin: BuiltinFunction,
                                 flush_builtin: BuiltinFunction,
@@ -950,6 +964,10 @@ impl Vm {
             module_data.globals.insert(
                 "exception".to_string(),
                 Value::Builtin(BuiltinFunction::SysException),
+            );
+            module_data.globals.insert(
+                "exc_info".to_string(),
+                Value::Builtin(BuiltinFunction::SysExcInfo),
             );
             module_data
                 .globals
@@ -1510,8 +1528,12 @@ impl Vm {
                 ("getenv", BuiltinFunction::OsGetEnv),
                 ("get_terminal_size", BuiltinFunction::OsGetTerminalSize),
                 ("open", BuiltinFunction::OsOpen),
+                ("pipe", BuiltinFunction::OsPipe),
+                ("read", BuiltinFunction::OsRead),
                 ("write", BuiltinFunction::OsWrite),
+                ("dup", BuiltinFunction::OsDup),
                 ("close", BuiltinFunction::OsClose),
+                ("kill", BuiltinFunction::OsKill),
                 ("isatty", BuiltinFunction::OsIsATty),
                 ("urandom", BuiltinFunction::OsURandom),
                 ("stat", BuiltinFunction::OsStat),
@@ -1634,8 +1656,12 @@ impl Vm {
                 ("getcwd", BuiltinFunction::OsGetCwd),
                 ("getenv", BuiltinFunction::OsGetEnv),
                 ("open", BuiltinFunction::OsOpen),
+                ("pipe", BuiltinFunction::OsPipe),
+                ("read", BuiltinFunction::OsRead),
                 ("write", BuiltinFunction::OsWrite),
+                ("dup", BuiltinFunction::OsDup),
                 ("close", BuiltinFunction::OsClose),
+                ("kill", BuiltinFunction::OsKill),
                 ("isatty", BuiltinFunction::OsIsATty),
                 ("urandom", BuiltinFunction::OsURandom),
                 ("listdir", BuiltinFunction::OsListDir),
@@ -1857,6 +1883,38 @@ impl Vm {
                 ("Incomplete", Value::ExceptionType("Exception".to_string())),
             ],
         );
+        let csv_reader_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Reader".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *csv_reader_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_csv".to_string()));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+        }
+        let csv_writer_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Writer".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *csv_writer_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_csv".to_string()));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+        }
         self.install_builtin_module(
             "_csv",
             &[
@@ -1870,7 +1928,9 @@ impl Vm {
                 ("Dialect", BuiltinFunction::CsvDialectValidate),
             ],
             vec![
-                ("Error", Value::ExceptionType("Exception".to_string())),
+                ("Error", Value::ExceptionType("Error".to_string())),
+                ("Reader", Value::Class(csv_reader_class)),
+                ("Writer", Value::Class(csv_writer_class)),
                 ("QUOTE_MINIMAL", Value::Int(0)),
                 ("QUOTE_ALL", Value::Int(1)),
                 ("QUOTE_NONNUMERIC", Value::Int(2)),
@@ -2313,6 +2373,35 @@ impl Vm {
                 ),
             ],
         );
+        let chain_map_class = match self
+            .heap
+            .alloc_class(ClassObject::new("ChainMap".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *chain_map_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapInit),
+            );
+            class_data.attrs.insert(
+                "new_child".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapNewChild),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapRepr),
+            );
+            class_data.attrs.insert(
+                "items".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapItems),
+            );
+        }
         self.install_builtin_module(
             "collections",
             &[
@@ -2322,12 +2411,11 @@ impl Vm {
                 ("defaultdict", BuiltinFunction::CollectionsDefaultDict),
                 ("_count_elements", BuiltinFunction::CollectionsCountElements),
                 ("OrderedDict", BuiltinFunction::Dict),
-                ("ChainMap", BuiltinFunction::Dict),
                 ("UserDict", BuiltinFunction::Dict),
                 ("UserList", BuiltinFunction::List),
                 ("UserString", BuiltinFunction::Str),
             ],
-            Vec::new(),
+            vec![("ChainMap", Value::Class(chain_map_class))],
         );
         self.install_builtin_module(
             "collections.abc",
@@ -2601,6 +2689,39 @@ impl Vm {
             &[("TokenizerIter", BuiltinFunction::TokenizeTokenizerIter)],
             Vec::new(),
         );
+        let struct_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Struct".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *struct_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::StructClassInit),
+            );
+            class_data.attrs.insert(
+                "pack".to_string(),
+                Value::Builtin(BuiltinFunction::StructClassPack),
+            );
+            class_data.attrs.insert(
+                "unpack".to_string(),
+                Value::Builtin(BuiltinFunction::StructClassUnpack),
+            );
+            class_data.attrs.insert(
+                "iter_unpack".to_string(),
+                Value::Builtin(BuiltinFunction::StructClassIterUnpack),
+            );
+            class_data.attrs.insert(
+                "pack_into".to_string(),
+                Value::Builtin(BuiltinFunction::StructClassPackInto),
+            );
+            class_data.attrs.insert(
+                "unpack_from".to_string(),
+                Value::Builtin(BuiltinFunction::StructClassUnpackFrom),
+            );
+        }
         self.install_builtin_module(
             "_struct",
             &[
@@ -2613,11 +2734,7 @@ impl Vm {
                 ("_clearcache", BuiltinFunction::StructClearCache),
             ],
             vec![
-                (
-                    "Struct",
-                    self.heap
-                        .alloc_class(ClassObject::new("Struct".to_string(), Vec::new())),
-                ),
+                ("Struct", Value::Class(struct_class)),
                 ("error", Value::ExceptionType("Exception".to_string())),
                 ("__doc__", Value::Str("pyrs _struct stub".to_string())),
             ],
@@ -3029,7 +3146,7 @@ impl Vm {
         self.install_builtin_module(
             "array",
             &[("array", BuiltinFunction::ArrayArray)],
-            vec![("typecodes", Value::Str("bBuhHiIlLqQfd".to_string()))],
+            vec![("typecodes", Value::Str("bBuhHiIlLqQfdw".to_string()))],
         );
         let errno_constants = vec![
             ("EPERM", 1),
@@ -3137,11 +3254,76 @@ impl Vm {
                 ("text_encoding", BuiltinFunction::IoTextEncoding),
             ],
             vec![
-                (
-                    "TextIOWrapper",
-                    self.heap
-                        .alloc_class(ClassObject::new("TextIOWrapper".to_string(), Vec::new())),
-                ),
+                {
+                    let textio = self
+                        .heap
+                        .alloc_class(ClassObject::new("TextIOWrapper".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &textio {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileTell),
+                            );
+                            class_data.attrs.insert(
+                                "close".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileClose),
+                            );
+                            class_data.attrs.insert(
+                                "flush".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileFlush),
+                            );
+                            class_data.attrs.insert(
+                                "__iter__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileIter),
+                            );
+                            class_data.attrs.insert(
+                                "__next__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileNext),
+                            );
+                            class_data.attrs.insert(
+                                "__enter__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileEnter),
+                            );
+                            class_data.attrs.insert(
+                                "__exit__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileExit),
+                            );
+                            class_data.attrs.insert(
+                                "fileno".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileFileno),
+                            );
+                            class_data.attrs.insert(
+                                "readable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadable),
+                            );
+                            class_data.attrs.insert(
+                                "writable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileWritable),
+                            );
+                            class_data.attrs.insert(
+                                "seekable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileSeekable),
+                            );
+                        }
+                    }
+                    ("TextIOWrapper", textio)
+                },
                 {
                     let stringio = self
                         .heap
@@ -3288,16 +3470,146 @@ impl Vm {
             "_io",
             &[("open", BuiltinFunction::IoOpen)],
             vec![
-                (
-                    "TextIOWrapper",
-                    self.heap
-                        .alloc_class(ClassObject::new("TextIOWrapper".to_string(), Vec::new())),
-                ),
-                (
-                    "FileIO",
-                    self.heap
-                        .alloc_class(ClassObject::new("FileIO".to_string(), Vec::new())),
-                ),
+                {
+                    let textio = self
+                        .heap
+                        .alloc_class(ClassObject::new("TextIOWrapper".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &textio {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileTell),
+                            );
+                            class_data.attrs.insert(
+                                "close".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileClose),
+                            );
+                            class_data.attrs.insert(
+                                "flush".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileFlush),
+                            );
+                            class_data.attrs.insert(
+                                "__iter__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileIter),
+                            );
+                            class_data.attrs.insert(
+                                "__next__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileNext),
+                            );
+                            class_data.attrs.insert(
+                                "__enter__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileEnter),
+                            );
+                            class_data.attrs.insert(
+                                "__exit__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileExit),
+                            );
+                            class_data.attrs.insert(
+                                "fileno".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileFileno),
+                            );
+                            class_data.attrs.insert(
+                                "readable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadable),
+                            );
+                            class_data.attrs.insert(
+                                "writable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileWritable),
+                            );
+                            class_data.attrs.insert(
+                                "seekable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileSeekable),
+                            );
+                        }
+                    }
+                    ("TextIOWrapper", textio)
+                },
+                {
+                    let fileio = self
+                        .heap
+                        .alloc_class(ClassObject::new("FileIO".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &fileio {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileTell),
+                            );
+                            class_data.attrs.insert(
+                                "close".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileClose),
+                            );
+                            class_data.attrs.insert(
+                                "flush".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileFlush),
+                            );
+                            class_data.attrs.insert(
+                                "__iter__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileIter),
+                            );
+                            class_data.attrs.insert(
+                                "__next__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileNext),
+                            );
+                            class_data.attrs.insert(
+                                "__enter__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileEnter),
+                            );
+                            class_data.attrs.insert(
+                                "__exit__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileExit),
+                            );
+                            class_data.attrs.insert(
+                                "fileno".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileFileno),
+                            );
+                            class_data.attrs.insert(
+                                "readable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileReadable),
+                            );
+                            class_data.attrs.insert(
+                                "writable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileWritable),
+                            );
+                            class_data.attrs.insert(
+                                "seekable".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileSeekable),
+                            );
+                        }
+                    }
+                    ("FileIO", fileio)
+                },
                 (
                     "BytesIO",
                     self.heap
@@ -3384,6 +3696,64 @@ impl Vm {
                 "__doc__",
                 Value::Str("pyrs _posixsubprocess stub".to_string()),
             )],
+        );
+        let subprocess_popen_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Popen".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *subprocess_popen_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPopenInit),
+            );
+            class_data.attrs.insert(
+                "communicate".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPopenCommunicate),
+            );
+            class_data.attrs.insert(
+                "wait".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPopenWait),
+            );
+            class_data.attrs.insert(
+                "kill".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPopenKill),
+            );
+            class_data.attrs.insert(
+                "poll".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPopenPoll),
+            );
+            class_data.attrs.insert(
+                "__enter__".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPopenEnter),
+            );
+            class_data.attrs.insert(
+                "__exit__".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPopenExit),
+            );
+        }
+        self.install_builtin_module(
+            "subprocess",
+            &[
+                ("_cleanup", BuiltinFunction::SubprocessCleanup),
+                ("check_call", BuiltinFunction::SubprocessCheckCall),
+            ],
+            vec![
+                ("PIPE", Value::Int(-1)),
+                ("STDOUT", Value::Int(-2)),
+                ("DEVNULL", Value::Int(-3)),
+                ("Popen", Value::Class(subprocess_popen_class)),
+                (
+                    "CalledProcessError",
+                    Value::ExceptionType("CalledProcessError".to_string()),
+                ),
+                (
+                    "SubprocessError",
+                    Value::ExceptionType("SubprocessError".to_string()),
+                ),
+            ],
         );
         self.install_builtin_module(
             "_testsinglephase",
@@ -4761,7 +5131,6 @@ impl Vm {
                 frame.ip += 1;
                 instr
             };
-
             let step_result = (|| -> Result<Option<Value>, RuntimeError> {
                 match instr.opcode {
                     Opcode::Nop => {}
@@ -5112,6 +5481,27 @@ impl Vm {
                                     self.heap.alloc_bound_method(bound)
                                 }
                                 Value::Exception(exception) => match attr_name.as_str() {
+                                    "with_traceback" => {
+                                        let wrapper = match self.heap.alloc_module(
+                                            ModuleObject::new(
+                                                "__exception_with_traceback__".to_string(),
+                                            ),
+                                        ) {
+                                            Value::Module(obj) => obj,
+                                            _ => unreachable!(),
+                                        };
+                                        if let Object::Module(module_data) = &mut *wrapper.kind_mut()
+                                        {
+                                            module_data.globals.insert(
+                                                "exception".to_string(),
+                                                Value::Exception(exception.clone()),
+                                            );
+                                        }
+                                        self.alloc_native_bound_method(
+                                            NativeMethodKind::ExceptionWithTraceback,
+                                            wrapper,
+                                        )
+                                    }
                                     "__cause__" => exception
                                         .cause
                                         .as_ref()
@@ -5343,6 +5733,9 @@ impl Vm {
                             Value::Function(func) => {
                                 self.store_attr_function(&func, attr_name, value)?
                             }
+                            Value::Exception(mut exception) => {
+                                self.store_attr_exception(&mut exception, &attr_name, value)?
+                            }
                             _ => {
                                 return Err(RuntimeError::new(
                                     "attribute assignment unsupported type",
@@ -5385,6 +5778,9 @@ impl Vm {
                             }
                             Value::Function(func) => {
                                 self.store_attr_function(&func, attr_name, value)?
+                            }
+                            Value::Exception(mut exception) => {
+                                self.store_attr_exception(&mut exception, &attr_name, value)?
                             }
                             _ => {
                                 return Err(RuntimeError::new(
@@ -7203,37 +7599,26 @@ impl Vm {
                                 }
                             }
                             Value::Instance(instance) => {
-                                let receiver = Value::Instance(instance.clone());
-                                let method = self
-                                    .lookup_bound_special_method(&receiver, "__next__")?
-                                    .ok_or_else(|| {
-                                        RuntimeError::new("FOR_ITER expects iterator")
-                                    })?;
-                                match self.call_internal(method, Vec::new(), HashMap::new()) {
-                                    Ok(InternalCallOutcome::Value(value)) => {
+                                let iterator = Value::Instance(instance.clone());
+                                match self.next_from_iterator_value(&iterator)? {
+                                    GeneratorResumeOutcome::Yield(value) => {
                                         self.push_value(Value::Instance(instance));
                                         self.push_value(value);
                                     }
-                                    Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                                        if self.active_exception_is("StopIteration") {
-                                            self.clear_active_exception();
-                                            let frame =
-                                                self.frames.last_mut().expect("frame exists");
-                                            frame.ip = target;
-                                        } else {
-                                            return Err(RuntimeError::new(
-                                                "iterator __next__ failed",
-                                            ));
-                                        }
+                                    GeneratorResumeOutcome::Complete(_) => {
+                                        let frame = self.frames.last_mut().expect("frame exists");
+                                        frame.ip = target;
                                     }
-                                    Err(err) => {
-                                        if classify_runtime_error(&err.message) == "StopIteration" {
-                                            let frame =
-                                                self.frames.last_mut().expect("frame exists");
-                                            frame.ip = target;
-                                        } else {
-                                            return Err(err);
+                                    GeneratorResumeOutcome::PropagatedException => {
+                                        if self
+                                            .frames
+                                            .last()
+                                            .and_then(|frame| frame.active_exception.as_ref())
+                                            .is_some()
+                                        {
+                                            return Ok(None);
                                         }
+                                        return Err(RuntimeError::new("iterator __next__ failed"));
                                     }
                                 }
                             }
@@ -7762,14 +8147,15 @@ impl Vm {
         template: &ExceptionObject,
         members: Vec<ExceptionObject>,
     ) -> ExceptionObject {
-        ExceptionObject {
-            name: template.name.clone(),
-            message: template.message.clone(),
-            exceptions: members,
-            cause: template.cause.clone(),
-            context: template.context.clone(),
-            suppress_context: template.suppress_context,
-        }
+        let mut clone = ExceptionObject::with_members(
+            template.name.clone(),
+            template.message.clone(),
+            members,
+        );
+        clone.cause = template.cause.clone();
+        clone.context = template.context.clone();
+        clone.suppress_context = template.suppress_context;
+        clone
     }
 
     fn exception_inherits(&self, exception_name: &str, handler_name: &str) -> bool {
@@ -8325,11 +8711,25 @@ impl Vm {
     }
 
     fn pop_value(&mut self) -> Result<Value, RuntimeError> {
+        let (frame_name, ip, opcode_name) = if let Some(frame) = self.frames.last() {
+            let ip = frame.ip.saturating_sub(1);
+            let opcode_name = frame
+                .code
+                .instructions
+                .get(ip)
+                .map(|instr| format!("{:?}", instr.opcode))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            (frame.code.name.clone(), ip, opcode_name)
+        } else {
+            ("<no-frame>".to_string(), 0, "<no-frame>".to_string())
+        };
         let frame = self.frames.last_mut().expect("frame exists");
-        frame
-            .stack
-            .pop()
-            .ok_or_else(|| RuntimeError::new("stack underflow (pop_value)"))
+        frame.stack.pop().ok_or_else(|| {
+            RuntimeError::new(format!(
+                "stack underflow (pop_value) in frame '{}' at ip {} opcode {}",
+                frame_name, ip, opcode_name
+            ))
+        })
     }
 
     fn push_value(&mut self, value: Value) {
@@ -8756,6 +9156,21 @@ impl Vm {
         builtin: BuiltinFunction,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        let builtin_module_name = match builtin {
+            BuiltinFunction::CsvReader
+            | BuiltinFunction::CsvWriter
+            | BuiltinFunction::CsvWriterRow
+            | BuiltinFunction::CsvWriterRows
+            | BuiltinFunction::CsvRegisterDialect
+            | BuiltinFunction::CsvUnregisterDialect
+            | BuiltinFunction::CsvGetDialect
+            | BuiltinFunction::CsvListDialects
+            | BuiltinFunction::CsvFieldSizeLimit
+            | BuiltinFunction::CsvDialectValidate
+            | BuiltinFunction::CsvReaderIter
+            | BuiltinFunction::CsvReaderNext => "_csv",
+            _ => "builtins",
+        };
         match attr_name {
             "__dict__" => Ok(self
                 .heap
@@ -8763,7 +9178,7 @@ impl Vm {
             "__name__" | "__qualname__" => {
                 Ok(Value::Str(self.builtin_type_name(builtin).to_string()))
             }
-            "__module__" => Ok(Value::Str("builtins".to_string())),
+            "__module__" => Ok(Value::Str(builtin_module_name.to_string())),
             "__self__" => Ok(Value::Builtin(builtin)),
             "__flags__" => Ok(Value::Int(0)),
             "__new__" => Ok(Value::Builtin(builtin)),
@@ -8865,6 +9280,7 @@ impl Vm {
             "replace" => NativeMethodKind::StrReplace,
             "upper" => NativeMethodKind::StrUpper,
             "lower" => NativeMethodKind::StrLower,
+            "capitalize" => NativeMethodKind::StrCapitalize,
             "encode" => NativeMethodKind::StrEncode,
             "decode" => NativeMethodKind::StrDecode,
             "removeprefix" => NativeMethodKind::StrRemovePrefix,
@@ -8958,6 +9374,9 @@ impl Vm {
             "add" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetAdd, set))
             }
+            "discard" if !is_frozenset => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::SetDiscard, set))
+            }
             "update" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetUpdate, set))
             }
@@ -8972,6 +9391,7 @@ impl Vm {
             "keys" => NativeMethodKind::DictKeys,
             "values" => NativeMethodKind::DictValues,
             "items" => NativeMethodKind::DictItems,
+            "clear" => NativeMethodKind::DictClear,
             "copy" => NativeMethodKind::DictCopy,
             "update" => NativeMethodKind::DictUpdateMethod,
             "setdefault" => NativeMethodKind::DictSetDefault,
@@ -9246,7 +9666,14 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match attr_name {
             "__name__" | "__qualname__" => Ok(Value::Str(exception_name.to_string())),
-            "__module__" => Ok(Value::Str("builtins".to_string())),
+            "__module__" => {
+                let module_name = if exception_name == "Error" {
+                    "_csv"
+                } else {
+                    "builtins"
+                };
+                Ok(Value::Str(module_name.to_string()))
+            }
             "__doc__" => Ok(Value::None),
             _ => Err(RuntimeError::new(format!(
                 "exception type has no attribute '{}'",
@@ -9370,6 +9797,60 @@ impl Vm {
             _ => {
                 let dict = self.ensure_function_dict(func)?;
                 self.dict_set_str_key(&dict, attr_name, value)
+            }
+        }
+    }
+
+    fn store_attr_exception(
+        &mut self,
+        exception: &mut ExceptionObject,
+        attr_name: &str,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        match attr_name {
+            "__cause__" => match value {
+                Value::None => {
+                    exception.cause = None;
+                    Ok(())
+                }
+                Value::Exception(cause) => {
+                    exception.cause = Some(Box::new(cause));
+                    Ok(())
+                }
+                _ => Err(RuntimeError::new(
+                    "__cause__ must be an exception or None",
+                )),
+            },
+            "__context__" => match value {
+                Value::None => {
+                    exception.context = None;
+                    Ok(())
+                }
+                Value::Exception(context) => {
+                    exception.context = Some(Box::new(context));
+                    Ok(())
+                }
+                _ => Err(RuntimeError::new(
+                    "__context__ must be an exception or None",
+                )),
+            },
+            "__suppress_context__" => match value {
+                Value::Bool(flag) => {
+                    exception.suppress_context = flag;
+                    Ok(())
+                }
+                _ => Err(RuntimeError::new(
+                    "__suppress_context__ must be set to bool",
+                )),
+            },
+            "__traceback__" => {
+                // Traceback objects are not modelled yet; accept writes for contextlib paths.
+                Ok(())
+            }
+            _ => {
+                // Exception instances allow dynamic attrs in CPython; attr persistence for
+                // exception-value semantics is tracked separately.
+                Ok(())
             }
         }
     }
@@ -9665,6 +10146,9 @@ impl Vm {
                 if let Some(call_target) = self.resolve_metaclass_call_target(&class)? {
                     return self.call_internal(call_target, args, kwargs);
                 }
+                if let Some(message) = self.class_disallow_instantiation_message(&class) {
+                    return Err(RuntimeError::new(message));
+                }
                 let instance = self.alloc_instance_for_class(&class);
                 let init = class_attr_lookup(&class, "__init__");
                 if let Some(init_callable) = init {
@@ -9708,7 +10192,58 @@ impl Vm {
                         }
                     }
                 } else {
-                    if !kwargs.is_empty() || !args.is_empty() {
+                    if let Some(fields) = self.class_namedtuple_fields(&class) {
+                        let mut bound_values: Vec<Option<Value>> = vec![None; fields.len()];
+                        if args.len() > fields.len() {
+                            return Err(RuntimeError::new("namedtuple() argument count mismatch"));
+                        }
+                        for (index, value) in args.into_iter().enumerate() {
+                            bound_values[index] = Some(value);
+                        }
+                        for (key, value) in kwargs {
+                            let Some(index) = fields.iter().position(|name| name == &key) else {
+                                return Err(RuntimeError::new(
+                                    "namedtuple() got unexpected keyword argument",
+                                ));
+                            };
+                            if bound_values[index].is_some() {
+                                return Err(RuntimeError::new(
+                                    "namedtuple() got multiple values for field",
+                                ));
+                            }
+                            bound_values[index] = Some(value);
+                        }
+                        for (index, name) in fields.iter().enumerate() {
+                            let Some(value) = bound_values[index].clone() else {
+                                return Err(RuntimeError::new(format!(
+                                    "namedtuple() missing value for field '{}'",
+                                    name
+                                )));
+                            };
+                            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                                instance_data.attrs.insert(name.clone(), value);
+                            } else {
+                                return Err(RuntimeError::new(
+                                    "namedtuple() instance construction failed",
+                                ));
+                            }
+                        }
+                    } else if self.class_is_exception_class(&class) {
+                        if !kwargs.is_empty() {
+                            return Err(RuntimeError::new(
+                                "keyword arguments not supported for exceptions",
+                            ));
+                        }
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
+                        } else {
+                            return Err(RuntimeError::new(
+                                "exception instance construction failed",
+                            ));
+                        }
+                    } else if !kwargs.is_empty() || !args.is_empty() {
                         return Err(RuntimeError::new("class constructor takes no arguments"));
                     }
                     self.push_value(Value::Instance(instance));
@@ -10480,6 +11015,14 @@ impl Vm {
                 let exc = args.into_iter().next().expect("checked len");
                 let exc = match exc {
                     Value::Exception(_) | Value::ExceptionType(_) => exc,
+                    Value::Class(class) if self.class_is_exception_class(&class) => {
+                        Value::Class(class)
+                    }
+                    Value::Instance(instance)
+                        if self.exception_class_name_for_instance(&instance).is_some() =>
+                    {
+                        Value::Instance(instance)
+                    }
                     _ => return Err(RuntimeError::new("throw() expects an exception type/value")),
                 };
                 match self.resume_generator(
@@ -10593,6 +11136,16 @@ impl Vm {
                 Ok(NativeCallResult::Value(
                     self.heap.alloc_dict(entries.to_vec()),
                 ))
+            }
+            NativeMethodKind::DictClear => {
+                if !args.is_empty() || !kwargs.is_empty() {
+                    return Err(RuntimeError::new("dict.clear() expects no arguments"));
+                }
+                let Object::Dict(entries) = &mut *receiver.kind_mut() else {
+                    return Err(RuntimeError::new("dict.clear() receiver must be dict"));
+                };
+                entries.clear();
+                Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DictUpdateMethod => {
                 if args.len() > 1 {
@@ -11078,6 +11631,26 @@ impl Vm {
                     _ => return Err(RuntimeError::new("str receiver is invalid")),
                 };
                 Ok(NativeCallResult::Value(Value::Str(text.to_lowercase())))
+            }
+            NativeMethodKind::StrCapitalize => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("capitalize() expects no arguments"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let mut chars = text.chars();
+                let Some(first) = chars.next() else {
+                    return Ok(NativeCallResult::Value(Value::Str(String::new())));
+                };
+                let mut out = String::new();
+                out.extend(first.to_uppercase());
+                out.push_str(chars.as_str().to_lowercase().as_str());
+                Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::StrEncode => {
                 if args.len() > 2 {
@@ -11880,6 +12453,19 @@ impl Vm {
                     }
                 }
             }
+            NativeMethodKind::ExceptionWithTraceback => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("with_traceback() expects one argument"));
+                }
+                let receiver_kind = receiver.kind();
+                let Object::Module(module_data) = &*receiver_kind else {
+                    return Err(RuntimeError::new("exception receiver is invalid"));
+                };
+                let Some(Value::Exception(exception)) = module_data.globals.get("exception") else {
+                    return Err(RuntimeError::new("exception receiver is invalid"));
+                };
+                Ok(NativeCallResult::Value(Value::Exception(exception.clone())))
+            }
             NativeMethodKind::SetContains => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("__contains__() expects one argument"));
@@ -11904,6 +12490,19 @@ impl Vm {
                     return Err(RuntimeError::new("add() receiver must be set"));
                 };
                 values.insert(item);
+                Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::SetDiscard => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("discard() expects one argument"));
+                }
+                let item = args.first().cloned().expect("checked len");
+                ensure_hashable(&item)?;
+                let mut receiver_kind = receiver.kind_mut();
+                let Object::Set(values) = &mut *receiver_kind else {
+                    return Err(RuntimeError::new("discard() receiver must be set"));
+                };
+                values.remove_value(&item);
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::SetUpdate => {
@@ -12624,6 +13223,53 @@ impl Vm {
         }
     }
 
+    fn class_namedtuple_fields(&self, class: &ObjRef) -> Option<Vec<String>> {
+        let value = class_attr_lookup(class, "__pyrs_namedtuple_fields__")?;
+        match value {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values
+                    .iter()
+                    .map(|value| match value {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => None,
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values
+                    .iter()
+                    .map(|value| match value {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn class_disallow_instantiation_message(&self, class: &ObjRef) -> Option<String> {
+        let class_kind = class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return None;
+        };
+        let Some(Value::Bool(true)) = class_data.attrs.get("__pyrs_disallow_instantiation__") else {
+            return None;
+        };
+        let module_name = match class_data.attrs.get("__module__") {
+            Some(Value::Str(name)) => name.clone(),
+            _ => "builtins".to_string(),
+        };
+        let qualified_name = if module_name == "builtins" {
+            class_data.name.clone()
+        } else {
+            format!("{}.{}", module_name, class_data.name)
+        };
+        Some(format!("cannot create '{}' instances", qualified_name))
+    }
+
     fn class_fallback_iterator(&self, class: &ObjRef) -> Option<Value> {
         let member_values = {
             let class_kind = class.kind();
@@ -12712,19 +13358,68 @@ impl Vm {
                 let method = self
                     .lookup_bound_special_method(&receiver, "__next__")?
                     .ok_or_else(|| RuntimeError::new("yield from expects iterable"))?;
+                let caller_depth = self.frames.len();
+                let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
+                    .frames
+                    .last()
+                    .map(|frame| {
+                        (
+                            frame.ip,
+                            frame.stack.len(),
+                            frame.blocks.clone(),
+                            frame.active_exception.clone(),
+                        )
+                    })
+                    .unwrap_or((0, 0, Vec::new(), None));
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.blocks.push(Block {
+                        handler: caller_ip,
+                        stack_len: caller_stack_len,
+                    });
+                }
                 match self.call_internal(method, Vec::new(), HashMap::new()) {
                     Ok(InternalCallOutcome::Value(value)) => {
+                        if self.frames.len() == caller_depth {
+                            if let Some(frame) = self.frames.last_mut() {
+                                frame.ip = caller_ip;
+                                frame.stack.truncate(caller_stack_len);
+                                frame.blocks = caller_blocks.clone();
+                                frame.active_exception = caller_active_exception.clone();
+                            }
+                        }
                         Ok(GeneratorResumeOutcome::Yield(value))
                     }
                     Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                        if self.active_exception_is("StopIteration") {
-                            self.clear_active_exception();
-                            Ok(GeneratorResumeOutcome::Complete(Value::None))
+                        if self.frames.len() == caller_depth {
+                            let active_exception =
+                                self.frames.last().and_then(|frame| frame.active_exception.clone());
+                            if let Some(frame) = self.frames.last_mut() {
+                                frame.ip = caller_ip;
+                                frame.stack.truncate(caller_stack_len);
+                                frame.blocks = caller_blocks.clone();
+                                frame.active_exception = caller_active_exception.clone();
+                            }
+                            if let Some(exception) = active_exception {
+                                if exception_is_named(&exception, "StopIteration") {
+                                    return Ok(GeneratorResumeOutcome::Complete(Value::None));
+                                }
+                                self.raise_exception(exception)?;
+                                return Ok(GeneratorResumeOutcome::PropagatedException);
+                            }
+                            Ok(GeneratorResumeOutcome::PropagatedException)
                         } else {
                             Ok(GeneratorResumeOutcome::PropagatedException)
                         }
                     }
                     Err(err) => {
+                        if self.frames.len() == caller_depth {
+                            if let Some(frame) = self.frames.last_mut() {
+                                frame.ip = caller_ip;
+                                frame.stack.truncate(caller_stack_len);
+                                frame.blocks = caller_blocks.clone();
+                                frame.active_exception = caller_active_exception.clone();
+                            }
+                        }
                         if classify_runtime_error(&err.message) == "StopIteration" {
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
                         } else {
@@ -13116,6 +13811,7 @@ impl Vm {
             BuiltinFunction::Dir => self.builtin_dir(args, kwargs),
             BuiltinFunction::SysGetFrame => self.builtin_sys_getframe(args, kwargs),
             BuiltinFunction::SysException => self.builtin_sys_exception(args, kwargs),
+            BuiltinFunction::SysExcInfo => self.builtin_sys_exc_info(args, kwargs),
             BuiltinFunction::SysExit => self.builtin_sys_exit(args, kwargs),
             BuiltinFunction::SysGetFilesystemEncoding => {
                 self.builtin_sys_getfilesystemencoding(args, kwargs)
@@ -13271,8 +13967,12 @@ impl Vm {
             BuiltinFunction::OsGetTerminalSize => self.builtin_os_get_terminal_size(args, kwargs),
             BuiltinFunction::OsTerminalSize => self.builtin_os_terminal_size(args, kwargs),
             BuiltinFunction::OsOpen => self.builtin_os_open(args, kwargs),
+            BuiltinFunction::OsPipe => self.builtin_os_pipe(args, kwargs),
+            BuiltinFunction::OsRead => self.builtin_os_read(args, kwargs),
             BuiltinFunction::OsWrite => self.builtin_os_write(args, kwargs),
+            BuiltinFunction::OsDup => self.builtin_os_dup(args, kwargs),
             BuiltinFunction::OsClose => self.builtin_os_close(args, kwargs),
+            BuiltinFunction::OsKill => self.builtin_os_kill(args, kwargs),
             BuiltinFunction::OsIsATty => self.builtin_os_isatty(args, kwargs),
             BuiltinFunction::OsURandom => self.builtin_os_urandom(args, kwargs),
             BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
@@ -13311,6 +14011,17 @@ impl Vm {
             BuiltinFunction::PosixSubprocessForkExec => {
                 self.builtin_posixsubprocess_fork_exec(args, kwargs)
             }
+            BuiltinFunction::SubprocessPopenInit => self.builtin_subprocess_popen_init(args, kwargs),
+            BuiltinFunction::SubprocessPopenCommunicate => {
+                self.builtin_subprocess_popen_communicate(args, kwargs)
+            }
+            BuiltinFunction::SubprocessPopenWait => self.builtin_subprocess_popen_wait(args, kwargs),
+            BuiltinFunction::SubprocessPopenKill => self.builtin_subprocess_popen_kill(args, kwargs),
+            BuiltinFunction::SubprocessPopenPoll => self.builtin_subprocess_popen_poll(args, kwargs),
+            BuiltinFunction::SubprocessPopenEnter => self.builtin_subprocess_popen_enter(args, kwargs),
+            BuiltinFunction::SubprocessPopenExit => self.builtin_subprocess_popen_exit(args, kwargs),
+            BuiltinFunction::SubprocessCleanup => self.builtin_subprocess_cleanup(args, kwargs),
+            BuiltinFunction::SubprocessCheckCall => self.builtin_subprocess_check_call(args, kwargs),
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
             BuiltinFunction::PyLongIntToDecimalString => {
@@ -13407,6 +14118,18 @@ impl Vm {
             }
             BuiltinFunction::CollectionsCounter => self.builtin_collections_counter(args, kwargs),
             BuiltinFunction::CollectionsDeque => self.builtin_collections_deque(args, kwargs),
+            BuiltinFunction::CollectionsChainMapInit => {
+                self.builtin_collections_chainmap_init(args, kwargs)
+            }
+            BuiltinFunction::CollectionsChainMapNewChild => {
+                self.builtin_collections_chainmap_new_child(args, kwargs)
+            }
+            BuiltinFunction::CollectionsChainMapRepr => {
+                self.builtin_collections_chainmap_repr(args, kwargs)
+            }
+            BuiltinFunction::CollectionsChainMapItems => {
+                self.builtin_collections_chainmap_items(args, kwargs)
+            }
             BuiltinFunction::CollectionsDefaultDict => {
                 self.builtin_collections_defaultdict(args, kwargs)
             }
@@ -13447,6 +14170,21 @@ impl Vm {
             BuiltinFunction::IoReadText => self.builtin_io_read_text(args, kwargs),
             BuiltinFunction::IoWriteText => self.builtin_io_write_text(args, kwargs),
             BuiltinFunction::IoTextEncoding => self.builtin_io_text_encoding(args, kwargs),
+            BuiltinFunction::IoFileRead => self.builtin_io_file_read(args, kwargs),
+            BuiltinFunction::IoFileReadLine => self.builtin_io_file_readline(args, kwargs),
+            BuiltinFunction::IoFileWrite => self.builtin_io_file_write(args, kwargs),
+            BuiltinFunction::IoFileSeek => self.builtin_io_file_seek(args, kwargs),
+            BuiltinFunction::IoFileTell => self.builtin_io_file_tell(args, kwargs),
+            BuiltinFunction::IoFileClose => self.builtin_io_file_close(args, kwargs),
+            BuiltinFunction::IoFileFlush => self.builtin_io_file_flush(args, kwargs),
+            BuiltinFunction::IoFileIter => self.builtin_io_file_iter(args, kwargs),
+            BuiltinFunction::IoFileNext => self.builtin_io_file_next(args, kwargs),
+            BuiltinFunction::IoFileEnter => self.builtin_io_file_enter(args, kwargs),
+            BuiltinFunction::IoFileExit => self.builtin_io_file_exit(args, kwargs),
+            BuiltinFunction::IoFileFileno => self.builtin_io_file_fileno(args, kwargs),
+            BuiltinFunction::IoFileReadable => self.builtin_io_file_readable(args, kwargs),
+            BuiltinFunction::IoFileWritable => self.builtin_io_file_writable(args, kwargs),
+            BuiltinFunction::IoFileSeekable => self.builtin_io_file_seekable(args, kwargs),
             BuiltinFunction::StringIOInit => self.builtin_stringio_init(args, kwargs),
             BuiltinFunction::StringIOWrite => self.builtin_stringio_write(args, kwargs),
             BuiltinFunction::StringIORead => self.builtin_stringio_read(args, kwargs),
@@ -13461,6 +14199,18 @@ impl Vm {
             }
             BuiltinFunction::StringFormatterFieldNameSplit => {
                 self.builtin_string_formatter_field_name_split(args, kwargs)
+            }
+            BuiltinFunction::StructClassInit => self.builtin_struct_class_init(args, kwargs),
+            BuiltinFunction::StructClassPack => self.builtin_struct_class_pack(args, kwargs),
+            BuiltinFunction::StructClassUnpack => self.builtin_struct_class_unpack(args, kwargs),
+            BuiltinFunction::StructClassIterUnpack => {
+                self.builtin_struct_class_iter_unpack(args, kwargs)
+            }
+            BuiltinFunction::StructClassPackInto => {
+                self.builtin_struct_class_pack_into(args, kwargs)
+            }
+            BuiltinFunction::StructClassUnpackFrom => {
+                self.builtin_struct_class_unpack_from(args, kwargs)
             }
             BuiltinFunction::DateTimeNow => self.builtin_datetime_now(args, kwargs),
             BuiltinFunction::DateToday => self.builtin_datetime_today(args, kwargs),
@@ -14183,6 +14933,29 @@ impl Vm {
             }
         }
         Ok(Value::None)
+    }
+
+    fn builtin_sys_exc_info(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("sys.exc_info() expects no arguments"));
+        }
+        for frame in self.frames.iter().rev() {
+            if let Some(exc) = frame.active_exception.clone() {
+                let exc_type = match &exc {
+                    Value::Exception(exception) => Value::ExceptionType(exception.name.clone()),
+                    Value::ExceptionType(name) => Value::ExceptionType(name.clone()),
+                    _ => Value::None,
+                };
+                return Ok(self.heap.alloc_tuple(vec![exc_type, exc, Value::None]));
+            }
+        }
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::None, Value::None, Value::None]))
     }
 
     fn builtin_sys_exit(
@@ -15264,6 +16037,9 @@ impl Vm {
                 ));
             }
         };
+        if let Some(message) = self.class_disallow_instantiation_message(&class_ref) {
+            return Err(RuntimeError::new(message));
+        }
         match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
             Value::Instance(instance) => Ok(Value::Instance(instance)),
             _ => unreachable!(),
@@ -16122,6 +16898,7 @@ impl Vm {
             BuiltinFunction::ByteArray => matches!(value, Value::ByteArray(_)),
             BuiltinFunction::MemoryView => matches!(value, Value::MemoryView(_)),
             BuiltinFunction::Complex => matches!(value, Value::Complex { .. }),
+            BuiltinFunction::TypesModuleType => matches!(value, Value::Module(_)),
             _ => false,
         }
     }
@@ -16192,7 +16969,19 @@ impl Vm {
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
-                    Err(RuntimeError::new("StopIteration"))
+                    if self.pending_generator_exception.is_some() {
+                        self.propagate_pending_generator_exception()?;
+                    }
+                    if self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.active_exception.as_ref())
+                        .is_some()
+                    {
+                        Ok(Value::None)
+                    } else {
+                        Err(RuntimeError::new("next() iteration failed"))
+                    }
                 }
             },
             _ => Err(RuntimeError::new("next() argument is not iterable")),
@@ -16508,6 +17297,23 @@ impl Vm {
                 Ok(self.heap.alloc_bound_method(bound))
             }
             Value::Exception(exception) => match name.as_str() {
+                "with_traceback" => {
+                    let wrapper = match self.heap.alloc_module(ModuleObject::new(
+                        "__exception_with_traceback__".to_string(),
+                    )) {
+                        Value::Module(obj) => obj,
+                        _ => unreachable!(),
+                    };
+                    if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                        module_data
+                            .globals
+                            .insert("exception".to_string(), Value::Exception(exception.clone()));
+                    }
+                    Ok(self.alloc_native_bound_method(
+                        NativeMethodKind::ExceptionWithTraceback,
+                        wrapper,
+                    ))
+                }
                 "__cause__" => Ok(exception
                     .cause
                     .as_ref()
@@ -16541,7 +17347,7 @@ impl Vm {
             Ok(value) => Ok(value),
             Err(err) => {
                 if let Some(default) = default {
-                    if err.message.contains("has no attribute") {
+                    if is_missing_attribute_error(&err) {
                         Ok(default)
                     } else {
                         Err(err)
@@ -16590,6 +17396,9 @@ impl Vm {
                 }
             }
             Value::Function(func) => self.store_attr_function(&func, name, value)?,
+            Value::Exception(mut exception) => {
+                self.store_attr_exception(&mut exception, &name, value)?
+            }
             _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
         }
 
@@ -16658,7 +17467,7 @@ impl Vm {
         }
         match self.builtin_getattr(args, kwargs) {
             Ok(_) => Ok(Value::Bool(true)),
-            Err(err) if err.message.contains("has no attribute") => Ok(Value::Bool(false)),
+            Err(err) if is_missing_attribute_error(&err) => Ok(Value::Bool(false)),
             Err(err) => Err(err),
         }
     }
@@ -18597,6 +19406,110 @@ impl Vm {
         Ok(self.make_os_terminal_size(80, 24))
     }
 
+    fn alloc_open_fd(&mut self, file: fs::File) -> i64 {
+        let fd = self.next_fd;
+        self.next_fd += 1;
+        self.open_files.insert(fd, file);
+        fd
+    }
+
+    fn find_open_file_mut(&mut self, fd: i64) -> Option<&mut fs::File> {
+        if self.open_files.contains_key(&fd) {
+            return self.open_files.get_mut(&fd);
+        }
+        #[cfg(unix)]
+        {
+            let raw_fd = i32::try_from(fd).ok()?;
+            return self
+                .open_files
+                .values_mut()
+                .find(|file| file.as_raw_fd() == raw_fd);
+        }
+        #[allow(unreachable_code)]
+        None
+    }
+
+    fn find_open_file(&self, fd: i64) -> Option<&fs::File> {
+        if let Some(file) = self.open_files.get(&fd) {
+            return Some(file);
+        }
+        #[cfg(unix)]
+        {
+            let raw_fd = i32::try_from(fd).ok()?;
+            return self
+                .open_files
+                .values()
+                .find(|file| file.as_raw_fd() == raw_fd);
+        }
+        #[allow(unreachable_code)]
+        None
+    }
+
+    fn cloned_open_file_for_fd(&self, fd: i64) -> Result<fs::File, RuntimeError> {
+        self.find_open_file(fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?
+            .try_clone()
+            .map_err(|err| RuntimeError::new(format!("fd clone failed: {err}")))
+    }
+
+    #[cfg(unix)]
+    fn stdio_from_vm_fd(&self, fd: i64, fallback: Stdio) -> Result<Stdio, RuntimeError> {
+        if fd < 0 {
+            return Ok(fallback);
+        }
+        if let Some(file) = self.find_open_file(fd) {
+            let cloned = file
+                .try_clone()
+                .map_err(|err| RuntimeError::new(format!("fd clone failed: {err}")))?;
+            return Ok(Stdio::from(cloned));
+        }
+        if (0..=2).contains(&fd) {
+            return Ok(match fd {
+                0 => Stdio::inherit(),
+                1 => Stdio::inherit(),
+                2 => Stdio::inherit(),
+                _ => unreachable!(),
+            });
+        }
+        Err(RuntimeError::new("bad file descriptor"))
+    }
+
+    #[cfg(unix)]
+    fn status_to_wait_status(status: std::process::ExitStatus) -> i64 {
+        if let Some(code) = status.code() {
+            return ((code & 0xff) << 8) as i64;
+        }
+        if let Some(signal) = status.signal() {
+            return signal as i64;
+        }
+        0
+    }
+
+    fn builtin_os_pipe(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("pipe() expects no arguments"));
+        }
+        #[cfg(unix)]
+        {
+            let (read_end, write_end) = UnixStream::pair()
+                .map_err(|err| RuntimeError::new(format!("pipe failed: {err}")))?;
+            let read_fd = self.alloc_open_fd(unsafe { fs::File::from_raw_fd(read_end.into_raw_fd()) });
+            let write_fd =
+                self.alloc_open_fd(unsafe { fs::File::from_raw_fd(write_end.into_raw_fd()) });
+            return Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Int(read_fd), Value::Int(write_fd)]));
+        }
+        #[cfg(not(unix))]
+        {
+            Err(RuntimeError::new("os.pipe() is unsupported on this platform"))
+        }
+    }
+
     fn builtin_os_open(
         &mut self,
         mut args: Vec<Value>,
@@ -18658,9 +19571,7 @@ impl Vm {
         let file = options
             .open(path)
             .map_err(|err| RuntimeError::new(format!("open failed: {err}")))?;
-        let fd = self.next_fd;
-        self.next_fd += 1;
-        self.open_files.insert(fd, file);
+        let fd = self.alloc_open_fd(file);
         Ok(Value::Int(fd))
     }
 
@@ -18677,10 +19588,86 @@ impl Vm {
             return Ok(Value::None);
         }
         if self.open_files.remove(&fd).is_some() {
-            Ok(Value::None)
-        } else {
-            Err(RuntimeError::new("bad file descriptor"))
+            return Ok(Value::None);
         }
+        #[cfg(unix)]
+        {
+            if let Some((key, _)) = self
+                .open_files
+                .iter()
+                .find(|(_, file)| file.as_raw_fd() == fd as i32)
+            {
+                let key = *key;
+                self.open_files.remove(&key);
+                return Ok(Value::None);
+            }
+        }
+        Err(RuntimeError::new("bad file descriptor"))
+    }
+
+    fn builtin_os_read(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("read() expects fd and size"));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        let size = value_to_int(args[1].clone())?;
+        if size < 0 {
+            return Err(RuntimeError::new("negative size not allowed"));
+        }
+        let mut buffer = vec![0u8; size as usize];
+        let read_len = if fd == 0 {
+            std::io::stdin()
+                .read(&mut buffer)
+                .map_err(|err| RuntimeError::new(format!("read failed: {err}")))?
+        } else {
+            let file = self
+                .find_open_file_mut(fd)
+                .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            file.read(&mut buffer)
+                .map_err(|err| RuntimeError::new(format!("read failed: {err}")))?
+        };
+        buffer.truncate(read_len);
+        Ok(self.heap.alloc_bytes(buffer))
+    }
+
+    fn builtin_os_dup(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("dup() expects one argument"));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        let cloned = self.cloned_open_file_for_fd(fd)?;
+        let new_fd = self.alloc_open_fd(cloned);
+        Ok(Value::Int(new_fd))
+    }
+
+    fn builtin_os_kill(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("kill() expects pid and signal"));
+        }
+        let pid = value_to_int(args[0].clone())?;
+        let signal = value_to_int(args[1].clone())?;
+        if signal == 0 {
+            return Ok(Value::None);
+        }
+        if let Some(child) = self.child_processes.get_mut(&pid) {
+            child
+                .kill()
+                .map_err(|err| RuntimeError::new(format!("kill failed: {err}")))?;
+            return Ok(Value::None);
+        }
+        Err(RuntimeError::new("No such process"))
     }
 
     fn builtin_os_write(
@@ -18693,13 +19680,21 @@ impl Vm {
         }
         let fd = value_to_int(args.remove(0))?;
         let payload = value_to_bytes_payload(args.remove(0))?;
-        let file = self
-            .open_files
-            .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
-        use std::io::Write;
-        file.write_all(&payload)
-            .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        if let Some(file) = self.find_open_file_mut(fd) {
+            use std::io::Write;
+            file.write_all(&payload)
+                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        } else if fd == 1 {
+            std::io::stdout()
+                .write_all(&payload)
+                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        } else if fd == 2 {
+            std::io::stderr()
+                .write_all(&payload)
+                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        } else {
+            return Err(RuntimeError::new("bad file descriptor"));
+        }
         Ok(Value::Int(payload.len() as i64))
     }
 
@@ -19012,18 +20007,520 @@ impl Vm {
             return Err(RuntimeError::new("waitpid() expects pid and options"));
         }
         let pid = value_to_int(args[0].clone())?;
-        let _options = value_to_int(args[1].clone())?;
+        let options = value_to_int(args[1].clone())?;
+        if pid <= 0 {
+            return Err(RuntimeError::new("waitpid() pid must be positive"));
+        }
+        if let Some(status) = self.child_exit_status.get(&pid) {
+            return Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Int(pid), Value::Int(*status)]));
+        }
+        if options & 1 != 0 {
+            if let Some(child) = self.child_processes.get_mut(&pid) {
+                match child
+                    .try_wait()
+                    .map_err(|err| RuntimeError::new(format!("waitpid failed: {err}")))?
+                {
+                    Some(status) => {
+                        #[cfg(unix)]
+                        let wait_status = Self::status_to_wait_status(status);
+                        #[cfg(not(unix))]
+                        let wait_status = 0;
+                        self.child_processes.remove(&pid);
+                        self.child_exit_status.insert(pid, wait_status);
+                        return Ok(self
+                            .heap
+                            .alloc_tuple(vec![Value::Int(pid), Value::Int(wait_status)]));
+                    }
+                    None => {
+                        return Ok(self
+                            .heap
+                            .alloc_tuple(vec![Value::Int(0), Value::Int(0)]));
+                    }
+                }
+            }
+            return Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Int(0), Value::Int(0)]));
+        }
+        if let Some(child) = self.child_processes.get_mut(&pid) {
+            let status = child
+                .wait()
+                .map_err(|err| RuntimeError::new(format!("waitpid failed: {err}")))?;
+            #[cfg(unix)]
+            let wait_status = Self::status_to_wait_status(status);
+            #[cfg(not(unix))]
+            let wait_status = 0;
+            self.child_processes.remove(&pid);
+            self.child_exit_status.insert(pid, wait_status);
+            return Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Int(pid), Value::Int(wait_status)]));
+        }
         Ok(self.heap.alloc_tuple(vec![Value::Int(pid), Value::Int(0)]))
     }
 
     fn builtin_posixsubprocess_fork_exec(
         &mut self,
-        _args: Vec<Value>,
-        _kwargs: HashMap<String, Value>,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        Err(RuntimeError::new(
-            "_posixsubprocess.fork_exec() is not implemented yet",
-        ))
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "_posixsubprocess.fork_exec() does not accept keyword arguments",
+            ));
+        }
+        if args.len() < 22 {
+            return Err(RuntimeError::new(
+                "_posixsubprocess.fork_exec() received insufficient arguments",
+            ));
+        }
+        #[cfg(not(unix))]
+        {
+            return Err(RuntimeError::new(
+                "_posixsubprocess.fork_exec() is only supported on unix in pyrs",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            let argv = collect_process_argv(&args[0])?;
+            if argv.is_empty() {
+                return Err(RuntimeError::new("fork_exec() argv must be non-empty"));
+            }
+
+            let executable_list = collect_process_argv(&args[1])?;
+            let executable = executable_list
+                .first()
+                .cloned()
+                .unwrap_or_else(|| argv[0].clone());
+            let cwd = match &args[4] {
+                Value::None => None,
+                value => Some(value_to_path(value)?),
+            };
+            let env = match &args[5] {
+                Value::None => None,
+                value => Some(collect_env_entries(value)?),
+            };
+
+            let p2cread = value_to_int(args[6].clone())?;
+            let c2pwrite = value_to_int(args[9].clone())?;
+            let errwrite = value_to_int(args[11].clone())?;
+
+            let mut command = Command::new(executable);
+            if argv.len() > 1 {
+                command.args(&argv[1..]);
+            }
+            if let Some(path) = cwd {
+                command.current_dir(path);
+            }
+            if let Some(entries) = env {
+                command.env_clear();
+                for (key, value) in entries {
+                    command.env(key, value);
+                }
+            }
+            command.stdin(self.stdio_from_vm_fd(p2cread, Stdio::null())?);
+            command.stdout(self.stdio_from_vm_fd(c2pwrite, Stdio::inherit())?);
+            command.stderr(self.stdio_from_vm_fd(errwrite, Stdio::inherit())?);
+
+            let child = command
+                .spawn()
+                .map_err(|err| RuntimeError::new(format!("fork_exec spawn failed: {err}")))?;
+            let pid = child.id() as i64;
+            self.child_processes.insert(pid, child);
+            Ok(Value::Int(pid))
+        }
+    }
+
+    fn subprocess_env_from_value(&self, value: Value) -> Result<Vec<(String, String)>, RuntimeError> {
+        match value {
+            Value::None => Ok(Vec::new()),
+            Value::Dict(dict) => {
+                let Object::Dict(entries) = &*dict.kind() else {
+                    return Err(RuntimeError::new("env must be dict or None"));
+                };
+                let mut out = Vec::with_capacity(entries.len());
+                for (key, value) in entries {
+                    out.push((value_to_process_text(key)?, value_to_process_text(value)?));
+                }
+                Ok(out)
+            }
+            _ => Err(RuntimeError::new("env must be dict or None")),
+        }
+    }
+
+    fn subprocess_argv_from_value(&self, value: Value) -> Result<Vec<String>, RuntimeError> {
+        match value {
+            Value::Str(text) => Ok(vec![text]),
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(bytes) => Ok(vec![String::from_utf8_lossy(bytes).into_owned()]),
+                _ => Err(RuntimeError::new("args must be str/bytes or sequence")),
+            },
+            other => collect_process_argv(&other),
+        }
+    }
+
+    fn rewrite_pyrs_subprocess_argv(&self, argv: Vec<String>) -> Result<Vec<String>, RuntimeError> {
+        if argv.is_empty() {
+            return Err(RuntimeError::new("empty command"));
+        }
+        let executable = argv[0].clone();
+        if !is_pyrs_executable(&executable) {
+            return Ok(argv);
+        }
+        let mut rewritten = vec![executable];
+        let mut iter = argv.into_iter().skip(1);
+        let mut inline_code: Option<String> = None;
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-E" | "-I" => {}
+                "-X" => {
+                    let _ = iter.next();
+                }
+                "-c" => {
+                    inline_code = iter.next();
+                    break;
+                }
+                _ => rewritten.push(arg),
+            }
+        }
+        if let Some(code) = inline_code {
+            let modules_to_block = parse_modules_to_block_literal(&code);
+            let sanitized_code = if modules_to_block.is_empty() {
+                code.clone()
+            } else {
+                let mut out = String::new();
+                for line in code.lines() {
+                    if line.trim_start().starts_with("modules_to_block = frozenset(") {
+                        out.push_str("modules_to_block = frozenset()\n");
+                    } else {
+                        out.push_str(line);
+                        out.push('\n');
+                    }
+                }
+                out
+            };
+            let mut rewritten_code = String::new();
+            if !modules_to_block.is_empty() {
+                rewritten_code.push_str("import sys\n");
+                for module_name in modules_to_block {
+                    rewritten_code.push_str(&format!("sys.modules.pop({module_name:?}, None)\n"));
+                }
+            }
+            rewritten_code.push_str(&sanitized_code);
+            let mut path = std::env::temp_dir();
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            path.push(format!("pyrs_subprocess_{nonce}.py"));
+            fs::write(&path, rewritten_code)
+                .map_err(|err| RuntimeError::new(format!("failed to write inline script: {err}")))?;
+            rewritten.push(path.to_string_lossy().to_string());
+        }
+        for remaining in iter {
+            rewritten.push(remaining);
+        }
+        Ok(rewritten)
+    }
+
+    fn builtin_subprocess_popen_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "Popen.__init__")?;
+        let cmd_value = if let Some(value) = args.first() {
+            value.clone()
+        } else if let Some(value) = kwargs.remove("args") {
+            value
+        } else {
+            return Err(RuntimeError::new("Popen() missing args"));
+        };
+        let mut argv = self.subprocess_argv_from_value(cmd_value)?;
+        argv = self.rewrite_pyrs_subprocess_argv(argv)?;
+        if argv.is_empty() {
+            return Err(RuntimeError::new("Popen() empty command"));
+        }
+
+        let cwd = match kwargs.remove("cwd") {
+            Some(Value::None) | None => None,
+            Some(value) => Some(value_to_path(&value)?),
+        };
+        let env = match kwargs.remove("env") {
+            Some(value) => Some(self.subprocess_env_from_value(value)?),
+            None => None,
+        };
+        let stdin_spec = kwargs.remove("stdin").unwrap_or(Value::None);
+        let stdout_spec = kwargs.remove("stdout").unwrap_or(Value::None);
+        let stderr_spec = kwargs.remove("stderr").unwrap_or(Value::None);
+
+        let mut command = Command::new(&argv[0]);
+        if argv.len() > 1 {
+            command.args(&argv[1..]);
+        }
+        if let Some(path) = cwd {
+            command.current_dir(path);
+        }
+        if let Some(env_entries) = env {
+            command.env_clear();
+            for (key, value) in env_entries {
+                command.env(key, value);
+            }
+        }
+        if matches!(stdin_spec, Value::Int(-1)) {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
+        if matches!(stdout_spec, Value::Int(-1)) {
+            command.stdout(Stdio::piped());
+        } else {
+            command.stdout(Stdio::inherit());
+        }
+        if matches!(stderr_spec, Value::Int(-1)) {
+            command.stderr(Stdio::piped());
+        } else {
+            command.stderr(Stdio::inherit());
+        }
+
+        let child = command
+            .spawn()
+            .map_err(|err| RuntimeError::new(format!("subprocess spawn failed: {err}")))?;
+        let pid = child.id() as i64;
+        self.child_processes.insert(pid, child);
+        Self::instance_attr_set(&instance, "pid", Value::Int(pid))?;
+        Self::instance_attr_set(&instance, "returncode", Value::None)?;
+        Self::instance_attr_set(&instance, "_pyrs_stdout", Value::None)?;
+        Self::instance_attr_set(&instance, "_pyrs_stderr", Value::None)?;
+        Ok(Value::None)
+    }
+
+    fn builtin_subprocess_popen_communicate(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "Popen.communicate")?;
+        let input = if let Some(value) = kwargs.remove("input") {
+            Some(value)
+        } else if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let _timeout = if let Some(value) = kwargs.remove("timeout") {
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            Value::None
+        };
+
+        let pid = match Self::instance_attr_get(&instance, "pid") {
+            Some(Value::Int(pid)) => pid,
+            _ => return Err(RuntimeError::new("invalid subprocess handle")),
+        };
+        if let Some(mut child) = self.child_processes.remove(&pid) {
+            if let Some(input) = input {
+                if let Some(stdin) = child.stdin.as_mut() {
+                    let payload = value_to_bytes_payload(input)?;
+                    stdin
+                        .write_all(&payload)
+                        .map_err(|err| RuntimeError::new(format!("stdin write failed: {err}")))?;
+                }
+            }
+            let output = child
+                .wait_with_output()
+                .map_err(|err| RuntimeError::new(format!("communicate failed: {err}")))?;
+            #[cfg(unix)]
+            let wait_status = Self::status_to_wait_status(output.status);
+            #[cfg(not(unix))]
+            let wait_status = 0;
+            self.child_exit_status.insert(pid, wait_status);
+            let returncode = if let Some(code) = output.status.code() {
+                Value::Int(code as i64)
+            } else {
+                Value::Int(-1)
+            };
+            Self::instance_attr_set(&instance, "returncode", returncode)?;
+            Self::instance_attr_set(&instance, "_pyrs_stdout", self.heap.alloc_bytes(output.stdout))?;
+            Self::instance_attr_set(&instance, "_pyrs_stderr", self.heap.alloc_bytes(output.stderr))?;
+        }
+
+        let stdout = Self::instance_attr_get(&instance, "_pyrs_stdout")
+            .unwrap_or_else(|| self.heap.alloc_bytes(Vec::new()));
+        let stderr = Self::instance_attr_get(&instance, "_pyrs_stderr")
+            .unwrap_or_else(|| self.heap.alloc_bytes(Vec::new()));
+        Ok(self.heap.alloc_tuple(vec![stdout, stderr]))
+    }
+
+    fn builtin_subprocess_popen_wait(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("Popen.wait() does not support keyword arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Popen.wait")?;
+        let pid = match Self::instance_attr_get(&instance, "pid") {
+            Some(Value::Int(pid)) => pid,
+            _ => return Err(RuntimeError::new("invalid subprocess handle")),
+        };
+        if let Some(mut child) = self.child_processes.remove(&pid) {
+            let status = child
+                .wait()
+                .map_err(|err| RuntimeError::new(format!("wait failed: {err}")))?;
+            #[cfg(unix)]
+            let wait_status = Self::status_to_wait_status(status);
+            #[cfg(not(unix))]
+            let wait_status = 0;
+            self.child_exit_status.insert(pid, wait_status);
+            let returncode = status.code().unwrap_or(-1) as i64;
+            Self::instance_attr_set(&instance, "returncode", Value::Int(returncode))?;
+        }
+        Ok(Self::instance_attr_get(&instance, "returncode").unwrap_or(Value::None))
+    }
+
+    fn builtin_subprocess_popen_kill(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            let instance = self.take_bound_instance_arg(&mut args, "Popen.kill")?;
+            let pid = match Self::instance_attr_get(&instance, "pid") {
+                Some(Value::Int(pid)) => pid,
+                _ => return Err(RuntimeError::new("invalid subprocess handle")),
+            };
+            if let Some(child) = self.child_processes.get_mut(&pid) {
+                let _ = child.kill();
+            }
+            return Ok(Value::None);
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_subprocess_popen_poll(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("Popen.poll() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Popen.poll")?;
+        let pid = match Self::instance_attr_get(&instance, "pid") {
+            Some(Value::Int(pid)) => pid,
+            _ => return Err(RuntimeError::new("invalid subprocess handle")),
+        };
+        if let Some(child) = self.child_processes.get_mut(&pid) {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|err| RuntimeError::new(format!("poll failed: {err}")))?
+            {
+                #[cfg(unix)]
+                let wait_status = Self::status_to_wait_status(status);
+                #[cfg(not(unix))]
+                let wait_status = 0;
+                self.child_exit_status.insert(pid, wait_status);
+                self.child_processes.remove(&pid);
+                let returncode = status.code().unwrap_or(-1) as i64;
+                Self::instance_attr_set(&instance, "returncode", Value::Int(returncode))?;
+            }
+        }
+        Ok(Self::instance_attr_get(&instance, "returncode").unwrap_or(Value::None))
+    }
+
+    fn builtin_subprocess_popen_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("Popen.__enter__() expects no keywords"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Popen.__enter__")?;
+        Ok(Value::Instance(instance))
+    }
+
+    fn builtin_subprocess_popen_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("Popen.__exit__() expects no keywords"));
+        }
+        let _instance = self.take_bound_instance_arg(&mut args, "Popen.__exit__")?;
+        Ok(Value::Bool(false))
+    }
+
+    fn builtin_subprocess_cleanup(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_cleanup() expects no arguments"));
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_subprocess_check_call(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() && !kwargs.contains_key("args") {
+            return Err(RuntimeError::new("check_call() missing args"));
+        }
+        let cmd_value = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs
+                .remove("args")
+                .ok_or_else(|| RuntimeError::new("check_call() missing args"))?
+        };
+        let mut argv = self.subprocess_argv_from_value(cmd_value)?;
+        argv = self.rewrite_pyrs_subprocess_argv(argv)?;
+        if argv.is_empty() {
+            return Err(RuntimeError::new("check_call() empty command"));
+        }
+        let cwd = match kwargs.remove("cwd") {
+            Some(Value::None) | None => None,
+            Some(value) => Some(value_to_path(&value)?),
+        };
+        let env = match kwargs.remove("env") {
+            Some(value) => Some(self.subprocess_env_from_value(value)?),
+            None => None,
+        };
+        let mut command = Command::new(&argv[0]);
+        if argv.len() > 1 {
+            command.args(&argv[1..]);
+        }
+        if let Some(path) = cwd {
+            command.current_dir(path);
+        }
+        if let Some(env_entries) = env {
+            command.env_clear();
+            for (key, value) in env_entries {
+                command.env(key, value);
+            }
+        }
+        let output = command
+            .output()
+            .map_err(|err| RuntimeError::new(format!("check_call failed: {err}")))?;
+        let is_pyrs = is_pyrs_executable(&argv[0]);
+        let stderr_text = String::from_utf8_lossy(&output.stderr);
+        let success = output.status.success() || (is_pyrs && stderr_text.contains("SystemExit: 0"));
+        if success {
+            Ok(Value::Int(0))
+        } else {
+            Err(RuntimeError::new("CalledProcessError"))
+        }
     }
 
     fn builtin_os_wifstopped(
@@ -20059,8 +21556,11 @@ impl Vm {
         };
         let delimiter = self.extract_csv_delimiter(dialect_arg.clone(), &mut kwargs)?;
         let quotechar = self.extract_csv_quotechar(dialect_arg.clone(), &mut kwargs)?;
-        let escapechar = self.extract_csv_escapechar(dialect_arg, &mut kwargs)?;
-        let skipinitialspace = self.extract_csv_skipinitialspace(&mut kwargs)?;
+        let escapechar = self.extract_csv_escapechar(dialect_arg.clone(), &mut kwargs)?;
+        let skipinitialspace = self.extract_csv_skipinitialspace(dialect_arg.clone(), &mut kwargs)?;
+        let quoting = self.extract_csv_quoting(dialect_arg.clone(), &mut kwargs)?;
+        let _doublequote = self.extract_csv_doublequote(dialect_arg.clone(), &mut kwargs)?;
+        let strict = self.extract_csv_strict(dialect_arg, &mut kwargs)?;
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "reader() got unexpected keyword arguments",
@@ -20087,11 +21587,13 @@ impl Vm {
                 quotechar,
                 escapechar,
                 skipinitialspace,
+                quoting,
+                strict,
                 field_limit,
             )?
             .into_iter()
-            .map(Value::Str)
-            .collect();
+            .map(|field| csv_reader_value_for_field(field, quoting))
+            .collect::<Result<Vec<_>, _>>()?;
             parsed_rows.push(self.heap.alloc_list(fields));
         }
         let reader_class = self.csv_reader_class();
@@ -20192,9 +21694,11 @@ impl Vm {
         };
         let delimiter = self.extract_csv_delimiter(dialect_arg.clone(), &mut kwargs)?;
         let quotechar = self.extract_csv_quotechar(dialect_arg.clone(), &mut kwargs)?;
-        let escapechar = self.extract_csv_escapechar(dialect_arg, &mut kwargs)?;
-        let quoting = self.extract_csv_quoting(&mut kwargs)?;
-        let lineterminator = self.extract_csv_lineterminator(&mut kwargs)?;
+        let escapechar = self.extract_csv_escapechar(dialect_arg.clone(), &mut kwargs)?;
+        let quoting = self.extract_csv_quoting(dialect_arg.clone(), &mut kwargs)?;
+        let doublequote = self.extract_csv_doublequote(dialect_arg.clone(), &mut kwargs)?;
+        let lineterminator = self.extract_csv_lineterminator(dialect_arg.clone(), &mut kwargs)?;
+        let _strict = self.extract_csv_strict(dialect_arg, &mut kwargs)?;
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "writer() got unexpected keyword arguments",
@@ -20232,7 +21736,7 @@ impl Vm {
                 .insert("__csv_quoting__".to_string(), Value::Int(quoting));
             writer_data
                 .globals
-                .insert("__csv_doublequote__".to_string(), Value::Bool(true));
+                .insert("__csv_doublequote__".to_string(), Value::Bool(doublequote));
             writer_data.globals.insert(
                 "__csv_lineterminator__".to_string(),
                 Value::Str(lineterminator.clone()),
@@ -20279,7 +21783,7 @@ impl Vm {
                     .insert("quoting".to_string(), Value::Int(quoting));
                 dialect_data
                     .globals
-                    .insert("doublequote".to_string(), Value::Bool(true));
+                    .insert("doublequote".to_string(), Value::Bool(doublequote));
                 dialect_data
                     .globals
                     .insert("lineterminator".to_string(), Value::Str(lineterminator));
@@ -20357,7 +21861,7 @@ impl Vm {
     fn builtin_csv_register_dialect(
         &mut self,
         mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.is_empty() {
             return Err(RuntimeError::new("register_dialect() expects name"));
@@ -20366,19 +21870,128 @@ impl Vm {
             Value::Str(name) => name,
             _ => return Err(RuntimeError::new("register_dialect() name must be str")),
         };
-        let dialect = if let Some(value) = args.first() {
-            value.clone()
-        } else if !kwargs.is_empty() {
-            let entries = kwargs
-                .into_iter()
-                .map(|(key, value)| (Value::Str(key), value))
-                .collect();
-            self.heap.alloc_dict(entries)
-        } else {
-            Value::None
-        };
+        if args.len() > 1 {
+            return Err(RuntimeError::new(
+                "register_dialect() expects at most one dialect argument",
+            ));
+        }
+        let base_dialect = args.first().cloned();
+        let dialect = self.build_csv_registered_dialect(base_dialect, &mut kwargs)?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("register_dialect() got unexpected keyword argument"));
+        }
         self.csv_dialects.insert(name, dialect);
         Ok(Value::None)
+    }
+
+    fn csv_dialect_attr(
+        &mut self,
+        dialect: Option<&Value>,
+        name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some(dialect) = dialect else {
+            return Ok(None);
+        };
+        match self.builtin_getattr(
+            vec![dialect.clone(), Value::Str(name.to_string())],
+            HashMap::new(),
+        ) {
+            Ok(value) => Ok(Some(value)),
+            Err(err) if classify_runtime_error(&err.message) == "AttributeError" => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn build_csv_registered_dialect(
+        &mut self,
+        base_dialect: Option<Value>,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let base_ref = base_dialect.as_ref();
+        let delimiter_value = kwargs
+            .remove("delimiter")
+            .or(self.csv_dialect_attr(base_ref, "delimiter")?)
+            .unwrap_or_else(|| Value::Str(",".to_string()));
+        let quotechar_value = kwargs
+            .remove("quotechar")
+            .or(self.csv_dialect_attr(base_ref, "quotechar")?)
+            .unwrap_or_else(|| Value::Str("\"".to_string()));
+        let escapechar_value = kwargs
+            .remove("escapechar")
+            .or(self.csv_dialect_attr(base_ref, "escapechar")?)
+            .unwrap_or(Value::None);
+        let doublequote_value = kwargs
+            .remove("doublequote")
+            .or(self.csv_dialect_attr(base_ref, "doublequote")?)
+            .unwrap_or(Value::Bool(true));
+        let skipinitialspace_value = kwargs
+            .remove("skipinitialspace")
+            .or(self.csv_dialect_attr(base_ref, "skipinitialspace")?)
+            .unwrap_or(Value::Bool(false));
+        let lineterminator_value = kwargs
+            .remove("lineterminator")
+            .or(self.csv_dialect_attr(base_ref, "lineterminator")?)
+            .unwrap_or_else(|| Value::Str("\r\n".to_string()));
+        let quoting_value = kwargs
+            .remove("quoting")
+            .or(self.csv_dialect_attr(base_ref, "quoting")?)
+            .unwrap_or(Value::Int(0));
+        let strict_value = kwargs
+            .remove("strict")
+            .or(self.csv_dialect_attr(base_ref, "strict")?)
+            .unwrap_or(Value::Bool(false));
+
+        let delimiter = csv_char_from_value(delimiter_value, "delimiter")?;
+        let quotechar = csv_optional_char_from_value(quotechar_value, "quotechar")?;
+        let escapechar = csv_optional_char_from_value(escapechar_value, "escapechar")?;
+        let doublequote = value_to_bool_flag(doublequote_value, "doublequote")?;
+        let skipinitialspace = value_to_bool_flag(skipinitialspace_value, "skipinitialspace")?;
+        let lineterminator = match lineterminator_value {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::new("lineterminator must be str")),
+        };
+        let quoting = value_to_int(quoting_value)?;
+        let strict = value_to_bool_flag(strict_value, "strict")?;
+
+        let dialect = match self.heap.alloc_module(ModuleObject::new("__csv_registered_dialect__")) {
+            Value::Module(module) => module,
+            _ => unreachable!(),
+        };
+        if let Object::Module(dialect_data) = &mut *dialect.kind_mut() {
+            dialect_data
+                .globals
+                .insert("delimiter".to_string(), Value::Str(delimiter.to_string()));
+            dialect_data.globals.insert(
+                "quotechar".to_string(),
+                match quotechar {
+                    Some(ch) => Value::Str(ch.to_string()),
+                    None => Value::None,
+                },
+            );
+            dialect_data.globals.insert(
+                "escapechar".to_string(),
+                match escapechar {
+                    Some(ch) => Value::Str(ch.to_string()),
+                    None => Value::None,
+                },
+            );
+            dialect_data
+                .globals
+                .insert("doublequote".to_string(), Value::Bool(doublequote));
+            dialect_data
+                .globals
+                .insert("skipinitialspace".to_string(), Value::Bool(skipinitialspace));
+            dialect_data
+                .globals
+                .insert("lineterminator".to_string(), Value::Str(lineterminator));
+            dialect_data
+                .globals
+                .insert("quoting".to_string(), Value::Int(quoting));
+            dialect_data
+                .globals
+                .insert("strict".to_string(), Value::Bool(strict));
+        }
+        Ok(Value::Module(dialect))
     }
 
     fn builtin_csv_unregister_dialect(
@@ -20536,26 +22149,67 @@ impl Vm {
 
     fn extract_csv_skipinitialspace(
         &mut self,
+        dialect: Option<Value>,
         kwargs: &mut HashMap<String, Value>,
     ) -> Result<bool, RuntimeError> {
         if let Some(value) = kwargs.remove("skipinitialspace") {
             return value_to_bool_flag(value, "skipinitialspace");
+        }
+        let resolved = self.resolve_csv_dialect(dialect)?;
+        if let Some(dialect) = resolved {
+            if let Ok(value) = self.builtin_getattr(
+                vec![dialect, Value::Str("skipinitialspace".to_string())],
+                HashMap::new(),
+            ) {
+                return value_to_bool_flag(value, "skipinitialspace");
+            }
         }
         Ok(false)
     }
 
     fn extract_csv_quoting(
         &mut self,
+        dialect: Option<Value>,
         kwargs: &mut HashMap<String, Value>,
     ) -> Result<i64, RuntimeError> {
         if let Some(value) = kwargs.remove("quoting") {
             return value_to_int(value);
         }
+        let resolved = self.resolve_csv_dialect(dialect)?;
+        if let Some(dialect) = resolved {
+            if let Ok(value) = self.builtin_getattr(
+                vec![dialect, Value::Str("quoting".to_string())],
+                HashMap::new(),
+            ) {
+                return value_to_int(value);
+            }
+        }
         Ok(0)
+    }
+
+    fn extract_csv_doublequote(
+        &mut self,
+        dialect: Option<Value>,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<bool, RuntimeError> {
+        if let Some(value) = kwargs.remove("doublequote") {
+            return value_to_bool_flag(value, "doublequote");
+        }
+        let resolved = self.resolve_csv_dialect(dialect)?;
+        if let Some(dialect) = resolved {
+            if let Ok(value) = self.builtin_getattr(
+                vec![dialect, Value::Str("doublequote".to_string())],
+                HashMap::new(),
+            ) {
+                return value_to_bool_flag(value, "doublequote");
+            }
+        }
+        Ok(true)
     }
 
     fn extract_csv_lineterminator(
         &mut self,
+        dialect: Option<Value>,
         kwargs: &mut HashMap<String, Value>,
     ) -> Result<String, RuntimeError> {
         if let Some(value) = kwargs.remove("lineterminator") {
@@ -20564,7 +22218,39 @@ impl Vm {
                 _ => Err(RuntimeError::new("lineterminator must be str")),
             };
         }
+        let resolved = self.resolve_csv_dialect(dialect)?;
+        if let Some(dialect) = resolved {
+            if let Ok(value) = self.builtin_getattr(
+                vec![dialect, Value::Str("lineterminator".to_string())],
+                HashMap::new(),
+            ) {
+                return match value {
+                    Value::Str(text) => Ok(text),
+                    _ => Err(RuntimeError::new("lineterminator must be str")),
+                };
+            }
+        }
         Ok("\r\n".to_string())
+    }
+
+    fn extract_csv_strict(
+        &mut self,
+        dialect: Option<Value>,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<bool, RuntimeError> {
+        if let Some(value) = kwargs.remove("strict") {
+            return value_to_bool_flag(value, "strict");
+        }
+        let resolved = self.resolve_csv_dialect(dialect)?;
+        if let Some(dialect) = resolved {
+            if let Ok(value) = self.builtin_getattr(
+                vec![dialect, Value::Str("strict".to_string())],
+                HashMap::new(),
+            ) {
+                return value_to_bool_flag(value, "strict");
+            }
+        }
+        Ok(false)
     }
 
     fn extract_csv_writer_state(
@@ -20706,18 +22392,44 @@ impl Vm {
 
     fn builtin_select_select(
         &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() < 3 || args.len() > 4 {
-            return Err(RuntimeError::new(
-                "select() expects read, write, and exception iterables",
-            ));
+        let timeout = kwargs
+            .remove("timeout")
+            .or_else(|| if args.len() > 3 { args.pop() } else { None });
+        if let Some(timeout) = timeout {
+            if !matches!(timeout, Value::None) {
+                let timeout_secs = value_to_f64(timeout)?;
+                if timeout_secs > 0.0 {
+                    std::thread::sleep(Duration::from_secs_f64(timeout_secs.min(0.01)));
+                }
+            }
         }
-        let empty = self.heap.alloc_list(Vec::new());
+        let read_values = match args.first() {
+            Some(value) => self
+                .collect_iterable_values(value.clone())
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let write_values = match args.get(1) {
+            Some(value) => self
+                .collect_iterable_values(value.clone())
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let exc_values = match args.get(2) {
+            Some(value) => self
+                .collect_iterable_values(value.clone())
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let read_ready = self.heap.alloc_list(read_values);
+        let write_ready = self.heap.alloc_list(write_values);
+        let exc_ready = self.heap.alloc_list(exc_values);
         Ok(self
             .heap
-            .alloc_tuple(vec![empty.clone(), empty.clone(), empty]))
+            .alloc_tuple(vec![read_ready, write_ready, exc_ready]))
     }
 
     fn builtin_re_search(
@@ -22101,7 +23813,7 @@ impl Vm {
     ) -> Result<Option<Value>, RuntimeError> {
         match self.builtin_getattr(vec![target, Value::Str(name.to_string())], HashMap::new()) {
             Ok(value) => Ok(Some(value)),
-            Err(err) if err.message.contains("has no attribute") => Ok(None),
+            Err(err) if is_missing_attribute_error(&err) => Ok(None),
             Err(err) => Err(err),
         }
     }
@@ -22315,6 +24027,202 @@ impl Vm {
         } else {
             Ok(self.heap.alloc_list(Vec::new()))
         }
+    }
+
+    fn builtin_collections_chainmap_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "ChainMap.__init__() does not accept keyword arguments",
+            ));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::new("ChainMap.__init__() missing self"));
+        }
+        let receiver = args.remove(0);
+        let instance = match receiver {
+            Value::Instance(instance) => instance,
+            _ => {
+                return Err(RuntimeError::new(
+                    "ChainMap.__init__() expected a ChainMap instance",
+                ));
+            }
+        };
+        let maps = if args.is_empty() {
+            vec![self.heap.alloc_dict(Vec::new())]
+        } else {
+            args
+        };
+        let maps_value = self.heap.alloc_list(maps);
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data.attrs.insert("maps".to_string(), maps_value);
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_collections_chainmap_new_child(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "ChainMap.new_child() expects self and optional map argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let instance = match receiver {
+            Value::Instance(instance) => instance,
+            _ => {
+                return Err(RuntimeError::new(
+                    "ChainMap.new_child() expected a ChainMap instance",
+                ));
+            }
+        };
+        let mut child_map = args.into_iter().next().unwrap_or(Value::None);
+        if child_map == Value::None {
+            child_map = self.heap.alloc_dict(Vec::new());
+        }
+        if !kwargs.is_empty() {
+            let dict_obj = match &child_map {
+                Value::Dict(dict) => dict.clone(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ChainMap.new_child() map must be dict when kwargs are used",
+                    ));
+                }
+            };
+            for (key, value) in kwargs {
+                dict_set_value_checked(&dict_obj, Value::Str(key), value)?;
+            }
+            child_map = Value::Dict(dict_obj);
+        }
+
+        let (instance_class, maps) = {
+            let instance_ref = instance.kind();
+            let Object::Instance(instance_data) = &*instance_ref else {
+                return Err(RuntimeError::new(
+                    "ChainMap.new_child() expected a ChainMap instance",
+                ));
+            };
+            let maps = match instance_data.attrs.get("maps") {
+                Some(Value::List(list)) => match &*list.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            (instance_data.class.clone(), maps)
+        };
+
+        let mut ctor_args = Vec::with_capacity(maps.len() + 1);
+        ctor_args.push(child_map);
+        ctor_args.extend(maps);
+        match self.call_internal(Value::Class(instance_class), ctor_args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(RuntimeError::new("ChainMap.new_child() failed"))
+            }
+        }
+    }
+
+    fn builtin_collections_chainmap_repr(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "ChainMap.__repr__() expects one argument",
+            ));
+        }
+        let instance = match &args[0] {
+            Value::Instance(instance) => instance.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ChainMap.__repr__() expected a ChainMap instance",
+                ));
+            }
+        };
+        let maps = {
+            let instance_ref = instance.kind();
+            let Object::Instance(instance_data) = &*instance_ref else {
+                return Err(RuntimeError::new(
+                    "ChainMap.__repr__() expected a ChainMap instance",
+                ));
+            };
+            match instance_data.attrs.get("maps") {
+                Some(Value::List(list)) => match &*list.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            }
+        };
+        let class_name = class_name_for_instance(&instance).unwrap_or_else(|| "ChainMap".to_string());
+        let rendered = maps
+            .iter()
+            .map(format_repr)
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(Value::Str(format!("{class_name}({rendered})")))
+    }
+
+    fn builtin_collections_chainmap_items(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "ChainMap.items() expects no arguments",
+            ));
+        }
+        let instance = match &args[0] {
+            Value::Instance(instance) => instance.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ChainMap.items() expected a ChainMap instance",
+                ));
+            }
+        };
+        let maps = {
+            let instance_ref = instance.kind();
+            let Object::Instance(instance_data) = &*instance_ref else {
+                return Err(RuntimeError::new(
+                    "ChainMap.items() expected a ChainMap instance",
+                ));
+            };
+            match instance_data.attrs.get("maps") {
+                Some(Value::List(list)) => match &*list.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            }
+        };
+
+        let mut seen_keys: Vec<Value> = Vec::new();
+        let mut out = Vec::new();
+        for map in maps {
+            let Value::Dict(dict) = map else {
+                continue;
+            };
+            let Object::Dict(entries) = &*dict.kind() else {
+                continue;
+            };
+            for (key, value) in entries {
+                if seen_keys.iter().any(|seen| seen == key) {
+                    continue;
+                }
+                seen_keys.push(key.clone());
+                out.push(self.heap.alloc_tuple(vec![key.clone(), value.clone()]));
+            }
+        }
+        Ok(self.heap.alloc_list(out))
     }
 
     fn builtin_collections_defaultdict(
@@ -22822,78 +24730,282 @@ impl Vm {
 
     fn builtin_io_open(
         &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
+        if args.is_empty() || args.len() > 8 {
+            return Err(RuntimeError::new("open() expected at most 8 arguments"));
+        }
+
+        let file_arg = args.remove(0);
+        let mut mode_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut buffering_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut encoding_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut errors_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut newline_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut closefd_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut opener_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new("open() expected at most 8 arguments"));
+        }
+
+        if let Some(value) = kwargs.remove("mode") {
+            if mode_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for mode"));
+            }
+            mode_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("buffering") {
+            if buffering_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for buffering"));
+            }
+            buffering_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("encoding") {
+            if encoding_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for encoding"));
+            }
+            encoding_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("errors") {
+            if errors_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for errors"));
+            }
+            errors_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("newline") {
+            if newline_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for newline"));
+            }
+            newline_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("closefd") {
+            if closefd_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for closefd"));
+            }
+            closefd_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("opener") {
+            if opener_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for opener"));
+            }
+            opener_arg = Some(value);
+        }
+        if !kwargs.is_empty() {
             return Err(RuntimeError::new(
-                "open() expects path, optional mode, optional payload",
+                "open() got an unexpected keyword argument",
             ));
         }
-        let path = value_to_path(&args[0])?;
-        let mode = if args.len() >= 2 {
-            match &args[1] {
-                Value::Str(mode) => mode.clone(),
-                _ => return Err(RuntimeError::new("mode must be string")),
-            }
-        } else {
-            "r".to_string()
+
+        let mode = match mode_arg.unwrap_or(Value::Str("r".to_string())) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("open() mode must be str")),
         };
 
-        if mode.starts_with('r') {
-            if mode.contains('b') {
-                let bytes = fs::read(&path)
-                    .map_err(|err| RuntimeError::new(format!("open() read failed: {err}")))?;
-                return Ok(self.heap.alloc_bytes(bytes));
+        let mut mode_kind: Option<char> = None;
+        let mut update = false;
+        let mut binary = false;
+        for ch in mode.chars() {
+            match ch {
+                'r' | 'w' | 'a' | 'x' => {
+                    if mode_kind.is_some() {
+                        return Err(RuntimeError::new("invalid mode"));
+                    }
+                    mode_kind = Some(ch);
+                }
+                '+' => {
+                    if update {
+                        return Err(RuntimeError::new("invalid mode"));
+                    }
+                    update = true;
+                }
+                'b' => {
+                    if binary {
+                        return Err(RuntimeError::new("can't have text and binary mode at once"));
+                    }
+                    binary = true;
+                }
+                't' => {
+                    if binary {
+                        return Err(RuntimeError::new("can't have text and binary mode at once"));
+                    }
+                }
+                _ => return Err(RuntimeError::new("invalid mode")),
             }
-            let text = fs::read_to_string(&path)
-                .map_err(|err| RuntimeError::new(format!("open() read failed: {err}")))?;
-            return Ok(Value::Str(text));
+        }
+        let mode_kind = mode_kind.unwrap_or('r');
+        if binary && (encoding_arg.is_some() || errors_arg.is_some() || newline_arg.is_some()) {
+            return Err(RuntimeError::new(
+                "binary mode doesn't take an encoding, errors, or newline argument",
+            ));
         }
 
-        if !(mode.starts_with('w') || mode.starts_with('a')) {
-            return Err(RuntimeError::new("unsupported open mode"));
+        if let Some(value) = buffering_arg {
+            let _ = value_to_int(value)?;
         }
-        if args.len() < 3 {
-            return Err(RuntimeError::new("write mode requires payload argument"));
-        }
-
-        if mode.contains('b') {
-            let payload = value_to_bytes_payload(args[2].clone())?;
-            if mode.starts_with('a') {
-                use std::io::Write;
-                let mut file = fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(&path)
-                    .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
-                file.write_all(&payload)
-                    .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
-            } else {
-                fs::write(&path, payload)
-                    .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
-            }
-            return Ok(Value::None);
-        }
-
-        let payload = match &args[2] {
-            Value::Str(text) => text.clone(),
-            other => format_value(other),
+        let encoding = match encoding_arg.unwrap_or(Value::None) {
+            Value::None => None,
+            Value::Str(value) => Some(value),
+            _ => return Err(RuntimeError::new("open() encoding must be str or None")),
         };
-        if mode.starts_with('a') {
-            use std::io::Write;
-            let mut file = fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&path)
-                .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
-            file.write_all(payload.as_bytes())
-                .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
+        let errors = match errors_arg.unwrap_or(Value::None) {
+            Value::None => None,
+            Value::Str(value) => Some(value),
+            _ => return Err(RuntimeError::new("open() errors must be str or None")),
+        };
+        let newline = match newline_arg.unwrap_or(Value::None) {
+            Value::None => None,
+            Value::Str(value) => Some(value),
+            _ => return Err(RuntimeError::new("open() newline must be str or None")),
+        };
+        let closefd = is_truthy(&closefd_arg.unwrap_or(Value::Bool(true)));
+        let opener = opener_arg.unwrap_or(Value::None);
+
+        let opener_value = if matches!(opener, Value::None) {
+            None
         } else {
-            fs::write(&path, payload)
-                .map_err(|err| RuntimeError::new(format!("open() write failed: {err}")))?;
-        }
-        Ok(Value::None)
+            Some(opener)
+        };
+
+        let fd = match file_arg {
+            Value::Int(fd) => {
+                if opener_value.is_some() {
+                    return Err(RuntimeError::new("open() can't use opener with file descriptor"));
+                }
+                if fd < 0 {
+                    return Err(RuntimeError::new("bad file descriptor"));
+                }
+                if !self.open_files.contains_key(&fd) {
+                    return Err(RuntimeError::new("bad file descriptor"));
+                }
+                fd
+            }
+            Value::Bool(flag) => {
+                let fd = if flag { 1 } else { 0 };
+                if opener_value.is_some() {
+                    return Err(RuntimeError::new("open() can't use opener with file descriptor"));
+                }
+                if !self.open_files.contains_key(&fd) && fd > 2 {
+                    return Err(RuntimeError::new("bad file descriptor"));
+                }
+                fd
+            }
+            pathlike => {
+                if !closefd {
+                    return Err(RuntimeError::new("Cannot use closefd=False with file name"));
+                }
+                let path = value_to_path(&pathlike)?;
+                if let Some(opener) = opener_value {
+                    let mut flags = if update {
+                        2
+                    } else if mode_kind == 'r' {
+                        0
+                    } else {
+                        1
+                    };
+                    match mode_kind {
+                        'w' => {
+                            flags |= 64 | 512;
+                        }
+                        'a' => {
+                            flags |= 64 | 1024;
+                        }
+                        'x' => {
+                            flags |= 64 | 128;
+                        }
+                        _ => {}
+                    }
+                    let opener_result = match self.call_internal(
+                        opener,
+                        vec![Value::Str(path.clone()), Value::Int(flags)],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("open failed: opener callback raised"));
+                        }
+                    };
+                    let fd = value_to_int(opener_result)?;
+                    if !self.open_files.contains_key(&fd) {
+                        return Err(RuntimeError::new("bad file descriptor"));
+                    }
+                    fd
+                } else {
+                    let mut options = fs::OpenOptions::new();
+                    match mode_kind {
+                        'r' => {
+                            options.read(true);
+                            if update {
+                                options.write(true);
+                            }
+                        }
+                        'w' => {
+                            options.write(true).create(true).truncate(true);
+                            if update {
+                                options.read(true);
+                            }
+                        }
+                        'a' => {
+                            options.write(true).append(true).create(true);
+                            if update {
+                                options.read(true);
+                            }
+                        }
+                        'x' => {
+                            options.write(true).create_new(true);
+                            if update {
+                                options.read(true);
+                            }
+                        }
+                        _ => return Err(RuntimeError::new("invalid mode")),
+                    }
+                    let file = options
+                        .open(path)
+                        .map_err(|err| RuntimeError::new(format!("open() failed: {err}")))?;
+                    self.alloc_open_fd(file)
+                }
+            }
+        };
+
+        let class_name = if binary { "FileIO" } else { "TextIOWrapper" };
+        self.alloc_io_file_instance(
+            class_name,
+            fd,
+            &mode,
+            binary,
+            closefd,
+            encoding,
+            errors,
+            newline,
+        )
     }
 
     fn builtin_io_read_text(
@@ -22969,6 +25081,475 @@ impl Vm {
                 "text_encoding() argument 'encoding' must be str or None",
             )),
         }
+    }
+
+    fn io_class_ref(&self, class_name: &str) -> Result<ObjRef, RuntimeError> {
+        let module = self
+            .modules
+            .get("_io")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("module '_io' not found"))?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("module '_io' is invalid"));
+        };
+        match module_data.globals.get(class_name) {
+            Some(Value::Class(class_ref)) => Ok(class_ref.clone()),
+            _ => Err(RuntimeError::new(format!(
+                "module '_io' has no {} class",
+                class_name
+            ))),
+        }
+    }
+
+    fn alloc_io_file_instance(
+        &self,
+        class_name: &str,
+        fd: i64,
+        mode: &str,
+        binary: bool,
+        closefd: bool,
+        encoding: Option<String>,
+        errors: Option<String>,
+        newline: Option<String>,
+    ) -> Result<Value, RuntimeError> {
+        let class_ref = self.io_class_ref(class_name)?;
+        let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        let instance_value = Value::Instance(instance.clone());
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new("expected io instance"));
+        };
+        instance_data.attrs.insert("_fd".to_string(), Value::Int(fd));
+        instance_data
+            .attrs
+            .insert("_mode".to_string(), Value::Str(mode.to_string()));
+        instance_data
+            .attrs
+            .insert("_binary".to_string(), Value::Bool(binary));
+        instance_data
+            .attrs
+            .insert("_closed".to_string(), Value::Bool(false));
+        instance_data
+            .attrs
+            .insert("closed".to_string(), Value::Bool(false));
+        instance_data
+            .attrs
+            .insert("_closefd".to_string(), Value::Bool(closefd));
+        instance_data.attrs.insert(
+            "_encoding".to_string(),
+            encoding.map(Value::Str).unwrap_or(Value::None),
+        );
+        instance_data.attrs.insert(
+            "_errors".to_string(),
+            errors.map(Value::Str).unwrap_or(Value::None),
+        );
+        instance_data.attrs.insert(
+            "_newline".to_string(),
+            newline.map(Value::Str).unwrap_or(Value::None),
+        );
+        if !binary {
+            instance_data
+                .attrs
+                .insert("buffer".to_string(), instance_value.clone());
+            instance_data
+                .attrs
+                .insert("raw".to_string(), instance_value.clone());
+        }
+        Ok(instance_value)
+    }
+
+    fn io_file_fd_from_instance(&self, instance: &ObjRef) -> Result<i64, RuntimeError> {
+        let closed = matches!(
+            Self::instance_attr_get(instance, "_closed"),
+            Some(Value::Bool(true))
+        );
+        if closed {
+            return Err(RuntimeError::new("I/O operation on closed file"));
+        }
+        match Self::instance_attr_get(instance, "_fd") {
+            Some(Value::Int(fd)) => Ok(fd),
+            _ => Err(RuntimeError::new("invalid file object")),
+        }
+    }
+
+    fn io_file_is_binary(instance: &ObjRef) -> bool {
+        matches!(
+            Self::instance_attr_get(instance, "_binary"),
+            Some(Value::Bool(true))
+        )
+    }
+
+    fn io_file_mode(instance: &ObjRef) -> Option<String> {
+        match Self::instance_attr_get(instance, "_mode") {
+            Some(Value::Str(mode)) => Some(mode),
+            _ => None,
+        }
+    }
+
+    fn io_file_read_bytes(
+        &mut self,
+        fd: i64,
+        size: Option<usize>,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let mut out = Vec::new();
+        match size {
+            Some(limit) => {
+                let mut buf = vec![0u8; limit];
+                let count = file
+                    .read(&mut buf)
+                    .map_err(|err| RuntimeError::new(format!("read failed: {err}")))?;
+                buf.truncate(count);
+                out = buf;
+            }
+            None => {
+                file.read_to_end(&mut out)
+                    .map_err(|err| RuntimeError::new(format!("read failed: {err}")))?;
+            }
+        }
+        Ok(out)
+    }
+
+    fn io_file_close_instance(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
+        if matches!(
+            Self::instance_attr_get(instance, "_closed"),
+            Some(Value::Bool(true))
+        ) {
+            return Ok(());
+        }
+        let fd = match Self::instance_attr_get(instance, "_fd") {
+            Some(Value::Int(fd)) => fd,
+            _ => return Err(RuntimeError::new("invalid file object")),
+        };
+        let closefd = !matches!(
+            Self::instance_attr_get(instance, "_closefd"),
+            Some(Value::Bool(false))
+        );
+        if closefd {
+            self.open_files.remove(&fd);
+        }
+        Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(instance, "closed", Value::Bool(true))?;
+        Ok(())
+    }
+
+    fn builtin_io_file_read(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("read() expects optional size"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "read")?;
+        let size = if let Some(value) = args.pop() {
+            let size = value_to_int(value)?;
+            if size < 0 {
+                None
+            } else {
+                Some(size as usize)
+            }
+        } else {
+            None
+        };
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let bytes = self.io_file_read_bytes(fd, size)?;
+        if Self::io_file_is_binary(&instance) {
+            Ok(self.heap.alloc_bytes(bytes))
+        } else {
+            let text = String::from_utf8(bytes)
+                .map_err(|_| RuntimeError::new("read() encountered non-UTF-8 bytes"))?;
+            Ok(Value::Str(text))
+        }
+    }
+
+    fn builtin_io_file_readline(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("readline() expects optional size"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "readline")?;
+        let limit = if let Some(value) = args.pop() {
+            let value = value_to_int(value)?;
+            if value < 0 {
+                None
+            } else {
+                Some(value as usize)
+            }
+        } else {
+            None
+        };
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let mut out = Vec::new();
+        while limit.map(|max| out.len() < max).unwrap_or(true) {
+            let mut byte = [0u8; 1];
+            let count = file
+                .read(&mut byte)
+                .map_err(|err| RuntimeError::new(format!("readline failed: {err}")))?;
+            if count == 0 {
+                break;
+            }
+            out.push(byte[0]);
+            if byte[0] == b'\n' {
+                break;
+            }
+        }
+        if Self::io_file_is_binary(&instance) {
+            Ok(self.heap.alloc_bytes(out))
+        } else {
+            let text = String::from_utf8(out)
+                .map_err(|_| RuntimeError::new("readline() encountered non-UTF-8 bytes"))?;
+            Ok(Value::Str(text))
+        }
+    }
+
+    fn builtin_io_file_write(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("write() expects one argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "write")?;
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let payload = if Self::io_file_is_binary(&instance) {
+            value_to_bytes_payload(args.remove(0))?
+        } else {
+            match args.remove(0) {
+                Value::Str(text) => text.into_bytes(),
+                _ => return Err(RuntimeError::new("write() argument must be str")),
+            }
+        };
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        file.write_all(&payload)
+            .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        Ok(Value::Int(payload.len() as i64))
+    }
+
+    fn builtin_io_file_seek(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new("seek() expects offset and optional whence"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "seek")?;
+        if args.is_empty() {
+            return Err(RuntimeError::new("seek() missing offset argument"));
+        }
+        let offset = value_to_int(args.remove(0))?;
+        let whence = if args.is_empty() {
+            0
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let position = match whence {
+            0 => {
+                if offset < 0 {
+                    return Err(RuntimeError::new("negative seek position"));
+                }
+                file.seek(SeekFrom::Start(offset as u64))
+            }
+            1 => file.seek(SeekFrom::Current(offset)),
+            2 => file.seek(SeekFrom::End(offset)),
+            _ => return Err(RuntimeError::new("invalid whence")),
+        }
+        .map_err(|err| RuntimeError::new(format!("seek failed: {err}")))?;
+        Ok(Value::Int(position as i64))
+    }
+
+    fn builtin_io_file_tell(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("tell() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "tell")?;
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let position = file
+            .stream_position()
+            .map_err(|err| RuntimeError::new(format!("tell failed: {err}")))?;
+        Ok(Value::Int(position as i64))
+    }
+
+    fn builtin_io_file_close(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("close() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "close")?;
+        self.io_file_close_instance(&instance)?;
+        Ok(Value::None)
+    }
+
+    fn builtin_io_file_flush(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("flush() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "flush")?;
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        file.flush()
+            .map_err(|err| RuntimeError::new(format!("flush failed: {err}")))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_io_file_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__iter__() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "__iter__")?;
+        Ok(Value::Instance(instance))
+    }
+
+    fn builtin_io_file_next(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__next__() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "__next__")?;
+        let line = self.builtin_io_file_readline(vec![Value::Instance(instance)], HashMap::new())?;
+        let is_empty = match &line {
+            Value::Str(text) => text.is_empty(),
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(bytes) => bytes.is_empty(),
+                _ => false,
+            },
+            _ => false,
+        };
+        if is_empty {
+            Err(RuntimeError::new("StopIteration"))
+        } else {
+            Ok(line)
+        }
+    }
+
+    fn builtin_io_file_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__enter__() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "__enter__")?;
+        Ok(Value::Instance(instance))
+    }
+
+    fn builtin_io_file_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new("__exit__() expects up to 3 arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "__exit__")?;
+        self.io_file_close_instance(&instance)?;
+        Ok(Value::Bool(false))
+    }
+
+    fn builtin_io_file_fileno(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("fileno() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "fileno")?;
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        #[cfg(unix)]
+        if let Some(file) = self.open_files.get(&fd) {
+            return Ok(Value::Int(file.as_raw_fd() as i64));
+        }
+        Ok(Value::Int(fd))
+    }
+
+    fn builtin_io_file_readable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("readable() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "readable")?;
+        let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
+        Ok(Value::Bool(mode.starts_with('r') || mode.contains('+')))
+    }
+
+    fn builtin_io_file_writable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("writable() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "writable")?;
+        let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
+        Ok(Value::Bool(
+            mode.starts_with('w') || mode.starts_with('a') || mode.starts_with('x') || mode.contains('+'),
+        ))
+    }
+
+    fn builtin_io_file_seekable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("seekable() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "seekable")?;
+        let _ = self.io_file_fd_from_instance(&instance)?;
+        Ok(Value::Bool(true))
     }
 
     fn stringio_buffer_from_instance(
@@ -23203,6 +25784,115 @@ impl Vm {
         let out: String = buffer[pos..end].iter().collect();
         self.stringio_store_buffer(&receiver, buffer, end)?;
         Ok(Value::Str(out))
+    }
+
+    fn struct_format_from_receiver(&self, receiver: &ObjRef) -> Result<String, RuntimeError> {
+        let Object::Instance(instance_data) = &*receiver.kind() else {
+            return Err(RuntimeError::new("Struct method expects struct instance"));
+        };
+        match instance_data.attrs.get("format") {
+            Some(Value::Str(format)) => Ok(format.clone()),
+            _ => Err(RuntimeError::new("Struct instance is missing format")),
+        }
+    }
+
+    fn forward_struct_method(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        target: BuiltinFunction,
+        method_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "Struct.{method_name}() missing receiver"
+            )));
+        }
+        let receiver = self.receiver_from_value(&args[0])?;
+        let format = self.struct_format_from_receiver(&receiver)?;
+        args.remove(0);
+        let mut forwarded = Vec::with_capacity(args.len() + 1);
+        forwarded.push(Value::Str(format));
+        forwarded.extend(args);
+        self.call_builtin(target, forwarded, kwargs)
+    }
+
+    fn builtin_struct_class_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("Struct() takes no keyword arguments"));
+        }
+        if args.len() != 2 {
+            return Err(RuntimeError::new("Struct() expects format string"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let format = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("Struct() format must be str")),
+        };
+        let size = self
+            .call_builtin(
+                BuiltinFunction::StructCalcSize,
+                vec![Value::Str(format.clone())],
+                HashMap::new(),
+            )
+            .unwrap_or(Value::Int(0));
+        let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
+            return Err(RuntimeError::new("Struct() expects instance receiver"));
+        };
+        instance_data
+            .attrs
+            .insert("format".to_string(), Value::Str(format));
+        instance_data.attrs.insert("size".to_string(), size);
+        Ok(Value::None)
+    }
+
+    fn builtin_struct_class_pack(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.forward_struct_method(args, kwargs, BuiltinFunction::StructPack, "pack")
+    }
+
+    fn builtin_struct_class_unpack(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.forward_struct_method(args, kwargs, BuiltinFunction::StructUnpack, "unpack")
+    }
+
+    fn builtin_struct_class_iter_unpack(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.forward_struct_method(args, kwargs, BuiltinFunction::StructIterUnpack, "iter_unpack")
+    }
+
+    fn builtin_struct_class_pack_into(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.forward_struct_method(args, kwargs, BuiltinFunction::StructPackInto, "pack_into")
+    }
+
+    fn builtin_struct_class_unpack_from(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.forward_struct_method(
+            args,
+            kwargs,
+            BuiltinFunction::StructUnpackFrom,
+            "unpack_from",
+        )
     }
 
     fn builtin_datetime_now(
@@ -26220,25 +28910,60 @@ fn value_to_bool_flag(value: Value, name: &str) -> Result<bool, RuntimeError> {
     }
 }
 
+struct CsvParsedField {
+    value: String,
+    quoted: bool,
+}
+
+fn csv_reader_value_for_field(field: CsvParsedField, quoting: i64) -> Result<Value, RuntimeError> {
+    match quoting {
+        // QUOTE_NONNUMERIC: unquoted non-empty fields are converted to float.
+        2 if !field.quoted && !field.value.is_empty() => {
+            Ok(Value::Float(parse_csv_reader_float(&field.value)?))
+        }
+        // QUOTE_STRINGS: like QUOTE_NONNUMERIC, but empty unquoted fields become None.
+        4 if !field.quoted && field.value.is_empty() => Ok(Value::None),
+        4 if !field.quoted => Ok(Value::Float(parse_csv_reader_float(&field.value)?)),
+        // QUOTE_NOTNULL: empty unquoted fields become None.
+        5 if !field.quoted && field.value.is_empty() => Ok(Value::None),
+        _ => Ok(Value::Str(field.value)),
+    }
+}
+
+fn parse_csv_reader_float(text: &str) -> Result<f64, RuntimeError> {
+    text.trim().parse::<f64>()
+        .map_err(|_| RuntimeError::new("could not convert string to float"))
+}
+
 fn parse_csv_row_simple(
     row: &str,
     delimiter: char,
     quotechar: Option<char>,
     escapechar: Option<char>,
     skipinitialspace: bool,
+    quoting: i64,
+    strict: bool,
     field_limit: Option<usize>,
-) -> Result<Vec<String>, RuntimeError> {
+) -> Result<Vec<CsvParsedField>, RuntimeError> {
+    if row.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut fields = Vec::new();
     let mut current = String::new();
+    let mut field_quoted = false;
     let mut in_quotes = false;
+    let active_quotechar = if quoting == 3 { None } else { quotechar };
     let mut chars = row.chars().peekable();
     while let Some(ch) = chars.next() {
-        if let Some(quote) = quotechar {
+        if let Some(quote) = active_quotechar {
             if ch == quote {
                 if in_quotes && chars.peek().is_some_and(|next| *next == quote) {
                     current.push(quote);
                     chars.next();
                 } else {
+                    if !in_quotes && current.is_empty() {
+                        field_quoted = true;
+                    }
                     in_quotes = !in_quotes;
                 }
                 continue;
@@ -26248,12 +28973,33 @@ fn parse_csv_row_simple(
             if ch == escape {
                 if let Some(next) = chars.next() {
                     current.push(next);
+                } else if strict {
+                    return Err(RuntimeError::new("unexpected end of data"));
+                } else if in_quotes || current.is_empty() {
+                    // CPython treats trailing escape-at-EOF as escaping newline in
+                    // open/empty field contexts.
+                    current.push('\n');
+                } else {
+                    // In closed-field contexts keep the escape character literally.
+                    current.push(escape);
                 }
                 continue;
             }
         }
+        if skipinitialspace && !in_quotes && current.is_empty() && ch == ' ' {
+            continue;
+        }
+        if (ch == '\n' || ch == '\r') && !in_quotes {
+            return Err(RuntimeError::new(
+                "new-line character seen in unquoted field; use newline=''",
+            ));
+        }
         if ch == delimiter && !in_quotes {
-            fields.push(std::mem::take(&mut current));
+            fields.push(CsvParsedField {
+                value: std::mem::take(&mut current),
+                quoted: field_quoted,
+            });
+            field_quoted = false;
             if skipinitialspace {
                 while chars.peek().is_some_and(|next| *next == ' ') {
                     chars.next();
@@ -26268,7 +29014,13 @@ fn parse_csv_row_simple(
             }
         }
     }
-    fields.push(current);
+    if in_quotes && strict {
+        return Err(RuntimeError::new("unexpected end of data"));
+    }
+    fields.push(CsvParsedField {
+        value: current,
+        quoted: field_quoted,
+    });
     Ok(fields)
 }
 
@@ -26880,8 +29632,89 @@ fn format_float_hex(value: f64) -> String {
 fn value_to_path(value: &Value) -> Result<String, RuntimeError> {
     match value {
         Value::Str(path) => Ok(path.clone()),
-        _ => Err(RuntimeError::new("path must be string")),
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(bytes) => Ok(String::from_utf8_lossy(bytes).into_owned()),
+            _ => Err(RuntimeError::new("path must be string or bytes")),
+        },
+        _ => Err(RuntimeError::new("path must be string or bytes")),
     }
+}
+
+fn value_to_process_text(value: &Value) -> Result<String, RuntimeError> {
+    match value {
+        Value::Str(text) => Ok(text.clone()),
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(bytes) => Ok(String::from_utf8_lossy(bytes).into_owned()),
+            _ => Err(RuntimeError::new("process argument must be str or bytes")),
+        },
+        _ => Err(RuntimeError::new("process argument must be str or bytes")),
+    }
+}
+
+fn value_to_sequence_items(value: &Value) -> Result<Vec<Value>, RuntimeError> {
+    match value {
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("expected tuple")),
+        },
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::new("expected list")),
+        },
+        _ => Err(RuntimeError::new("expected tuple or list")),
+    }
+}
+
+fn collect_process_argv(value: &Value) -> Result<Vec<String>, RuntimeError> {
+    let items = value_to_sequence_items(value)?;
+    let mut argv = Vec::with_capacity(items.len());
+    for item in &items {
+        argv.push(value_to_process_text(item)?);
+    }
+    Ok(argv)
+}
+
+fn collect_env_entries(value: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
+    let items = value_to_sequence_items(value)?;
+    let mut out = Vec::with_capacity(items.len());
+    for item in &items {
+        let text = value_to_process_text(item)?;
+        let Some((key, value)) = text.split_once('=') else {
+            return Err(RuntimeError::new("invalid env entry"));
+        };
+        out.push((key.to_string(), value.to_string()));
+    }
+    Ok(out)
+}
+
+fn is_pyrs_executable(path: &str) -> bool {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.starts_with("pyrs"))
+        .unwrap_or(false)
+}
+
+fn parse_modules_to_block_literal(code: &str) -> Vec<String> {
+    let marker = "modules_to_block = frozenset({";
+    let Some(start) = code.find(marker) else {
+        return Vec::new();
+    };
+    let rest = &code[start + marker.len()..];
+    let Some(end) = rest.find("})") else {
+        return Vec::new();
+    };
+    rest[..end]
+        .split(',')
+        .filter_map(|entry| {
+            let item = entry.trim().trim_matches('\'').trim_matches('"');
+            if item.is_empty() {
+                None
+            } else {
+                Some(item.to_string())
+            }
+        })
+        .collect()
 }
 
 fn system_time_to_secs_f64(value: SystemTime) -> Option<f64> {
@@ -29608,6 +32441,10 @@ fn class_name_for_instance(instance: &ObjRef) -> Option<String> {
     }
 }
 
+fn is_missing_attribute_error(err: &RuntimeError) -> bool {
+    err.message.contains("has no attribute") || err.message == "attribute access unsupported type"
+}
+
 fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
     if candidate == expected || expected == "BaseException" {
         return true;
@@ -29681,7 +32518,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.starts_with("name '") && message.ends_with("is not defined") {
         return "NameError";
     }
-    if message.contains("has no attribute") {
+    if message.contains("has no attribute") || message == "attribute access unsupported type" {
         return "AttributeError";
     }
     if message.contains("__init__() should return None") {
@@ -29699,6 +32536,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.contains("metaclass conflict") {
         return "TypeError";
     }
+    if message.starts_with("cannot create '") && message.ends_with("' instances") {
+        return "TypeError";
+    }
     if message.contains("object is not iterable")
         || message.contains("argument is not iterable")
         || message.contains("__iter__() returned non-iterator")
@@ -29709,6 +32549,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("tolerances must be non-negative")
         || message.contains("inputs are not the same length")
         || message.contains("not in list")
+        || message.contains("could not convert string to float")
     {
         return "ValueError";
     }

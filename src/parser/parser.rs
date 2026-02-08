@@ -565,11 +565,10 @@ impl Parser {
             }
             TokenKind::Number => {
                 if let Some(imag) = self.parse_imag_literal(&token.lexeme, pos)? {
-                    let complex_ctor =
-                        self.make_expr(pos, ExprKind::Name("complex".to_string()));
+                    let complex_ctor = self.make_expr(pos, ExprKind::Name("complex".to_string()));
                     let zero = self.make_expr(pos, ExprKind::Constant(Constant::Int(0)));
-                    let imag_part =
-                        self.make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(imag))));
+                    let imag_part = self
+                        .make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(imag))));
                     let expr = self.make_expr(
                         pos,
                         ExprKind::Call {
@@ -598,10 +597,14 @@ impl Parser {
                             };
                             let complex_ctor =
                                 self.make_expr(pos, ExprKind::Name("complex".to_string()));
-                            let real_expr =
-                                self.make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(real))));
-                            let imag_expr =
-                                self.make_expr(pos, ExprKind::Constant(Constant::Float(FloatLiteral(imag))));
+                            let real_expr = self.make_expr(
+                                pos,
+                                ExprKind::Constant(Constant::Float(FloatLiteral(real))),
+                            );
+                            let imag_expr = self.make_expr(
+                                pos,
+                                ExprKind::Constant(Constant::Float(FloatLiteral(imag))),
+                            );
                             let expr = self.make_expr(
                                 pos,
                                 ExprKind::Call {
@@ -641,8 +644,7 @@ impl Parser {
                     return Err(self.error_at(pos, "expected numeric pattern"));
                 }
                 if let Some(imag) = self.parse_imag_literal(&next.lexeme, pos + 1)? {
-                    let complex_ctor =
-                        self.make_expr(pos, ExprKind::Name("complex".to_string()));
+                    let complex_ctor = self.make_expr(pos, ExprKind::Name("complex".to_string()));
                     let zero = self.make_expr(pos, ExprKind::Constant(Constant::Int(0)));
                     let imag_part = self.make_expr(
                         pos,
@@ -720,7 +722,10 @@ impl Parser {
         let mut positional = Vec::new();
         let mut keywords = Vec::new();
         let mut saw_keyword = false;
-        while !matches!(self.token_at(pos).kind, TokenKind::RParen | TokenKind::EndMarker) {
+        while !matches!(
+            self.token_at(pos).kind,
+            TokenKind::RParen | TokenKind::EndMarker
+        ) {
             if self.token_at(pos).kind == TokenKind::Name
                 && matches!(self.token_at(pos + 1).kind, TokenKind::Equal)
             {
@@ -754,10 +759,7 @@ impl Parser {
         ))
     }
 
-    fn parse_match_sequence_pattern(
-        &mut self,
-        pos: usize,
-    ) -> Result<(Pattern, usize), ParseError> {
+    fn parse_match_sequence_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
         let (open, close) = match self.token_at(pos).kind {
             TokenKind::LBracket => (TokenKind::LBracket, TokenKind::RBracket),
             TokenKind::LParen => (TokenKind::LParen, TokenKind::RParen),
@@ -803,14 +805,14 @@ impl Parser {
         Ok((Pattern::Sequence(elements), pos))
     }
 
-    fn parse_match_mapping_pattern(
-        &mut self,
-        pos: usize,
-    ) -> Result<(Pattern, usize), ParseError> {
+    fn parse_match_mapping_pattern(&mut self, pos: usize) -> Result<(Pattern, usize), ParseError> {
         let mut pos = self.expect_kind(pos, TokenKind::LBrace)?;
         let mut entries = Vec::new();
         let mut rest = None;
-        while !matches!(self.token_at(pos).kind, TokenKind::RBrace | TokenKind::EndMarker) {
+        while !matches!(
+            self.token_at(pos).kind,
+            TokenKind::RBrace | TokenKind::EndMarker
+        ) {
             if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
                 pos += 1;
                 let token = self.token_at(pos);

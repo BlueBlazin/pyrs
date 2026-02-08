@@ -61,6 +61,7 @@ fn is_hashable(value: &Value) -> bool {
     match value {
         Value::List(_)
         | Value::Dict(_)
+        | Value::DictKeys(_)
         | Value::Set(_)
         | Value::ByteArray(_)
         | Value::Slice { .. } => false,
@@ -89,6 +90,7 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::List(_) => "list",
         Value::Tuple(_) => "tuple",
         Value::Dict(_) => "dict",
+        Value::DictKeys(_) => "dict_keys",
         Value::Set(_) => "set",
         Value::FrozenSet(_) => "frozenset",
         Value::Bytes(_) => "bytes",

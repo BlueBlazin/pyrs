@@ -21,10 +21,18 @@ class _ResourcePath:
         return self.joinpath(name)
 
     def read_text(self, encoding='utf-8'):
-        return open(self._path, 'r')
+        handle = open(self._path, 'r')
+        try:
+            return handle.read()
+        finally:
+            handle.close()
 
     def read_bytes(self):
-        return open(self._path, 'rb')
+        handle = open(self._path, 'rb')
+        try:
+            return handle.read()
+        finally:
+            handle.close()
 
     def open(self, mode='r', encoding='utf-8'):
         return open(self._path, mode)
