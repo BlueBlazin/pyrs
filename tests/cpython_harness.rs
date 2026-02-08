@@ -114,6 +114,34 @@ fn module_name(entry: &str) -> Option<String> {
     }
 }
 
+fn pyrs_bin() -> Option<PathBuf> {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_pyrs") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_pyrs") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let from_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
+    if from_manifest.is_file() {
+        return Some(from_manifest);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(debug_dir) = exe.parent().and_then(|deps| deps.parent()) {
+            let sibling = debug_dir.join("pyrs");
+            if sibling.is_file() {
+                return Some(sibling);
+            }
+        }
+    }
+    None
+}
+
 #[derive(Clone, Copy)]
 enum SuiteMode {
     ImportOnly,
@@ -124,12 +152,15 @@ fn run_entry(lib: &Path, entry: &str, mode: SuiteMode) -> Result<(), String> {
     let _path = module_path(lib, entry).ok_or_else(|| "missing module".to_string())?;
     let import_name = module_name(entry).ok_or_else(|| "invalid module entry".to_string())?;
     let lib_path = lib.to_string_lossy();
+    let executable_patch = pyrs_bin()
+        .map(|path| format!("sys.executable = {:?}\n", path.to_string_lossy()))
+        .unwrap_or_default();
     let source = match mode {
         SuiteMode::ImportOnly => format!(
-            "import sys\nimport importlib\nsys.path = [{lib_path:?}]\nimportlib.import_module({import_name:?})\n"
+            "import sys\nimport importlib\n{executable_patch}sys.path = [{lib_path:?}]\nimportlib.import_module({import_name:?})\n"
         ),
         SuiteMode::StrictUnittest => format!(
-            "import sys\nimport importlib\nimport unittest\nsys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nresult = unittest.TextTestRunner(verbosity=0, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
+            "import sys\nimport importlib\nimport unittest\n{executable_patch}sys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nresult = unittest.TextTestRunner(verbosity=0, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
         ),
     };
     let module =
