@@ -14,7 +14,30 @@ use crate::vm::Vm;
 const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
 
 pub fn run() -> i32 {
-    let mut args = env::args().skip(1);
+    let mut args = env::args().skip(1).peekable();
+    let mut import_site = true;
+
+    // Parse a small subset of CPython-style startup flags used by stdlib tests.
+    loop {
+        let Some(flag) = args.peek().cloned() else {
+            break;
+        };
+        match flag.as_str() {
+            "-X" => {
+                args.next();
+                if args.next().is_none() {
+                    eprintln!("error: -X expects an option");
+                    return 2;
+                }
+            }
+            "-S" | "--no-site" => {
+                import_site = false;
+                args.next();
+            }
+            _ => break,
+        }
+    }
+
     match args.next() {
         None => {
             print_help();
@@ -54,8 +77,8 @@ pub fn run() -> i32 {
             println!("pyrs {VERSION}");
             0
         }
-        Some(flag) if flag == "-S" || flag == "--no-site" => match args.next() {
-            Some(path) => match run_file(&path, false) {
+        Some(flag) if flag == "-c" => match args.next() {
+            Some(source) => match run_command(&source, import_site) {
                 Ok(()) => 0,
                 Err(err) => {
                     eprintln!("error: {err}");
@@ -63,11 +86,11 @@ pub fn run() -> i32 {
                 }
             },
             None => {
-                eprintln!("error: -S/--no-site expects a file path");
+                eprintln!("error: -c expects command string");
                 2
             }
         },
-        Some(path) => match run_file(&path, true) {
+        Some(path) => match run_file(&path, import_site) {
             Ok(()) => 0,
             Err(err) => {
                 eprintln!("error: {err}");
@@ -111,11 +134,43 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn run_command(source: &str, import_site: bool) -> Result<(), String> {
+    let mut vm = Vm::new();
+    configure_vm_for_command(&mut vm, import_site)?;
+
+    stdlib::initialize();
+
+    let module = parser::parse_module(source).map_err(|err| {
+        format!(
+            "parse error at {} (line {}, column {}): {}",
+            err.offset, err.line, err.column, err.message
+        )
+    })?;
+
+    let code = compiler::compile_module_with_filename(&module, "<string>")
+        .map_err(|err| format!("compile error: {}", err.message))?;
+
+    vm.execute(&code)
+        .map_err(|err| format!("runtime error: {}", err.message))?;
+
+    Ok(())
+}
+
 fn configure_vm_for_execution(
     vm: &mut Vm,
     script_path: &str,
     import_site: bool,
 ) -> Result<(), String> {
+    configure_vm_for_command(vm, import_site)?;
+    if let Some(parent) = Path::new(script_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            vm.add_module_path_front(parent.to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+fn configure_vm_for_command(vm: &mut Vm, import_site: bool) -> Result<(), String> {
     let (stdlib_paths, strict_site_import) = detect_cpython_stdlib_paths();
     for stdlib_path in &stdlib_paths {
         vm.add_module_path(stdlib_path.clone());
@@ -125,11 +180,6 @@ fn configure_vm_for_execution(
             if strict_site_import {
                 return Err(format!("startup site import failed: {}", err.message));
             }
-        }
-    }
-    if let Some(parent) = Path::new(script_path).parent() {
-        if !parent.as_os_str().is_empty() {
-            vm.add_module_path_front(parent.to_path_buf());
         }
     }
     Ok(())
