@@ -29347,48 +29347,93 @@ impl Vm {
             Value::Str(value) => value,
             _ => return Err(RuntimeError::new("open() mode must be str")),
         };
-
-        let mut mode_kind: Option<char> = None;
-        let mut update = false;
-        let mut binary = false;
+        // Keep mode validation close to CPython's _io_open_impl in Modules/_io/_iomodule.c.
+        let mut creating = false;
+        let mut reading = false;
+        let mut writing = false;
+        let mut appending = false;
+        let mut updating = false;
+        let mut text_mode = false;
+        let mut binary_mode = false;
         for ch in mode.chars() {
             match ch {
-                'r' | 'w' | 'a' | 'x' => {
-                    if mode_kind.is_some() {
-                        return Err(RuntimeError::new("invalid mode"));
+                'x' => {
+                    if creating {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
                     }
-                    mode_kind = Some(ch);
+                    creating = true;
+                }
+                'r' => {
+                    if reading {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    reading = true;
+                }
+                'w' => {
+                    if writing {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    writing = true;
+                }
+                'a' => {
+                    if appending {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    appending = true;
                 }
                 '+' => {
-                    if update {
-                        return Err(RuntimeError::new("invalid mode"));
+                    if updating {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
                     }
-                    update = true;
-                }
-                'b' => {
-                    if binary {
-                        return Err(RuntimeError::new("can't have text and binary mode at once"));
-                    }
-                    binary = true;
+                    updating = true;
                 }
                 't' => {
-                    if binary {
-                        return Err(RuntimeError::new("can't have text and binary mode at once"));
+                    if text_mode {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
                     }
+                    text_mode = true;
                 }
-                _ => return Err(RuntimeError::new("invalid mode")),
+                'b' => {
+                    if binary_mode {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    binary_mode = true;
+                }
+                _ => return Err(RuntimeError::new(format!("invalid mode: '{mode}'"))),
             }
         }
-        let mode_kind = mode_kind.unwrap_or('r');
-        if binary && (encoding_arg.is_some() || errors_arg.is_some() || newline_arg.is_some()) {
+
+        if text_mode && binary_mode {
+            return Err(RuntimeError::new("can't have text and binary mode at once"));
+        }
+        let mode_kind_count = creating as u8 + reading as u8 + writing as u8 + appending as u8;
+        if mode_kind_count != 1 {
             return Err(RuntimeError::new(
-                "binary mode doesn't take an encoding, errors, or newline argument",
+                "must have exactly one of create/read/write/append mode",
             ));
         }
+        let mode_kind = if creating {
+            'x'
+        } else if reading {
+            'r'
+        } else if writing {
+            'w'
+        } else {
+            'a'
+        };
 
-        if let Some(value) = buffering_arg {
-            let _ = value_to_int(value)?;
+        let mut buffering = value_to_int(buffering_arg.unwrap_or(Value::Int(-1)))?;
+        if buffering < -1 {
+            return Err(RuntimeError::new("invalid buffering size"));
         }
+        if binary_mode && buffering == 1 {
+            // CPython emits RuntimeWarning and falls back to default buffering.
+            buffering = -1;
+        }
+        if buffering == 0 && !binary_mode {
+            return Err(RuntimeError::new("can't have unbuffered text I/O"));
+        }
+
         let encoding = match encoding_arg.unwrap_or(Value::None) {
             Value::None => None,
             Value::Str(value) => Some(value),
@@ -29404,6 +29449,17 @@ impl Vm {
             Value::Str(value) => Some(value),
             _ => return Err(RuntimeError::new("open() newline must be str or None")),
         };
+        if binary_mode && encoding.is_some() {
+            return Err(RuntimeError::new(
+                "binary mode doesn't take an encoding argument",
+            ));
+        }
+        if binary_mode && errors.is_some() {
+            return Err(RuntimeError::new("binary mode doesn't take an errors argument"));
+        }
+        if binary_mode && newline.is_some() {
+            return Err(RuntimeError::new("binary mode doesn't take a newline argument"));
+        }
         let closefd = is_truthy(&closefd_arg.unwrap_or(Value::Bool(true)));
         let opener = opener_arg.unwrap_or(Value::None);
 
@@ -29415,27 +29471,17 @@ impl Vm {
 
         let fd = match file_arg {
             Value::Int(fd) => {
-                if opener_value.is_some() {
-                    return Err(RuntimeError::new(
-                        "open() can't use opener with file descriptor",
-                    ));
-                }
                 if fd < 0 {
                     return Err(RuntimeError::new("bad file descriptor"));
                 }
-                if !self.open_files.contains_key(&fd) {
+                if self.find_open_file(fd).is_none() && fd > 2 {
                     return Err(RuntimeError::new("bad file descriptor"));
                 }
                 fd
             }
             Value::Bool(flag) => {
                 let fd = if flag { 1 } else { 0 };
-                if opener_value.is_some() {
-                    return Err(RuntimeError::new(
-                        "open() can't use opener with file descriptor",
-                    ));
-                }
-                if !self.open_files.contains_key(&fd) && fd > 2 {
+                if self.find_open_file(fd).is_none() && fd > 2 {
                     return Err(RuntimeError::new("bad file descriptor"));
                 }
                 fd
@@ -29446,7 +29492,7 @@ impl Vm {
                 }
                 let path = self.io_open_path_from_value(pathlike)?;
                 if let Some(opener) = opener_value {
-                    let mut flags = if update {
+                    let mut flags = if updating {
                         2
                     } else if mode_kind == 'r' {
                         0
@@ -29476,7 +29522,10 @@ impl Vm {
                         }
                     };
                     let fd = value_to_int(opener_result)?;
-                    if !self.open_files.contains_key(&fd) {
+                    if fd < 0 {
+                        return Err(RuntimeError::new(format!("opener returned {fd}")));
+                    }
+                    if self.find_open_file(fd).is_none() && fd > 2 {
                         return Err(RuntimeError::new("bad file descriptor"));
                     }
                     fd
@@ -29485,25 +29534,25 @@ impl Vm {
                     match mode_kind {
                         'r' => {
                             options.read(true);
-                            if update {
+                            if updating {
                                 options.write(true);
                             }
                         }
                         'w' => {
                             options.write(true).create(true).truncate(true);
-                            if update {
+                            if updating {
                                 options.read(true);
                             }
                         }
                         'a' => {
                             options.write(true).append(true).create(true);
-                            if update {
+                            if updating {
                                 options.read(true);
                             }
                         }
                         'x' => {
                             options.write(true).create_new(true);
-                            if update {
+                            if updating {
                                 options.read(true);
                             }
                         }
@@ -29517,9 +29566,9 @@ impl Vm {
             }
         };
 
-        let class_name = if binary { "FileIO" } else { "TextIOWrapper" };
+        let class_name = if binary_mode { "FileIO" } else { "TextIOWrapper" };
         self.alloc_io_file_instance(
-            class_name, fd, &mode, binary, closefd, encoding, errors, newline,
+            class_name, fd, &mode, binary_mode, closefd, encoding, errors, newline,
         )
     }
 
@@ -38984,6 +39033,16 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("could not convert string to float")
         || message.contains("complex() invalid literal")
         || message.contains("list modified during sort")
+        || message.starts_with("invalid mode:")
+        || message.contains("must have exactly one of create/read/write/append mode")
+        || message.contains("can't have text and binary mode at once")
+        || message.contains("can't have unbuffered text I/O")
+        || message.contains("invalid buffering size")
+        || message.contains("binary mode doesn't take an encoding argument")
+        || message.contains("binary mode doesn't take an errors argument")
+        || message.contains("binary mode doesn't take a newline argument")
+        || message.contains("Cannot use closefd=False with file name")
+        || message.starts_with("opener returned ")
     {
         return "ValueError";
     }

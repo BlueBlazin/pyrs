@@ -5995,6 +5995,160 @@ ok = (data == b'payload')
 }
 
 #[test]
+fn io_open_binary_allows_none_text_kwargs() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_binary_none_kwargs_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        "import io\n\
+path = {path:?}\n\
+reader = io.open(path, 'rb', encoding=None, errors=None, newline=None)\n\
+data = reader.read()\n\
+reader.close()\n\
+ok = (data == b'payload')\n",
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_rejects_unbuffered_text_mode() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_text_buffering_zero_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+caught = False
+try:
+    io.open(path, 'r', buffering=0)
+except ValueError:
+    caught = True
+ok = caught
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_rejects_modes_without_rwax_component() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_mode_validation_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+count = 0
+for mode in ('', 'b', '+'):
+    try:
+        io.open(path, mode)
+    except ValueError:
+        count += 1
+ok = (count == 3)
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_fd_ignores_opener_and_respects_closefd_false() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_fd_opener_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+import os
+path = {path:?}
+fd = os.open(path, os.O_RDONLY)
+reader = io.open(fd, 'r', opener=os.open, closefd=False)
+payload = reader.read()
+reader.close()
+closed_ok = False
+try:
+    os.close(fd)
+    closed_ok = True
+except OSError:
+    closed_ok = False
+ok = (payload == 'payload' and closed_ok)
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_rejects_negative_fd_from_opener() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_bad_opener_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+caught = False
+try:
+    io.open(path, 'r', opener=lambda p, flags: -1)
+except ValueError:
+    caught = True
+ok = caught
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
 fn exposes_platform_libc_ver_tuple() {
     let source = "import platform\ninfo = platform.libc_ver()\nok = isinstance(info, tuple) and len(info) == 2 and isinstance(info[0], str) and isinstance(info[1], str)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

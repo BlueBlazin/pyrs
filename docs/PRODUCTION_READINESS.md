@@ -99,7 +99,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [~] P0: `codecs` foundations (`encode`/`decode` for `utf-8`/`utf-16`/`utf-32`/`ascii`/`latin-1` with `strict`/`ignore`/`replace`).
 - [~] P0: `sys`, `types`, `inspect`, `io` (foundation for many libs).
 - [~] P0: `os`, `pathlib`, `stat`, `errno`, `time`, `datetime` (process/FS core; `os`/`posix` now include non-`NoOp` `open`/`close`/`write`/`getenv`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` + wait-status helpers, and `datetime` now exports baseline `date`/`timedelta` symbols; full module parity pending).
-- [~] P0: `_io.open` CPython file-object semantics (`TextIOWrapper.__init__` wrapping and `readlines()` are now implemented for `tokenize`/`linecache` flows, but full `opener`/buffering/newline/closefd parity and full stream-object semantics are still required for `tempfile`/`test_csv` closure).
+- [~] P0: `_io.open` CPython file-object semantics (`TextIOWrapper.__init__` wrapping and `readlines()` are implemented; mode validation, binary/text argument compatibility checks, buffering guardrails, and opener/FD closefd handling now track CPython `_io_open_impl` baselines. Full buffered-class behavior, newline translation details, and wider stream-object parity are still required for complete `tempfile`/stdlib closure).
 - [ ] P0: Full `json` parity and hardening (`test_json` closure, differential malformed-input coverage, performance baselines).
 - [ ] P0: Full `_csv`/`csv` parity and hardening (`test_csv` closure, malformed-input coverage, performance baselines).
 - [ ] P0: Full `pickle`/`pickletools`/`copyreg` parity and hardening (`test_pickle`, `test_pickletools`, `test_copyreg` closure, protocol coverage, performance baselines).
