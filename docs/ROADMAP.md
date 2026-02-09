@@ -367,6 +367,7 @@ Progress:
 - Bytes API parity follow-up landed: `bytes.join(...)` now supports iterable bytes-like inputs (`bytes`/`bytearray`/`memoryview`) with dedicated VM regression coverage, closing a strict `test_pickle` blocker (`AttributeError: bytes has no attribute 'join'`).
 - Strict stdlib lane remains P0-blocked on timeouts for `test_pickle.py` and `test_pickletools.py` at the current per-module watchdog (`PYRS_STRICT_HARNESS_TIMEOUT_SECS=120`); no runaway harness loop is observed, and remaining closure work is concentrated in pickle/unittest runtime behavior and performance.
 - Runtime exception-unwind fix landed for attribute opcodes: `AttrAccessOutcome`/`AttrMutationOutcome` `ExceptionHandled` paths now re-raise through normal VM error unwinding (instead of continuing execution), closing the `with ... assertRaises(...)` `PopTop` stack-underflow failure seen in strict pickletools paths; dedicated regression coverage is in `tests/vm.rs`.
+- Builtin numeric parity follow-up landed for `round(...)`: VM now supports tie-to-even behavior across float/int/bigint paths, `ndigits` (including negative precision), and `__round__` dispatch for user-defined objects; dedicated VM regressions cover ties, precision edges, and dunder dispatch.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:

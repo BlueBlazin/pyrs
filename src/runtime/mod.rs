@@ -1748,6 +1748,7 @@ pub enum BuiltinFunction {
     Map,
     Filter,
     Pow,
+    Round,
     List,
     ListAppendDescriptor,
     Tuple,
@@ -2845,6 +2846,7 @@ impl BuiltinFunction {
                 let value = pow_numeric_values(args[0].clone(), args[1].clone())?;
                 Ok(value)
             }
+            BuiltinFunction::Round => Err(RuntimeError::new("round() requires VM context")),
             BuiltinFunction::List => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new("list() expects at most one argument"));

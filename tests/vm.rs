@@ -4285,6 +4285,46 @@ fn executes_augmented_assignment_variants() {
 }
 
 #[test]
+fn round_builtin_handles_numeric_ties_and_ndigits() {
+    let source = r#"ok = (
+    round(1.5) == 2 and
+    round(2.5) == 2 and
+    round(-1.5) == -2 and
+    round(1250, -2) == 1200 and
+    round(1350, -2) == 1400
+)
+v = round(1.2345, 3)
+ok = ok and (v == 1.234)
+ok = ok and (round(1.0, 400) == 1.0)
+ok = ok and (round(1.0, -400) == 0.0)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn round_builtin_uses_dunder_round_for_user_types() {
+    let source = r#"class C:
+    def __round__(self, ndigits=None):
+        if ndigits is None:
+            return 42
+        return ndigits + 1
+
+ok = (round(C()) == 42)
+ok = ok and (round(C(), 4) == 5)
+ok = ok and (round(C(), ndigits=7) == 8)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_for_with_tuple_target() {
     let source = r#"pairs = [(1, 2), (3, 4)]
 total = 0

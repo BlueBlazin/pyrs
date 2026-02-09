@@ -16618,6 +16618,7 @@ impl Vm {
             BuiltinFunction::Min => self.builtin_min(args, kwargs),
             BuiltinFunction::Max => self.builtin_max(args, kwargs),
             BuiltinFunction::Sum => self.builtin_sum(args, kwargs),
+            BuiltinFunction::Round => self.builtin_round(args, kwargs),
             BuiltinFunction::Sorted => self.builtin_sorted(args, kwargs),
             BuiltinFunction::All => self.builtin_all(args, kwargs),
             BuiltinFunction::Any => self.builtin_any(args, kwargs),
@@ -19696,6 +19697,124 @@ impl Vm {
             total = add_values(total, value, &self.heap)?;
         }
         Ok(total)
+    }
+
+    fn builtin_round(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("round() expects 1-2 arguments"));
+        }
+
+        let ndigits_kw = kwargs.remove("ndigits");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "round() got an unexpected keyword argument",
+            ));
+        }
+        if ndigits_kw.is_some() && args.len() == 2 {
+            return Err(RuntimeError::new(
+                "round() got multiple values for argument 'ndigits'",
+            ));
+        }
+
+        let number = args.remove(0);
+        let ndigits_value = ndigits_kw.or_else(|| args.pop());
+
+        match number.clone() {
+            Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => {
+                let value = value_to_bigint(number)?;
+                if let Some(raw_digits) = ndigits_value {
+                    let digits = value_to_int(raw_digits)?;
+                    self.round_integral_with_ndigits(value, digits)
+                } else {
+                    Ok(value_from_bigint(value))
+                }
+            }
+            Value::Float(value) => {
+                if let Some(raw_digits) = ndigits_value {
+                    let digits = value_to_int(raw_digits)?;
+                    Ok(Value::Float(round_float_with_ndigits(value, digits)))
+                } else {
+                    self.round_float_to_int(value)
+                }
+            }
+            other => self.call_round_dunder(other, ndigits_value),
+        }
+    }
+
+    fn round_integral_with_ndigits(
+        &self,
+        value: BigInt,
+        ndigits: i64,
+    ) -> Result<Value, RuntimeError> {
+        if ndigits >= 0 {
+            return Ok(value_from_bigint(value));
+        }
+
+        let factor = BigInt::from_i64(10).pow_u64((-ndigits) as u64);
+        let is_negative = value.is_negative();
+        let abs_value = value.abs();
+        let (mut quotient, remainder) = abs_value
+            .div_mod_floor(&factor)
+            .ok_or_else(|| RuntimeError::new("round() internal error"))?;
+        let should_increment = match remainder.mul_small(2).cmp_total(&factor) {
+            Ordering::Greater => true,
+            Ordering::Equal => self.bigint_is_odd(&quotient)?,
+            Ordering::Less => false,
+        };
+        if should_increment {
+            quotient = quotient.add(&BigInt::one());
+        }
+
+        let mut rounded = quotient.mul(&factor);
+        if is_negative {
+            rounded = rounded.negated();
+        }
+        Ok(value_from_bigint(rounded))
+    }
+
+    fn round_float_to_int(&self, value: f64) -> Result<Value, RuntimeError> {
+        if value.is_nan() {
+            return Err(RuntimeError::new("cannot convert float NaN to integer"));
+        }
+        if value.is_infinite() {
+            return Err(RuntimeError::new("cannot convert float infinity to integer"));
+        }
+        let rounded = value.round_ties_even();
+        let bigint = BigInt::from_f64_integral(rounded)
+            .ok_or_else(|| RuntimeError::new("cannot convert float to integer"))?;
+        Ok(value_from_bigint(bigint))
+    }
+
+    fn call_round_dunder(
+        &mut self,
+        number: Value,
+        ndigits_value: Option<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let Some(round_method) = self.lookup_bound_special_method(&number, "__round__")? else {
+            return Err(RuntimeError::new("type doesn't define __round__ method"));
+        };
+        let mut call_args = Vec::new();
+        if let Some(ndigits) = ndigits_value {
+            call_args.push(ndigits);
+        }
+        match self.call_internal(round_method, call_args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("round() failed"))
+            }
+        }
+    }
+
+    fn bigint_is_odd(&self, value: &BigInt) -> Result<bool, RuntimeError> {
+        let divisor = BigInt::from_i64(2);
+        let (_quotient, remainder) = value
+            .div_mod_floor(&divisor)
+            .ok_or_else(|| RuntimeError::new("round() internal error"))?;
+        Ok(!remainder.is_zero())
     }
 
     fn builtin_min_max(
@@ -32853,6 +32972,8 @@ impl Vm {
         self.builtins
             .insert("pow".to_string(), Value::Builtin(BuiltinFunction::Pow));
         self.builtins
+            .insert("round".to_string(), Value::Builtin(BuiltinFunction::Round));
+        self.builtins
             .insert("list".to_string(), Value::Builtin(BuiltinFunction::List));
         self.builtins
             .insert("tuple".to_string(), Value::Builtin(BuiltinFunction::Tuple));
@@ -33620,6 +33741,43 @@ fn value_from_bigint(value: BigInt) -> Value {
     match value.to_i64() {
         Some(number) => Value::Int(number),
         None => Value::BigInt(value),
+    }
+}
+
+fn round_float_with_ndigits(value: f64, ndigits: i64) -> f64 {
+    if !value.is_finite() {
+        return value;
+    }
+
+    if ndigits >= 0 {
+        if ndigits > 308 {
+            return value;
+        }
+        let factor = 10_f64.powi(ndigits as i32);
+        if !factor.is_finite() || factor == 0.0 {
+            return value;
+        }
+        let rounded = (value * factor).round_ties_even() / factor;
+        if rounded == 0.0 {
+            0.0f64.copysign(value)
+        } else {
+            rounded
+        }
+    } else {
+        let shift = (-ndigits) as i64;
+        if shift > 308 {
+            return 0.0f64.copysign(value);
+        }
+        let factor = 10_f64.powi(shift as i32);
+        if !factor.is_finite() || factor == 0.0 {
+            return 0.0f64.copysign(value);
+        }
+        let rounded = (value / factor).round_ties_even() * factor;
+        if rounded == 0.0 {
+            0.0f64.copysign(value)
+        } else {
+            rounded
+        }
     }
 }
 
