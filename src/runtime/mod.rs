@@ -2013,6 +2013,10 @@ pub enum BuiltinFunction {
     SubprocessCheckCall,
     JsonDumps,
     JsonLoads,
+    JsonEncodeBaseString,
+    JsonEncodeBaseStringAscii,
+    JsonMakeEncoder,
+    JsonMakeEncoderCall,
     PickleDump,
     PickleDumps,
     PickleLoad,
@@ -4315,6 +4319,10 @@ impl BuiltinFunction {
             | BuiltinFunction::SubprocessCheckCall
             | BuiltinFunction::JsonDumps
             | BuiltinFunction::JsonLoads
+            | BuiltinFunction::JsonEncodeBaseString
+            | BuiltinFunction::JsonEncodeBaseStringAscii
+            | BuiltinFunction::JsonMakeEncoder
+            | BuiltinFunction::JsonMakeEncoderCall
             | BuiltinFunction::JsonScannerMakeScanner
             | BuiltinFunction::JsonScannerPyMakeScanner
             | BuiltinFunction::JsonScannerScanOnce

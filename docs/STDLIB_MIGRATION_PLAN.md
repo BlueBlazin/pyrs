@@ -10,7 +10,7 @@ Primary rule:
 
 | Module area | CPython source of truth | Rust responsibility | Current state | Exit criteria |
 |---|---|---|---|---|
-| `json` | `Lib/json/*` + optional `_json` accelerator | `_json` compatibility surface only (`scanstring`/`make_scanner`) | VM now has pure `json` preference wiring as explicit opt-in (`Vm::enable_pure_json_preference`); native `json` remains default fallback | Strict/parity suites pass with pure `json` path when opt-in is enabled, then promote pure path to default and retire native fallback |
+| `json` | `Lib/json/*` + optional `_json` accelerator | `_json` compatibility surface only (`scanstring`/`make_scanner`) | VM now defaults to pure `json` when CPython stdlib paths are discoverable; native high-level `json` remains only as stdlib-less fallback | Strict/parity suites pass with pure `json` path and native high-level fallback is retired |
 | `csv` | `Lib/csv.py` + `_csv` C module | `_csv` behavior-compatible accelerator surface | Pure `csv.py` path is primary; `_csv` is native | `test_csv` strict closure + `_csv` edge/perf parity |
 | `pickle`/`pickletools`/`copyreg` | `Lib/pickle.py`, `Lib/pickletools.py`, `Lib/copyreg.py` + optional `_pickle` accelerator | object protocol hooks + `_pickle` compatibility surface | Pure modules are primary; active strict lane now excludes pickle and pickle strict is tracked separately in deferred suite (`tests/cpython_suite_deferred_pickle.txt`) | Re-enable pickle in active strict lane and close deferred suite failures with perf proof gates |
 | `re` | `Lib/re/*` + `_sre` C module | `_sre`-equivalent runtime surface | Still native-heavy because `_sre` parity layer is incomplete | Implement `_sre`-equivalent surface and switch to pure `Lib/re/*` |
@@ -32,7 +32,7 @@ Primary rule:
 - High-level module behavior should come from CPython pure-Python code.
 
 4. Parity gate:
-- For covered modules, runtime must support preferring pure module implementations; rollout may be gated behind explicit opt-in until parity/perf blockers are closed.
+- For covered modules, runtime must support preferring pure module implementations by default when stdlib paths are available.
 - Regression tests must verify this preference explicitly.
 
 5. Native-core-first sequencing:
@@ -49,8 +49,9 @@ Primary rule:
 
 ## Current Migration Steps Landed
 
-- VM now supports removing preinstalled native `json` modules when CPython `Lib/json/__init__.py` is present and pure-json preference is explicitly enabled.
-- This keeps migration behavior testable while avoiding default strict-suite regressions during closure work.
+- VM now removes preinstalled native high-level `json` modules when CPython `Lib/json/__init__.py` is present.
+- Native high-level `json` behavior is retained only for stdlib-less fallback environments.
+- Local `_json` shim routing is removed; `_json` accelerator symbols are provided natively by the VM.
 
 ## Remaining P0 Work
 

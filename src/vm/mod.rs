@@ -260,7 +260,6 @@ const LOCAL_SHIM_MODULES: &[&str] = &[
     "enum",
     "pkgutil",
     "importlib.resources",
-    "_json",
 ];
 
 struct Frame {
@@ -1957,11 +1956,16 @@ impl Vm {
                 Value::ExceptionType("ValueError".to_string()),
             )],
         );
-        // Presence of _json lets stdlib import helpers detect accelerator availability.
-        // Individual speedup symbols intentionally remain absent so pure-Python fallbacks run.
+        // Provide CPython-compatible _json accelerator symbols used by Lib/json paths.
         self.install_builtin_module(
             "_json",
             &[
+                ("encode_basestring", BuiltinFunction::JsonEncodeBaseString),
+                (
+                    "encode_basestring_ascii",
+                    BuiltinFunction::JsonEncodeBaseStringAscii,
+                ),
+                ("make_encoder", BuiltinFunction::JsonMakeEncoder),
                 ("make_scanner", BuiltinFunction::JsonScannerMakeScanner),
                 ("scanstring", BuiltinFunction::JsonDecoderScanString),
             ],
@@ -10464,6 +10468,14 @@ impl Vm {
             BuiltinFunction::BytesMakeTrans | BuiltinFunction::StrMakeTrans => {
                 "maketrans".to_string()
             }
+            BuiltinFunction::JsonEncodeBaseString => "encode_basestring".to_string(),
+            BuiltinFunction::JsonEncodeBaseStringAscii => "encode_basestring_ascii".to_string(),
+            BuiltinFunction::JsonMakeEncoder => "make_encoder".to_string(),
+            BuiltinFunction::JsonMakeEncoderCall => "_iterencode".to_string(),
+            BuiltinFunction::JsonScannerMakeScanner => "make_scanner".to_string(),
+            BuiltinFunction::JsonScannerPyMakeScanner => "py_make_scanner".to_string(),
+            BuiltinFunction::JsonScannerScanOnce => "scan_once".to_string(),
+            BuiltinFunction::JsonDecoderScanString => "scanstring".to_string(),
             BuiltinFunction::OperatorContains => "contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_runtime_name(builtin),
@@ -10475,6 +10487,16 @@ impl Vm {
             BuiltinFunction::DictFromKeys => "dict.fromkeys".to_string(),
             BuiltinFunction::BytesMakeTrans => "bytearray.maketrans".to_string(),
             BuiltinFunction::StrMakeTrans => "str.maketrans".to_string(),
+            BuiltinFunction::JsonEncodeBaseString => "_json.encode_basestring".to_string(),
+            BuiltinFunction::JsonEncodeBaseStringAscii => {
+                "_json.encode_basestring_ascii".to_string()
+            }
+            BuiltinFunction::JsonMakeEncoder => "_json.make_encoder".to_string(),
+            BuiltinFunction::JsonMakeEncoderCall => "_json._iterencode".to_string(),
+            BuiltinFunction::JsonScannerMakeScanner => "_json.make_scanner".to_string(),
+            BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner.py_make_scanner".to_string(),
+            BuiltinFunction::JsonScannerScanOnce => "_json.scan_once".to_string(),
+            BuiltinFunction::JsonDecoderScanString => "_json.scanstring".to_string(),
             BuiltinFunction::OperatorContains => "operator.contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_attribute_name(builtin),
@@ -10547,6 +10569,10 @@ impl Vm {
             | BuiltinFunction::CopyregNewObj
             | BuiltinFunction::CopyregNewObjEx => "copyreg",
             BuiltinFunction::JsonScannerMakeScanner
+            | BuiltinFunction::JsonMakeEncoder
+            | BuiltinFunction::JsonMakeEncoderCall
+            | BuiltinFunction::JsonEncodeBaseString
+            | BuiltinFunction::JsonEncodeBaseStringAscii
             | BuiltinFunction::JsonScannerScanOnce
             | BuiltinFunction::JsonDecoderScanString => "_json",
             BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner",
@@ -17245,6 +17271,16 @@ impl Vm {
             }
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
+            BuiltinFunction::JsonEncodeBaseString => {
+                self.builtin_json_encode_basestring(args, kwargs)
+            }
+            BuiltinFunction::JsonEncodeBaseStringAscii => {
+                self.builtin_json_encode_basestring_ascii(args, kwargs)
+            }
+            BuiltinFunction::JsonMakeEncoder => self.builtin_json_make_encoder(args, kwargs),
+            BuiltinFunction::JsonMakeEncoderCall => {
+                self.builtin_json_make_encoder_call(args, kwargs)
+            }
             BuiltinFunction::PickleDump => self.builtin_pickle_dump(args, kwargs),
             BuiltinFunction::PickleDumps => self.builtin_pickle_dumps(args, kwargs),
             BuiltinFunction::PickleLoad => self.builtin_pickle_load(args, kwargs),

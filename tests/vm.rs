@@ -1984,14 +1984,29 @@ fn json_import_prefers_cpython_pure_module_when_lib_path_is_added() {
         eprintln!("skipping pure-json import preference test (CPython Lib path not available)");
         return;
     };
-    let source = r#"import sys
-ok = ("json" not in sys.modules) and ("json.decoder" not in sys.modules) and ("json.scanner" not in sys.modules)
+    let source = r#"import json
+origin = getattr(json, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = norm.endswith('/json/__init__.py') and ('/shims/' not in norm) and hasattr(json, 'loads') and hasattr(json, 'dumps')
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
-    vm.enable_pure_json_preference();
     vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _json_import_does_not_route_through_local_shim() {
+    let source = r#"import _json
+origin = getattr(_json, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = ('/shims/' not in norm) and hasattr(_json, 'scanstring')
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }

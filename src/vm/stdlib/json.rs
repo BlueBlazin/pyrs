@@ -134,6 +134,173 @@ impl Vm {
         Ok(json_node_to_value(node, &self.heap))
     }
 
+    pub(in crate::vm) fn builtin_json_encode_basestring(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("encode_basestring() expects one string argument"));
+        }
+        let Value::Str(text) = &args[0] else {
+            return Err(RuntimeError::new("encode_basestring() expects str"));
+        };
+        Ok(Value::Str(json_escape_string(text, false)))
+    }
+
+    pub(in crate::vm) fn builtin_json_encode_basestring_ascii(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "encode_basestring_ascii() expects one string argument",
+            ));
+        }
+        let Value::Str(text) = &args[0] else {
+            return Err(RuntimeError::new("encode_basestring_ascii() expects str"));
+        };
+        Ok(Value::Str(json_escape_string(text, true)))
+    }
+
+    pub(in crate::vm) fn builtin_json_make_encoder(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("make_encoder() got unexpected keyword arguments"));
+        }
+        if args.len() != 9 {
+            return Err(RuntimeError::new("make_encoder() expects 9 positional arguments"));
+        }
+
+        let key_separator = match &args[4] {
+            Value::Str(value) => value.clone(),
+            _ => return Err(RuntimeError::new("make_encoder() key_separator must be str")),
+        };
+        let item_separator = match &args[5] {
+            Value::Str(value) => value.clone(),
+            _ => return Err(RuntimeError::new("make_encoder() item_separator must be str")),
+        };
+        let ensure_ascii = matches!(
+            args[2],
+            Value::Builtin(BuiltinFunction::JsonEncodeBaseStringAscii)
+        );
+
+        let wrapper = match self
+            .heap
+            .alloc_module(ModuleObject::new("__json_make_encoder__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+            module_data
+                .globals
+                .insert("skipkeys".to_string(), Value::Bool(is_truthy(&args[7])));
+            module_data
+                .globals
+                .insert("ensure_ascii".to_string(), Value::Bool(ensure_ascii));
+            module_data
+                .globals
+                .insert("allow_nan".to_string(), Value::Bool(is_truthy(&args[8])));
+            module_data
+                .globals
+                .insert("sort_keys".to_string(), Value::Bool(is_truthy(&args[6])));
+            module_data
+                .globals
+                .insert("item_separator".to_string(), Value::Str(item_separator));
+            module_data
+                .globals
+                .insert("key_separator".to_string(), Value::Str(key_separator));
+            module_data
+                .globals
+                .insert("default".to_string(), args[1].clone());
+        }
+        Ok(self.alloc_builtin_bound_method(
+            BuiltinFunction::JsonMakeEncoderCall,
+            wrapper,
+        ))
+    }
+
+    pub(in crate::vm) fn builtin_json_make_encoder_call(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("_iterencode() got unexpected keyword arguments"));
+        }
+        if args.len() != 3 {
+            return Err(RuntimeError::new(
+                "_iterencode() expects receiver, object, and current indent level",
+            ));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let value = args.remove(0);
+        let _current_indent_level = args.remove(0);
+
+        let (
+            skipkeys,
+            ensure_ascii,
+            allow_nan,
+            sort_keys,
+            item_separator,
+            key_separator,
+            default_callable,
+        ) = match &*receiver.kind() {
+            Object::Module(module_data) => {
+                let bool_setting = |name: &str| {
+                    module_data
+                        .globals
+                        .get(name)
+                        .map(is_truthy)
+                        .unwrap_or(false)
+                };
+                let string_setting = |name: &str, fallback: &str| {
+                    module_data
+                        .globals
+                        .get(name)
+                        .and_then(|value| match value {
+                            Value::Str(text) => Some(text.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| fallback.to_string())
+                };
+                (
+                    bool_setting("skipkeys"),
+                    bool_setting("ensure_ascii"),
+                    bool_setting("allow_nan"),
+                    bool_setting("sort_keys"),
+                    string_setting("item_separator", ", "),
+                    string_setting("key_separator", ": "),
+                    module_data.globals.get("default").cloned(),
+                )
+            }
+            _ => return Err(RuntimeError::new("_iterencode() receiver is invalid")),
+        };
+
+        let mut dumps_kwargs = HashMap::new();
+        dumps_kwargs.insert("skipkeys".to_string(), Value::Bool(skipkeys));
+        dumps_kwargs.insert("ensure_ascii".to_string(), Value::Bool(ensure_ascii));
+        dumps_kwargs.insert("allow_nan".to_string(), Value::Bool(allow_nan));
+        dumps_kwargs.insert("sort_keys".to_string(), Value::Bool(sort_keys));
+        dumps_kwargs.insert(
+            "separators".to_string(),
+            self.heap.alloc_tuple(vec![
+                Value::Str(item_separator),
+                Value::Str(key_separator),
+            ]),
+        );
+        if let Some(default) = default_callable {
+            dumps_kwargs.insert("default".to_string(), default);
+        }
+        let rendered = self.builtin_json_dumps(vec![value], dumps_kwargs)?;
+        Ok(self.heap.alloc_list(vec![rendered]))
+    }
+
     pub(in crate::vm) fn builtin_json_scanner_make_scanner(
         &mut self,
         args: Vec<Value>,
