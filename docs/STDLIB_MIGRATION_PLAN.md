@@ -55,6 +55,6 @@ Primary rule:
 
 ## Remaining P0 Work
 
-1. Complete `_csv` parity closure and keep active strict lane green (`json`/`csv`/`copyreg`).
+1. Complete `_csv` parity closure and keep active strict lane green (`json`/`csv`/`copyreg`/`genericalias`).
 2. Implement `_sre`-equivalent surface and migrate `re` to pure CPython package.
 3. Re-enable deferred pickle strict lane and close `_pickle`/`pickletools` parity + performance blockers.
