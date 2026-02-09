@@ -170,6 +170,44 @@ fn pyrs_bin() -> Option<PathBuf> {
     None
 }
 
+fn strict_subprocess_bin() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PYRS_SUBPROCESS_BIN") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    if let Ok(mode) = std::env::var("PYRS_SUBPROCESS_BIN_MODE") {
+        let mode = mode.trim().to_ascii_lowercase();
+        if matches!(mode.as_str(), "debug" | "release") {
+            let candidate =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("target/{mode}/pyrs"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    // Default strict behavior: prefer release subprocesses for long-running stdlib suites.
+    let prefer_release = std::env::var("PYRS_STRICT_PREFER_RELEASE")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        })
+        .unwrap_or(true);
+
+    if prefer_release {
+        let release = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/pyrs");
+        if release.is_file() {
+            return Some(release);
+        }
+    }
+
+    pyrs_bin()
+}
+
 fn strict_unittest_timeout() -> Duration {
     let secs = std::env::var("PYRS_STRICT_HARNESS_TIMEOUT_SECS")
         .ok()
@@ -288,7 +326,11 @@ fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
 
     let strict_mode = matches!(mode, SuiteMode::StrictUnittest);
     let timing_trace = strict_mode && strict_timing_trace_enabled();
-    let strict_bin = if strict_mode { pyrs_bin() } else { None };
+    let strict_bin = if strict_mode {
+        strict_subprocess_bin()
+    } else {
+        None
+    };
 
     let mut unexpected_failures = Vec::new();
     let mut stale_allowlist = Vec::new();
