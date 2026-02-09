@@ -6139,26 +6139,24 @@ impl Vm {
                                     }
                                 },
                                 Value::Str(text) => self.load_attr_str_method(text, &attr_name)?,
-                                Value::Bytes(obj) => match &*obj.kind() {
-                                    Object::Bytes(values) => {
-                                        self.load_attr_bytes_method(values.clone(), &attr_name)?
-                                    }
-                                    _ => {
+                                Value::Bytes(obj) => {
+                                    let is_bytes = matches!(&*obj.kind(), Object::Bytes(_));
+                                    if !is_bytes {
                                         return Err(RuntimeError::new(
                                             "attribute access unsupported type",
                                         ));
                                     }
-                                },
-                                Value::ByteArray(obj) => match &*obj.kind() {
-                                    Object::ByteArray(values) => {
-                                        self.load_attr_bytes_method(values.clone(), &attr_name)?
-                                    }
-                                    _ => {
+                                    self.load_attr_bytes_method(Value::Bytes(obj), &attr_name)?
+                                }
+                                Value::ByteArray(obj) => {
+                                    let is_bytearray = matches!(&*obj.kind(), Object::ByteArray(_));
+                                    if !is_bytearray {
                                         return Err(RuntimeError::new(
                                             "attribute access unsupported type",
                                         ));
                                     }
-                                },
+                                    self.load_attr_bytes_method(Value::ByteArray(obj), &attr_name)?
+                                }
                                 Value::Iterator(iterator) => {
                                     self.load_attr_iterator(iterator, &attr_name)?
                                 }
@@ -10663,11 +10661,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
 
-    fn load_attr_bytes_method(
-        &self,
-        bytes: Vec<u8>,
-        attr_name: &str,
-    ) -> Result<Value, RuntimeError> {
+    fn load_attr_bytes_method(&self, receiver_value: Value, attr_name: &str) -> Result<Value, RuntimeError> {
         let kind = match attr_name {
             "decode" => NativeMethodKind::BytesDecode,
             "startswith" => NativeMethodKind::BytesStartsWith,
@@ -10689,9 +10683,14 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-            module_data
-                .globals
-                .insert("value".to_string(), self.heap.alloc_bytes(bytes));
+            match receiver_value {
+                Value::Bytes(_) | Value::ByteArray(_) => {
+                    module_data.globals.insert("value".to_string(), receiver_value);
+                }
+                _ => {
+                    return Err(RuntimeError::new("bytes receiver is invalid"));
+                }
+            }
         }
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
@@ -12347,63 +12346,22 @@ impl Vm {
         if let Some(getattribute_method) =
             self.lookup_bound_special_method(&receiver, "__getattribute__")?
         {
-            let caller_depth = self.frames.len();
-            let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
-                .frames
-                .last()
-                .map(|frame| {
-                    (
-                        frame.ip,
-                        frame.stack.len(),
-                        frame.blocks.clone(),
-                        frame.active_exception.clone(),
-                    )
-                })
-                .unwrap_or((0, 0, Vec::new(), None));
-            let getattribute_outcome = self.call_internal(
+            let getattribute_outcome = self.call_internal_preserving_caller(
                 getattribute_method,
                 vec![Value::Str(attr_name.to_string())],
                 HashMap::new(),
             );
             match getattribute_outcome {
                 Ok(InternalCallOutcome::Value(value)) => {
-                    if self.frames.len() == caller_depth {
-                        if let Some(frame) = self.frames.last_mut() {
-                            frame.ip = caller_ip;
-                            frame.stack.truncate(caller_stack_len);
-                            frame.blocks = caller_blocks.clone();
-                            frame.active_exception = caller_active_exception.clone();
-                        }
-                    }
                     return Ok(AttrAccessOutcome::Value(value));
                 }
                 Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                    let active_exception = self
-                        .frames
-                        .last()
-                        .and_then(|frame| frame.active_exception.clone());
-                    if self.frames.len() == caller_depth {
-                        if let Some(frame) = self.frames.last_mut() {
-                            frame.ip = caller_ip;
-                            frame.stack.truncate(caller_stack_len);
-                            frame.blocks = caller_blocks.clone();
-                            frame.active_exception = active_exception;
-                        }
-                    }
                     if !self.active_exception_is("AttributeError") {
                         return Ok(AttrAccessOutcome::ExceptionHandled);
                     }
                     self.clear_active_exception();
                 }
                 Err(err) => {
-                    if self.frames.len() == caller_depth {
-                        if let Some(frame) = self.frames.last_mut() {
-                            frame.ip = caller_ip;
-                            frame.stack.truncate(caller_stack_len);
-                            frame.blocks = caller_blocks.clone();
-                            frame.active_exception = caller_active_exception.clone();
-                        }
-                    }
                     if classify_runtime_error(&err.message) != "AttributeError" {
                         return Err(err);
                     }
@@ -12413,61 +12371,15 @@ impl Vm {
             if let Some(getattr_method) =
                 self.lookup_bound_special_method(&receiver, "__getattr__")?
             {
-                let caller_depth = self.frames.len();
-                let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
-                    .frames
-                    .last()
-                    .map(|frame| {
-                        (
-                            frame.ip,
-                            frame.stack.len(),
-                            frame.blocks.clone(),
-                            frame.active_exception.clone(),
-                        )
-                    })
-                    .unwrap_or((0, 0, Vec::new(), None));
                 return Ok(
-                    match self.call_internal(
+                    match self.call_internal_preserving_caller(
                         getattr_method,
                         vec![Value::Str(attr_name.to_string())],
                         HashMap::new(),
-                    ) {
-                        Ok(InternalCallOutcome::Value(value)) => {
-                            if self.frames.len() == caller_depth {
-                                if let Some(frame) = self.frames.last_mut() {
-                                    frame.ip = caller_ip;
-                                    frame.stack.truncate(caller_stack_len);
-                                    frame.blocks = caller_blocks.clone();
-                                    frame.active_exception = caller_active_exception.clone();
-                                }
-                            }
-                            AttrAccessOutcome::Value(value)
-                        }
-                        Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                            let active_exception = self
-                                .frames
-                                .last()
-                                .and_then(|frame| frame.active_exception.clone());
-                            if self.frames.len() == caller_depth {
-                                if let Some(frame) = self.frames.last_mut() {
-                                    frame.ip = caller_ip;
-                                    frame.stack.truncate(caller_stack_len);
-                                    frame.blocks = caller_blocks.clone();
-                                    frame.active_exception = active_exception;
-                                }
-                            }
+                    )? {
+                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
                             AttrAccessOutcome::ExceptionHandled
-                        }
-                        Err(err) => {
-                            if self.frames.len() == caller_depth {
-                                if let Some(frame) = self.frames.last_mut() {
-                                    frame.ip = caller_ip;
-                                    frame.stack.truncate(caller_stack_len);
-                                    frame.blocks = caller_blocks.clone();
-                                    frame.active_exception = caller_active_exception.clone();
-                                }
-                            }
-                            return Err(err);
                         }
                     },
                 );
@@ -20934,7 +20846,7 @@ impl Vm {
 
     fn builtin_getattr(
         &mut self,
-        mut args: Vec<Value>,
+        args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
@@ -20946,12 +20858,18 @@ impl Vm {
             return Err(RuntimeError::new("getattr() expects 2-3 arguments"));
         }
 
-        let target = args.remove(0);
-        let name = match args.remove(0) {
+        let mut args_iter = args.into_iter();
+        let target = args_iter
+            .next()
+            .ok_or_else(|| RuntimeError::new("getattr() expects 2-3 arguments"))?;
+        let name = match args_iter
+            .next()
+            .ok_or_else(|| RuntimeError::new("getattr() expects 2-3 arguments"))?
+        {
             Value::Str(name) => name,
             _ => return Err(RuntimeError::new("attribute name must be string")),
         };
-        let default = args.into_iter().next();
+        let default = args_iter.next();
         // Preserve the caller's active exception context: getattr(..., default)
         // should not clobber an exception currently being handled by surrounding code.
         let saved_active_exception = self
@@ -20988,10 +20906,20 @@ impl Vm {
             Value::List(list) => self.load_attr_list_method(list, &name),
             Value::Tuple(tuple) => self.load_attr_tuple_method(tuple, &name),
             Value::Str(text) => self.load_attr_str_method(text, &name),
-            Value::Bytes(bytes) => match &*bytes.kind() {
-                Object::Bytes(data) => self.load_attr_bytes_method(data.clone(), &name),
-                _ => Err(RuntimeError::new("attribute access unsupported type")),
-            },
+            Value::Bytes(bytes) => {
+                let is_bytes = matches!(&*bytes.kind(), Object::Bytes(_));
+                if !is_bytes {
+                    return Err(RuntimeError::new("attribute access unsupported type"));
+                }
+                self.load_attr_bytes_method(Value::Bytes(bytes), &name)
+            }
+            Value::ByteArray(bytearray) => {
+                let is_bytearray = matches!(&*bytearray.kind(), Object::ByteArray(_));
+                if !is_bytearray {
+                    return Err(RuntimeError::new("attribute access unsupported type"));
+                }
+                self.load_attr_bytes_method(Value::ByteArray(bytearray), &name)
+            }
             Value::Iterator(iterator) => self.load_attr_iterator(iterator, &name),
             Value::MemoryView(view) => self.load_attr_memoryview(view, &name),
             Value::Set(set) => self.load_attr_set_method(set, &name),
