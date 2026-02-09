@@ -13364,9 +13364,7 @@ impl Vm {
                     };
                     std::mem::take(values)
                 };
-                let original_values = working.clone();
-
-                let sorted_values = if !matches!(key_func, Value::None) {
+                let sorted_values_result = if !matches!(key_func, Value::None) {
                     let mut keyed = Vec::with_capacity(working.len());
                     for value in &working {
                         let key = match self.call_internal(
@@ -13376,13 +13374,6 @@ impl Vm {
                         )? {
                             InternalCallOutcome::Value(key) => key,
                             InternalCallOutcome::CallerExceptionHandled => {
-                                let mut receiver_kind = receiver.kind_mut();
-                                let Object::List(values) = &mut *receiver_kind else {
-                                    return Err(RuntimeError::new(
-                                        "list.sort() receiver must be list",
-                                    ));
-                                };
-                                *values = original_values;
                                 return Err(RuntimeError::new("key function raised"));
                             }
                         };
@@ -13399,17 +13390,12 @@ impl Vm {
                         }
                     });
                     if let Some(err) = compare_error {
-                        let mut receiver_kind = receiver.kind_mut();
-                        let Object::List(values) = &mut *receiver_kind else {
-                            return Err(RuntimeError::new("list.sort() receiver must be list"));
-                        };
-                        *values = original_values;
                         return Err(err);
                     }
                     if reverse {
                         keyed.reverse();
                     }
-                    keyed.into_iter().map(|(value, _)| value).collect()
+                    Ok(keyed.into_iter().map(|(value, _)| value).collect())
                 } else {
                     let mut compare_error: Option<RuntimeError> = None;
                     working.sort_by(|left, right| {
@@ -13422,17 +13408,26 @@ impl Vm {
                         }
                     });
                     if let Some(err) = compare_error {
-                        let mut receiver_kind = receiver.kind_mut();
-                        let Object::List(values) = &mut *receiver_kind else {
-                            return Err(RuntimeError::new("list.sort() receiver must be list"));
-                        };
-                        *values = original_values;
                         return Err(err);
                     }
                     if reverse {
                         working.reverse();
                     }
-                    working
+                    Ok(std::mem::take(&mut working))
+                };
+
+                let sorted_values = match sorted_values_result {
+                    Ok(values) => values,
+                    Err(err) => {
+                        let mut receiver_kind = receiver.kind_mut();
+                        let Object::List(values) = &mut *receiver_kind else {
+                            return Err(RuntimeError::new("list.sort() receiver must be list"));
+                        };
+                        if values.is_empty() {
+                            *values = working;
+                        }
+                        return Err(err);
+                    }
                 };
 
                 let mut receiver_kind = receiver.kind_mut();
