@@ -29485,6 +29485,11 @@ impl Vm {
             Value::Str(value) => Some(value),
             _ => return Err(RuntimeError::new("open() newline must be str or None")),
         };
+        if let Some(value) = newline.as_deref() {
+            if !matches!(value, "" | "\n" | "\r" | "\r\n") {
+                return Err(RuntimeError::new(format!("illegal newline value: {value}")));
+            }
+        }
         if binary_mode && encoding.is_some() {
             return Err(RuntimeError::new(
                 "binary mode doesn't take an encoding argument",
@@ -29602,10 +29607,39 @@ impl Vm {
             }
         };
 
-        let class_name = if binary_mode { "FileIO" } else { "TextIOWrapper" };
-        self.alloc_io_file_instance(
-            class_name, fd, &mode, binary_mode, closefd, encoding, errors, newline,
-        )
+        let raw_mode = if binary_mode {
+            mode.clone()
+        } else {
+            let mut raw_mode = mode.chars().filter(|ch| *ch != 't').collect::<String>();
+            if !raw_mode.contains('b') {
+                raw_mode.push('b');
+            }
+            raw_mode
+        };
+        let raw_instance = self.alloc_io_file_instance(
+            "FileIO", fd, &raw_mode, true, closefd, None, None, None,
+        )?;
+        if binary_mode {
+            return Ok(raw_instance);
+        }
+        let text_instance = self.alloc_io_file_instance(
+            "TextIOWrapper",
+            fd,
+            &mode,
+            false,
+            closefd,
+            encoding,
+            errors,
+            newline,
+        )?;
+        let line_buffering = buffering == 1;
+        if let (Value::Instance(text_ref), Value::Instance(raw_ref)) = (&text_instance, &raw_instance)
+        {
+            Self::instance_attr_set(text_ref, "buffer", Value::Instance(raw_ref.clone()))?;
+            Self::instance_attr_set(text_ref, "raw", Value::Instance(raw_ref.clone()))?;
+            Self::instance_attr_set(text_ref, "_line_buffering", Value::Bool(line_buffering))?;
+        }
+        Ok(text_instance)
     }
 
     fn io_open_path_from_value(&mut self, value: Value) -> Result<String, RuntimeError> {
@@ -29810,15 +29844,17 @@ impl Vm {
                 _ => return Err(RuntimeError::new("TextIOWrapper errors must be str or None")),
             },
         )?;
-        Self::instance_attr_set(
-            &instance,
-            "_newline",
-            match newline.unwrap_or(Value::None) {
-                Value::None => Value::None,
-                Value::Str(value) => Value::Str(value),
-                _ => return Err(RuntimeError::new("TextIOWrapper newline must be str or None")),
-            },
-        )?;
+        let newline_value = match newline.unwrap_or(Value::None) {
+            Value::None => Value::None,
+            Value::Str(value) => {
+                if !matches!(value.as_str(), "" | "\n" | "\r" | "\r\n") {
+                    return Err(RuntimeError::new(format!("illegal newline value: {value}")));
+                }
+                Value::Str(value)
+            }
+            _ => return Err(RuntimeError::new("TextIOWrapper newline must be str or None")),
+        };
+        Self::instance_attr_set(&instance, "_newline", newline_value)?;
         Self::instance_attr_set(&instance, "buffer", Value::Instance(buffer_instance.clone()))?;
         Self::instance_attr_set(&instance, "raw", Value::Instance(buffer_instance))?;
         Ok(Value::None)
@@ -29951,6 +29987,44 @@ impl Vm {
         }
     }
 
+    fn io_file_newline(instance: &ObjRef) -> Option<String> {
+        match Self::instance_attr_get(instance, "_newline") {
+            Some(Value::Str(newline)) => Some(newline),
+            _ => None,
+        }
+    }
+
+    fn io_normalize_universal_newlines(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\r' {
+                if chars.peek() == Some(&'\n') {
+                    let _ = chars.next();
+                }
+                out.push('\n');
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
+    fn io_translate_write_newlines(mut text: String, newline: Option<&str>) -> String {
+        match newline {
+            Some("") | Some("\n") => text,
+            Some("\r") => text.replace('\n', "\r"),
+            Some("\r\n") => text.replace('\n', "\r\n"),
+            None => {
+                if cfg!(windows) {
+                    text = text.replace('\n', "\r\n");
+                }
+                text
+            }
+            Some(_) => text,
+        }
+    }
+
     fn io_file_read_bytes(
         &mut self,
         fd: i64,
@@ -30023,7 +30097,13 @@ impl Vm {
         } else {
             let text = String::from_utf8(bytes)
                 .map_err(|_| RuntimeError::new("read() encountered non-UTF-8 bytes"))?;
-            Ok(Value::Str(text))
+            let newline = Self::io_file_newline(&instance);
+            let normalized = if newline.is_none() {
+                Self::io_normalize_universal_newlines(&text)
+            } else {
+                text
+            };
+            Ok(Value::Str(normalized))
         }
     }
 
@@ -30048,6 +30128,11 @@ impl Vm {
         };
         let fd = self.io_file_fd_from_instance(&instance)?;
         let binary = Self::io_file_is_binary(&instance);
+        let newline = if binary {
+            None
+        } else {
+            Self::io_file_newline(&instance)
+        };
         let file = self
             .open_files
             .get_mut(&fd)
@@ -30063,24 +30148,68 @@ impl Vm {
             }
             out.push(byte[0]);
             if byte[0] == b'\n' {
-                break;
+                if binary || newline.as_deref() != Some("\r") {
+                    break;
+                }
             }
-            if !binary && byte[0] == b'\r' {
-                if limit.map(|max| out.len() < max).unwrap_or(true) {
-                    let mut next = [0u8; 1];
-                    let next_count = file
-                        .read(&mut next)
-                        .map_err(|err| RuntimeError::new(format!("readline failed: {err}")))?;
-                    if next_count == 1 {
-                        if next[0] == b'\n' {
-                            out.push(next[0]);
-                        } else {
-                            file.seek(SeekFrom::Current(-1))
-                                .map_err(|err| RuntimeError::new(format!("readline failed: {err}")))?;
+            if !binary {
+                match newline.as_deref() {
+                    None | Some("") => {
+                        if byte[0] == b'\n' {
+                            break;
+                        }
+                        if byte[0] == b'\r' {
+                            if limit.map(|max| out.len() < max).unwrap_or(true) {
+                                let mut next = [0u8; 1];
+                                let next_count =
+                                    file.read(&mut next).map_err(|err| {
+                                        RuntimeError::new(format!("readline failed: {err}"))
+                                    })?;
+                                if next_count == 1 {
+                                    if next[0] == b'\n' {
+                                        out.push(next[0]);
+                                    } else {
+                                        file.seek(SeekFrom::Current(-1)).map_err(|err| {
+                                            RuntimeError::new(format!("readline failed: {err}"))
+                                        })?;
+                                    }
+                                }
+                            }
+                            break;
                         }
                     }
+                    Some("\n") => {
+                        if byte[0] == b'\n' {
+                            break;
+                        }
+                    }
+                    Some("\r") => {
+                        if byte[0] == b'\r' {
+                            break;
+                        }
+                    }
+                    Some("\r\n") => {
+                        if byte[0] == b'\r' {
+                            if limit.map(|max| out.len() < max).unwrap_or(true) {
+                                let mut next = [0u8; 1];
+                                let next_count =
+                                    file.read(&mut next).map_err(|err| {
+                                        RuntimeError::new(format!("readline failed: {err}"))
+                                    })?;
+                                if next_count == 1 {
+                                    if next[0] == b'\n' {
+                                        out.push(next[0]);
+                                        break;
+                                    }
+                                    file.seek(SeekFrom::Current(-1)).map_err(|err| {
+                                        RuntimeError::new(format!("readline failed: {err}"))
+                                    })?;
+                                }
+                            }
+                        }
+                    }
+                    Some(_) => {}
                 }
-                break;
             }
         }
         if binary {
@@ -30088,7 +30217,12 @@ impl Vm {
         } else {
             let text = String::from_utf8(out)
                 .map_err(|_| RuntimeError::new("readline() encountered non-UTF-8 bytes"))?;
-            Ok(Value::Str(text))
+            let normalized = if newline.is_none() {
+                Self::io_normalize_universal_newlines(&text)
+            } else {
+                text
+            };
+            Ok(Value::Str(normalized))
         }
     }
 
@@ -30146,7 +30280,11 @@ impl Vm {
             value_to_bytes_payload(args.remove(0))?
         } else {
             match args.remove(0) {
-                Value::Str(text) => text.into_bytes(),
+                Value::Str(text) => {
+                    let newline = Self::io_file_newline(&instance);
+                    let translated = Self::io_translate_write_newlines(text, newline.as_deref());
+                    translated.into_bytes()
+                }
                 _ => return Err(RuntimeError::new("write() argument must be str")),
             }
         };

@@ -1470,46 +1470,39 @@ fn validate_csv_parameter_consistency(
         ));
     }
     if delimiter == '\n' || delimiter == '\r' {
-        return Err(RuntimeError::new("delimiter cannot be a newline"));
+        return Err(RuntimeError::new("bad delimiter value"));
     }
     if quotechar.is_some_and(|ch| ch == '\n' || ch == '\r') {
-        return Err(RuntimeError::new("quotechar cannot be a newline"));
+        return Err(RuntimeError::new("bad quotechar value"));
     }
     if escapechar.is_some_and(|ch| ch == '\n' || ch == '\r') {
-        return Err(RuntimeError::new("escapechar cannot be a newline"));
+        return Err(RuntimeError::new("bad escapechar value"));
     }
     if skipinitialspace && quotechar == Some(' ') {
-        return Err(RuntimeError::new(
-            "quotechar cannot be a space when skipinitialspace is true",
-        ));
+        return Err(RuntimeError::new("bad quotechar value"));
     }
     if skipinitialspace && escapechar == Some(' ') {
-        return Err(RuntimeError::new(
-            "escapechar cannot be a space when skipinitialspace is true",
-        ));
+        return Err(RuntimeError::new("bad escapechar value"));
     }
-    if quotechar == Some(delimiter) || escapechar == Some(delimiter) {
-        return Err(RuntimeError::new(
-            "delimiter cannot be the same as quotechar or escapechar",
-        ));
+    if quotechar == Some(delimiter) {
+        return Err(RuntimeError::new("bad delimiter or quotechar value"));
+    }
+    if escapechar == Some(delimiter) {
+        return Err(RuntimeError::new("bad delimiter or escapechar value"));
     }
     if let (Some(quote), Some(escape)) = (quotechar, escapechar) {
         if quote == escape {
-            return Err(RuntimeError::new(
-                "quotechar cannot be the same as escapechar",
-            ));
+            return Err(RuntimeError::new("bad escapechar or quotechar value"));
         }
     }
-    if lineterminator.is_empty() {
-        return Err(RuntimeError::new("lineterminator must not be empty"));
+    if lineterminator.contains(delimiter) {
+        return Err(RuntimeError::new("bad delimiter or lineterminator value"));
     }
-    if lineterminator.contains(delimiter)
-        || quotechar.is_some_and(|ch| lineterminator.contains(ch))
-        || escapechar.is_some_and(|ch| lineterminator.contains(ch))
-    {
-        return Err(RuntimeError::new(
-            "lineterminator cannot contain delimiter, quotechar, or escapechar",
-        ));
+    if quotechar.is_some_and(|ch| lineterminator.contains(ch)) {
+        return Err(RuntimeError::new("bad quotechar or lineterminator value"));
+    }
+    if escapechar.is_some_and(|ch| lineterminator.contains(ch)) {
+        return Err(RuntimeError::new("bad escapechar or lineterminator value"));
     }
     Ok(())
 }
@@ -1884,12 +1877,23 @@ mod tests {
 
         let err = validate_csv_parameter_consistency(',', Some('"'), Some('"'), false, "\n", 0)
             .expect_err("quotechar and escapechar cannot match");
-        assert!(err.message.contains("quotechar cannot be the same as escapechar"));
+        assert!(err.message.contains("bad escapechar or quotechar value"));
 
-        let err = validate_csv_parameter_consistency(',', Some('"'), None, false, "", 0)
-            .expect_err("empty lineterminator should fail");
-        assert!(err.message.contains("lineterminator must not be empty"));
+        let err = validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, ",", 0)
+            .expect_err("delimiter in lineterminator should fail");
+        assert!(err.message.contains("bad delimiter or lineterminator value"));
 
+        let err = validate_csv_parameter_consistency(',', Some('"'), None, false, "\"", 0)
+            .expect_err("quotechar in lineterminator should fail");
+        assert!(err.message.contains("bad quotechar or lineterminator value"));
+
+        let err = validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, "\\", 0)
+            .expect_err("escapechar in lineterminator should fail");
+        assert!(err.message.contains("bad escapechar or lineterminator value"));
+
+        assert!(
+            validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, "", 0).is_ok()
+        );
         assert!(
             validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, "\n", 0).is_ok()
         );

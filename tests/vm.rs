@@ -6037,6 +6037,129 @@ ok = (data == b'payload')\n",
 }
 
 #[test]
+fn io_open_rejects_illegal_newline_values() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_newline_validation_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+msgs = []
+for nl in ('x', '\n\n', '\r\r', 'abc'):
+    try:
+        io.open(path, 'r', newline=nl)
+    except Exception as exc:
+        msgs.append(str(exc))
+ok = (len(msgs) == 4 and all('illegal newline value:' in m for m in msgs))
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_translates_universal_newlines_in_default_text_mode() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_universal_newline_{unique}.txt"));
+    std::fs::write(&temp, b"a\r\nb\rc\n").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+reader = io.open(path, 'r')
+data = reader.read()
+reader.close()
+reader = io.open(path, 'r')
+lines = reader.readlines()
+reader.close()
+ok = (data == 'a\nb\nc\n' and lines == ['a\n', 'b\n', 'c\n'])
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_preserves_newline_bytes_when_newline_empty() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_newline_empty_{unique}.txt"));
+    std::fs::write(&temp, b"a\r\nb\rc\n").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+reader = io.open(path, 'r', newline='')
+data = reader.read()
+reader.close()
+reader = io.open(path, 'r', newline='')
+lines = reader.readlines()
+reader.close()
+ok = (data == 'a\r\nb\rc\n' and lines == ['a\r\n', 'b\r', 'c\n'])
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_writes_with_explicit_newline_translation() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_write_newline_{unique}.txt"));
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+writer = io.open(path, 'w', newline='\r\n')
+writer.write('a\nb\n')
+writer.close()
+reader = io.open(path, 'rb')
+payload = reader.read()
+reader.close()
+ok = (payload == b'a\r\nb\r\n')
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
 fn io_open_rejects_unbuffered_text_mode() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -7717,6 +7840,41 @@ try:
 except Exception:
     limit_raised = True
 ok = (rows == [['a', 'b', 'c']] and rows2 == [['a,b', 'c']] and ''.join(sink.parts) == 'a\\,b,c\n' and limit_raised)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_writer_accepts_empty_lineterminator_and_reports_value_errors() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import csv
+import io
+sink = io.StringIO(newline='')
+w = csv.writer(sink, lineterminator='')
+w.writerow(['a', 'b'])
+m1 = None
+m2 = None
+m3 = None
+try:
+    csv.writer(io.StringIO(), delimiter='\n')
+except Exception as exc:
+    m1 = str(exc)
+try:
+    csv.writer(io.StringIO(), delimiter=';', quotechar=';')
+except Exception as exc:
+    m2 = str(exc)
+try:
+    csv.writer(io.StringIO(), delimiter=';', lineterminator=';')
+except Exception as exc:
+    m3 = str(exc)
+ok = (sink.getvalue() == 'a,b' and m1 == 'bad delimiter value' and m2 == 'bad delimiter or quotechar value' and m3 == 'bad delimiter or lineterminator value')
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
