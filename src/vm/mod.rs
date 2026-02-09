@@ -11902,6 +11902,68 @@ impl Vm {
         Ok(InternalCallOutcome::Value(value))
     }
 
+    fn call_internal_preserving_caller(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<InternalCallOutcome, RuntimeError> {
+        let caller_depth = self.frames.len();
+        let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
+            .frames
+            .last()
+            .map(|frame| {
+                (
+                    frame.ip,
+                    frame.stack.len(),
+                    frame.blocks.clone(),
+                    frame.active_exception.clone(),
+                )
+            })
+            .unwrap_or((0, 0, Vec::new(), None));
+
+        let outcome = self.call_internal(callable, args, kwargs);
+        match outcome {
+            Ok(InternalCallOutcome::Value(value)) => {
+                if self.frames.len() == caller_depth {
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.ip = caller_ip;
+                        frame.stack.truncate(caller_stack_len);
+                        frame.blocks = caller_blocks;
+                        frame.active_exception = caller_active_exception;
+                    }
+                }
+                Ok(InternalCallOutcome::Value(value))
+            }
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                let active_exception = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.active_exception.clone());
+                if self.frames.len() == caller_depth {
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.ip = caller_ip;
+                        frame.stack.truncate(caller_stack_len);
+                        frame.blocks = caller_blocks;
+                        frame.active_exception = active_exception;
+                    }
+                }
+                Ok(InternalCallOutcome::CallerExceptionHandled)
+            }
+            Err(err) => {
+                if self.frames.len() == caller_depth {
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.ip = caller_ip;
+                        frame.stack.truncate(caller_stack_len);
+                        frame.blocks = caller_blocks;
+                        frame.active_exception = caller_active_exception;
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+
     fn load_attr_class(
         &mut self,
         class: &ObjRef,
@@ -12452,7 +12514,7 @@ impl Vm {
             if setter.is_some() || deleter.is_some() {
                 if let Some(getter) = getter {
                     return Ok(
-                        match self.call_internal(
+                        match self.call_internal_preserving_caller(
                             getter,
                             vec![
                                 Value::Instance(instance.clone()),
@@ -12515,7 +12577,7 @@ impl Vm {
             let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
             if let Some(getter) = getter {
                 return Ok(
-                    match self.call_internal(
+                    match self.call_internal_preserving_caller(
                         getter,
                         vec![
                             Value::Instance(instance.clone()),
@@ -12538,7 +12600,7 @@ impl Vm {
                 self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__getattr__")?
             {
                 return Ok(
-                    match self.call_internal(
+                    match self.call_internal_preserving_caller(
                         getattr_method,
                         vec![Value::Str(attr_name.to_string())],
                         HashMap::new(),
@@ -19305,7 +19367,9 @@ impl Vm {
             Value::Instance(instance) => {
                 match self.load_attr_instance_default(&instance, &name, false)? {
                     AttrAccessOutcome::Value(value) => Ok(value),
-                    AttrAccessOutcome::ExceptionHandled => Ok(Value::None),
+                    AttrAccessOutcome::ExceptionHandled => Err(
+                        self.runtime_error_from_active_exception("object.__getattribute__() failed"),
+                    ),
                 }
             }
             other => self.builtin_getattr(vec![other, Value::Str(name)], HashMap::new()),
@@ -19332,7 +19396,13 @@ impl Vm {
             Value::Instance(instance) => {
                 match self.store_attr_instance_direct(&instance, &name, value)? {
                     AttrMutationOutcome::Done => {}
-                    AttrMutationOutcome::ExceptionHandled => return Ok(Value::None),
+                    AttrMutationOutcome::ExceptionHandled => {
+                        return Err(
+                            self.runtime_error_from_active_exception(
+                                "object.__setattr__() failed",
+                            ),
+                        );
+                    }
                 }
             }
             _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
@@ -19359,7 +19429,13 @@ impl Vm {
             Value::Instance(instance) => {
                 match self.delete_attr_instance_direct(&instance, &name)? {
                     AttrMutationOutcome::Done => {}
-                    AttrMutationOutcome::ExceptionHandled => return Ok(Value::None),
+                    AttrMutationOutcome::ExceptionHandled => {
+                        return Err(
+                            self.runtime_error_from_active_exception(
+                                "object.__delattr__() failed",
+                            ),
+                        );
+                    }
                 }
             }
             _ => return Err(RuntimeError::new("attribute deletion unsupported type")),

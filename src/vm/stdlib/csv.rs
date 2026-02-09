@@ -443,7 +443,9 @@ impl Vm {
             HashMap::new(),
         ) {
             Ok(value) => value,
-            Err(err) if classify_runtime_error(&err.message) == "OSError" => return Err(err),
+            Err(err) if runtime_error_matches_exception(&err.message, "OSError") => {
+                return Err(err);
+            }
             Err(_) => {
                 return Err(RuntimeError::new(
                     "writer() argument must have a write method",
