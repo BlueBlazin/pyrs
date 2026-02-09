@@ -1,4 +1,2 @@
 # strict unittest-backed stdlib harness allowlist
 # format: <suite entry>|<category>|<owner>
-test/test_pickle.py|stdlib-strict-pickle|pyrs-core
-test/test_pickletools.py|stdlib-strict-pickletools|pyrs-core

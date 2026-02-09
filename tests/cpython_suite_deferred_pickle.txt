@@ -1,0 +1,5 @@
+# Deferred strict unittest-backed pickle parity lane (backburner).
+# These remain tracked Milestone 13 blockers, but are intentionally excluded
+# from frequent strict loops until core `_io` / `_pickle` closure work lands.
+test/test_pickle.py
+test/test_pickletools.py

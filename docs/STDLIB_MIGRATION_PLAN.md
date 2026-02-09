@@ -12,7 +12,7 @@ Primary rule:
 |---|---|---|---|---|
 | `json` | `Lib/json/*` + optional `_json` accelerator | `_json` compatibility surface only (`scanstring`/`make_scanner`) | VM now has pure `json` preference wiring as explicit opt-in (`Vm::enable_pure_json_preference`); native `json` remains default fallback | Strict/parity suites pass with pure `json` path when opt-in is enabled, then promote pure path to default and retire native fallback |
 | `csv` | `Lib/csv.py` + `_csv` C module | `_csv` behavior-compatible accelerator surface | Pure `csv.py` path is primary; `_csv` is native | `test_csv` strict closure + `_csv` edge/perf parity |
-| `pickle`/`pickletools`/`copyreg` | `Lib/pickle.py`, `Lib/pickletools.py`, `Lib/copyreg.py` + optional `_pickle` accelerator | object protocol hooks + `_pickle` compatibility surface | Pure modules are primary; strict suite still timeout-blocked on `test_pickle`/`test_pickletools` | Burn strict allowlist to zero and meet perf proof gates |
+| `pickle`/`pickletools`/`copyreg` | `Lib/pickle.py`, `Lib/pickletools.py`, `Lib/copyreg.py` + optional `_pickle` accelerator | object protocol hooks + `_pickle` compatibility surface | Pure modules are primary; active strict lane now excludes pickle and pickle strict is tracked separately in deferred suite (`tests/cpython_suite_deferred_pickle.txt`) | Re-enable pickle in active strict lane and close deferred suite failures with perf proof gates |
 | `re` | `Lib/re/*` + `_sre` C module | `_sre`-equivalent runtime surface | Still native-heavy because `_sre` parity layer is incomplete | Implement `_sre`-equivalent surface and switch to pure `Lib/re/*` |
 
 ## Engineering Policy
@@ -54,6 +54,6 @@ Primary rule:
 
 ## Remaining P0 Work
 
-1. Close strict `pickle` and `pickletools` timeout blockers.
-2. Complete `_csv` and `_pickle` parity for remaining strict/unittest paths.
-3. Implement `_sre`-equivalent surface and migrate `re` to pure CPython package.
+1. Complete `_csv` parity closure and keep active strict lane green (`json`/`csv`/`copyreg`).
+2. Implement `_sre`-equivalent surface and migrate `re` to pure CPython package.
+3. Re-enable deferred pickle strict lane and close `_pickle`/`pickletools` parity + performance blockers.
