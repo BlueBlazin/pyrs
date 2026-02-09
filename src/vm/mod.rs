@@ -362,6 +362,8 @@ pub struct Vm {
     pickle_symbol_cache: HashMap<String, Value>,
     defaultdict_factories: HashMap<u64, Value>,
     exception_parents: HashMap<String, String>,
+    finalized_del_objects: HashSet<u64>,
+    pending_del_instances: HashMap<u64, ObjRef>,
     atexit_handlers: Vec<AtexitHandler>,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
@@ -417,6 +419,8 @@ impl Vm {
             pickle_symbol_cache: HashMap::new(),
             defaultdict_factories: HashMap::new(),
             exception_parents: HashMap::new(),
+            finalized_del_objects: HashSet::new(),
+            pending_del_instances: HashMap::new(),
             atexit_handlers: Vec::new(),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
@@ -582,7 +586,45 @@ impl Vm {
         self.heap.live_objects_count()
     }
 
+    fn track_instance_del_candidate(&mut self, class: &ObjRef, instance: &ObjRef) {
+        if class_attr_lookup(class, "__del__").is_some() {
+            self.pending_del_instances
+                .insert(instance.id(), instance.clone());
+        }
+    }
+
+    fn run_pending_del_finalizers(&mut self) {
+        let mut ready = Vec::new();
+        for (id, instance) in &self.pending_del_instances {
+            if instance.strong_count() == 1 {
+                ready.push((*id, instance.clone()));
+            }
+        }
+
+        for (obj_id, instance) in ready {
+            self.pending_del_instances.remove(&obj_id);
+            if self.finalized_del_objects.contains(&obj_id) {
+                continue;
+            }
+            let receiver = Value::Instance(instance.clone());
+            let del_method = match self.lookup_bound_special_method(&receiver, "__del__") {
+                Ok(Some(method)) => method,
+                _ => continue,
+            };
+            self.finalized_del_objects.insert(obj_id);
+            let _ = self.call_internal_preserving_caller(
+                del_method,
+                Vec::new(),
+                HashMap::new(),
+            );
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = None;
+            }
+        }
+    }
+
     pub fn gc_collect(&mut self) {
+        self.run_pending_del_finalizers();
         let mut roots = Vec::new();
         for value in self.builtins.values() {
             roots.push(value.clone());
@@ -660,7 +702,46 @@ impl Vm {
             }
         }
         roots.extend(self.generator_returns.values().cloned());
+        let unreachable = self.heap.unreachable_objects(&roots);
+        for obj in unreachable {
+            let obj_id = obj.id();
+            self.pending_del_instances.remove(&obj_id);
+            if self.finalized_del_objects.contains(&obj_id) {
+                continue;
+            }
+            if !matches!(&*obj.kind(), Object::Instance(_)) {
+                continue;
+            }
+            let receiver = Value::Instance(obj.clone());
+            let del_method = match self.lookup_bound_special_method(&receiver, "__del__") {
+                Ok(Some(method)) => method,
+                _ => continue,
+            };
+            self.finalized_del_objects.insert(obj_id);
+            let _ = self.call_internal_preserving_caller(
+                del_method,
+                Vec::new(),
+                HashMap::new(),
+            );
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = None;
+            }
+        }
         self.heap.collect_cycles(&roots);
+    }
+
+    fn builtin_gc_collect(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new(
+                "gc.collect() expects at most one argument",
+            ));
+        }
+        self.gc_collect();
+        Ok(Value::Int(0))
     }
 
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {
@@ -1690,11 +1771,13 @@ impl Vm {
                 ("stat", BuiltinFunction::OsStat),
                 ("lstat", BuiltinFunction::OsLStat),
                 ("mkdir", BuiltinFunction::OsMkdir),
+                ("chmod", BuiltinFunction::OsChmod),
                 ("rmdir", BuiltinFunction::OsRmdir),
                 ("utime", BuiltinFunction::OsUTime),
                 ("scandir", BuiltinFunction::OsScandir),
                 ("walk", BuiltinFunction::OsWalk),
                 ("listdir", BuiltinFunction::OsListDir),
+                ("access", BuiltinFunction::OsAccess),
                 ("fsencode", BuiltinFunction::OsFsEncode),
                 ("fsdecode", BuiltinFunction::OsFsDecode),
                 (
@@ -1819,6 +1902,7 @@ impl Vm {
                 ("isatty", BuiltinFunction::OsIsATty),
                 ("urandom", BuiltinFunction::OsURandom),
                 ("listdir", BuiltinFunction::OsListDir),
+                ("access", BuiltinFunction::OsAccess),
                 (
                     "waitstatus_to_exitcode",
                     BuiltinFunction::OsWaitStatusToExitCode,
@@ -1827,6 +1911,7 @@ impl Vm {
                 ("stat", BuiltinFunction::OsStat),
                 ("lstat", BuiltinFunction::OsLStat),
                 ("mkdir", BuiltinFunction::OsMkdir),
+                ("chmod", BuiltinFunction::OsChmod),
                 ("rmdir", BuiltinFunction::OsRmdir),
                 ("utime", BuiltinFunction::OsUTime),
                 ("scandir", BuiltinFunction::OsScandir),
@@ -9281,6 +9366,17 @@ impl Vm {
                     Err(err) => return Err(err),
                 },
             }
+            // Avoid running __del__ callbacks while transient call-stack operands are live.
+            // This prevents finalizer-side Python calls from perturbing expression evaluation.
+            let safe_for_pending_finalizers = self.frames.len() == 1
+                && self
+                    .frames
+                    .last()
+                    .map(|frame| frame.stack.is_empty() && frame.active_exception.is_none())
+                    .unwrap_or(false);
+            if safe_for_pending_finalizers {
+                self.run_pending_del_finalizers();
+            }
         }
     }
 
@@ -9960,6 +10056,10 @@ impl Vm {
                     .attrs
                     .entry("__module__".to_string())
                     .or_insert(Value::Str(module_name));
+                class_data
+                    .attrs
+                    .entry("__pyrs_user_class__".to_string())
+                    .or_insert(Value::Bool(true));
                 class_data
                     .attrs
                     .insert("__flags__".to_string(), Value::Int(PY_TPFLAGS_HEAPTYPE));
@@ -12474,18 +12574,18 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<InternalCallOutcome, RuntimeError> {
         let caller_depth = self.frames.len();
-        let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
+        let (caller_ip, caller_stack, caller_blocks, caller_active_exception) = self
             .frames
             .last()
             .map(|frame| {
                 (
                     frame.ip,
-                    frame.stack.len(),
+                    frame.stack.clone(),
                     (!frame.blocks.is_empty()).then(|| frame.blocks.clone()),
                     frame.active_exception.clone(),
                 )
             })
-            .unwrap_or((0, 0, None, None));
+            .unwrap_or((0, Vec::new(), None, None));
 
         let outcome = self.call_internal(callable, args, kwargs);
         match outcome {
@@ -12493,7 +12593,7 @@ impl Vm {
                 self.restore_internal_call_caller_state(
                     caller_depth,
                     caller_ip,
-                    caller_stack_len,
+                    &caller_stack,
                     &caller_blocks,
                     caller_active_exception.clone(),
                 );
@@ -12507,7 +12607,7 @@ impl Vm {
                 self.restore_internal_call_caller_state(
                     caller_depth,
                     caller_ip,
-                    caller_stack_len,
+                    &caller_stack,
                     &caller_blocks,
                     active_exception,
                 );
@@ -12517,7 +12617,7 @@ impl Vm {
                 self.restore_internal_call_caller_state(
                     caller_depth,
                     caller_ip,
-                    caller_stack_len,
+                    &caller_stack,
                     &caller_blocks,
                     caller_active_exception,
                 );
@@ -12530,14 +12630,14 @@ impl Vm {
         &mut self,
         caller_depth: usize,
         caller_ip: usize,
-        caller_stack_len: usize,
+        caller_stack: &[Value],
         caller_blocks: &Option<Vec<Block>>,
         active_exception: Option<Value>,
     ) {
         if self.frames.len() == caller_depth {
             if let Some(frame) = self.frames.last_mut() {
                 frame.ip = caller_ip;
-                frame.stack.truncate(caller_stack_len);
+                frame.stack = caller_stack.to_vec();
                 if let Some(blocks) = caller_blocks {
                     frame.blocks = blocks.clone();
                 } else {
@@ -12934,6 +13034,7 @@ impl Vm {
                 );
             }
         }
+        self.track_instance_del_candidate(class, &instance);
         instance
     }
 
@@ -13237,6 +13338,12 @@ impl Vm {
                 ));
             }
             if let Value::Builtin(builtin) = attr.clone() {
+                let direct_user_defined_attr = matches!(&*class_ref.kind(), Object::Class(class_data)
+                    if matches!(class_data.attrs.get("__pyrs_user_class__"), Some(Value::Bool(true)))
+                        && class_data.attrs.contains_key(attr_name));
+                if direct_user_defined_attr {
+                    return Ok(AttrAccessOutcome::Value(Value::Builtin(builtin)));
+                }
                 return Ok(AttrAccessOutcome::Value(
                     self.alloc_builtin_bound_method(builtin, instance.clone()),
                 ));
@@ -17317,6 +17424,7 @@ impl Vm {
             BuiltinFunction::Len => self.builtin_len(args, kwargs),
             BuiltinFunction::Locals => self.builtin_locals(args, kwargs),
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
+            BuiltinFunction::GcCollect => self.builtin_gc_collect(args, kwargs),
             BuiltinFunction::Dir => self.builtin_dir(args, kwargs),
             BuiltinFunction::SysGetFrame => self.builtin_sys_getframe(args, kwargs),
             BuiltinFunction::SysException => self.builtin_sys_exception(args, kwargs),
@@ -17499,6 +17607,7 @@ impl Vm {
             BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
             BuiltinFunction::OsLStat => self.builtin_os_lstat(args, kwargs),
             BuiltinFunction::OsMkdir => self.builtin_os_mkdir(args, kwargs),
+            BuiltinFunction::OsChmod => self.builtin_os_chmod(args, kwargs),
             BuiltinFunction::OsRmdir => self.builtin_os_rmdir(args, kwargs),
             BuiltinFunction::OsUTime => self.builtin_os_utime(args, kwargs),
             BuiltinFunction::OsScandir => self.builtin_os_scandir(args, kwargs),
@@ -17510,6 +17619,7 @@ impl Vm {
             BuiltinFunction::OsWIfExited => self.builtin_os_wifexited(args, kwargs),
             BuiltinFunction::OsWExitStatus => self.builtin_os_wexitstatus(args, kwargs),
             BuiltinFunction::OsListDir => self.builtin_os_listdir(args, kwargs),
+            BuiltinFunction::OsAccess => self.builtin_os_access(args, kwargs),
             BuiltinFunction::OsFspath => self.builtin_os_fspath(args, kwargs),
             BuiltinFunction::OsFsEncode => self.builtin_os_fsencode(args, kwargs),
             BuiltinFunction::OsFsDecode => self.builtin_os_fsdecode(args, kwargs),
@@ -18779,8 +18889,11 @@ impl Vm {
             return Err(RuntimeError::new("call stack is not deep enough"));
         }
         let frame_index = self.frames.len() - 1 - depth;
-        let frame = &self.frames[frame_index];
+        Ok(self.build_frame_proxy_value(frame_index))
+    }
 
+    fn build_frame_proxy_value(&self, frame_index: usize) -> Value {
+        let frame = &self.frames[frame_index];
         let locals_dict = if frame.is_module {
             if let Object::Module(module_data) = &*frame.module.kind() {
                 let mut entries = Vec::with_capacity(module_data.globals.len());
@@ -18834,6 +18947,13 @@ impl Vm {
         } else {
             self.heap.alloc_dict(Vec::new())
         };
+        let location = frame.code.locations.get(frame.last_ip);
+        let lineno = location.map(|loc| loc.line).unwrap_or(0);
+        let f_back = if frame_index > 0 {
+            self.build_frame_proxy_value(frame_index - 1)
+        } else {
+            Value::None
+        };
 
         let frame_obj = match self
             .heap
@@ -18849,8 +18969,15 @@ impl Vm {
             module_data
                 .globals
                 .insert("f_globals".to_string(), globals_dict);
+            module_data
+                .globals
+                .insert("f_code".to_string(), Value::Code(frame.code.clone()));
+            module_data
+                .globals
+                .insert("f_lineno".to_string(), Value::Int(lineno as i64));
+            module_data.globals.insert("f_back".to_string(), f_back);
         }
-        Ok(Value::Module(frame_obj))
+        Value::Module(frame_obj)
     }
 
     fn builtin_sys_exception(
@@ -24953,7 +25080,7 @@ impl Vm {
         }
         let path = value_to_path(&args[0])?;
         let flags = value_to_int(args.remove(1))?;
-        let _mode = if args.len() == 2 {
+        let mode = if args.len() == 2 {
             value_to_int(args.remove(1))?
         } else if let Some(mode) = kwargs.remove("mode") {
             value_to_int(mode)?
@@ -24997,6 +25124,11 @@ impl Vm {
         }
         if append {
             options.append(true);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(mode as u32);
         }
 
         let file = options
@@ -25243,6 +25375,53 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn builtin_os_chmod(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "chmod() expects path, mode, and optional dir_fd/follow_symlinks",
+            ));
+        }
+        let path = value_to_path(&args.remove(0))?;
+        let mode = value_to_int(args.remove(0))?;
+        if let Some(dir_fd) = kwargs.remove("dir_fd") {
+            if !matches!(dir_fd, Value::None) {
+                return Err(RuntimeError::new("chmod() dir_fd is unsupported"));
+            }
+        }
+        if let Some(follow_symlinks) = kwargs.remove("follow_symlinks") {
+            if !is_truthy(&follow_symlinks) {
+                return Err(RuntimeError::new("chmod() follow_symlinks is unsupported"));
+            }
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "chmod() got an unexpected keyword argument",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = fs::Permissions::from_mode((mode & 0o7777) as u32);
+            fs::set_permissions(&path, permissions)
+                .map_err(|err| RuntimeError::new(format!("chmod failed: {err}")))?;
+        }
+        #[cfg(not(unix))]
+        {
+            let readonly = (mode & 0o222) == 0;
+            let metadata = fs::metadata(&path)
+                .map_err(|err| RuntimeError::new(format!("chmod failed: {err}")))?;
+            let mut permissions = metadata.permissions();
+            permissions.set_readonly(readonly);
+            fs::set_permissions(&path, permissions)
+                .map_err(|err| RuntimeError::new(format!("chmod failed: {err}")))?;
+        }
+        Ok(Value::None)
+    }
+
     fn builtin_os_rmdir(
         &mut self,
         args: Vec<Value>,
@@ -25462,6 +25641,60 @@ impl Vm {
         }
         names.sort_by(|a, b| format_value(a).cmp(&format_value(b)));
         Ok(self.heap.alloc_list(names))
+    }
+
+    fn builtin_os_access(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "access() expects path, mode, and optional keyword-only arguments",
+            ));
+        }
+        let (path, _) = self.path_arg_to_string_and_type(args.remove(0))?;
+        let mode = value_to_int(args.remove(0))?;
+        if let Some(dir_fd) = kwargs.remove("dir_fd") {
+            if !matches!(dir_fd, Value::None) {
+                return Err(RuntimeError::new("access() dir_fd is unsupported"));
+            }
+        }
+        if let Some(effective_ids) = kwargs.remove("effective_ids") {
+            if is_truthy(&effective_ids) {
+                return Err(RuntimeError::new("access() effective_ids is unsupported"));
+            }
+        }
+        if let Some(follow_symlinks) = kwargs.remove("follow_symlinks") {
+            if !is_truthy(&follow_symlinks) {
+                return Err(RuntimeError::new("access() follow_symlinks is unsupported"));
+            }
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "access() got an unexpected keyword argument",
+            ));
+        }
+
+        let path_buf = PathBuf::from(path);
+        if !path_buf.exists() {
+            return Ok(Value::Bool(false));
+        }
+
+        let metadata = fs::metadata(&path_buf)
+            .map_err(|err| RuntimeError::new(format!("access failed: {err}")))?;
+        let mut allowed = true;
+        if mode & 2 != 0 {
+            allowed &= !metadata.permissions().readonly();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if mode & 1 != 0 {
+                allowed &= metadata.permissions().mode() & 0o111 != 0;
+            }
+        }
+        Ok(Value::Bool(allowed))
     }
 
     fn builtin_os_fspath(
@@ -26319,9 +26552,24 @@ impl Vm {
         Ok(Value::Bool(PathBuf::from(path).exists()))
     }
 
+    fn path_arg_to_string_and_type(&mut self, value: Value) -> Result<(String, bool), RuntimeError> {
+        let normalized = match value {
+            Value::Str(_) | Value::Bytes(_) => value,
+            other => self.builtin_os_fspath(vec![other], HashMap::new())?,
+        };
+        match normalized {
+            Value::Str(path) => Ok((path, false)),
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(bytes) => Ok((String::from_utf8_lossy(bytes).into_owned(), true)),
+                _ => Err(RuntimeError::new("path must be string or bytes")),
+            },
+            _ => Err(RuntimeError::new("path must be string or bytes")),
+        }
+    }
+
     fn builtin_os_path_join(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
@@ -26332,16 +26580,16 @@ impl Vm {
         if args.is_empty() {
             return Ok(Value::Str(".".to_string()));
         }
-        let first_is_bytes = matches!(args[0], Value::Bytes(_));
-        let mut out = PathBuf::from(value_to_path(&args[0])?);
-        for part in args.iter().skip(1) {
-            let part_is_bytes = matches!(part, Value::Bytes(_));
+        let (first, first_is_bytes) = self.path_arg_to_string_and_type(args.remove(0))?;
+        let mut out = PathBuf::from(first);
+        for part in args {
+            let (part, part_is_bytes) = self.path_arg_to_string_and_type(part)?;
             if part_is_bytes != first_is_bytes {
                 return Err(RuntimeError::new(
                     "can't mix strings and bytes in path components",
                 ));
             }
-            out.push(value_to_path(part)?);
+            out.push(part);
         }
         let joined = out.to_string_lossy().to_string();
         if first_is_bytes {
@@ -26613,8 +26861,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("abspath() expects one argument"));
         }
-        let return_bytes = matches!(args[0], Value::Bytes(_));
-        let path = value_to_path(&args[0])?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         let joined = if path.starts_with('/') {
             path
         } else {
@@ -30187,6 +30434,9 @@ impl Vm {
         if binary_mode && newline.is_some() {
             return Err(RuntimeError::new("binary mode doesn't take a newline argument"));
         }
+        if let Some(encoding_name) = encoding.as_ref() {
+            self.ensure_known_text_encoding(encoding_name)?;
+        }
         let closefd = is_truthy(&closefd_arg.unwrap_or(Value::Bool(true)));
         let opener = opener_arg.unwrap_or(Value::None);
 
@@ -30346,6 +30596,20 @@ impl Vm {
             Self::instance_attr_set(text_ref, "_line_buffering", Value::Bool(line_buffering))?;
         }
         Ok(text_instance)
+    }
+
+    fn ensure_known_text_encoding(&mut self, encoding: &str) -> Result<(), RuntimeError> {
+        match self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.to_string())],
+            HashMap::new(),
+        ) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(RuntimeError::new(format!(
+                "LookupError: unknown encoding: {}",
+                encoding
+            ))),
+        }
     }
 
     fn io_open_path_from_value(&mut self, value: Value) -> Result<String, RuntimeError> {
@@ -30532,15 +30796,15 @@ impl Vm {
         Self::instance_attr_set(&instance, "_closed", Value::Bool(closed))?;
         Self::instance_attr_set(&instance, "closed", Value::Bool(closed))?;
         Self::instance_attr_set(&instance, "_closefd", Value::Bool(closefd))?;
-        Self::instance_attr_set(
-            &instance,
-            "_encoding",
-            match encoding.unwrap_or(Value::None) {
-                Value::None => Value::None,
-                Value::Str(value) => Value::Str(value),
-                _ => return Err(RuntimeError::new("TextIOWrapper encoding must be str or None")),
-            },
-        )?;
+        let encoding_value = match encoding.unwrap_or(Value::None) {
+            Value::None => Value::None,
+            Value::Str(value) => {
+                self.ensure_known_text_encoding(&value)?;
+                Value::Str(value)
+            }
+            _ => return Err(RuntimeError::new("TextIOWrapper encoding must be str or None")),
+        };
+        Self::instance_attr_set(&instance, "_encoding", encoding_value)?;
         Self::instance_attr_set(
             &instance,
             "_errors",
@@ -31223,6 +31487,12 @@ impl Vm {
             return Err(RuntimeError::new("__enter__() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "__enter__")?;
+        if matches!(
+            Self::instance_attr_get(&instance, "_closed"),
+            Some(Value::Bool(true))
+        ) {
+            return Err(RuntimeError::new("ValueError: I/O operation on closed file"));
+        }
         Ok(Value::Instance(instance))
     }
 
@@ -34657,6 +34927,15 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        if let Ok(module) = self.load_module("_py_warnings") {
+            let callable = self.load_attr_module(&module, "warn")?;
+            return match self.call_internal(callable, args, kwargs)? {
+                InternalCallOutcome::Value(value) => Ok(value),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Err(self.runtime_error_from_active_exception("warn() raised exception"))
+                }
+            };
+        }
         if kwargs.keys().any(|key| {
             !matches!(
                 key.as_str(),
@@ -34678,6 +34957,17 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        if let Ok(module) = self.load_module("_py_warnings") {
+            let callable = self.load_attr_module(&module, "warn_explicit")?;
+            return match self.call_internal(callable, args, kwargs)? {
+                InternalCallOutcome::Value(value) => Ok(value),
+                InternalCallOutcome::CallerExceptionHandled => Err(
+                    self.runtime_error_from_active_exception(
+                        "warn_explicit() raised exception",
+                    ),
+                ),
+            };
+        }
         if kwargs
             .keys()
             .any(|key| !matches!(key.as_str(), "message" | "category" | "filename" | "lineno"))
@@ -35083,6 +35373,9 @@ impl Vm {
     }
 
     fn collect_iterable_values(&mut self, source: Value) -> Result<Vec<Value>, RuntimeError> {
+        // Keep the original iterable alive while we consume it. This avoids
+        // premature finalization for temporary objects with __del__.
+        let _source_guard = source.clone();
         let iter = match self.to_iterator_value(source) {
             Ok(iter) => iter,
             Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
@@ -37917,24 +38210,46 @@ fn re_match_details(
                 }
                 _ => return Err(RuntimeError::new("string must be bytes-like")),
             };
+            let regex_found = match (
+                std::str::from_utf8(pattern_bytes.as_slice()),
+                std::str::from_utf8(text.as_slice()),
+            ) {
+                (Ok(pattern_text), Ok(text_text)) => {
+                    if pattern_text == LOGGING_PERCENT_VALIDATION_PATTERN {
+                        find_logging_percent_style_match(text_text).map(|(start, end)| {
+                            ReMatchDetail {
+                                start,
+                                end,
+                                captures: Vec::new(),
+                            }
+                        })
+                    } else {
+                        simple_regex_match_details(pattern_text, text_text, mode)
+                    }
+                }
+                _ => None,
+            };
             let found = match mode {
-                ReMode::Search => find_bytes_subslice(&text, pattern_bytes)
-                    .map(|start| ReMatchDetail {
+                ReMode::Search => regex_found.or_else(|| {
+                    find_bytes_subslice(&text, pattern_bytes).map(|start| ReMatchDetail {
                         start,
                         end: start + pattern_bytes.len(),
                         captures: Vec::new(),
-                    }),
-                ReMode::Match => text
-                    .starts_with(pattern_bytes)
-                    .then_some(ReMatchDetail {
+                    })
+                }),
+                ReMode::Match => regex_found.or_else(|| {
+                    text.starts_with(pattern_bytes).then_some(ReMatchDetail {
                         start: 0,
                         end: pattern_bytes.len(),
                         captures: Vec::new(),
-                    }),
-                ReMode::FullMatch => (text == *pattern_bytes).then_some(ReMatchDetail {
-                    start: 0,
-                    end: pattern_bytes.len(),
-                    captures: Vec::new(),
+                    })
+                }),
+                ReMode::FullMatch => regex_found.or_else(|| {
+                    (text == *pattern_bytes).then_some(ReMatchDetail {
+                        start: 0,
+                        end: pattern_bytes.len(),
+                        captures: Vec::new(),
+                    })
                 }),
             };
             let found = match mode {
@@ -39921,7 +40236,7 @@ fn runtime_error_line_matches_exception(line: &str, exception: &str) -> bool {
 }
 
 fn classify_runtime_error(message: &str) -> &'static str {
-    const DIRECT_PREFIX_EXCEPTIONS: [&str; 22] = [
+    const DIRECT_PREFIX_EXCEPTIONS: [&str; 23] = [
         "TypeError",
         "ValueError",
         "RuntimeError",
@@ -39940,6 +40255,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         "StopAsyncIteration",
         "SystemExit",
         "KeyboardInterrupt",
+        "LookupError",
         "CalledProcessError",
         "PickleError",
         "PicklingError",
@@ -40048,6 +40364,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.contains("can't decode bytes") {
         return "UnicodeDecodeError";
     }
+    if message.contains("unknown encoding") {
+        return "LookupError";
+    }
     if message.contains("can't encode character")
         || message.contains("can't encode")
         || message.contains("ordinal not in range")
@@ -40105,6 +40424,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("binary mode doesn't take an encoding argument")
         || message.contains("binary mode doesn't take an errors argument")
         || message.contains("binary mode doesn't take a newline argument")
+        || message.contains("I/O operation on closed file")
         || message.contains("Cannot use closefd=False with file name")
         || message.starts_with("opener returned ")
     {
@@ -40141,6 +40461,25 @@ fn classify_runtime_error(message: &str) -> &'static str {
             return "NotADirectoryError";
         }
     }
+    if message.contains("access failed:") {
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+    }
+    if message.contains("chmod failed:") {
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
     if message.contains("remove failed:") {
         if message.contains("No such file or directory") || message.contains("os error 2") {
             return "FileNotFoundError";
@@ -40158,6 +40497,8 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.contains("bad file descriptor")
         || message.contains("open failed:")
         || message.contains("mkdir failed:")
+        || message.contains("chmod failed:")
+        || message.contains("access failed:")
         || message.contains("remove failed:")
         || message.contains("close failed:")
         || message.contains("stat failed:")

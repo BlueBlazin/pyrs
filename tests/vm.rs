@@ -7683,6 +7683,18 @@ fn map_callable_exception_is_raised_on_iteration() {
 }
 
 #[test]
+fn re_bytes_character_class_pattern_matches_tempfile_name_shape() {
+    let source = "import re\n\
+m = re.match(b'^[a-z0-9_-]{8}$', b'm9bo88vi')\n\
+ok = (m is not None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn string_predicates_isascii_isdigit_and_islower_work() {
     let source = "ok = ('123'.isdigit() and 'abc'.islower() and 'abc'.isascii() and 'abc123'.isalnum() and not ''.isdigit())\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -8696,6 +8708,83 @@ ok = (
 fn exceptions_accept_keyword_attributes() {
     let source = r#"err = ImportError("boom", name="pkg.mod", path="/tmp/pkg/mod.py")
 ok = (err is not None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn user_class_module_builtin_attrs_are_not_descriptor_bound() {
+    let source = r#"import gc
+import os
+
+class TempHandle:
+    _close = os.close
+    _unlink = os.unlink
+
+    def __init__(self, path):
+        self.name = path
+        self.fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_TRUNC, 0o600)
+
+    def __del__(self):
+        self._close(self.fd)
+        self._unlink(self.name)
+
+def run():
+    path = "pyrs_bind_builtin_close_unlink.tmp"
+    if os.path.exists(path):
+        os.unlink(path)
+    TempHandle(path)
+    gc.collect()
+    exists = os.path.exists(path)
+    if exists:
+        os.unlink(path)
+    return not exists
+
+ok = run()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn fstring_repr_conversion_uses_repr() {
+    let source = r#"class C:
+    def __str__(self):
+        return "str-value"
+    def __repr__(self):
+        return "repr-value"
+
+value = f"{C()!r}"
+ok = (value == "repr-value")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn temporary_iterable_with_del_keeps_collection_results() {
+    let source = r#"class C:
+    def __init__(self):
+        self.data = [1, 2, 3]
+    def __del__(self):
+        pass
+    def __iter__(self):
+        for item in self.data:
+            yield item
+
+x = list(C())
+y = enumerate(C())
+ok = (x == [1, 2, 3] and y == [(0, 1), (1, 2), (2, 3)])
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
