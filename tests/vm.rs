@@ -3041,7 +3041,15 @@ fn os_path_relpath_is_available_for_unittest_discovery() {
     let source = r#"import os
 p = os.path.relpath('/tmp/a/b', '/tmp')
 q = os.path.relpath('/tmp/a', '/tmp/a')
-ok = (p == 'a/b' and q == '.' and os.path.isabs('/tmp') and not os.path.isabs('tmp'))
+head, tail = os.path.split('/tmp/a/b.txt')
+ok = (
+    p == 'a/b'
+    and q == '.'
+    and os.path.isabs('/tmp')
+    and not os.path.isabs('tmp')
+    and head == '/tmp/a'
+    and tail == 'b.txt'
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -5932,6 +5940,31 @@ fn imports_gc_errno_weakref_and_array_modules() {
 }
 
 #[test]
+fn weakref_finalize_exposes_detach_tuple_contract() {
+    let source = r#"import weakref
+class Box:
+    pass
+box = Box()
+finalizer = weakref.finalize(box, str, 42, base=10)
+detached = finalizer.detach()
+ok = (
+    detached is not None
+    and detached[0] is box
+    and detached[1] is str
+    and detached[2] == (42,)
+    and detached[3].get("base") == 10
+    and finalizer.alive is False
+    and finalizer.detach() is None
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn from_import_missing_name_raises_importerror() {
     let source = "ok = False\ntry:\n    from _testinternalcapi import hamt\nexcept ImportError:\n    ok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -7618,6 +7651,38 @@ ok = (table[97] == 120 and table[98] == 121 and value == 0x01020304)\n";
 }
 
 #[test]
+fn map_is_lazy_over_unbounded_iterables() {
+    let source = "import itertools\n\
+m = map(lambda x: x + 1, itertools.count())\n\
+a = next(m)\n\
+b = next(m)\n\
+ok = (a == 1 and b == 2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn map_callable_exception_is_raised_on_iteration() {
+    let init_module =
+        parser::parse_module("m = map(lambda x: 1 // 0, [1])\n").expect("parse should succeed");
+    let init_code = compiler::compile_module(&init_module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&init_code).expect("execution should succeed");
+
+    let next_module = parser::parse_module("next(m)\n").expect("parse should succeed");
+    let next_code = compiler::compile_module(&next_module).expect("compile should succeed");
+    let err = vm.execute(&next_code).expect_err("next(m) should raise");
+    assert!(
+        err.message.contains("ZeroDivisionError"),
+        "expected ZeroDivisionError, got: {}",
+        err.message
+    );
+}
+
+#[test]
 fn string_predicates_isascii_isdigit_and_islower_work() {
     let source = "ok = ('123'.isdigit() and 'abc'.islower() and 'abc'.isascii() and 'abc123'.isalnum() and not ''.isdigit())\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -8466,6 +8531,40 @@ ok = (seen == "present" and missing == "fallback")
 }
 
 #[test]
+fn os_fspath_supports_str_bytes_and_pathlike() {
+    let source = r#"import os
+class PathLike:
+    def __fspath__(self):
+        return b"/tmp/path"
+ok = (
+    os.fspath("name.txt") == "name.txt"
+    and os.fspath(b"name.bin") == b"name.bin"
+    and os.fspath(PathLike()) == b"/tmp/path"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pathlike_protocol_drives_isinstance_and_issubclass() {
+    let source = r#"import os
+class PathLike:
+    def __fspath__(self):
+        return "x"
+ok = isinstance(PathLike(), os.PathLike) and issubclass(PathLike, os.PathLike)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_mkdir_creates_directory_with_mode_argument() {
     let source = r#"import os, time
 name = "__pyrs_mkdir_test__" + str(int(time.time() * 1000000))
@@ -8478,6 +8577,46 @@ os.rmdir(name)
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_walk_returns_directory_tree_rows() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("pyrs_walk_{unique}"));
+    let child = root.join("child");
+    std::fs::create_dir_all(&child).expect("create child dir");
+    std::fs::write(root.join("root.txt"), b"root").expect("write root file");
+    std::fs::write(child.join("child.txt"), b"child").expect("write child file");
+
+    let source = format!(
+        r#"import os
+root = '{root}'
+child = os.path.join(root, 'child')
+rows = list(os.walk(root))
+top_ok = False
+child_ok = False
+for path, dirs, files in rows:
+    if path == root:
+        top_ok = (dirs == ['child'] and files == ['root.txt'])
+    if path == child:
+        child_ok = (dirs == [] and files == ['child.txt'])
+ok = top_ok and child_ok
+"#,
+        root = root.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(child.join("child.txt"));
+    let _ = std::fs::remove_file(root.join("root.txt"));
+    let _ = std::fs::remove_dir(child);
+    let _ = std::fs::remove_dir(root);
 }
 
 #[test]

@@ -993,7 +993,9 @@ pub enum IteratorKind {
     Map {
         values: Vec<Value>,
         func: Value,
+        iterators: Vec<Value>,
         sources: Vec<Value>,
+        exhausted: bool,
     },
     Range {
         current: BigInt,
@@ -1301,12 +1303,17 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             IteratorKind::Map {
                 values,
                 func,
+                iterators,
                 sources,
+                ..
             } => {
                 for value in values {
                     trace_value(value, stack, marked);
                 }
                 trace_value(func, stack, marked);
+                for iterator in iterators {
+                    trace_value(iterator, stack, marked);
+                }
                 for source in sources {
                     trace_value(source, stack, marked);
                 }
@@ -1422,8 +1429,14 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
-                IteratorKind::Map { values, sources, .. } => {
+                IteratorKind::Map {
+                    values,
+                    iterators,
+                    sources,
+                    ..
+                } => {
                     values.clear();
+                    iterators.clear();
                     sources.clear();
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
@@ -1918,6 +1931,8 @@ pub enum BuiltinFunction {
     DecimalLocalContext,
     WeakRefRef,
     WeakRefProxy,
+    WeakRefFinalize,
+    WeakRefFinalizeDetach,
     WeakRefGetWeakRefCount,
     WeakRefGetWeakRefs,
     WeakRefRemoveDead,
@@ -1976,6 +1991,7 @@ pub enum BuiltinFunction {
     OsRmdir,
     OsUTime,
     OsScandir,
+    OsWalk,
     OsWIfStopped,
     OsWStopSig,
     OsWIfSignaled,
@@ -1983,6 +1999,7 @@ pub enum BuiltinFunction {
     OsWIfExited,
     OsWExitStatus,
     OsListDir,
+    OsFspath,
     OsFsEncode,
     OsFsDecode,
     OsRemove,
@@ -1992,6 +2009,7 @@ pub enum BuiltinFunction {
     OsPathNormPath,
     OsPathNormCase,
     OsPathSplitRootEx,
+    OsPathSplit,
     OsPathDirName,
     OsPathBaseName,
     OsPathIsAbs,
@@ -4042,6 +4060,89 @@ impl BuiltinFunction {
                 }
                 Ok(args[0].clone())
             }
+            BuiltinFunction::WeakRefFinalize => {
+                if args.len() < 2 {
+                    return Err(RuntimeError::new(
+                        "finalize() expects object and callback",
+                    ));
+                }
+                let object = args[0].clone();
+                let callback = args[1].clone();
+                let callback_args = heap.alloc_tuple(args.into_iter().skip(2).collect());
+                let callback_kwargs = heap.alloc_dict(Vec::new());
+                let finalizer = match heap
+                    .alloc_module(ModuleObject::new("__weakref_finalize__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("__pyrs_weakref_finalize__".to_string(), Value::Bool(true));
+                    module_data.globals.insert("alive".to_string(), Value::Bool(true));
+                    module_data.globals.insert("_obj".to_string(), object);
+                    module_data.globals.insert("_func".to_string(), callback);
+                    module_data
+                        .globals
+                        .insert("_args".to_string(), callback_args);
+                    module_data
+                        .globals
+                        .insert("_kwargs".to_string(), callback_kwargs);
+                }
+                let native =
+                    heap.alloc_native_method(NativeMethodObject::new(NativeMethodKind::Builtin(
+                        BuiltinFunction::WeakRefFinalizeDetach,
+                    )));
+                let detach = heap.alloc_bound_method(BoundMethod::new(native, finalizer.clone()));
+                if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
+                    module_data.globals.insert("detach".to_string(), detach);
+                }
+                Ok(Value::Module(finalizer))
+            }
+            BuiltinFunction::WeakRefFinalizeDetach => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("finalize.detach() expects no arguments"));
+                }
+                let finalizer = match &args[0] {
+                    Value::Module(obj) => obj.clone(),
+                    _ => return Err(RuntimeError::new("invalid finalize receiver")),
+                };
+                let mut obj = Value::None;
+                let mut func = Value::None;
+                let mut cb_args = Value::None;
+                let mut cb_kwargs = Value::None;
+                let mut alive = false;
+                if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
+                    alive = matches!(module_data.globals.get("alive"), Some(Value::Bool(true)));
+                    if alive {
+                        module_data.globals.insert("alive".to_string(), Value::Bool(false));
+                        obj = module_data
+                            .globals
+                            .insert("_obj".to_string(), Value::None)
+                            .unwrap_or(Value::None);
+                        func = module_data
+                            .globals
+                            .get("_func")
+                            .cloned()
+                            .unwrap_or(Value::None);
+                        cb_args = module_data
+                            .globals
+                            .get("_args")
+                            .cloned()
+                            .unwrap_or_else(|| heap.alloc_tuple(Vec::new()));
+                        cb_kwargs = module_data
+                            .globals
+                            .get("_kwargs")
+                            .cloned()
+                            .unwrap_or_else(|| heap.alloc_dict(Vec::new()));
+                    }
+                }
+                if !alive || matches!(obj, Value::None) {
+                    return Ok(Value::None);
+                }
+                Ok(heap.alloc_tuple(vec![obj, func, cb_args, cb_kwargs]))
+            }
             BuiltinFunction::WeakRefGetWeakRefCount => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("getweakrefcount() expects one argument"));
@@ -4283,6 +4384,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsRmdir
             | BuiltinFunction::OsUTime
             | BuiltinFunction::OsScandir
+            | BuiltinFunction::OsWalk
             | BuiltinFunction::OsWIfStopped
             | BuiltinFunction::OsWStopSig
             | BuiltinFunction::OsWIfSignaled
@@ -4290,6 +4392,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsWIfExited
             | BuiltinFunction::OsWExitStatus
             | BuiltinFunction::OsListDir
+            | BuiltinFunction::OsFspath
             | BuiltinFunction::OsFsEncode
             | BuiltinFunction::OsFsDecode
             | BuiltinFunction::OsRemove
@@ -4299,6 +4402,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsPathNormPath
             | BuiltinFunction::OsPathNormCase
             | BuiltinFunction::OsPathSplitRootEx
+            | BuiltinFunction::OsPathSplit
             | BuiltinFunction::OsPathDirName
             | BuiltinFunction::OsPathBaseName
             | BuiltinFunction::OsPathIsAbs

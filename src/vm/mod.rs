@@ -1693,6 +1693,7 @@ impl Vm {
                 ("rmdir", BuiltinFunction::OsRmdir),
                 ("utime", BuiltinFunction::OsUTime),
                 ("scandir", BuiltinFunction::OsScandir),
+                ("walk", BuiltinFunction::OsWalk),
                 ("listdir", BuiltinFunction::OsListDir),
                 ("fsencode", BuiltinFunction::OsFsEncode),
                 ("fsdecode", BuiltinFunction::OsFsDecode),
@@ -1704,7 +1705,7 @@ impl Vm {
                 ("path_exists", BuiltinFunction::OsPathExists),
                 ("path_join", BuiltinFunction::OsPathJoin),
                 ("_get_exports_list", BuiltinFunction::Dir),
-                ("fspath", BuiltinFunction::TypingIdFunc),
+                ("fspath", BuiltinFunction::OsFspath),
                 ("unlink", BuiltinFunction::OsRemove),
                 ("remove", BuiltinFunction::OsRemove),
             ],
@@ -1744,6 +1745,7 @@ impl Vm {
                     "name",
                     Value::Str(if cfg!(windows) { "nt" } else { "posix" }.to_string()),
                 ),
+                ("_walk_symlinks_as_files", Value::Bool(false)),
                 ("supports_bytes_environ", Value::Bool(!cfg!(windows))),
                 (
                     "PathLike",
@@ -1910,6 +1912,7 @@ impl Vm {
                 ("relpath", BuiltinFunction::OsPathRelPath),
                 ("dirname", BuiltinFunction::OsPathDirName),
                 ("basename", BuiltinFunction::OsPathBaseName),
+                ("split", BuiltinFunction::OsPathSplit),
                 ("isabs", BuiltinFunction::OsPathIsAbs),
                 ("isdir", BuiltinFunction::OsPathIsDir),
                 ("isfile", BuiltinFunction::OsPathIsFile),
@@ -3518,6 +3521,7 @@ impl Vm {
             &[
                 ("ref", BuiltinFunction::WeakRefRef),
                 ("proxy", BuiltinFunction::WeakRefProxy),
+                ("finalize", BuiltinFunction::WeakRefFinalize),
                 ("getweakrefcount", BuiltinFunction::WeakRefGetWeakRefCount),
                 ("getweakrefs", BuiltinFunction::WeakRefGetWeakRefs),
             ],
@@ -7243,7 +7247,7 @@ impl Vm {
                             },
                             Value::ByteArray(obj) => match index {
                                 Value::Slice { lower, upper, step } => {
-                                    let replacement = value_to_bytes_payload(value)?;
+                                    let replacement = self.value_to_bytes_payload(value)?;
                                     if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                         let step_value = step.unwrap_or(1);
                                         if step_value == 1 {
@@ -8931,7 +8935,7 @@ impl Vm {
                                 }
                             },
                             Value::Iterator(iterator_ref) => {
-                                let next_value = self.iterator_next_value(&iterator_ref);
+                                let next_value = self.iterator_next_value(&iterator_ref)?;
                                 if let Some(value) = next_value {
                                     self.push_value(Value::Iterator(iterator_ref));
                                     self.push_value(value);
@@ -16384,7 +16388,7 @@ impl Vm {
                 }
             },
             Value::Iterator(iterator) => {
-                while self.iterator_next_value(&iterator).is_some() {}
+                while self.iterator_next_value(&iterator)?.is_some() {}
                 Ok(Value::None)
             }
             _ => Err(RuntimeError::new("object is not awaitable")),
@@ -16762,7 +16766,7 @@ impl Vm {
         match iterator {
             Value::Generator(obj) => self.generator_for_iter_next(obj),
             Value::Iterator(iterator_ref) => {
-                let next_value = self.iterator_next_value(iterator_ref);
+                let next_value = self.iterator_next_value(iterator_ref)?;
                 if let Some(value) = next_value {
                     Ok(GeneratorResumeOutcome::Yield(value))
                 } else {
@@ -16942,120 +16946,156 @@ impl Vm {
         }
     }
 
-    fn iterator_next_value(&self, iterator_ref: &ObjRef) -> Option<Value> {
-        let mut iter = iterator_ref.kind_mut();
-        match &mut *iter {
-            Object::Iterator(state) => match &mut state.kind {
-                IteratorKind::List(list) => match &*list.kind() {
-                    Object::List(values) => {
-                        if state.index >= values.len() {
-                            None
-                        } else {
-                            let value = values[state.index].clone();
-                            state.index += 1;
-                            Some(value)
+    fn iterator_next_value(&mut self, iterator_ref: &ObjRef) -> Result<Option<Value>, RuntimeError> {
+        enum PendingMapStep {
+            Evaluate {
+                func: Value,
+                iterators: Vec<Value>,
+            },
+        }
+
+        let pending_map_step;
+        {
+            let mut iter = iterator_ref.kind_mut();
+            let Object::Iterator(state) = &mut *iter else {
+                return Ok(None);
+            };
+            match &mut state.kind {
+                IteratorKind::List(list) => {
+                    return Ok(match &*list.kind() {
+                        Object::List(values) => {
+                            if state.index >= values.len() {
+                                None
+                            } else {
+                                let value = values[state.index].clone();
+                                state.index += 1;
+                                Some(value)
+                            }
                         }
-                    }
-                    _ => None,
-                },
-                IteratorKind::Tuple(list) => match &*list.kind() {
-                    Object::Tuple(values) => {
-                        if state.index >= values.len() {
-                            None
-                        } else {
-                            let value = values[state.index].clone();
-                            state.index += 1;
-                            Some(value)
+                        _ => None,
+                    });
+                }
+                IteratorKind::Tuple(list) => {
+                    return Ok(match &*list.kind() {
+                        Object::Tuple(values) => {
+                            if state.index >= values.len() {
+                                None
+                            } else {
+                                let value = values[state.index].clone();
+                                state.index += 1;
+                                Some(value)
+                            }
                         }
-                    }
-                    _ => None,
-                },
+                        _ => None,
+                    });
+                }
                 IteratorKind::Str(text) => {
                     let chars: Vec<char> = text.chars().collect();
-                    if state.index >= chars.len() {
+                    return Ok(if state.index >= chars.len() {
                         None
                     } else {
                         let ch = chars[state.index];
                         state.index += 1;
                         Some(Value::Str(ch.to_string()))
-                    }
+                    });
                 }
-                IteratorKind::Dict(dict) => match &*dict.kind() {
-                    Object::Dict(entries) => {
-                        if state.index >= entries.len() {
-                            None
-                        } else {
-                            let value = entries[state.index].0.clone();
-                            state.index += 1;
-                            Some(value)
+                IteratorKind::Dict(dict) => {
+                    return Ok(match &*dict.kind() {
+                        Object::Dict(entries) => {
+                            if state.index >= entries.len() {
+                                None
+                            } else {
+                                let value = entries[state.index].0.clone();
+                                state.index += 1;
+                                Some(value)
+                            }
                         }
-                    }
-                    _ => None,
-                },
-                IteratorKind::Set(set) => match &*set.kind() {
-                    Object::Set(values) | Object::FrozenSet(values) => {
-                        if state.index >= values.len() {
-                            None
-                        } else {
-                            let value = values[state.index].clone();
-                            state.index += 1;
-                            Some(value)
+                        _ => None,
+                    });
+                }
+                IteratorKind::Set(set) => {
+                    return Ok(match &*set.kind() {
+                        Object::Set(values) | Object::FrozenSet(values) => {
+                            if state.index >= values.len() {
+                                None
+                            } else {
+                                let value = values[state.index].clone();
+                                state.index += 1;
+                                Some(value)
+                            }
                         }
-                    }
-                    _ => None,
-                },
-                IteratorKind::Bytes(bytes) => match &*bytes.kind() {
-                    Object::Bytes(values) => {
-                        if state.index >= values.len() {
-                            None
-                        } else {
-                            let value = Value::Int(values[state.index] as i64);
-                            state.index += 1;
-                            Some(value)
+                        _ => None,
+                    });
+                }
+                IteratorKind::Bytes(bytes) => {
+                    return Ok(match &*bytes.kind() {
+                        Object::Bytes(values) => {
+                            if state.index >= values.len() {
+                                None
+                            } else {
+                                let value = Value::Int(values[state.index] as i64);
+                                state.index += 1;
+                                Some(value)
+                            }
                         }
-                    }
-                    _ => None,
-                },
-                IteratorKind::ByteArray(bytes) => match &*bytes.kind() {
-                    Object::ByteArray(values) => {
-                        if state.index >= values.len() {
-                            None
-                        } else {
-                            let value = Value::Int(values[state.index] as i64);
-                            state.index += 1;
-                            Some(value)
+                        _ => None,
+                    });
+                }
+                IteratorKind::ByteArray(bytes) => {
+                    return Ok(match &*bytes.kind() {
+                        Object::ByteArray(values) => {
+                            if state.index >= values.len() {
+                                None
+                            } else {
+                                let value = Value::Int(values[state.index] as i64);
+                                state.index += 1;
+                                Some(value)
+                            }
                         }
-                    }
-                    _ => None,
-                },
-                IteratorKind::MemoryView(view_ref) => match &*view_ref.kind() {
-                    Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                        if state.index >= values.len() {
-                            None
-                        } else {
-                            let value = Value::Int(values[state.index] as i64);
-                            state.index += 1;
-                            Some(value)
-                        }
-                    })
-                    .flatten(),
-                    _ => None,
-                },
+                        _ => None,
+                    });
+                }
+                IteratorKind::MemoryView(view_ref) => {
+                    return Ok(match &*view_ref.kind() {
+                        Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                            if state.index >= values.len() {
+                                None
+                            } else {
+                                let value = Value::Int(values[state.index] as i64);
+                                state.index += 1;
+                                Some(value)
+                            }
+                        })
+                        .flatten(),
+                        _ => None,
+                    });
+                }
                 IteratorKind::Count { current, step } => {
                     let value = *current;
                     *current = current.saturating_add(*step);
-                    Some(Value::Int(value))
+                    return Ok(Some(Value::Int(value)));
                 }
-                IteratorKind::Map { values, .. } => {
-                    if state.index >= values.len() {
-                        None
-                    } else {
+                IteratorKind::Map {
+                    values,
+                    func,
+                    iterators,
+                    exhausted,
+                    ..
+                } => {
+                    if state.index < values.len() {
                         let value = values[state.index].clone();
                         state.index += 1;
-                        Some(value)
+                        return Ok(Some(value));
                     }
+                    if *exhausted {
+                        return Ok(None);
+                    }
+                    pending_map_step = PendingMapStep::Evaluate {
+                        func: func.clone(),
+                        iterators: iterators.clone(),
+                    };
                 }
-                IteratorKind::RangeObject { .. } => None,
+                IteratorKind::RangeObject { .. } => return Ok(None),
                 IteratorKind::Range {
                     current,
                     stop,
@@ -17067,16 +17107,52 @@ impl Vm {
                         current.cmp_total(stop) != Ordering::Less
                     };
                     if done {
-                        None
-                    } else {
-                        let value = current.clone();
-                        *current = current.add(step);
-                        Some(value_from_bigint(value))
+                        return Ok(None);
                     }
+                    let value = current.clone();
+                    *current = current.add(step);
+                    return Ok(Some(value_from_bigint(value)));
                 }
-            },
-            _ => None,
+            }
         }
+
+        let PendingMapStep::Evaluate { func, iterators } = pending_map_step;
+
+        let mut call_args = Vec::with_capacity(iterators.len());
+        for iterator in &iterators {
+            match self.next_from_iterator_value(iterator)? {
+                GeneratorResumeOutcome::Yield(value) => call_args.push(value),
+                GeneratorResumeOutcome::Complete(_) => {
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter {
+                        if let IteratorKind::Map { exhausted, .. } = &mut state.kind {
+                            *exhausted = true;
+                        }
+                    }
+                    return Ok(None);
+                }
+                GeneratorResumeOutcome::PropagatedException => {
+                    return Err(self.iteration_error_from_state("map() iteration failed")?);
+                }
+            }
+        }
+
+        let value = match self.call_internal(func, call_args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(RuntimeError::new("map() callable failed"));
+            }
+        };
+
+        let mut iter = iterator_ref.kind_mut();
+        if let Object::Iterator(state) = &mut *iter {
+            if let IteratorKind::Map { values, .. } = &mut state.kind {
+                values.push(value.clone());
+                state.index += 1;
+                return Ok(Some(value));
+            }
+        }
+        Ok(None)
     }
 
     fn resume_generator(
@@ -17303,6 +17379,10 @@ impl Vm {
             BuiltinFunction::All => self.builtin_all(args, kwargs),
             BuiltinFunction::Any => self.builtin_any(args, kwargs),
             BuiltinFunction::Enumerate => self.builtin_enumerate(args, kwargs),
+            BuiltinFunction::WeakRefFinalize => self.builtin_weakref_finalize(args, kwargs),
+            BuiltinFunction::WeakRefFinalizeDetach => {
+                self.builtin_weakref_finalize_detach(args, kwargs)
+            }
             BuiltinFunction::Filter => self.builtin_filter(args, kwargs),
             BuiltinFunction::Reversed => self.builtin_reversed(args, kwargs),
             BuiltinFunction::Zip => self.builtin_zip(args, kwargs),
@@ -17422,6 +17502,7 @@ impl Vm {
             BuiltinFunction::OsRmdir => self.builtin_os_rmdir(args, kwargs),
             BuiltinFunction::OsUTime => self.builtin_os_utime(args, kwargs),
             BuiltinFunction::OsScandir => self.builtin_os_scandir(args, kwargs),
+            BuiltinFunction::OsWalk => self.builtin_os_walk(args, kwargs),
             BuiltinFunction::OsWIfStopped => self.builtin_os_wifstopped(args, kwargs),
             BuiltinFunction::OsWStopSig => self.builtin_os_wstopsig(args, kwargs),
             BuiltinFunction::OsWIfSignaled => self.builtin_os_wifsignaled(args, kwargs),
@@ -17429,6 +17510,7 @@ impl Vm {
             BuiltinFunction::OsWIfExited => self.builtin_os_wifexited(args, kwargs),
             BuiltinFunction::OsWExitStatus => self.builtin_os_wexitstatus(args, kwargs),
             BuiltinFunction::OsListDir => self.builtin_os_listdir(args, kwargs),
+            BuiltinFunction::OsFspath => self.builtin_os_fspath(args, kwargs),
             BuiltinFunction::OsFsEncode => self.builtin_os_fsencode(args, kwargs),
             BuiltinFunction::OsFsDecode => self.builtin_os_fsdecode(args, kwargs),
             BuiltinFunction::OsRemove => self.builtin_os_remove(args, kwargs),
@@ -17441,6 +17523,7 @@ impl Vm {
             BuiltinFunction::OsPathNormPath => self.builtin_os_path_normpath(args, kwargs),
             BuiltinFunction::OsPathNormCase => self.builtin_os_path_normcase(args, kwargs),
             BuiltinFunction::OsPathSplitRootEx => self.builtin_os_path_splitroot_ex(args, kwargs),
+            BuiltinFunction::OsPathSplit => self.builtin_os_path_split(args, kwargs),
             BuiltinFunction::OsPathDirName => self.builtin_os_path_dirname(args, kwargs),
             BuiltinFunction::OsPathBaseName => self.builtin_os_path_basename(args, kwargs),
             BuiltinFunction::OsPathIsAbs => self.builtin_os_path_isabs(args, kwargs),
@@ -19239,7 +19322,7 @@ impl Vm {
     }
 
     fn builtin_int_from_bytes(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -19294,7 +19377,10 @@ impl Vm {
             signed_kw.unwrap_or(Value::Bool(false))
         };
 
-        let bytes = bytes_like_from_value(bytes_arg)?;
+        if matches!(bytes_arg, Value::Str(_)) {
+            return Err(RuntimeError::new("expected bytes-like value"));
+        }
+        let bytes = self.value_to_bytes_payload(bytes_arg)?;
         let byteorder = match byteorder_arg {
             Value::Str(value) if value == "little" || value == "big" => value,
             _ => {
@@ -21659,7 +21745,7 @@ impl Vm {
         let mut result = expect_all;
         match iter {
             Value::Iterator(iterator_ref) => {
-                while let Some(value) = self.iterator_next_value(&iterator_ref) {
+                while let Some(value) = self.iterator_next_value(&iterator_ref)? {
                     let truthy = is_truthy(&value);
                     if expect_all {
                         if !truthy {
@@ -21786,6 +21872,9 @@ impl Vm {
             Value::Class(expected) => match value {
                 _ => {
                     if let Object::Class(class_data) = &*expected.kind() {
+                        if class_data.name == "PathLike" {
+                            return Ok(self.value_has_fspath_protocol(value));
+                        }
                         let marker_match = match class_data.name.as_str() {
                             "NoneType" => matches!(value, Value::None),
                             "function" => matches!(value, Value::Function(_)),
@@ -21833,6 +21922,20 @@ impl Vm {
         }
     }
 
+    fn value_has_fspath_protocol(&self, value: &Value) -> bool {
+        match value {
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => {
+                    instance_data.attrs.contains_key("__fspath__")
+                        || class_attr_lookup(&instance_data.class, "__fspath__").is_some()
+                }
+                _ => false,
+            },
+            Value::Class(class) => class_attr_lookup(class, "__fspath__").is_some(),
+            _ => false,
+        }
+    }
+
     fn class_value_is_subclass_of(
         &self,
         candidate: &Value,
@@ -21866,10 +21969,19 @@ impl Vm {
                 )),
             },
             Value::Class(expected) => match candidate {
-                Value::Class(class) => Ok(self
-                    .class_mro_entries(class)
-                    .iter()
-                    .any(|entry| entry.id() == expected.id())),
+                Value::Class(class) => {
+                    if let Object::Class(expected_data) = &*expected.kind() {
+                        if expected_data.name == "PathLike"
+                            && class_attr_lookup(class, "__fspath__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(self
+                        .class_mro_entries(class)
+                        .iter()
+                        .any(|entry| entry.id() == expected.id()))
+                }
                 Value::Exception(exception) => {
                     let Object::Class(class_data) = &*expected.kind() else {
                         return Ok(false);
@@ -22043,7 +22155,7 @@ impl Vm {
                 }
             },
             Value::Iterator(iterator_ref) => {
-                if let Some(value) = self.iterator_next_value(&iterator_ref) {
+                if let Some(value) = self.iterator_next_value(&iterator_ref)? {
                     Ok(value)
                 } else if let Some(default) = default {
                     Ok(default)
@@ -22107,6 +22219,103 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
+    fn builtin_weakref_finalize(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 {
+            return Err(RuntimeError::new(
+                "finalize() expects object and callback",
+            ));
+        }
+        let object = args.remove(0);
+        let callback = args.remove(0);
+        let callback_args = self.heap.alloc_tuple(args);
+        let callback_kwargs = self.heap.alloc_dict(
+            kwargs
+                .into_iter()
+                .map(|(key, value)| (Value::Str(key), value))
+                .collect(),
+        );
+        let finalizer = match self
+            .heap
+            .alloc_module(ModuleObject::new("__weakref_finalize__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        let detach =
+            self.alloc_builtin_bound_method(BuiltinFunction::WeakRefFinalizeDetach, finalizer.clone());
+        if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
+            module_data
+                .globals
+                .insert("__pyrs_weakref_finalize__".to_string(), Value::Bool(true));
+            module_data.globals.insert("alive".to_string(), Value::Bool(true));
+            module_data.globals.insert("atexit".to_string(), Value::Bool(true));
+            module_data.globals.insert("_obj".to_string(), object);
+            module_data.globals.insert("_func".to_string(), callback);
+            module_data
+                .globals
+                .insert("_args".to_string(), callback_args);
+            module_data
+                .globals
+                .insert("_kwargs".to_string(), callback_kwargs);
+            module_data.globals.insert("detach".to_string(), detach);
+        }
+        Ok(Value::Module(finalizer))
+    }
+
+    fn builtin_weakref_finalize_detach(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("finalize.detach() expects no arguments"));
+        }
+        let finalizer = match &args[0] {
+            Value::Module(obj) => obj.clone(),
+            _ => return Err(RuntimeError::new("invalid finalize receiver")),
+        };
+        let mut obj = Value::None;
+        let mut func = Value::None;
+        let mut call_args = Value::None;
+        let mut call_kwargs = Value::None;
+        let mut alive = false;
+        if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
+            alive = matches!(module_data.globals.get("alive"), Some(Value::Bool(true)));
+            if alive {
+                module_data.globals.insert("alive".to_string(), Value::Bool(false));
+                obj = module_data
+                    .globals
+                    .insert("_obj".to_string(), Value::None)
+                    .unwrap_or(Value::None);
+                func = module_data
+                    .globals
+                    .get("_func")
+                    .cloned()
+                    .unwrap_or(Value::None);
+                call_args = module_data
+                    .globals
+                    .get("_args")
+                    .cloned()
+                    .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()));
+                call_kwargs = module_data
+                    .globals
+                    .get("_kwargs")
+                    .cloned()
+                    .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()));
+            }
+        }
+        if !alive || matches!(obj, Value::None) {
+            return Ok(Value::None);
+        }
+        Ok(self
+            .heap
+            .alloc_tuple(vec![obj, func, call_args, call_kwargs]))
+    }
+
     fn builtin_map(
         &mut self,
         mut args: Vec<Value>,
@@ -22126,36 +22335,16 @@ impl Vm {
             iterators.push(iterator);
         }
 
-        let mut mapped = Vec::new();
-        loop {
-            let mut call_args = Vec::with_capacity(iterators.len());
-            for iterator in &iterators {
-                match self.next_from_iterator_value(iterator)? {
-                    GeneratorResumeOutcome::Yield(value) => call_args.push(value),
-                    GeneratorResumeOutcome::Complete(_) => {
-                        return Ok(self.heap.alloc_iterator(IteratorObject {
-                            kind: IteratorKind::Map {
-                                values: mapped,
-                                func,
-                                sources,
-                            },
-                            index: 0,
-                        }));
-                    }
-                    GeneratorResumeOutcome::PropagatedException => {
-                        return Err(self.iteration_error_from_state("map() iteration failed")?);
-                    }
-                }
-            }
-
-            let value = match self.call_internal(func.clone(), call_args, HashMap::new())? {
-                InternalCallOutcome::Value(value) => value,
-                InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(RuntimeError::new("map() callable failed"));
-                }
-            };
-            mapped.push(value);
-        }
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Map {
+                values: Vec::new(),
+                func,
+                iterators,
+                sources,
+                exhausted: false,
+            },
+            index: 0,
+        }))
     }
 
     fn builtin_filter(
@@ -24921,7 +25110,7 @@ impl Vm {
             return Err(RuntimeError::new("write() expects fd and data"));
         }
         let fd = value_to_int(args.remove(0))?;
-        let payload = value_to_bytes_payload(args.remove(0))?;
+        let payload = self.value_to_bytes_payload(args.remove(0))?;
         if let Some(file) = self.find_open_file_mut(fd) {
             use std::io::Write;
             file.write_all(&payload)
@@ -25161,6 +25350,95 @@ impl Vm {
         Ok(self.heap.alloc_list(rows))
     }
 
+    fn builtin_os_walk(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new("walk() expects one positional argument"));
+        }
+        let root_str = value_to_path(&args.remove(0))?;
+        let topdown = kwargs
+            .remove("topdown")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(true);
+        let followlinks = kwargs
+            .remove("followlinks")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let _ = kwargs.remove("onerror");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "walk() got an unexpected keyword argument",
+            ));
+        }
+
+        let root = PathBuf::from(&root_str);
+        let mut rows = Vec::new();
+
+        fn collect_walk(
+            vm: &mut Vm,
+            rows: &mut Vec<Value>,
+            current: &Path,
+            topdown: bool,
+            followlinks: bool,
+        ) -> Result<(), RuntimeError> {
+            let entries = fs::read_dir(current)
+                .map_err(|err| RuntimeError::new(format!("walk failed: {err}")))?;
+            let mut dir_entries: Vec<(String, PathBuf)> = Vec::new();
+            let mut file_entries: Vec<String> = Vec::new();
+            for entry in entries {
+                let entry = entry.map_err(|err| RuntimeError::new(format!("walk failed: {err}")))?;
+                let name = entry.file_name().to_string_lossy().to_string();
+                let path = entry.path();
+                let file_type = entry
+                    .file_type()
+                    .map_err(|err| RuntimeError::new(format!("walk failed: {err}")))?;
+                if file_type.is_dir() {
+                    dir_entries.push((name, path));
+                } else if file_type.is_symlink() && followlinks {
+                    dir_entries.push((name, path));
+                } else {
+                    file_entries.push(name);
+                }
+            }
+            dir_entries.sort_by(|a, b| a.0.cmp(&b.0));
+            file_entries.sort();
+
+            let emit_row = |vm: &mut Vm, rows: &mut Vec<Value>| {
+                let dirnames = vm.heap.alloc_list(
+                    dir_entries
+                        .iter()
+                        .map(|(name, _)| Value::Str(name.clone()))
+                        .collect(),
+                );
+                let filenames = vm
+                    .heap
+                    .alloc_list(file_entries.iter().map(|name| Value::Str(name.clone())).collect());
+                rows.push(vm.heap.alloc_tuple(vec![
+                    Value::Str(current.to_string_lossy().to_string()),
+                    dirnames,
+                    filenames,
+                ]));
+            };
+
+            if topdown {
+                emit_row(vm, rows);
+            }
+            for (_, child) in &dir_entries {
+                collect_walk(vm, rows, child, topdown, followlinks)?;
+            }
+            if !topdown {
+                emit_row(vm, rows);
+            }
+            Ok(())
+        }
+
+        collect_walk(self, &mut rows, &root, topdown, followlinks)?;
+        Ok(self.heap.alloc_list(rows))
+    }
+
     fn builtin_os_listdir(
         &mut self,
         args: Vec<Value>,
@@ -25184,6 +25462,36 @@ impl Vm {
         }
         names.sort_by(|a, b| format_value(a).cmp(&format_value(b)));
         Ok(self.heap.alloc_list(names))
+    }
+
+    fn builtin_os_fspath(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("fspath() expects one argument"));
+        }
+        let value = args[0].clone();
+        match value {
+            Value::Str(_) | Value::Bytes(_) => Ok(value),
+            _ => {
+                let Some(fspath) = self.lookup_bound_special_method(&value, "__fspath__")? else {
+                    return Err(RuntimeError::new(
+                        "expected str, bytes or os.PathLike object",
+                    ));
+                };
+                match self.call_internal(fspath, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(path) => match path {
+                        Value::Str(_) | Value::Bytes(_) => Ok(path),
+                        _ => Err(RuntimeError::new("__fspath__() must return str or bytes")),
+                    },
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(RuntimeError::new("__fspath__() raised an exception"))
+                    }
+                }
+            }
+        }
     }
 
     fn builtin_os_fsencode(
@@ -25609,7 +25917,7 @@ impl Vm {
         if let Some(mut child) = self.child_processes.remove(&pid) {
             if let Some(input) = input {
                 if let Some(stdin) = child.stdin.as_mut() {
-                    let payload = value_to_bytes_payload(input)?;
+                    let payload = self.value_to_bytes_payload(input)?;
                     stdin
                         .write_all(&payload)
                         .map_err(|err| RuntimeError::new(format!("stdin write failed: {err}")))?;
@@ -26024,11 +26332,23 @@ impl Vm {
         if args.is_empty() {
             return Ok(Value::Str(".".to_string()));
         }
+        let first_is_bytes = matches!(args[0], Value::Bytes(_));
         let mut out = PathBuf::from(value_to_path(&args[0])?);
         for part in args.iter().skip(1) {
+            let part_is_bytes = matches!(part, Value::Bytes(_));
+            if part_is_bytes != first_is_bytes {
+                return Err(RuntimeError::new(
+                    "can't mix strings and bytes in path components",
+                ));
+            }
             out.push(value_to_path(part)?);
         }
-        Ok(Value::Str(out.to_string_lossy().to_string()))
+        let joined = out.to_string_lossy().to_string();
+        if first_is_bytes {
+            Ok(self.heap.alloc_bytes(joined.into_bytes()))
+        } else {
+            Ok(Value::Str(joined))
+        }
     }
 
     fn builtin_os_path_normpath(
@@ -26039,9 +26359,14 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("_path_normpath() expects one argument"));
         }
+        let return_bytes = matches!(args[0], Value::Bytes(_));
         let path = value_to_path(&args[0])?;
         if path.is_empty() {
-            return Ok(Value::Str(".".to_string()));
+            return if return_bytes {
+                Ok(self.heap.alloc_bytes(b".".to_vec()))
+            } else {
+                Ok(Value::Str(".".to_string()))
+            };
         }
 
         let (initial_slashes, remainder) = if let Some(stripped) = path.strip_prefix("//") {
@@ -26074,9 +26399,17 @@ impl Vm {
         let joined = comps.join("/");
         let out = format!("{initial_slashes}{joined}");
         if out.is_empty() {
-            Ok(Value::Str(".".to_string()))
+            if return_bytes {
+                Ok(self.heap.alloc_bytes(b".".to_vec()))
+            } else {
+                Ok(Value::Str(".".to_string()))
+            }
         } else {
-            Ok(Value::Str(out))
+            if return_bytes {
+                Ok(self.heap.alloc_bytes(out.into_bytes()))
+            } else {
+                Ok(Value::Str(out))
+            }
         }
     }
 
@@ -26088,11 +26421,17 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("normcase() expects one argument"));
         }
+        let return_bytes = matches!(args[0], Value::Bytes(_));
         let path = value_to_path(&args[0])?;
-        if cfg!(windows) {
-            Ok(Value::Str(path.replace('/', "\\").to_ascii_lowercase()))
+        let out = if cfg!(windows) {
+            path.replace('/', "\\").to_ascii_lowercase()
         } else {
-            Ok(Value::Str(path))
+            path
+        };
+        if return_bytes {
+            Ok(self.heap.alloc_bytes(out.into_bytes()))
+        } else {
+            Ok(Value::Str(out))
         }
     }
 
@@ -26128,9 +26467,14 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("dirname() expects one argument"));
         }
+        let return_bytes = matches!(args[0], Value::Bytes(_));
         let path = value_to_path(&args[0])?;
         if path.is_empty() {
-            return Ok(Value::Str(String::new()));
+            return if return_bytes {
+                Ok(self.heap.alloc_bytes(Vec::new()))
+            } else {
+                Ok(Value::Str(String::new()))
+            };
         }
         let idx = path.rfind('/').map(|value| value + 1).unwrap_or(0);
         let mut head = path[..idx].to_string();
@@ -26139,7 +26483,39 @@ impl Vm {
                 head.pop();
             }
         }
-        Ok(Value::Str(head))
+        if return_bytes {
+            Ok(self.heap.alloc_bytes(head.into_bytes()))
+        } else {
+            Ok(Value::Str(head))
+        }
+    }
+
+    fn builtin_os_path_split(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("split() expects one argument"));
+        }
+        let return_bytes = matches!(args[0], Value::Bytes(_));
+        let path = value_to_path(&args[0])?;
+        let idx = path.rfind('/').map(|value| value + 1).unwrap_or(0);
+        let mut head = path[..idx].to_string();
+        let tail = path[idx..].to_string();
+        if !head.is_empty() && head != "/".repeat(head.len()) {
+            while head.ends_with('/') {
+                head.pop();
+            }
+        }
+        if return_bytes {
+            Ok(self.heap.alloc_tuple(vec![
+                self.heap.alloc_bytes(head.into_bytes()),
+                self.heap.alloc_bytes(tail.into_bytes()),
+            ]))
+        } else {
+            Ok(self.heap.alloc_tuple(vec![Value::Str(head), Value::Str(tail)]))
+        }
     }
 
     fn builtin_os_path_basename(
@@ -26150,9 +26526,15 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("basename() expects one argument"));
         }
+        let return_bytes = matches!(args[0], Value::Bytes(_));
         let path = value_to_path(&args[0])?;
         let idx = path.rfind('/').map(|value| value + 1).unwrap_or(0);
-        Ok(Value::Str(path[idx..].to_string()))
+        let tail = path[idx..].to_string();
+        if return_bytes {
+            Ok(self.heap.alloc_bytes(tail.into_bytes()))
+        } else {
+            Ok(Value::Str(tail))
+        }
     }
 
     fn builtin_os_path_isabs(
@@ -26199,6 +26581,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("splitext() expects one argument"));
         }
+        let return_bytes = matches!(args[0], Value::Bytes(_));
         let path = value_to_path(&args[0])?;
         let slash = path.rfind('/').map(|idx| idx + 1).unwrap_or(0);
         let dot = path[slash..]
@@ -26210,9 +26593,16 @@ impl Vm {
         } else {
             (path, String::new())
         };
-        Ok(self
-            .heap
-            .alloc_tuple(vec![Value::Str(root), Value::Str(ext)]))
+        if return_bytes {
+            Ok(self.heap.alloc_tuple(vec![
+                self.heap.alloc_bytes(root.into_bytes()),
+                self.heap.alloc_bytes(ext.into_bytes()),
+            ]))
+        } else {
+            Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Str(root), Value::Str(ext)]))
+        }
     }
 
     fn builtin_os_path_abspath(
@@ -26223,6 +26613,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("abspath() expects one argument"));
         }
+        let return_bytes = matches!(args[0], Value::Bytes(_));
         let path = value_to_path(&args[0])?;
         let joined = if path.starts_with('/') {
             path
@@ -26231,7 +26622,15 @@ impl Vm {
                 .map_err(|err| RuntimeError::new(format!("abspath failed: {err}")))?;
             cwd.join(path).to_string_lossy().to_string()
         };
-        self.builtin_os_path_normpath(vec![Value::Str(joined)], HashMap::new())
+        let normalized = self.builtin_os_path_normpath(vec![Value::Str(joined)], HashMap::new())?;
+        if return_bytes {
+            match normalized {
+                Value::Str(text) => Ok(self.heap.alloc_bytes(text.into_bytes())),
+                other => Ok(other),
+            }
+        } else {
+            Ok(normalized)
+        }
     }
 
     fn builtin_os_path_expanduser(
@@ -26242,12 +26641,21 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("expanduser() expects one argument"));
         }
+        let return_bytes = matches!(args[0], Value::Bytes(_));
         let path = value_to_path(&args[0])?;
         if !path.starts_with('~') {
-            return Ok(Value::Str(path));
+            return if return_bytes {
+                Ok(self.heap.alloc_bytes(path.into_bytes()))
+            } else {
+                Ok(Value::Str(path))
+            };
         }
         if path != "~" && !path.starts_with("~/") {
-            return Ok(Value::Str(path));
+            return if return_bytes {
+                Ok(self.heap.alloc_bytes(path.into_bytes()))
+            } else {
+                Ok(Value::Str(path))
+            };
         }
 
         let home = std::env::var("HOME")
@@ -26260,9 +26668,18 @@ impl Vm {
             })
             .unwrap_or_else(|| "~".to_string());
         if path == "~" {
-            Ok(Value::Str(home))
+            if return_bytes {
+                Ok(self.heap.alloc_bytes(home.into_bytes()))
+            } else {
+                Ok(Value::Str(home))
+            }
         } else {
-            Ok(Value::Str(format!("{home}{}", &path[1..])))
+            let expanded = format!("{home}{}", &path[1..]);
+            if return_bytes {
+                Ok(self.heap.alloc_bytes(expanded.into_bytes()))
+            } else {
+                Ok(Value::Str(expanded))
+            }
         }
     }
 
@@ -30647,7 +31064,7 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "write")?;
         let fd = self.io_file_fd_from_instance(&instance)?;
         let payload = if Self::io_file_is_binary(&instance) {
-            value_to_bytes_payload(args.remove(0))?
+            self.value_to_bytes_payload(args.remove(0))?
         } else {
             match args.remove(0) {
                 Value::Str(text) => {
@@ -31178,7 +31595,8 @@ impl Vm {
                 }
             }
             Some(other) => {
-                let bytes = value_to_bytes_payload(other)
+                let bytes = self
+                    .value_to_bytes_payload(other)
                     .map_err(|_| RuntimeError::new("BytesIO internal buffer is invalid"))?;
                 match self.heap.alloc_bytearray(bytes) {
                     Value::ByteArray(obj) => (obj, true),
@@ -34675,7 +35093,7 @@ impl Vm {
         match iter {
             Value::Iterator(iterator_ref) => {
                 let mut out = Vec::new();
-                while let Some(value) = self.iterator_next_value(&iterator_ref) {
+                while let Some(value) = self.iterator_next_value(&iterator_ref)? {
                     out.push(value);
                 }
                 Ok(out)
@@ -34707,6 +35125,75 @@ impl Vm {
                 Ok(out)
             }
             _ => Err(RuntimeError::new("expected iterable")),
+        }
+    }
+
+    fn value_to_bytes_payload(&mut self, value: Value) -> Result<Vec<u8>, RuntimeError> {
+        match value {
+            Value::Iterator(iterator_ref) => {
+                let mut out = Vec::new();
+                while let Some(value) = self.iterator_next_value(&iterator_ref)? {
+                    let byte = value_to_int(value)?;
+                    if !(0..=255).contains(&byte) {
+                        return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                    }
+                    out.push(byte as u8);
+                }
+                Ok(out)
+            }
+            Value::Generator(generator) => {
+                let mut out = Vec::new();
+                loop {
+                    match self.generator_for_iter_next(&generator)? {
+                        GeneratorResumeOutcome::Yield(value) => {
+                            let byte = value_to_int(value)?;
+                            if !(0..=255).contains(&byte) {
+                                return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                            }
+                            out.push(byte as u8);
+                        }
+                        GeneratorResumeOutcome::Complete(_) => break,
+                        GeneratorResumeOutcome::PropagatedException => {
+                            return Err(self.iteration_error_from_state("iteration failed")?);
+                        }
+                    }
+                }
+                Ok(out)
+            }
+            Value::Instance(instance) => {
+                let instance_value = Value::Instance(instance);
+                match value_to_bytes_payload(instance_value.clone()) {
+                    Ok(payload) => Ok(payload),
+                    Err(_) => {
+                        self.ensure_sync_iterator_target(&instance_value)?;
+                        let iterator = self
+                            .to_iterator_value(instance_value)
+                            .map_err(|_| RuntimeError::new("expected bytes-like payload"))?;
+                        let mut out = Vec::new();
+                        loop {
+                            match self.next_from_iterator_value(&iterator)? {
+                                GeneratorResumeOutcome::Yield(value) => {
+                                    let byte = value_to_int(value)?;
+                                    if !(0..=255).contains(&byte) {
+                                        return Err(RuntimeError::new(
+                                            "byte must be in range(0, 256)",
+                                        ));
+                                    }
+                                    out.push(byte as u8);
+                                }
+                                GeneratorResumeOutcome::Complete(_) => break,
+                                GeneratorResumeOutcome::PropagatedException => {
+                                    return Err(
+                                        self.iteration_error_from_state("iteration failed")?,
+                                    );
+                                }
+                            }
+                        }
+                        Ok(out)
+                    }
+                }
+            }
+            other => value_to_bytes_payload(other),
         }
     }
 
