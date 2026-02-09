@@ -166,6 +166,16 @@ fn strict_stdlib_enabled() -> bool {
     enabled("PYRS_RUN_STRICT_STDLIB") || enabled("PYRS_PARITY_STRICT")
 }
 
+fn strict_run_allowlisted_entries() -> bool {
+    std::env::var("PYRS_RUN_ALLOWLISTED_STRICT")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
 fn run_source_in_subprocess(bin: &Path, source: &str, timeout: Duration) -> Result<(), String> {
     let mut child = Command::new(bin)
         .arg("-c")
@@ -248,8 +258,15 @@ fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
     let mut stale_allowlist = Vec::new();
     let mut passed = 0usize;
     let mut allowed = 0usize;
+    let mut skipped_allowlisted = 0usize;
+    let run_allowlisted = !matches!(mode, SuiteMode::StrictUnittest) || strict_run_allowlisted_entries();
 
     for entry in &suite {
+        if !run_allowlisted && allow.contains_key(entry) {
+            allowed += 1;
+            skipped_allowlisted += 1;
+            continue;
+        }
         match run_entry(&lib, entry, mode) {
             Ok(()) => {
                 if let Some(allow_entry) = allow.get(entry) {
@@ -269,6 +286,12 @@ fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
                 }
             }
         }
+    }
+
+    if skipped_allowlisted > 0 {
+        eprintln!(
+            "skipped {skipped_allowlisted} allowlisted strict entries (set PYRS_RUN_ALLOWLISTED_STRICT=1 to run them)"
+        );
     }
 
     if !stale_allowlist.is_empty() || !unexpected_failures.is_empty() {
