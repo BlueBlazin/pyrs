@@ -4,6 +4,7 @@ const PERTURB_SHIFT: usize = 5;
 const MIN_TABLE_SIZE: usize = 8;
 const LOAD_NUMERATOR: usize = 2;
 const LOAD_DENOMINATOR: usize = 3;
+const MAX_PERTURB_ROUNDS: usize = (usize::BITS as usize / PERTURB_SHIFT) + 2;
 
 #[derive(Debug, Clone, Copy)]
 enum DictSlot {
@@ -231,7 +232,8 @@ impl DictBackend {
         let mut slot = (hash as usize) & mask;
         let mut perturb = hash as usize;
         let mut first_dummy = None;
-        for _ in 0..self.slots.len() {
+        // CPython probing may need extra rounds while perturb collapses to zero.
+        for _ in 0..(self.slots.len() + MAX_PERTURB_ROUNDS) {
             match self.slots[slot] {
                 DictSlot::Empty => return first_dummy.unwrap_or(slot),
                 DictSlot::Dummy => {
@@ -254,7 +256,8 @@ impl DictBackend {
         let mut perturb = hash as usize;
         let mut first_dummy = None;
 
-        for _ in 0..self.slots.len() {
+        // CPython probing may need extra rounds while perturb collapses to zero.
+        for _ in 0..(self.slots.len() + MAX_PERTURB_ROUNDS) {
             match self.slots[slot] {
                 DictSlot::Empty => return SlotLookup::Vacant(first_dummy.unwrap_or(slot)),
                 DictSlot::Dummy => {
@@ -398,5 +401,22 @@ mod tests {
         assert_eq!(backend.find(&missing), None);
         backend.insert(missing.clone(), Value::Int(99));
         assert_eq!(backend.find(&missing), Some(&Value::Int(99)));
+    }
+
+    #[test]
+    fn string_key_lookup_remains_correct_after_dense_inserts() {
+        let backend = DictBackend::new(vec![
+            (Value::Str("i1".to_string()), Value::Str("2147483648".to_string())),
+            (Value::Str("float".to_string()), Value::Str("43.0e12".to_string())),
+            (Value::Str("i2".to_string()), Value::Str("17".to_string())),
+            (Value::Str("s1".to_string()), Value::Str("abc".to_string())),
+            (Value::Str("s2".to_string()), Value::Str("def".to_string())),
+        ]);
+
+        assert_eq!(
+            backend.find(&Value::Str("s2".to_string())),
+            Some(&Value::Str("def".to_string()))
+        );
+        assert!(backend.contains_key(&Value::Str("s2".to_string())));
     }
 }
