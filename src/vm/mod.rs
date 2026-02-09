@@ -3859,21 +3859,39 @@ impl Vm {
                     }
                     ("BytesIO", bytesio)
                 },
-                (
-                    "BufferedReader",
-                    self.heap
-                        .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new())),
-                ),
-                (
-                    "BufferedWriter",
-                    self.heap
-                        .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new())),
-                ),
-                (
-                    "BufferedRandom",
-                    self.heap
-                        .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new())),
-                ),
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_io_file_methods(class_data);
+                        }
+                    }
+                    ("BufferedReader", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_io_file_methods(class_data);
+                        }
+                    }
+                    ("BufferedWriter", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_io_file_methods(class_data);
+                        }
+                    }
+                    ("BufferedRandom", class)
+                },
                 (
                     "BufferedRWPair",
                     self.heap
@@ -4038,70 +4056,7 @@ impl Vm {
                         .alloc_class(ClassObject::new("FileIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &fileio {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileRead),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "readlines".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadLines),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileWrite),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileTell),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileClose),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileFlush),
-                            );
-                            class_data.attrs.insert(
-                                "__iter__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileIter),
-                            );
-                            class_data.attrs.insert(
-                                "__next__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileNext),
-                            );
-                            class_data.attrs.insert(
-                                "__enter__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileEnter),
-                            );
-                            class_data.attrs.insert(
-                                "__exit__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileExit),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileFileno),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileSeekable),
-                            );
+                            Self::install_io_file_methods(class_data);
                         }
                     }
                     ("FileIO", fileio)
@@ -4172,21 +4127,39 @@ impl Vm {
                     }
                     ("BytesIO", bytesio)
                 },
-                (
-                    "BufferedReader",
-                    self.heap
-                        .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new())),
-                ),
-                (
-                    "BufferedWriter",
-                    self.heap
-                        .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new())),
-                ),
-                (
-                    "BufferedRandom",
-                    self.heap
-                        .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new())),
-                ),
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_io_file_methods(class_data);
+                        }
+                    }
+                    ("BufferedReader", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_io_file_methods(class_data);
+                        }
+                    }
+                    ("BufferedWriter", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_io_file_methods(class_data);
+                        }
+                    }
+                    ("BufferedRandom", class)
+                },
                 (
                     "BufferedRWPair",
                     self.heap
@@ -29619,8 +29592,27 @@ impl Vm {
         let raw_instance = self.alloc_io_file_instance(
             "FileIO", fd, &raw_mode, true, closefd, None, None, None,
         )?;
+        let buffered_instance = if buffering == 0 {
+            raw_instance.clone()
+        } else {
+            let buffered_class = if mode_kind == 'r' && !updating {
+                "BufferedReader"
+            } else if (mode_kind == 'w' || mode_kind == 'x' || mode_kind == 'a') && !updating {
+                "BufferedWriter"
+            } else {
+                "BufferedRandom"
+            };
+            let instance =
+                self.alloc_io_file_instance(buffered_class, fd, &raw_mode, true, closefd, None, None, None)?;
+            if let Value::Instance(buffer_ref) = &instance {
+                if let Value::Instance(raw_ref) = &raw_instance {
+                    Self::instance_attr_set(buffer_ref, "raw", Value::Instance(raw_ref.clone()))?;
+                }
+            }
+            instance
+        };
         if binary_mode {
-            return Ok(raw_instance);
+            return Ok(buffered_instance);
         }
         let text_instance = self.alloc_io_file_instance(
             "TextIOWrapper",
@@ -29633,9 +29625,10 @@ impl Vm {
             newline,
         )?;
         let line_buffering = buffering == 1;
-        if let (Value::Instance(text_ref), Value::Instance(raw_ref)) = (&text_instance, &raw_instance)
+        if let (Value::Instance(text_ref), Value::Instance(raw_ref), Value::Instance(buffer_ref)) =
+            (&text_instance, &raw_instance, &buffered_instance)
         {
-            Self::instance_attr_set(text_ref, "buffer", Value::Instance(raw_ref.clone()))?;
+            Self::instance_attr_set(text_ref, "buffer", Value::Instance(buffer_ref.clone()))?;
             Self::instance_attr_set(text_ref, "raw", Value::Instance(raw_ref.clone()))?;
             Self::instance_attr_set(text_ref, "_line_buffering", Value::Bool(line_buffering))?;
         }
@@ -29878,6 +29871,73 @@ impl Vm {
         }
     }
 
+    fn install_io_file_methods(class_data: &mut ClassObject) {
+        class_data.attrs.insert(
+            "read".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileRead),
+        );
+        class_data.attrs.insert(
+            "readline".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileReadLine),
+        );
+        class_data.attrs.insert(
+            "readlines".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileReadLines),
+        );
+        class_data.attrs.insert(
+            "write".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileWrite),
+        );
+        class_data.attrs.insert(
+            "seek".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileSeek),
+        );
+        class_data.attrs.insert(
+            "tell".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileTell),
+        );
+        class_data.attrs.insert(
+            "close".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileClose),
+        );
+        class_data.attrs.insert(
+            "flush".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileFlush),
+        );
+        class_data.attrs.insert(
+            "__iter__".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileIter),
+        );
+        class_data.attrs.insert(
+            "__next__".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileNext),
+        );
+        class_data.attrs.insert(
+            "__enter__".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileEnter),
+        );
+        class_data.attrs.insert(
+            "__exit__".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileExit),
+        );
+        class_data.attrs.insert(
+            "fileno".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileFileno),
+        );
+        class_data.attrs.insert(
+            "readable".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileReadable),
+        );
+        class_data.attrs.insert(
+            "writable".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileWritable),
+        );
+        class_data.attrs.insert(
+            "seekable".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileSeekable),
+        );
+    }
+
     fn alloc_io_file_instance(
         &self,
         class_name: &str,
@@ -30059,19 +30119,33 @@ impl Vm {
         ) {
             return Ok(());
         }
-        let fd = match Self::instance_attr_get(instance, "_fd") {
-            Some(Value::Int(fd)) => fd,
-            _ => return Err(RuntimeError::new("invalid file object")),
-        };
-        let closefd = !matches!(
-            Self::instance_attr_get(instance, "_closefd"),
-            Some(Value::Bool(false))
-        );
-        if closefd {
-            self.open_files.remove(&fd);
+
+        let mut linked = Vec::new();
+        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") {
+            if buffer.id() != instance.id() {
+                linked.push(buffer);
+            }
+        }
+        if let Some(Value::Instance(raw)) = Self::instance_attr_get(instance, "raw") {
+            if raw.id() != instance.id() && !linked.iter().any(|item| item.id() == raw.id()) {
+                linked.push(raw);
+            }
+        }
+
+        if let Some(Value::Int(fd)) = Self::instance_attr_get(instance, "_fd") {
+            let closefd = !matches!(
+                Self::instance_attr_get(instance, "_closefd"),
+                Some(Value::Bool(false))
+            );
+            if closefd {
+                self.open_files.remove(&fd);
+            }
         }
         Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
         Self::instance_attr_set(instance, "closed", Value::Bool(true))?;
+        for nested in linked {
+            self.io_file_close_instance(&nested)?;
+        }
         Ok(())
     }
 

@@ -6257,6 +6257,74 @@ ok = (payload == 'payload' and closed_ok)
 }
 
 #[test]
+fn io_open_binary_uses_buffered_classes_with_raw_link() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_buffered_class_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+reader = io.open(path, 'rb')
+writer = io.open(path, 'wb')
+random = io.open(path, 'r+b')
+raw = io.open(path, 'rb', buffering=0)
+ok = (
+    type(reader).__name__ == 'BufferedReader'
+    and type(writer).__name__ == 'BufferedWriter'
+    and type(random).__name__ == 'BufferedRandom'
+    and type(raw).__name__ == 'FileIO'
+    and type(reader.raw).__name__ == 'FileIO'
+)
+reader.close()
+writer.close()
+random.close()
+raw.close()
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_text_wrapper_close_marks_buffer_chain_closed() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_close_chain_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+text = io.open(path, 'r')
+buffer = text.buffer
+raw = text.raw
+text.close()
+ok = text.closed and buffer.closed and raw.closed
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
 fn io_open_rejects_negative_fd_from_opener() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
