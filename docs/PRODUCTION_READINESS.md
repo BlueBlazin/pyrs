@@ -129,6 +129,7 @@ Milestone 12 closure record is tracked in `docs/MILESTONE_12_BACKLOG.md`.
 - [x] P0: Prior strict pickle metaclass-construction blocker is closed (`type`-derived metaclass invocation no longer falls through instance/object-init paths; dynamic-class pickle flow no longer fails with `object.__init__() takes exactly one argument`).
 - [x] P0: Prior strict pickle singleton/reducer and bytes API blockers are closed (`object.__reduce_ex__` now returns builtin singleton names for `Ellipsis`/`NotImplemented`; `bytes.join` is implemented for bytes-like iterables).
 - [x] P0: Prior strict pickle frame/dispatch blockers are closed (protocol 4/5 frame splitting no longer corrupts large-opcode payloads, and class/instance `dispatch_table` now forwards to pure fallback picklers).
+- [x] P0: Prior strict pickle `myint` copy-equality blocker is closed (runtime `int`-subclass equality now compares int-backed instance payloads, so `myint(4) == myint(4)` and strict `test_pickle` `test_misc` equality paths match CPython behavior).
 - [x] P1: Differential tests vs CPython on curated script corpus (`tests/differential_cpython.rs`).
 - [x] P1: Fuzzing for parser + VM (syntax + runtime) (`tests/fuzz_parser_vm.rs` + arithmetic fuzz suites).
 - [x] P1: Module-local unit tests for high-risk helper internals (`src/vm/containers.rs`, `src/vm/stdlib/json.rs`, `src/vm/stdlib/csv.rs`) are now in place as an early regression gate.

@@ -373,6 +373,7 @@ Progress:
 - Native `_pickle` bootstrap parity follow-up landed: `_pickle` now supports direct `from _pickle import dump, dumps, load, loads, Pickler, Unpickler` import paths (not only attribute probes), and local shim files for `_pickle`/`copyreg` were removed in favor of VM-native module bootstrap.
 - `_pickle` framed-stream correctness follow-up landed: protocol 4/5 frame chunking now advances to the next full opcode boundary when no boundary exists inside the target frame window, fixing corrupted frame streams on large payload opcodes (`CDumpPickle_LoadPickle.test_framed_write_sizes_with_delayed_writer` now passes in release runs).
 - `_pickle` dispatch-table parity follow-up landed: class-level and instance-level `dispatch_table` are now resolved through full attribute lookup and mirrored onto pure fallback picklers, closing strict `CChainDispatchTableTests` failure in allowlisted runs.
+- `int`-subclass comparison parity follow-up landed: runtime equality now compares int-backed instance payloads as numeric values (`myint(4) == myint(4)`), unblocking strict pickle `test_misc` copy-equality failures and adding dedicated VM regression coverage for int-subclass equality + pickle roundtrip equality.
 - Import opcode parity follow-up landed: `ImportFromCpython` now resolves module attributes through module attribute machinery (`load_attr_module`), so module-level `__getattr__` fallback participates in `from ... import ...` resolution as expected.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
