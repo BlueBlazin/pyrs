@@ -27868,7 +27868,7 @@ impl Vm {
                 if !closefd {
                     return Err(RuntimeError::new("Cannot use closefd=False with file name"));
                 }
-                let path = value_to_path(&pathlike)?;
+                let path = self.io_open_path_from_value(pathlike)?;
                 if let Some(opener) = opener_value {
                     let mut flags = if update {
                         2
@@ -27945,6 +27945,29 @@ impl Vm {
         self.alloc_io_file_instance(
             class_name, fd, &mode, binary, closefd, encoding, errors, newline,
         )
+    }
+
+    fn io_open_path_from_value(&mut self, value: Value) -> Result<String, RuntimeError> {
+        match value {
+            Value::Str(_) | Value::Bytes(_) => value_to_path(&value),
+            other => {
+                let Some(fspath) = self.lookup_bound_special_method(&other, "__fspath__")? else {
+                    return Err(RuntimeError::new(
+                        "expected str, bytes or os.PathLike object",
+                    ));
+                };
+                let path_value = match self.call_internal(fspath, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("__fspath__() raised an exception"));
+                    }
+                };
+                match path_value {
+                    Value::Str(_) | Value::Bytes(_) => value_to_path(&path_value),
+                    _ => Err(RuntimeError::new("__fspath__() must return str or bytes")),
+                }
+            }
+        }
     }
 
     fn builtin_io_read_text(

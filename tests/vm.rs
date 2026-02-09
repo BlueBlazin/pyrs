@@ -5409,6 +5409,68 @@ ok = (line == 'alpha\\n' and lines == ['alpha\\n', 'beta\\n'])\n",
 }
 
 #[test]
+fn io_open_accepts_pathlike_dunder_fspath_string() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_fspath_str_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+    let path = temp.to_string_lossy().replace('\\', "\\\\");
+
+    let source = format!(
+        r#"import io
+class P:
+    def __fspath__(self):
+        return '{path}'
+reader = io.open(P(), 'rb')
+data = reader.read()
+reader.close()
+ok = (data == b'payload')
+"#,
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_accepts_pathlike_dunder_fspath_bytes() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_fspath_bytes_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+    let path = temp.to_string_lossy().replace('\\', "\\\\");
+
+    let source = format!(
+        r#"import io
+import os
+path = '{path}'
+class P:
+    def __fspath__(self):
+        return os.fsencode(path)
+reader = io.open(P(), 'rb')
+data = reader.read()
+reader.close()
+ok = (data == b'payload')
+"#,
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
 fn exposes_platform_libc_ver_tuple() {
     let source = "import platform\ninfo = platform.libc_ver()\nok = isinstance(info, tuple) and len(info) == 2 and isinstance(info[0], str) and isinstance(info[1], str)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
