@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use super::class_name_for_instance;
-use super::containers::{dedup_hashable_values, ensure_hashable};
+use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
 use super::{
     NumericValue, mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div,
     python_mod, value_to_int,
@@ -1080,18 +1080,12 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::Dict(obj) => match &*obj.kind() {
-            Object::Dict(entries) => {
-                ensure_hashable(left)?;
-                Ok(entries.contains_key(left))
-            }
+            Object::Dict(_) => dict_contains_key_checked(obj, left),
             _ => Err(RuntimeError::new("unsupported operand type for in")),
         },
         Value::DictKeys(obj) => match &*obj.kind() {
             Object::DictKeysView(view) => match &*view.dict.kind() {
-                Object::Dict(entries) => {
-                    ensure_hashable(left)?;
-                    Ok(entries.contains_key(left))
-                }
+                Object::Dict(_) => dict_contains_key_checked(&view.dict, left),
                 _ => Err(RuntimeError::new("unsupported operand type for in")),
             },
             _ => Err(RuntimeError::new("unsupported operand type for in")),

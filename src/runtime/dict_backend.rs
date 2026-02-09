@@ -80,8 +80,17 @@ impl DictBackend {
         Some(&self.entries[index].1)
     }
 
+    pub(super) fn find_with_hash(&self, key: &Value, hash: u64) -> Option<&Value> {
+        let index = self.find_index_with_hash(key, hash)?;
+        Some(&self.entries[index].1)
+    }
+
     pub(super) fn contains_key(&self, key: &Value) -> bool {
         self.find_index(key).is_some()
+    }
+
+    pub(super) fn contains_key_with_hash(&self, key: &Value, hash: u64) -> bool {
+        self.find_index_with_hash(key, hash).is_some()
     }
 
     pub(super) fn insert(&mut self, key: Value, value: Value) {
@@ -118,6 +127,11 @@ impl DictBackend {
         Some(self.remove(index))
     }
 
+    pub(super) fn remove_key_with_hash(&mut self, key: &Value, hash: u64) -> Option<(Value, Value)> {
+        let index = self.find_index_with_hash(key, hash)?;
+        Some(self.remove(index))
+    }
+
     pub(super) fn remove(&mut self, index: usize) -> (Value, Value) {
         if value_lookup_hash(&self.entries[index].0).is_some() {
             self.remove_slot_for_entry(index);
@@ -141,12 +155,19 @@ impl DictBackend {
 
     fn find_index(&self, key: &Value) -> Option<usize> {
         if let Some(hash) = value_lookup_hash(key) {
-            if !self.slots.is_empty() {
-                if let SlotLookup::Found { entry } = self.lookup_slot(key, hash) {
-                    return Some(entry);
-                }
-                return None;
+            return self.find_index_with_hash(key, hash);
+        }
+        self.entries
+            .iter()
+            .position(|(stored, _)| value_key_equal(stored, key))
+    }
+
+    fn find_index_with_hash(&self, key: &Value, hash: u64) -> Option<usize> {
+        if !self.slots.is_empty() {
+            if let SlotLookup::Found { entry } = self.lookup_slot(key, hash) {
+                return Some(entry);
             }
+            return None;
         }
         self.entries
             .iter()
@@ -158,7 +179,8 @@ impl DictBackend {
             self.resize_slots(MIN_TABLE_SIZE);
             return;
         }
-        if self.filled * LOAD_DENOMINATOR >= self.slots.len() * LOAD_NUMERATOR {
+        let usable_slots = (self.slots.len() * LOAD_NUMERATOR) / LOAD_DENOMINATOR;
+        if self.filled + 1 > usable_slots {
             self.resize_slots(self.slots.len() * 2);
         }
     }
@@ -171,7 +193,12 @@ impl DictBackend {
         if self.slots.len() <= MIN_TABLE_SIZE {
             return;
         }
-        if self.used * 5 <= self.slots.len() {
+        let dummy_count = self.filled.saturating_sub(self.used);
+        if dummy_count > self.used {
+            self.resize_slots(self.slots.len());
+            return;
+        }
+        if self.used * 8 <= self.slots.len() {
             self.resize_slots(self.slots.len() / 2);
         }
     }

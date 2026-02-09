@@ -1,4 +1,4 @@
-use crate::runtime::{ObjRef, Object, RuntimeError, SetObject, Value};
+use crate::runtime::{value_lookup_hash, ObjRef, Object, RuntimeError, SetObject, Value};
 
 pub(crate) fn dedup_hashable_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     let mut deduped = SetObject::new(Vec::new());
@@ -15,7 +15,11 @@ pub(crate) fn dict_get_value(dict: &ObjRef, key: &Value) -> Option<Value> {
         Object::Dict(entries) => entries,
         _ => return None,
     };
-    entries.find(key).cloned()
+    if let Some(hash) = value_lookup_hash(key) {
+        entries.find_with_hash(key, hash).cloned()
+    } else {
+        entries.find(key).cloned()
+    }
 }
 
 pub(crate) fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
@@ -33,7 +37,26 @@ pub(crate) fn dict_remove_value(dict: &ObjRef, key: &Value) -> Option<Value> {
         Object::Dict(entries) => entries,
         _ => return None,
     };
-    entries.remove_key(key).map(|(_, value)| value)
+    if let Some(hash) = value_lookup_hash(key) {
+        entries.remove_key_with_hash(key, hash).map(|(_, value)| value)
+    } else {
+        entries.remove_key(key).map(|(_, value)| value)
+    }
+}
+
+pub(crate) fn dict_contains_key_checked(dict: &ObjRef, key: &Value) -> Result<bool, RuntimeError> {
+    let hash = value_lookup_hash(key).ok_or_else(|| {
+        RuntimeError::new(format!(
+            "unhashable type: '{}'",
+            value_type_name(key)
+        ))
+    })?;
+    let dict_kind = dict.kind();
+    let entries = match &*dict_kind {
+        Object::Dict(entries) => entries,
+        _ => return Err(RuntimeError::new("unsupported operand type for in")),
+    };
+    Ok(entries.contains_key_with_hash(key, hash))
 }
 
 pub(crate) fn dict_set_value_checked(

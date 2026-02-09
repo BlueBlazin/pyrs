@@ -393,7 +393,7 @@ pub(super) fn value_key_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
-pub(super) fn value_lookup_hash(value: &Value) -> Option<u64> {
+pub(crate) fn value_lookup_hash(value: &Value) -> Option<u64> {
     value_hash_key(value)
 }
 
@@ -544,8 +544,16 @@ impl DictObject {
         self.backend.find(key)
     }
 
+    pub fn find_with_hash(&self, key: &Value, hash: u64) -> Option<&Value> {
+        self.backend.find_with_hash(key, hash)
+    }
+
     pub fn contains_key(&self, key: &Value) -> bool {
         self.backend.contains_key(key)
+    }
+
+    pub fn contains_key_with_hash(&self, key: &Value, hash: u64) -> bool {
+        self.backend.contains_key_with_hash(key, hash)
     }
 
     pub fn insert(&mut self, key: Value, value: Value) {
@@ -554,6 +562,10 @@ impl DictObject {
 
     pub fn remove_key(&mut self, key: &Value) -> Option<(Value, Value)> {
         self.backend.remove_key(key)
+    }
+
+    pub fn remove_key_with_hash(&mut self, key: &Value, hash: u64) -> Option<(Value, Value)> {
+        self.backend.remove_key_with_hash(key, hash)
     }
 }
 
