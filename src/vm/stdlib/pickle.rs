@@ -30,6 +30,7 @@ static PICKLE_PROFILE_EMIT_EVERY: OnceLock<u64> = OnceLock::new();
 static PICKLE_PROFILE_STATS: OnceLock<Mutex<BTreeMap<&'static str, PickleProfileStat>>> =
     OnceLock::new();
 static PICKLE_PROFILE_EVENTS: AtomicU64 = AtomicU64::new(0);
+const PICKLE_BUFFER_RELEASED_ATTR: &str = "__pyrs_picklebuffer_released__";
 
 fn pickle_profile_flag(name: &str) -> bool {
     std::env::var(name)
@@ -143,6 +144,256 @@ impl Vm {
         self.pickle_copyreg_cache
             .insert(attr_name.to_string(), resolved.clone());
         Ok(resolved)
+    }
+
+    fn picklebuffer_storage_from_value(&self, value: Value) -> Result<Value, RuntimeError> {
+        match value {
+            Value::Bytes(_) | Value::ByteArray(_) => Ok(value),
+            Value::MemoryView(view) => match &*view.kind() {
+                Object::MemoryView(view_data) => match &*view_data.source.kind() {
+                    Object::Bytes(_) => Ok(Value::Bytes(view_data.source.clone())),
+                    Object::ByteArray(_) => Ok(Value::ByteArray(view_data.source.clone())),
+                    _ => Err(RuntimeError::new(
+                        "PickleBuffer() argument must be a bytes-like object",
+                    )),
+                },
+                _ => Err(RuntimeError::new(
+                    "PickleBuffer() argument must be a bytes-like object",
+                )),
+            },
+            Value::Instance(instance) => {
+                let kind = instance.kind();
+                let Object::Instance(instance_data) = &*kind else {
+                    return Err(RuntimeError::new(
+                        "PickleBuffer() argument must be a bytes-like object",
+                    ));
+                };
+                match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+                    Some(Value::Bytes(storage)) => Ok(Value::Bytes(storage.clone())),
+                    Some(Value::ByteArray(storage)) => Ok(Value::ByteArray(storage.clone())),
+                    _ => Err(RuntimeError::new(
+                        "PickleBuffer() argument must be a bytes-like object",
+                    )),
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "PickleBuffer() argument must be a bytes-like object",
+            )),
+        }
+    }
+
+    pub(in crate::vm) fn builtin_picklebuffer_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "PickleBuffer.__init__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "PickleBuffer.__init__")?;
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "PickleBuffer.__init__() expects one argument",
+            ));
+        }
+        let storage = self.picklebuffer_storage_from_value(args.remove(0))?;
+        {
+            let mut instance_kind = instance.kind_mut();
+            let Object::Instance(instance_data) = &mut *instance_kind else {
+                return Err(RuntimeError::new(
+                    "PickleBuffer.__init__() descriptor requires an instance",
+                ));
+            };
+            instance_data
+                .attrs
+                .insert(BYTES_BACKING_STORAGE_ATTR.to_string(), storage);
+            instance_data
+                .attrs
+                .insert(PICKLE_BUFFER_RELEASED_ATTR.to_string(), Value::Bool(false));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_picklebuffer_release(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "PickleBuffer.release() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "PickleBuffer.release")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new("PickleBuffer.release() expects no arguments"));
+        }
+        {
+            let mut instance_kind = instance.kind_mut();
+            let Object::Instance(instance_data) = &mut *instance_kind else {
+                return Err(RuntimeError::new(
+                    "PickleBuffer.release() descriptor requires an instance",
+                ));
+            };
+            instance_data.attrs.remove(BYTES_BACKING_STORAGE_ATTR);
+            instance_data
+                .attrs
+                .insert(PICKLE_BUFFER_RELEASED_ATTR.to_string(), Value::Bool(true));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_pickle_module_getattr(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "_pickle.__getattr__() expects one attribute name",
+            ));
+        }
+        let Value::Str(attr_name) = &args[0] else {
+            return Err(RuntimeError::new(
+                "_pickle.__getattr__() attribute name must be str",
+            ));
+        };
+
+        let target_attr = match attr_name.as_str() {
+            "Pickler" => "_Pickler",
+            "Unpickler" => "_Unpickler",
+            "dump" => "_dump",
+            "dumps" => "_dumps",
+            "load" => "_load",
+            "loads" => "_loads",
+            _ => {
+                return Err(RuntimeError::new(format!(
+                    "AttributeError: module '_pickle' has no attribute '{}'",
+                    attr_name
+                )))
+            }
+        };
+
+        let caller_depth = self.frames.len();
+        let pickle_module = Value::Module(self.import_module_object("pickle")?);
+        self.run_pending_import_frames(caller_depth)?;
+        self.builtin_getattr(
+            vec![pickle_module, Value::Str(target_attr.to_string())],
+            HashMap::new(),
+        )
+    }
+
+    pub(in crate::vm) fn builtin_copyreg_newobj(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() {
+            return Err(RuntimeError::new("__newobj__() expects class and args"));
+        }
+        let class_value = args.remove(0);
+        let new_method = self.builtin_getattr(
+            vec![class_value.clone(), Value::Str("__new__".to_string())],
+            HashMap::new(),
+        )?;
+        let mut new_args = Vec::with_capacity(1 + args.len());
+        new_args.push(class_value);
+        new_args.extend(args);
+        match self.call_internal(new_method, new_args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(RuntimeError::new("__newobj__() failed"))
+            }
+        }
+    }
+
+    pub(in crate::vm) fn builtin_copyreg_newobj_ex(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(RuntimeError::new(
+                "__newobj_ex__() expects class, args tuple, kwargs dict",
+            ));
+        }
+        let class_value = args.remove(0);
+        let tuple_args = match args.remove(0) {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("__newobj_ex__ args must be tuple")),
+            },
+            _ => return Err(RuntimeError::new("__newobj_ex__ args must be tuple")),
+        };
+        let call_kwargs = match args.remove(0) {
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(entries) => {
+                    let mut out = HashMap::new();
+                    for (key, value) in entries {
+                        let Value::Str(name) = key else {
+                            return Err(RuntimeError::new(
+                                "__newobj_ex__ kwargs keys must be strings",
+                            ));
+                        };
+                        out.insert(name.clone(), value.clone());
+                    }
+                    out
+                }
+                _ => return Err(RuntimeError::new("__newobj_ex__ kwargs must be dict")),
+            },
+            _ => return Err(RuntimeError::new("__newobj_ex__ kwargs must be dict")),
+        };
+        let new_method = self.builtin_getattr(
+            vec![class_value.clone(), Value::Str("__new__".to_string())],
+            HashMap::new(),
+        )?;
+        let mut new_args = Vec::with_capacity(1 + tuple_args.len());
+        new_args.push(class_value);
+        new_args.extend(tuple_args);
+        match self.call_internal(new_method, new_args, call_kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(RuntimeError::new("__newobj_ex__() failed"))
+            }
+        }
+    }
+
+    pub(in crate::vm) fn builtin_copyreg_reconstructor(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(RuntimeError::new(
+                "_reconstructor() expects class, base, and state",
+            ));
+        }
+        let class_value = args.remove(0);
+        let base = args.remove(0);
+        let state = args.remove(0);
+
+        let base_is_object = self
+            .builtins
+            .get("object")
+            .is_some_and(|object_type| *object_type == base);
+
+        let new_target = if base_is_object { class_value.clone() } else { base };
+        let new_method = self.builtin_getattr(
+            vec![new_target, Value::Str("__new__".to_string())],
+            HashMap::new(),
+        )?;
+        let mut new_args = vec![class_value];
+        if !base_is_object {
+            new_args.push(state);
+        }
+        match self.call_internal(new_method, new_args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(RuntimeError::new("_reconstructor() failed"))
+            }
+        }
     }
 
     fn object_reduce_ex_new_constructor_and_args(
@@ -694,6 +945,8 @@ impl Vm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler;
+    use crate::parser;
     use crate::runtime::{ClassObject, InstanceObject, Object};
 
     fn tuple_values(value: &Value) -> Vec<Value> {
@@ -920,5 +1173,68 @@ mod tests {
             reduced_not_implemented,
             Value::Str("NotImplemented".to_string())
         );
+    }
+
+    #[test]
+    fn pickle_module_getattr_maps_accelerator_names_to_pure_pickle_symbols() {
+        let mut vm = Vm::new();
+        let Ok(pickle_module) = vm.import_module_object("pickle") else {
+            eprintln!("skipping _pickle getattr mapping test (pickle module unavailable)");
+            return;
+        };
+        let c_pickle = vm
+            .import_module_object("_pickle")
+            .expect("_pickle module should import");
+
+        let pickler_attr = vm
+            .builtin_getattr(
+                vec![Value::Module(c_pickle.clone()), Value::Str("Pickler".to_string())],
+                HashMap::new(),
+            )
+            .expect("_pickle.Pickler should resolve");
+        let expected_pickler = vm
+            .builtin_getattr(
+                vec![
+                    Value::Module(pickle_module.clone()),
+                    Value::Str("_Pickler".to_string()),
+                ],
+                HashMap::new(),
+            )
+            .expect("pickle._Pickler should resolve");
+        assert_eq!(pickler_attr, expected_pickler);
+
+        let dumps_attr = vm
+            .builtin_getattr(
+                vec![Value::Module(c_pickle), Value::Str("dumps".to_string())],
+                HashMap::new(),
+            )
+            .expect("_pickle.dumps should resolve");
+        let expected_dumps = vm
+            .builtin_getattr(
+                vec![Value::Module(pickle_module), Value::Str("_dumps".to_string())],
+                HashMap::new(),
+            )
+            .expect("pickle._dumps should resolve");
+        assert_eq!(dumps_attr, expected_dumps);
+    }
+
+    #[test]
+    fn picklebuffer_raw_returns_memoryview_and_release_blocks_access() {
+        let mut vm = Vm::new();
+        let source = r#"import _pickle
+pb = _pickle.PickleBuffer(b"abc")
+raw = pb.raw().tobytes()
+pb.release()
+caught = False
+try:
+    pb.raw()
+except ValueError:
+    caught = True
+ok = (raw == b"abc" and caught)
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
     }
 }

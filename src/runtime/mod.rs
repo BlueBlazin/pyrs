@@ -2012,6 +2012,12 @@ pub enum BuiltinFunction {
     SubprocessCheckCall,
     JsonDumps,
     JsonLoads,
+    PickleModuleGetAttr,
+    PickleBufferInit,
+    PickleBufferRelease,
+    CopyregReconstructor,
+    CopyregNewObj,
+    CopyregNewObjEx,
     JsonScannerMakeScanner,
     JsonScannerPyMakeScanner,
     JsonScannerScanOnce,
@@ -2406,7 +2412,13 @@ impl BuiltinFunction {
             | BuiltinFunction::CollectionsChainMapSetItem
             | BuiltinFunction::CollectionsChainMapDelItem
             | BuiltinFunction::CsvReaderIter
-            | BuiltinFunction::CsvReaderNext => Err(RuntimeError::new(
+            | BuiltinFunction::CsvReaderNext
+            | BuiltinFunction::PickleModuleGetAttr
+            | BuiltinFunction::PickleBufferInit
+            | BuiltinFunction::PickleBufferRelease
+            | BuiltinFunction::CopyregReconstructor
+            | BuiltinFunction::CopyregNewObj
+            | BuiltinFunction::CopyregNewObjEx => Err(RuntimeError::new(
                 "StringIO/BytesIO builtin not available in runtime-only call path",
             )),
             BuiltinFunction::Len => {
@@ -3169,6 +3181,19 @@ impl BuiltinFunction {
                     },
                     Value::Instance(obj) => match &*obj.kind() {
                         Object::Instance(instance_data) => {
+                            if matches!(
+                                &*instance_data.class.kind(),
+                                Object::Class(class_data)
+                                    if class_data.name == "PickleBuffer"
+                                        && matches!(
+                                            instance_data.attrs.get("__pyrs_picklebuffer_released__"),
+                                            Some(Value::Bool(true))
+                                        )
+                            ) {
+                                return Err(RuntimeError::new(
+                                    "ValueError: operation forbidden on released PickleBuffer object",
+                                ));
+                            }
                             match instance_data.attrs.get("__pyrs_bytes_storage__") {
                                 Some(Value::Bytes(storage)) | Some(Value::ByteArray(storage)) => {
                                     storage.clone()
@@ -5052,6 +5077,19 @@ fn value_to_bytes_with_encoding(
         },
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
+                if matches!(
+                    &*instance_data.class.kind(),
+                    Object::Class(class_data)
+                        if class_data.name == "PickleBuffer"
+                            && matches!(
+                                instance_data.attrs.get("__pyrs_picklebuffer_released__"),
+                                Some(Value::Bool(true))
+                            )
+                ) {
+                    return Err(RuntimeError::new(
+                        "ValueError: operation forbidden on released PickleBuffer object",
+                    ));
+                }
                 match instance_data.attrs.get("__pyrs_bytes_storage__") {
                     Some(Value::Bytes(storage)) => match &*storage.kind() {
                         Object::Bytes(values) => Ok(values.clone()),

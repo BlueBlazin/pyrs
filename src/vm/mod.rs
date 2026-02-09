@@ -1956,6 +1956,58 @@ impl Vm {
             ],
             Vec::new(),
         );
+        let pickle_buffer_class = match self
+            .heap
+            .alloc_class(ClassObject::new("PickleBuffer".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *pickle_buffer_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_pickle".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::PickleBufferInit),
+            );
+            class_data.attrs.insert(
+                "raw".to_string(),
+                // CPython exposes PickleBuffer.raw() -> memoryview.
+                Value::Builtin(BuiltinFunction::MemoryView),
+            );
+            class_data.attrs.insert(
+                "release".to_string(),
+                Value::Builtin(BuiltinFunction::PickleBufferRelease),
+            );
+        }
+        // Minimal _pickle accelerator surface: enough for stdlib feature probing and
+        // PickleBuffer presence while pure-Python pickle remains the semantic source.
+        self.install_builtin_module(
+            "_pickle",
+            &[("__getattr__", BuiltinFunction::PickleModuleGetAttr)],
+            vec![
+                ("PickleBuffer", Value::Class(pickle_buffer_class)),
+                ("PickleError", Value::ExceptionType("PickleError".to_string())),
+                (
+                    "PicklingError",
+                    Value::ExceptionType("PicklingError".to_string()),
+                ),
+                (
+                    "UnpicklingError",
+                    Value::ExceptionType("UnpicklingError".to_string()),
+                ),
+            ],
+        );
+        self.install_builtin_module(
+            "copyreg",
+            &[
+                ("_reconstructor", BuiltinFunction::CopyregReconstructor),
+                ("__newobj__", BuiltinFunction::CopyregNewObj),
+                ("__newobj_ex__", BuiltinFunction::CopyregNewObjEx),
+            ],
+            vec![("dispatch_table", self.heap.alloc_dict(Vec::new()))],
+        );
         if let (Some(json_module), Value::Module(decoder_module), Value::Module(scanner_module)) = (
             self.modules.get("json").cloned(),
             self.heap
@@ -10391,6 +10443,12 @@ impl Vm {
             | BuiltinFunction::CsvDialectValidate
             | BuiltinFunction::CsvReaderIter
             | BuiltinFunction::CsvReaderNext => "_csv",
+            BuiltinFunction::PickleModuleGetAttr
+            | BuiltinFunction::PickleBufferInit
+            | BuiltinFunction::PickleBufferRelease => "_pickle",
+            BuiltinFunction::CopyregReconstructor
+            | BuiltinFunction::CopyregNewObj
+            | BuiltinFunction::CopyregNewObjEx => "copyreg",
             BuiltinFunction::JsonScannerMakeScanner
             | BuiltinFunction::JsonScannerScanOnce
             | BuiltinFunction::JsonDecoderScanString => "_json",
@@ -10855,6 +10913,16 @@ impl Vm {
                 NativeMethodKind::MemoryViewRelease,
                 view,
             )),
+            "tobytes" => Ok(self.alloc_builtin_bound_method(BuiltinFunction::Bytes, view)),
+            "contiguous" | "c_contiguous" | "f_contiguous" => Ok(Value::Bool(true)),
+            "readonly" => match &*view.kind() {
+                Object::MemoryView(view_data) => match &*view_data.source.kind() {
+                    Object::Bytes(_) => Ok(Value::Bool(true)),
+                    Object::ByteArray(_) => Ok(Value::Bool(false)),
+                    _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                },
+                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+            },
             "obj" => match &*view.kind() {
                 Object::MemoryView(view_data) => match &*view_data.source.kind() {
                     Object::Bytes(_) => Ok(Value::Bytes(view_data.source.clone())),
@@ -11213,6 +11281,11 @@ impl Vm {
             "__module__" => {
                 let module_name = if exception_name == "Error" {
                     "_csv"
+                } else if matches!(
+                    exception_name,
+                    "PickleError" | "PicklingError" | "UnpicklingError"
+                ) {
+                    "_pickle"
                 } else {
                     "builtins"
                 };
@@ -16830,6 +16903,16 @@ impl Vm {
             }
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
+            BuiltinFunction::PickleModuleGetAttr => {
+                self.builtin_pickle_module_getattr(args, kwargs)
+            }
+            BuiltinFunction::PickleBufferInit => self.builtin_picklebuffer_init(args, kwargs),
+            BuiltinFunction::PickleBufferRelease => self.builtin_picklebuffer_release(args, kwargs),
+            BuiltinFunction::CopyregReconstructor => {
+                self.builtin_copyreg_reconstructor(args, kwargs)
+            }
+            BuiltinFunction::CopyregNewObj => self.builtin_copyreg_newobj(args, kwargs),
+            BuiltinFunction::CopyregNewObjEx => self.builtin_copyreg_newobj_ex(args, kwargs),
             BuiltinFunction::JsonScannerMakeScanner => {
                 self.builtin_json_scanner_make_scanner(args, kwargs)
             }
@@ -37722,6 +37805,9 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
     if expected == "RuntimeError" && candidate == "PythonFinalizationError" {
         return true;
     }
+    if expected == "PickleError" && matches!(candidate, "PicklingError" | "UnpicklingError") {
+        return true;
+    }
     if expected == "OSError"
         && matches!(
             candidate,
@@ -37759,7 +37845,7 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
 }
 
 fn classify_runtime_error(message: &str) -> &'static str {
-    const DIRECT_PREFIX_EXCEPTIONS: [&str; 19] = [
+    const DIRECT_PREFIX_EXCEPTIONS: [&str; 22] = [
         "TypeError",
         "ValueError",
         "RuntimeError",
@@ -37779,6 +37865,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
         "SystemExit",
         "KeyboardInterrupt",
         "CalledProcessError",
+        "PickleError",
+        "PicklingError",
+        "UnpicklingError",
     ];
     if message.starts_with("Traceback (most recent call last):") {
         if let Some(last_non_empty_line) = message
