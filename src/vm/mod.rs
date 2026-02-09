@@ -248,7 +248,14 @@ enum RePatternValue {
 
 const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
-const LOCAL_SHIM_MODULES: &[&str] = &["enum", "pkgutil", "importlib.resources", "_json", "_pickle"];
+const LOCAL_SHIM_MODULES: &[&str] = &[
+    "enum",
+    "pkgutil",
+    "importlib.resources",
+    "_json",
+    "_pickle",
+    "copyreg",
+];
 
 struct Frame {
     code: Rc<CodeObject>,
@@ -4892,7 +4899,7 @@ impl Vm {
     }
 
     fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
-        if name == "enum" {
+        if matches!(name, "enum" | "copyreg") {
             if let Some(source) = self.preferred_local_shim_source(name) {
                 return Some(source);
             }
@@ -4909,7 +4916,7 @@ impl Vm {
             return Some(source);
         }
         // Only fall back to local shims when normal path resolution fails.
-        if name == "enum" {
+        if matches!(name, "enum" | "copyreg") {
             None
         } else {
             self.preferred_local_shim_source(name)
@@ -11778,6 +11785,18 @@ impl Vm {
                             return Err(RuntimeError::new(
                                 "exception instance construction failed",
                             ));
+                        }
+                    } else if self.class_has_builtin_list_base(&class) {
+                        let list_value = self.call_builtin(BuiltinFunction::List, args, kwargs)?;
+                        let Value::List(_) = list_value else {
+                            return Err(RuntimeError::new("list constructor returned non-list"));
+                        };
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert(LIST_BACKING_STORAGE_ATTR.to_string(), list_value);
+                        } else {
+                            return Err(RuntimeError::new("list instance construction failed"));
                         }
                     } else if self.class_has_builtin_tuple_base(&class) {
                         let tuple_value = self.call_builtin(BuiltinFunction::Tuple, args, kwargs)?;
@@ -19097,10 +19116,7 @@ impl Vm {
         if let Some(message) = self.class_disallow_instantiation_message(&class_ref) {
             return Err(RuntimeError::new(message));
         }
-        let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref.clone())) {
-            Value::Instance(instance) => instance,
-            _ => unreachable!(),
-        };
+        let instance = self.alloc_instance_for_class(&class_ref);
         if self.class_has_builtin_int_base(&class_ref) {
             let int_value = self.builtin_int(args, kwargs)?;
             let (Value::Int(_) | Value::BigInt(_) | Value::Bool(_)) = int_value else {
@@ -19786,6 +19802,9 @@ impl Vm {
     }
 
     fn compare_eq_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = self.compare_eq_via_list_backing(&left, &right)? {
+            return Ok(Value::Bool(result));
+        }
         if matches!(left, Value::Instance(_) | Value::Class(_)) {
             if let Some(result) =
                 self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
@@ -19804,6 +19823,9 @@ impl Vm {
     }
 
     fn compare_ne_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = self.compare_eq_via_list_backing(&left, &right)? {
+            return Ok(Value::Bool(!result));
+        }
         if matches!(left, Value::Instance(_) | Value::Class(_)) {
             if let Some(result) =
                 self.call_compare_method_bool(left.clone(), "__ne__", right.clone())?
@@ -19823,6 +19845,44 @@ impl Vm {
             _ => false,
         };
         Ok(Value::Bool(!eq))
+    }
+
+    fn compare_eq_via_list_backing(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let list_from_value = |value: &Value| -> Option<Vec<Value>> {
+            match value {
+                Value::List(list) => match &*list.kind() {
+                    Object::List(values) => Some(values.clone()),
+                    _ => None,
+                },
+                Value::Instance(instance) => {
+                    let backing = self.instance_backing_list(instance)?;
+                    match &*backing.kind() {
+                        Object::List(values) => Some(values.clone()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+        let (Some(left_values), Some(right_values)) = (list_from_value(left), list_from_value(right))
+        else {
+            return Ok(None);
+        };
+        if left_values.len() != right_values.len() {
+            return Ok(Some(false));
+        }
+        for (left_item, right_item) in left_values.into_iter().zip(right_values.into_iter()) {
+            match self.compare_eq_runtime(left_item, right_item)? {
+                Value::Bool(true) => {}
+                Value::Bool(false) => return Ok(Some(false)),
+                _ => return Ok(None),
+            }
+        }
+        Ok(Some(true))
     }
 
     fn compare_le_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {

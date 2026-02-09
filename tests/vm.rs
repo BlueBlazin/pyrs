@@ -2111,6 +2111,57 @@ ok = ok and (b"bytearray" in data)
 }
 
 #[test]
+fn pickle_protocol_zero_and_one_roundtrip_instances_with_required_init_args() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle getinitargs protocol test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+class NeedsArgs:
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
+
+ok = True
+for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+    dumped = pickle.dumps(NeedsArgs(1, 2), proto)
+    loaded = pickle.loads(dumped)
+    ok = ok and (loaded.a, loaded.b) == (1, 2)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_list_subclass_roundtrip_preserves_items_and_instance_attrs() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle list-subclass roundtrip test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+class MyList(list):
+    pass
+
+ok = True
+for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+    x = MyList([1, 2, 3])
+    x.foo = 42
+    y = pickle.loads(pickle.dumps(x, proto))
+    ok = ok and (type(y) is MyList and list(y) == [1, 2, 3] and y.foo == 42 and x == y)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn pickle_compat_emits_legacy_globals_for_range_and_map() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pickle compat global test (CPython Lib path not available)");
@@ -5113,6 +5164,16 @@ fn positional_only_binding_does_not_conflict_with_named_positionals() {
 #[test]
 fn list_subclass_inherits_basic_list_behavior() {
     let source = "class L(list):\n    pass\nx = L()\nx.append(1)\nx.append(2)\nvals = []\nfor value in x:\n    vals.append(value)\nok = (len(x) == 2 and vals == [1, 2] and x[1] == 2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_subclass_constructor_accepts_iterable_argument() {
+    let source = "class L(list):\n    pass\nx = L([1, 2, 3])\nok = (len(x) == 3 and x[0] == 1 and x[2] == 3)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

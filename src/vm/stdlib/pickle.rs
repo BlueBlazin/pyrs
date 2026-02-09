@@ -21,7 +21,9 @@ impl Vm {
     }
 
     fn pickle_copyreg_callable(&mut self, attr_name: &str) -> Result<Value, RuntimeError> {
+        let caller_depth = self.frames.len();
         let copyreg_module = Value::Module(self.import_module_object("copyreg")?);
+        self.run_pending_import_frames(caller_depth)?;
         self.builtin_getattr(
             vec![copyreg_module, Value::Str(attr_name.to_string())],
             HashMap::new(),
@@ -164,6 +166,12 @@ impl Vm {
                     self.heap.alloc_tuple(vec![class_obj, int_value]),
                 )));
             }
+            // Default protocol >=2 constructor path for user instances:
+            // use __newobj__(cls, *args) so unpickling bypasses __init__.
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap.alloc_tuple(vec![class_obj]),
+            )));
         }
 
         Ok(None)
@@ -179,15 +187,23 @@ impl Vm {
         let Some(class_obj) = self.class_of_value(value).map(Value::Class) else {
             return Ok(None);
         };
-        let Some(integer_value) = self.instance_backing_int(instance) else {
-            return Ok(None);
+        let constructor_args = if let Some(integer_value) = self.instance_backing_int(instance) {
+            let int_value = BuiltinFunction::Int.call(&self.heap, vec![integer_value])?;
+            self.heap.alloc_tuple(vec![
+                class_obj,
+                Value::Builtin(BuiltinFunction::Int),
+                int_value,
+            ])
+        } else {
+            // For protocol 0/1, regular user instances must use copyreg._reconstructor.
+            // Emitting (Class, ()) here incorrectly routes through __init__ on load.
+            let base = self
+                .builtins
+                .get("object")
+                .cloned()
+                .ok_or_else(|| RuntimeError::new("object type is unavailable"))?;
+            self.heap.alloc_tuple(vec![class_obj, base, Value::None])
         };
-        let int_value = BuiltinFunction::Int.call(&self.heap, vec![integer_value])?;
-        let constructor_args = self.heap.alloc_tuple(vec![
-            class_obj,
-            Value::Builtin(BuiltinFunction::Int),
-            int_value,
-        ]);
         Ok(Some((
             self.pickle_copyreg_callable("_reconstructor")?,
             constructor_args,
@@ -534,13 +550,24 @@ impl Vm {
                 None => self.reduce_ex_constructor_and_args(&value),
             }
         };
-        let state = match value {
-            Value::Instance(_) => self.builtin_object_getstate(vec![value], HashMap::new())?,
+        let mut reduced_parts = vec![constructor, constructor_args];
+        let state = match &value {
+            Value::Instance(_) => {
+                self.builtin_object_getstate(vec![value.clone()], HashMap::new())?
+            }
             _ => Value::None,
         };
-        Ok(self
-            .heap
-            .alloc_tuple(vec![constructor, constructor_args, state]))
+        reduced_parts.push(state);
+
+        if let Value::Instance(instance) = &value {
+            if let Some(list_backing) = self.instance_backing_list(instance) {
+                let iter_value =
+                    self.call_builtin(BuiltinFunction::Iter, vec![Value::List(list_backing)], HashMap::new())?;
+                reduced_parts.push(iter_value);
+            }
+        }
+
+        Ok(self.heap.alloc_tuple(reduced_parts))
     }
 }
 
@@ -640,6 +667,61 @@ mod tests {
             ]
         );
         assert_eq!(parts[2], Value::None);
+    }
+
+    #[test]
+    fn object_reduce_ex_protocol0_uses_reconstructor_for_instances() {
+        let mut vm = Vm::new();
+        if vm.import_module_object("copyreg").is_err() {
+            eprintln!("skipping legacy protocol reduce_ex unit test (copyreg unavailable)");
+            return;
+        }
+        let instance =
+            alloc_instance_with_attrs(&mut vm, "NeedsArgs", &[("a", Value::Int(1))]);
+        let class_obj = vm
+            .class_of_value(&instance)
+            .map(Value::Class)
+            .expect("instance should have class");
+        let reduced = vm
+            .builtin_object_reduce_ex(vec![instance, Value::Int(0)], HashMap::new())
+            .expect("object.__reduce_ex__ should succeed");
+        let parts = tuple_values(&reduced);
+        assert_eq!(parts.len(), 3);
+        // Protocol 0/1 should use copyreg._reconstructor rather than direct class call.
+        assert!(!matches!(parts[0], Value::Class(_)));
+        let constructor_args = tuple_values(&parts[1]);
+        assert_eq!(constructor_args.len(), 3);
+        assert_eq!(constructor_args[0], class_obj);
+        assert_eq!(constructor_args[2], Value::None);
+        let object_type = vm
+            .builtins
+            .get("object")
+            .cloned()
+            .expect("object type should be installed");
+        assert_eq!(constructor_args[1], object_type);
+    }
+
+    #[test]
+    fn object_reduce_ex_protocol2_uses_newobj_for_instances() {
+        let mut vm = Vm::new();
+        if vm.import_module_object("copyreg").is_err() {
+            eprintln!("skipping protocol-2 reduce_ex unit test (copyreg unavailable)");
+            return;
+        }
+        let instance =
+            alloc_instance_with_attrs(&mut vm, "NeedsArgs", &[("a", Value::Int(1))]);
+        let class_obj = vm
+            .class_of_value(&instance)
+            .map(Value::Class)
+            .expect("instance should have class");
+        let reduced = vm
+            .builtin_object_reduce_ex(vec![instance, Value::Int(2)], HashMap::new())
+            .expect("object.__reduce_ex__ should succeed");
+        let parts = tuple_values(&reduced);
+        assert_eq!(parts.len(), 3);
+        assert!(!matches!(parts[0], Value::Class(_)));
+        let constructor_args = tuple_values(&parts[1]);
+        assert_eq!(constructor_args, vec![class_obj]);
     }
 
     #[test]
