@@ -206,6 +206,7 @@ pub enum NativeMethodKind {
     BytesStartsWith,
     BytesEndsWith,
     BytesFind,
+    BytesJoin,
     MemoryViewEnter,
     MemoryViewExit,
     MemoryViewRelease,
@@ -5488,6 +5489,7 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method bytes.endswith>".to_string()
                     }
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
+                    NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
                     NativeMethodKind::MemoryViewEnter => {
                         "<bound method memoryview.__enter__>".to_string()
                     }

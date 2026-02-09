@@ -1,6 +1,25 @@
 use super::super::*;
 
 impl Vm {
+    fn object_reduce_ex_builtin_singleton_name(&self, value: &Value) -> Option<&'static str> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let Some(Value::Instance(ellipsis)) = self.builtins.get("Ellipsis") else {
+            return None;
+        };
+        if instance.id() == ellipsis.id() {
+            return Some("Ellipsis");
+        }
+        let Some(Value::Instance(not_implemented)) = self.builtins.get("NotImplemented") else {
+            return None;
+        };
+        if instance.id() == not_implemented.id() {
+            return Some("NotImplemented");
+        }
+        None
+    }
+
     fn pickle_copyreg_callable(&mut self, attr_name: &str) -> Result<Value, RuntimeError> {
         let copyreg_module = Value::Module(self.import_module_object("copyreg")?);
         self.builtin_getattr(
@@ -490,6 +509,9 @@ impl Vm {
             }
             return Ok(Value::Str(self.builtin_attribute_qualname(*builtin)));
         }
+        if let Some(name) = self.object_reduce_ex_builtin_singleton_name(&value) {
+            return Ok(Value::Str(name.to_string()));
+        }
         if let Value::Instance(instance) = &value {
             if let Some(class_name) = class_name_for_instance(instance) {
                 if class_name == "__csv_dialect__" {
@@ -643,5 +665,32 @@ mod tests {
             .builtin_object_reduce_ex(vec![dialect, Value::Int(4)], HashMap::new())
             .expect_err("dialect pickling should fail");
         assert!(dialect_err.message.contains("cannot pickle 'Dialect' instances"));
+    }
+
+    #[test]
+    fn object_reduce_ex_returns_names_for_builtin_singletons() {
+        let mut vm = Vm::new();
+        let ellipsis = vm
+            .builtins
+            .get("Ellipsis")
+            .cloned()
+            .expect("Ellipsis should be installed");
+        let reduced_ellipsis = vm
+            .builtin_object_reduce_ex(vec![ellipsis, Value::Int(4)], HashMap::new())
+            .expect("Ellipsis reduce should succeed");
+        assert_eq!(reduced_ellipsis, Value::Str("Ellipsis".to_string()));
+
+        let not_implemented = vm
+            .builtins
+            .get("NotImplemented")
+            .cloned()
+            .expect("NotImplemented should be installed");
+        let reduced_not_implemented = vm
+            .builtin_object_reduce_ex(vec![not_implemented, Value::Int(4)], HashMap::new())
+            .expect("NotImplemented reduce should succeed");
+        assert_eq!(
+            reduced_not_implemented,
+            Value::Str("NotImplemented".to_string())
+        );
     }
 }

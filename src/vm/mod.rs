@@ -10584,6 +10584,7 @@ impl Vm {
             "startswith" => NativeMethodKind::BytesStartsWith,
             "endswith" => NativeMethodKind::BytesEndsWith,
             "find" => NativeMethodKind::BytesFind,
+            "join" => NativeMethodKind::BytesJoin,
             _ => {
                 return Err(RuntimeError::new(format!(
                     "bytes has no attribute '{}'",
@@ -13862,6 +13863,35 @@ impl Vm {
                 };
                 let index = found.map(|idx| idx as i64 + start).unwrap_or(-1);
                 Ok(NativeCallResult::Value(Value::Int(index)))
+            }
+            NativeMethodKind::BytesJoin => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("join() expects one argument"));
+                }
+                let separator = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(value) => bytes_like_from_value(value.clone())?,
+                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let values = self.collect_iterable_values(args.remove(0))?;
+                let mut output = Vec::new();
+                for (idx, value) in values.into_iter().enumerate() {
+                    let bytes = match bytes_like_from_value(value) {
+                        Ok(bytes) => bytes,
+                        Err(_) => {
+                            return Err(RuntimeError::new(
+                                "sequence item is not a bytes-like object",
+                            ))
+                        }
+                    };
+                    if idx > 0 && !separator.is_empty() {
+                        output.extend_from_slice(&separator);
+                    }
+                    output.extend_from_slice(&bytes);
+                }
+                Ok(NativeCallResult::Value(self.heap.alloc_bytes(output)))
             }
             NativeMethodKind::MemoryViewEnter => {
                 if !args.is_empty() {

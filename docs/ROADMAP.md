@@ -362,6 +362,9 @@ Progress:
 - `_csv` reader/dialect hardening landed for strict-parity paths: `register_dialect(..., dialect, **kwargs)` override semantics now merge/validate correctly; reader handles `strict`, `quoting` (`QUOTE_NONE`/`QUOTE_NONNUMERIC`/`QUOTE_STRINGS`/`QUOTE_NOTNULL`), skip-initial-space edge cases, EOF escape behavior, and unquoted-newline error contracts with dedicated regressions.
 - Small-thread-stack sensitivity remains tracked: the `ipaddress` bigint import regression test now runs in a dedicated larger-stack thread; runtime stack-depth hardening for constrained embedding stacks remains an explicit follow-up in `docs/STUB_ACCOUNTING.md`.
 - Engineering audit backlog is now explicit in `docs/ALGO_AUDIT_BACKLOG.md`; current open P0 item includes `list.sort` mutation/clone parity closure (`AQ-001`).
+- Strict-pickle timeout reduction follow-up landed: `object.__reduce_ex__` now returns builtin singleton names for `Ellipsis`/`NotImplemented`, removing the prior singleton pickling hang path and adding direct unit/regression coverage.
+- Bytes API parity follow-up landed: `bytes.join(...)` now supports iterable bytes-like inputs (`bytes`/`bytearray`/`memoryview`) with dedicated VM regression coverage, closing a strict `test_pickle` blocker (`AttributeError: bytes has no attribute 'join'`).
+- Strict stdlib lane remains P0-blocked on timeouts for `test_pickle.py` and `test_pickletools.py` at the current per-module watchdog (`PYRS_STRICT_HARNESS_TIMEOUT_SECS=120`); no runaway harness loop is observed, and remaining closure work is concentrated in pickle/unittest runtime behavior and performance.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:

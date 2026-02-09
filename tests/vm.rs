@@ -7222,6 +7222,19 @@ ok = (
 }
 
 #[test]
+fn bytes_join_supports_iterables_and_bytes_like_items() {
+    let source = r#"sep = b":"
+joined = sep.join([b"a", bytearray(b"b"), memoryview(b"c")])
+ok = (joined == b"a:b:c")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn inspect_helpers_cover_getmodule_file_and_predicates() {
     let source = r#"import inspect
 def sample():
