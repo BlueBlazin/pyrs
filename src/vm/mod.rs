@@ -4899,7 +4899,7 @@ impl Vm {
     }
 
     fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
-        if matches!(name, "enum" | "copyreg") {
+        if name == "enum" {
             if let Some(source) = self.preferred_local_shim_source(name) {
                 return Some(source);
             }
@@ -4916,7 +4916,7 @@ impl Vm {
             return Some(source);
         }
         // Only fall back to local shims when normal path resolution fails.
-        if matches!(name, "enum" | "copyreg") {
+        if name == "enum" {
             None
         } else {
             self.preferred_local_shim_source(name)
@@ -5443,6 +5443,7 @@ impl Vm {
     }
 
     fn import_module_object(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
+        let caller_depth = self.frames.len();
         let existing_modules: HashSet<String> = self.modules.keys().cloned().collect();
         let key = Value::Str(name.to_string());
         let mut present_in_sys_modules = false;
@@ -5457,7 +5458,7 @@ impl Vm {
                         let _ = dict_remove_value(&modules_dict, &key);
                     } else {
                         self.modules.insert(name.to_string(), module.clone());
-                        return Ok(module);
+                        return self.return_imported_module(module, caller_depth);
                     }
                 }
                 Some(Value::None) => {
@@ -5497,11 +5498,11 @@ impl Vm {
                         );
                     }
                 }
-                return Ok(module);
+                return self.return_imported_module(module, caller_depth);
             }
         }
         match self.load_module(name) {
-            Ok(module) => Ok(module),
+            Ok(module) => self.return_imported_module(module, caller_depth),
             Err(load_err) => {
                 if let Some((parent, _)) = name.rsplit_once('.') {
                     let _ = self.import_module_object(parent)?;
@@ -5513,14 +5514,14 @@ impl Vm {
                                 Value::Module(module.clone()),
                             );
                         }
-                        return Ok(module);
+                        return self.return_imported_module(module, caller_depth);
                     }
                     if let Some(modules_dict) = self.sys_dict_obj("modules") {
                         let key = Value::Str(name.to_string());
                         match dict_get_value(&modules_dict, &key) {
                             Some(Value::Module(module)) => {
                                 self.modules.insert(name.to_string(), module.clone());
-                                return Ok(module);
+                                return self.return_imported_module(module, caller_depth);
                             }
                             Some(Value::None) => {
                                 return Err(RuntimeError::new(format!(
@@ -8725,7 +8726,13 @@ impl Vm {
                                             .cloned()
                                     })
                                     .ok_or_else(|| {
-                                        RuntimeError::new("no active exception to reraise")
+                                        let location = frame.code.locations.get(frame.last_ip);
+                                        let line = location.map(|loc| loc.line).unwrap_or(0);
+                                        let column = location.map(|loc| loc.column).unwrap_or(0);
+                                        RuntimeError::new(format!(
+                                            "no active exception to reraise at {}:{}:{} in {}",
+                                            frame.code.filename, line, column, frame.code.name
+                                        ))
                                     })?;
                                 self.raise_exception(value)?;
                             }
@@ -11551,11 +11558,8 @@ impl Vm {
                 Ok(())
             }
             Ok(NativeCallResult::PropagatedException) => {
-                if self.caller_exception_handled(caller_depth, caller_ip) {
-                    Ok(())
-                } else {
-                    self.propagate_pending_generator_exception()
-                }
+                self.propagate_pending_generator_exception()?;
+                Ok(())
             }
             Err(err) => {
                 if self.caller_exception_handled(caller_depth, caller_ip) {
@@ -11617,9 +11621,6 @@ impl Vm {
                                 return Ok(InternalCallOutcome::Value(result));
                             }
                             Ok(NativeCallResult::PropagatedException) => {
-                                if self.caller_exception_handled(caller_depth, caller_ip) {
-                                    return Ok(InternalCallOutcome::CallerExceptionHandled);
-                                }
                                 self.propagate_pending_generator_exception()?;
                                 return Ok(InternalCallOutcome::CallerExceptionHandled);
                             }
@@ -12258,6 +12259,19 @@ impl Vm {
         if let Some(getattribute_method) =
             self.lookup_bound_special_method(&receiver, "__getattribute__")?
         {
+            let caller_depth = self.frames.len();
+            let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
+                .frames
+                .last()
+                .map(|frame| {
+                    (
+                        frame.ip,
+                        frame.stack.len(),
+                        frame.blocks.clone(),
+                        frame.active_exception.clone(),
+                    )
+                })
+                .unwrap_or((0, 0, Vec::new(), None));
             let getattribute_outcome = self.call_internal(
                 getattribute_method,
                 vec![Value::Str(attr_name.to_string())],
@@ -12265,15 +12279,43 @@ impl Vm {
             );
             match getattribute_outcome {
                 Ok(InternalCallOutcome::Value(value)) => {
+                    if self.frames.len() == caller_depth {
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.ip = caller_ip;
+                            frame.stack.truncate(caller_stack_len);
+                            frame.blocks = caller_blocks.clone();
+                            frame.active_exception = caller_active_exception.clone();
+                        }
+                    }
                     return Ok(AttrAccessOutcome::Value(value));
                 }
                 Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    let active_exception = self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.active_exception.clone());
+                    if self.frames.len() == caller_depth {
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.ip = caller_ip;
+                            frame.stack.truncate(caller_stack_len);
+                            frame.blocks = caller_blocks.clone();
+                            frame.active_exception = active_exception;
+                        }
+                    }
                     if !self.active_exception_is("AttributeError") {
                         return Ok(AttrAccessOutcome::ExceptionHandled);
                     }
                     self.clear_active_exception();
                 }
                 Err(err) => {
+                    if self.frames.len() == caller_depth {
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.ip = caller_ip;
+                            frame.stack.truncate(caller_stack_len);
+                            frame.blocks = caller_blocks.clone();
+                            frame.active_exception = caller_active_exception.clone();
+                        }
+                    }
                     if classify_runtime_error(&err.message) != "AttributeError" {
                         return Err(err);
                     }
@@ -12283,15 +12325,61 @@ impl Vm {
             if let Some(getattr_method) =
                 self.lookup_bound_special_method(&receiver, "__getattr__")?
             {
+                let caller_depth = self.frames.len();
+                let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
+                    .frames
+                    .last()
+                    .map(|frame| {
+                        (
+                            frame.ip,
+                            frame.stack.len(),
+                            frame.blocks.clone(),
+                            frame.active_exception.clone(),
+                        )
+                    })
+                    .unwrap_or((0, 0, Vec::new(), None));
                 return Ok(
                     match self.call_internal(
                         getattr_method,
                         vec![Value::Str(attr_name.to_string())],
                         HashMap::new(),
-                    )? {
-                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
-                        InternalCallOutcome::CallerExceptionHandled => {
+                    ) {
+                        Ok(InternalCallOutcome::Value(value)) => {
+                            if self.frames.len() == caller_depth {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    frame.ip = caller_ip;
+                                    frame.stack.truncate(caller_stack_len);
+                                    frame.blocks = caller_blocks.clone();
+                                    frame.active_exception = caller_active_exception.clone();
+                                }
+                            }
+                            AttrAccessOutcome::Value(value)
+                        }
+                        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                            let active_exception = self
+                                .frames
+                                .last()
+                                .and_then(|frame| frame.active_exception.clone());
+                            if self.frames.len() == caller_depth {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    frame.ip = caller_ip;
+                                    frame.stack.truncate(caller_stack_len);
+                                    frame.blocks = caller_blocks.clone();
+                                    frame.active_exception = active_exception;
+                                }
+                            }
                             AttrAccessOutcome::ExceptionHandled
+                        }
+                        Err(err) => {
+                            if self.frames.len() == caller_depth {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    frame.ip = caller_ip;
+                                    frame.stack.truncate(caller_stack_len);
+                                    frame.blocks = caller_blocks.clone();
+                                    frame.active_exception = caller_active_exception.clone();
+                                }
+                            }
+                            return Err(err);
                         }
                     },
                 );
@@ -20627,6 +20715,12 @@ impl Vm {
             _ => return Err(RuntimeError::new("attribute name must be string")),
         };
         let default = args.into_iter().next();
+        // Preserve the caller's active exception context: getattr(..., default)
+        // should not clobber an exception currently being handled by surrounding code.
+        let saved_active_exception = self
+            .frames
+            .last()
+            .and_then(|frame| frame.active_exception.clone());
         if name == "__class__" {
             return self.load_dunder_class_attr(&target);
         }
@@ -20837,6 +20931,9 @@ impl Vm {
             Err(err) => {
                 if let Some(default) = default {
                     if is_missing_attribute_error(&err) {
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.active_exception = saved_active_exception;
+                        }
                         Ok(default)
                     } else {
                         Err(err)
@@ -21223,6 +21320,20 @@ impl Vm {
         self.run_stop_depth = previous_stop;
         run_result?;
         Ok(())
+    }
+
+    fn return_imported_module(
+        &mut self,
+        module: ObjRef,
+        caller_depth: usize,
+    ) -> Result<ObjRef, RuntimeError> {
+        // Only force immediate module execution for host-side imports
+        // (no active Python frame). In-frame imports are executed by the
+        // main VM loop and should not recurse into `run()`.
+        if caller_depth == 0 {
+            self.run_pending_import_frames(caller_depth)?;
+        }
+        Ok(module)
     }
 
     fn builtin_find_spec(

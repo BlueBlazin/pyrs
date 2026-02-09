@@ -524,6 +524,16 @@ fn executes_unary_plus_assignment() {
 }
 
 #[test]
+fn try_finally_reraises_original_exception_after_finally_calls() {
+    let source = "def helper():\n    try:\n        1 / 0\n    except:\n        pass\n\ndef run():\n    try:\n        raise RuntimeError('boom')\n    finally:\n        helper()\n\nok = False\ntry:\n    run()\nexcept RuntimeError as exc:\n    ok = str(exc) == 'boom'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_boolean_literal_assignment() {
     let module = parser::parse_module("x = True").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -5912,6 +5922,28 @@ fn executes_warnings_lock_helpers() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn unittest_failed_test_keeps_active_exception_context() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping unittest _FailedTest regression (CPython Lib not found)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("unittest-failed-test".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = "import unittest\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\nsuite = unittest.defaultTestLoader.loadTestsFromName('missing', T)\nresult = unittest.TextTestRunner(verbosity=0, failfast=True).run(suite)\nok = (not result.wasSuccessful()) and len(result.errors) == 1\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn unittest regression thread");
+    handle.join().expect("unittest regression thread should complete");
 }
 
 #[test]

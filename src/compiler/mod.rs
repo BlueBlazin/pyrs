@@ -3855,11 +3855,13 @@ impl Compiler {
 
         let handler_start = self.current_ip();
         self.patch_jump(setup_finally, handler_start)?;
-        self.emit(Opcode::PopTop, None);
+        let finally_exc_name = self.fresh_temp("finally_exc");
+        self.emit_store_name(&finally_exc_name);
         for stmt in finalbody {
             self.compile_stmt(stmt)?;
         }
-        self.emit(Opcode::Raise, Some(0));
+        self.emit_load_name(&finally_exc_name)?;
+        self.emit(Opcode::Raise, Some(1));
 
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
@@ -3890,11 +3892,13 @@ impl Compiler {
 
         let handler_start = self.current_ip();
         self.patch_jump(setup_finally, handler_start)?;
-        self.emit(Opcode::PopTop, None);
+        let finally_exc_name = self.fresh_temp("finally_exc");
+        self.emit_store_name(&finally_exc_name);
         for stmt in finalbody {
             self.compile_stmt(stmt)?;
         }
-        self.emit(Opcode::Raise, Some(0));
+        self.emit_load_name(&finally_exc_name)?;
+        self.emit(Opcode::Raise, Some(1));
 
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
@@ -3928,11 +3932,13 @@ impl Compiler {
 
         let handler_start = self.current_ip();
         self.patch_jump(setup_except, handler_start)?;
-        self.emit(Opcode::PopTop, None);
+        let finally_exc_name = self.fresh_temp("finally_exc");
+        self.emit_store_name(&finally_exc_name);
         for stmt in finalbody {
             self.compile_stmt(stmt)?;
         }
-        self.emit(Opcode::Raise, Some(0));
+        self.emit_load_name(&finally_exc_name)?;
+        self.emit(Opcode::Raise, Some(1));
 
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
