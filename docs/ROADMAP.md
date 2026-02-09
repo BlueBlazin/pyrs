@@ -366,6 +366,7 @@ Progress:
 - Strict-pickle timeout reduction follow-up landed: `object.__reduce_ex__` now returns builtin singleton names for `Ellipsis`/`NotImplemented`, removing the prior singleton pickling hang path and adding direct unit/regression coverage.
 - Bytes API parity follow-up landed: `bytes.join(...)` now supports iterable bytes-like inputs (`bytes`/`bytearray`/`memoryview`) with dedicated VM regression coverage, closing a strict `test_pickle` blocker (`AttributeError: bytes has no attribute 'join'`).
 - Strict stdlib lane remains P0-blocked on timeouts for `test_pickle.py` and `test_pickletools.py` at the current per-module watchdog (`PYRS_STRICT_HARNESS_TIMEOUT_SECS=120`); no runaway harness loop is observed, and remaining closure work is concentrated in pickle/unittest runtime behavior and performance.
+- Runtime exception-unwind fix landed for attribute opcodes: `AttrAccessOutcome`/`AttrMutationOutcome` `ExceptionHandled` paths now re-raise through normal VM error unwinding (instead of continuing execution), closing the `with ... assertRaises(...)` `PopTop` stack-underflow failure seen in strict pickletools paths; dedicated regression coverage is in `tests/vm.rs`.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:

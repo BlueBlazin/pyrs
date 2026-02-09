@@ -4345,6 +4345,31 @@ x = flag
 }
 
 #[test]
+fn with_assert_raises_handles_missing_attr_without_stack_underflow() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping with/assertRaises regression (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import unittest
+class C:
+    def __getattr__(self, name):
+        raise AttributeError("x")
+c = C()
+t = unittest.TestCase()
+ok = False
+with t.assertRaises(AttributeError):
+    c.dispatch_table
+ok = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_id_builtin_and_is_identity() {
     let source = "a = [1]\n\
 b = a\n\

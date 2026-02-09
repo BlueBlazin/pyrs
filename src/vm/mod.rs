@@ -6066,19 +6066,31 @@ impl Vm {
                                 Value::Class(class) => {
                                     match self.load_attr_class(&class, &attr_name)? {
                                         AttrAccessOutcome::Value(attr) => attr,
-                                        AttrAccessOutcome::ExceptionHandled => return Ok(None),
+                                        AttrAccessOutcome::ExceptionHandled => {
+                                            return Err(self.runtime_error_from_active_exception(
+                                                "attribute access failed",
+                                            ))
+                                        }
                                     }
                                 }
                                 Value::Instance(instance) => {
                                     match self.load_attr_instance(&instance, &attr_name)? {
                                         AttrAccessOutcome::Value(attr) => attr,
-                                        AttrAccessOutcome::ExceptionHandled => return Ok(None),
+                                        AttrAccessOutcome::ExceptionHandled => {
+                                            return Err(self.runtime_error_from_active_exception(
+                                                "attribute access failed",
+                                            ))
+                                        }
                                     }
                                 }
                                 Value::Super(super_obj) => {
                                     match self.load_attr_super(&super_obj, &attr_name)? {
                                         AttrAccessOutcome::Value(attr) => attr,
-                                        AttrAccessOutcome::ExceptionHandled => return Ok(None),
+                                        AttrAccessOutcome::ExceptionHandled => {
+                                            return Err(self.runtime_error_from_active_exception(
+                                                "attribute access failed",
+                                            ))
+                                        }
                                     }
                                 }
                                 Value::List(list) => {
@@ -6514,7 +6526,11 @@ impl Vm {
                             Value::Instance(instance) => {
                                 match self.store_attr_instance(&instance, &attr_name, value)? {
                                     AttrMutationOutcome::Done => {}
-                                    AttrMutationOutcome::ExceptionHandled => return Ok(None),
+                                    AttrMutationOutcome::ExceptionHandled => {
+                                        return Err(self.runtime_error_from_active_exception(
+                                            "attribute assignment failed",
+                                        ))
+                                    }
                                 }
                             }
                             Value::Class(class) => {
@@ -6560,7 +6576,11 @@ impl Vm {
                             Value::Instance(instance) => {
                                 match self.store_attr_instance(&instance, &attr_name, value)? {
                                     AttrMutationOutcome::Done => {}
-                                    AttrMutationOutcome::ExceptionHandled => return Ok(None),
+                                    AttrMutationOutcome::ExceptionHandled => {
+                                        return Err(self.runtime_error_from_active_exception(
+                                            "attribute assignment failed",
+                                        ))
+                                    }
                                 }
                             }
                             Value::Class(class) => {
@@ -6620,7 +6640,11 @@ impl Vm {
                             Value::Instance(instance) => {
                                 match self.delete_attr_instance(&instance, &attr_name)? {
                                     AttrMutationOutcome::Done => {}
-                                    AttrMutationOutcome::ExceptionHandled => return Ok(None),
+                                    AttrMutationOutcome::ExceptionHandled => {
+                                        return Err(self.runtime_error_from_active_exception(
+                                            "attribute deletion failed",
+                                        ))
+                                    }
                                 }
                             }
                             Value::Function(func) => {
