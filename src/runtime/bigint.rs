@@ -168,6 +168,23 @@ impl BigInt {
         if self.sign < 0 { -value } else { value }
     }
 
+    pub fn to_abs_le_bytes(&self) -> Vec<u8> {
+        if self.is_zero() {
+            return vec![0];
+        }
+        let mut out = Vec::with_capacity(self.limbs.len() * 4);
+        for limb in &self.limbs {
+            out.extend_from_slice(&limb.to_le_bytes());
+        }
+        while out.last() == Some(&0) {
+            out.pop();
+        }
+        if out.is_empty() {
+            out.push(0);
+        }
+        out
+    }
+
     pub fn add(&self, other: &Self) -> Self {
         match (self.sign, other.sign) {
             (0, _) => other.clone(),
@@ -684,5 +701,16 @@ mod tests {
         assert_eq!(a.bitor(&b).to_string(), "-5");
         assert_eq!(a.bitxor(&b).to_string(), "-8");
         assert_eq!(a.bitnot().to_string(), "4");
+    }
+
+    #[test]
+    fn to_abs_le_bytes_matches_expected_layout() {
+        let value = BigInt::from_str_radix("1234567890abcdef11223344", 16).expect("parse");
+        assert_eq!(
+            value.to_abs_le_bytes(),
+            vec![0x44, 0x33, 0x22, 0x11, 0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12]
+        );
+        assert_eq!(BigInt::zero().to_abs_le_bytes(), vec![0]);
+        assert_eq!(BigInt::from_i64(-255).to_abs_le_bytes(), vec![0xff]);
     }
 }

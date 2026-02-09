@@ -33998,21 +33998,7 @@ fn bigint_from_bytes(bytes: &[u8], little_endian: bool, signed: bool) -> BigInt 
 }
 
 fn bigint_to_unsigned_le_bytes(value: &BigInt) -> Vec<u8> {
-    if value.is_zero() {
-        return vec![0];
-    }
-    let divisor = BigInt::from_i64(256);
-    let mut current = value.clone();
-    let mut out = Vec::new();
-    while !current.is_zero() {
-        let (quotient, remainder) = current
-            .div_mod_floor(&divisor)
-            .expect("divisor is non-zero");
-        let byte = remainder.to_i64().expect("remainder fits in i64");
-        out.push(byte as u8);
-        current = quotient;
-    }
-    out
+    value.to_abs_le_bytes()
 }
 
 fn bigint_to_fixed_bytes(
