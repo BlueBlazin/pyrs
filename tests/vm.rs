@@ -2663,6 +2663,29 @@ for proto in range(6):
 }
 
 #[test]
+fn pickle_zero_copy_bytes_oob_buffers_preserve_identity() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping ZeroCopyBytes OOB pickle test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.picklecommon import ZeroCopyBytes
+obj = ZeroCopyBytes(b"abcdefgh")
+buffers = []
+payload = pickle.dumps(obj, protocol=5, buffer_callback=lambda pb: buffers.append(pb.raw()))
+a = pickle.loads(payload, buffers=buffers)
+b = pickle.loads(payload, buffers=iter(buffers))
+ok = (a is obj and b is obj and bytes(buffers[0]) == b"abcdefgh")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn class_new_returning_non_instance_skips_init() {
     let source = r#"class Factory:
     def __new__(cls, value):

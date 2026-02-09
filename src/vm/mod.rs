@@ -1988,8 +1988,7 @@ impl Vm {
             );
             class_data.attrs.insert(
                 "raw".to_string(),
-                // CPython exposes PickleBuffer.raw() -> memoryview.
-                Value::Builtin(BuiltinFunction::MemoryView),
+                Value::Builtin(BuiltinFunction::PickleBufferRaw),
             );
             class_data.attrs.insert(
                 "release".to_string(),
@@ -10537,6 +10536,7 @@ impl Vm {
             | BuiltinFunction::PickleUnpicklerInit
             | BuiltinFunction::PickleUnpicklerLoad
             | BuiltinFunction::PickleBufferInit
+            | BuiltinFunction::PickleBufferRaw
             | BuiltinFunction::PickleBufferRelease => "_pickle",
             BuiltinFunction::CopyregReconstructor
             | BuiltinFunction::CopyregNewObj
@@ -11008,6 +11008,10 @@ impl Vm {
         match attr_name {
             "__enter__" => Ok(self.alloc_native_bound_method(NativeMethodKind::MemoryViewEnter, view)),
             "__exit__" => Ok(self.alloc_native_bound_method(NativeMethodKind::MemoryViewExit, view)),
+            "toreadonly" => Ok(self.alloc_native_bound_method(
+                NativeMethodKind::MemoryViewToReadOnly,
+                view,
+            )),
             "release" => Ok(self.alloc_native_bound_method(
                 NativeMethodKind::MemoryViewRelease,
                 view,
@@ -11015,17 +11019,16 @@ impl Vm {
             "tobytes" => Ok(self.alloc_builtin_bound_method(BuiltinFunction::Bytes, view)),
             "contiguous" | "c_contiguous" | "f_contiguous" => Ok(Value::Bool(true)),
             "readonly" => match &*view.kind() {
-                Object::MemoryView(view_data) => match &*view_data.source.kind() {
-                    Object::Bytes(_) => Ok(Value::Bool(true)),
-                    Object::ByteArray(_) => Ok(Value::Bool(false)),
-                    _ => Err(RuntimeError::new("memoryview receiver is invalid")),
-                },
+                Object::MemoryView(view_data) => bytes_like_source_is_readonly(&view_data.source)
+                    .map(Value::Bool)
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid")),
                 _ => Err(RuntimeError::new("memoryview receiver is invalid")),
             },
             "obj" => match &*view.kind() {
                 Object::MemoryView(view_data) => match &*view_data.source.kind() {
                     Object::Bytes(_) => Ok(Value::Bytes(view_data.source.clone())),
                     Object::ByteArray(_) => Ok(Value::ByteArray(view_data.source.clone())),
+                    Object::Instance(_) => Ok(Value::Instance(view_data.source.clone())),
                     _ => Err(RuntimeError::new("memoryview receiver is invalid")),
                 },
                 _ => Err(RuntimeError::new("memoryview receiver is invalid")),
@@ -14565,6 +14568,22 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Bool(false)))
             }
+            NativeMethodKind::MemoryViewToReadOnly => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("toreadonly() expects no arguments"));
+                }
+                let source = match &*receiver.kind() {
+                    Object::MemoryView(view_data) => view_data.source.clone(),
+                    _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
+                };
+                let bytes = with_bytes_like_source(&source, |values| values.to_vec())
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                let source = match self.heap.alloc_bytes(bytes) {
+                    Value::Bytes(obj) => obj,
+                    _ => unreachable!(),
+                };
+                Ok(NativeCallResult::Value(self.heap.alloc_memoryview(source)))
+            }
             NativeMethodKind::MemoryViewRelease => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("release() expects no arguments"));
@@ -16790,18 +16809,16 @@ impl Vm {
                     _ => None,
                 },
                 IteratorKind::MemoryView(view_ref) => match &*view_ref.kind() {
-                    Object::MemoryView(view) => match &*view.source.kind() {
-                        Object::Bytes(values) | Object::ByteArray(values) => {
-                            if state.index >= values.len() {
-                                None
-                            } else {
-                                let value = Value::Int(values[state.index] as i64);
-                                state.index += 1;
-                                Some(value)
-                            }
+                    Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                        if state.index >= values.len() {
+                            None
+                        } else {
+                            let value = Value::Int(values[state.index] as i64);
+                            state.index += 1;
+                            Some(value)
                         }
-                        _ => None,
-                    },
+                    })
+                    .flatten(),
                     _ => None,
                 },
                 IteratorKind::Count { current, step } => {
@@ -17270,6 +17287,7 @@ impl Vm {
                 self.builtin_pickle_unpickler_load(args, kwargs)
             }
             BuiltinFunction::PickleBufferInit => self.builtin_picklebuffer_init(args, kwargs),
+            BuiltinFunction::PickleBufferRaw => self.builtin_picklebuffer_raw(args, kwargs),
             BuiltinFunction::PickleBufferRelease => self.builtin_picklebuffer_release(args, kwargs),
             BuiltinFunction::CopyregReconstructor => {
                 self.builtin_copyreg_reconstructor(args, kwargs)
@@ -34132,17 +34150,15 @@ impl Vm {
                     _ => Err(RuntimeError::new("subscript unsupported type")),
                 },
                 Value::MemoryView(obj) => match &*obj.kind() {
-                    Object::MemoryView(view) => match &*view.source.kind() {
-                        Object::Bytes(values) | Object::ByteArray(values) => {
-                            let indices = slice_indices(values.len(), lower, upper, step)?;
-                            let mut result = Vec::with_capacity(indices.len());
-                            for idx in indices {
-                                result.push(values[idx]);
-                            }
-                            Ok(self.heap.alloc_bytes(result))
+                    Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                        let indices = slice_indices(values.len(), lower, upper, step)?;
+                        let mut result = Vec::with_capacity(indices.len());
+                        for idx in indices {
+                            result.push(values[idx]);
                         }
-                        _ => Err(RuntimeError::new("subscript unsupported type")),
-                    },
+                        Ok(self.heap.alloc_bytes(result))
+                    })
+                    .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type"))),
                     _ => Err(RuntimeError::new("subscript unsupported type")),
                 },
                 Value::Iterator(obj) => {
@@ -34289,19 +34305,17 @@ impl Vm {
                     _ => Err(RuntimeError::new("subscript unsupported type")),
                 },
                 Value::MemoryView(obj) => match &*obj.kind() {
-                    Object::MemoryView(view) => match &*view.source.kind() {
-                        Object::Bytes(values) | Object::ByteArray(values) => {
-                            let mut index_int = value_to_int(index)? as isize;
-                            if index_int < 0 {
-                                index_int += values.len() as isize;
-                            }
-                            if index_int < 0 || index_int as usize >= values.len() {
-                                return Err(RuntimeError::new("index out of range"));
-                            }
-                            Ok(Value::Int(values[index_int as usize] as i64))
+                    Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                        let mut index_int = value_to_int(index)? as isize;
+                        if index_int < 0 {
+                            index_int += values.len() as isize;
                         }
-                        _ => Err(RuntimeError::new("subscript unsupported type")),
-                    },
+                        if index_int < 0 || index_int as usize >= values.len() {
+                            return Err(RuntimeError::new("index out of range"));
+                        }
+                        Ok(Value::Int(values[index_int as usize] as i64))
+                    })
+                    .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type"))),
                     _ => Err(RuntimeError::new("subscript unsupported type")),
                 },
                 Value::Iterator(obj) => {
@@ -36206,6 +36220,37 @@ fn parse_formatter_key(text: &str) -> FormatterFieldKey {
     FormatterFieldKey::Str(text.to_string())
 }
 
+fn with_bytes_like_source<R>(source: &ObjRef, map: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    match &*source.kind() {
+        Object::Bytes(values) | Object::ByteArray(values) => Some(map(values)),
+        Object::Instance(instance_data) => match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+            Some(Value::Bytes(storage)) => match &*storage.kind() {
+                Object::Bytes(values) => Some(map(values)),
+                _ => None,
+            },
+            Some(Value::ByteArray(storage)) => match &*storage.kind() {
+                Object::ByteArray(values) => Some(map(values)),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn bytes_like_source_is_readonly(source: &ObjRef) -> Option<bool> {
+    match &*source.kind() {
+        Object::Bytes(_) => Some(true),
+        Object::ByteArray(_) => Some(false),
+        Object::Instance(instance_data) => match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+            Some(Value::Bytes(_)) => Some(true),
+            Some(Value::ByteArray(_)) => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
     match value {
         Value::Bytes(obj) => match &*obj.kind() {
@@ -36217,10 +36262,8 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
             _ => Err(RuntimeError::new("expected bytes-like payload")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => match &*view.source.kind() {
-                Object::Bytes(values) | Object::ByteArray(values) => Ok(values.clone()),
-                _ => Err(RuntimeError::new("expected bytes-like payload")),
-            },
+            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| values.to_vec())
+                .ok_or_else(|| RuntimeError::new("expected bytes-like payload")),
             _ => Err(RuntimeError::new("expected bytes-like payload")),
         },
         Value::Instance(obj) => match &*obj.kind() {
@@ -36286,18 +36329,16 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                     _ => return Err(RuntimeError::new("expected bytes-like payload")),
                 },
                 IteratorKind::MemoryView(memory_obj) => match &*memory_obj.kind() {
-                    Object::MemoryView(view) => match &*view.source.kind() {
-                        Object::Bytes(items) | Object::ByteArray(items) => {
-                            let start = iterator.index.min(items.len());
-                            let out = items[start..]
-                                .iter()
-                                .map(|byte| Value::Int(*byte as i64))
-                                .collect::<Vec<_>>();
-                            iterator.index = items.len();
-                            out
-                        }
-                        _ => return Err(RuntimeError::new("expected bytes-like payload")),
-                    },
+                    Object::MemoryView(view) => with_bytes_like_source(&view.source, |items| {
+                        let start = iterator.index.min(items.len());
+                        let out = items[start..]
+                            .iter()
+                            .map(|byte| Value::Int(*byte as i64))
+                            .collect::<Vec<_>>();
+                        iterator.index = items.len();
+                        out
+                    })
+                    .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))?,
                     _ => return Err(RuntimeError::new("expected bytes-like payload")),
                 },
                 IteratorKind::Map { values, .. } => {
@@ -37095,10 +37136,10 @@ fn re_match_details(
                     _ => return Err(RuntimeError::new("string must be bytes-like")),
                 },
                 Value::MemoryView(obj) => match &*obj.kind() {
-                    Object::MemoryView(view) => match &*view.source.kind() {
-                        Object::Bytes(values) | Object::ByteArray(values) => values.clone(),
-                        _ => return Err(RuntimeError::new("string must be bytes-like")),
-                    },
+                    Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                        values.to_vec()
+                    })
+                    .ok_or_else(|| RuntimeError::new("string must be bytes-like"))?,
                     _ => return Err(RuntimeError::new("string must be bytes-like")),
                 },
                 Value::Str(_) => {
@@ -38058,10 +38099,8 @@ fn is_truthy(value: &Value) -> bool {
             _ => true,
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => match &*view.source.kind() {
-                Object::Bytes(values) | Object::ByteArray(values) => !values.is_empty(),
-                _ => true,
-            },
+            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| !values.is_empty())
+                .unwrap_or(true),
             _ => true,
         },
         Value::Cell(obj) => match &*obj.kind() {

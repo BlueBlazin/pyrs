@@ -31,6 +31,7 @@ static PICKLE_PROFILE_STATS: OnceLock<Mutex<BTreeMap<&'static str, PickleProfile
     OnceLock::new();
 static PICKLE_PROFILE_EVENTS: AtomicU64 = AtomicU64::new(0);
 const PICKLE_BUFFER_RELEASED_ATTR: &str = "__pyrs_picklebuffer_released__";
+const PICKLE_BUFFER_SOURCE_ATTR: &str = "__pyrs_picklebuffer_source__";
 const PICKLE_DEFAULT_PROTOCOL: i64 = 5;
 const PICKLE_MIN_FAST_PROTOCOL: i64 = 4;
 const PICKLE_MAX_FAST_PROTOCOL: i64 = 5;
@@ -908,13 +909,38 @@ impl Vm {
         Ok(resolved)
     }
 
-    fn picklebuffer_storage_from_value(&self, value: Value) -> Result<Value, RuntimeError> {
+    fn picklebuffer_storage_and_source_from_value(
+        &self,
+        value: Value,
+    ) -> Result<(Value, Value), RuntimeError> {
         match value {
-            Value::Bytes(_) | Value::ByteArray(_) => Ok(value),
+            Value::Bytes(obj) => Ok((Value::Bytes(obj.clone()), Value::Bytes(obj))),
+            Value::ByteArray(obj) => Ok((Value::ByteArray(obj.clone()), Value::ByteArray(obj))),
             Value::MemoryView(view) => match &*view.kind() {
                 Object::MemoryView(view_data) => match &*view_data.source.kind() {
-                    Object::Bytes(_) => Ok(Value::Bytes(view_data.source.clone())),
-                    Object::ByteArray(_) => Ok(Value::ByteArray(view_data.source.clone())),
+                    Object::Bytes(_) => Ok((
+                        Value::Bytes(view_data.source.clone()),
+                        Value::Bytes(view_data.source.clone()),
+                    )),
+                    Object::ByteArray(_) => Ok((
+                        Value::ByteArray(view_data.source.clone()),
+                        Value::ByteArray(view_data.source.clone()),
+                    )),
+                    Object::Instance(instance_data) => {
+                        match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+                            Some(Value::Bytes(storage)) => Ok((
+                                Value::Bytes(storage.clone()),
+                                Value::Instance(view_data.source.clone()),
+                            )),
+                            Some(Value::ByteArray(storage)) => Ok((
+                                Value::ByteArray(storage.clone()),
+                                Value::Instance(view_data.source.clone()),
+                            )),
+                            _ => Err(RuntimeError::new(
+                                "PickleBuffer() argument must be a bytes-like object",
+                            )),
+                        }
+                    }
                     _ => Err(RuntimeError::new(
                         "PickleBuffer() argument must be a bytes-like object",
                     )),
@@ -931,8 +957,14 @@ impl Vm {
                     ));
                 };
                 match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
-                    Some(Value::Bytes(storage)) => Ok(Value::Bytes(storage.clone())),
-                    Some(Value::ByteArray(storage)) => Ok(Value::ByteArray(storage.clone())),
+                    Some(Value::Bytes(storage)) => Ok((
+                        Value::Bytes(storage.clone()),
+                        Value::Instance(instance.clone()),
+                    )),
+                    Some(Value::ByteArray(storage)) => Ok((
+                        Value::ByteArray(storage.clone()),
+                        Value::Instance(instance.clone()),
+                    )),
                     _ => Err(RuntimeError::new(
                         "PickleBuffer() argument must be a bytes-like object",
                     )),
@@ -960,7 +992,7 @@ impl Vm {
                 "PickleBuffer.__init__() expects one argument",
             ));
         }
-        let storage = self.picklebuffer_storage_from_value(args.remove(0))?;
+        let (storage, source) = self.picklebuffer_storage_and_source_from_value(args.remove(0))?;
         {
             let mut instance_kind = instance.kind_mut();
             let Object::Instance(instance_data) = &mut *instance_kind else {
@@ -973,9 +1005,71 @@ impl Vm {
                 .insert(BYTES_BACKING_STORAGE_ATTR.to_string(), storage);
             instance_data
                 .attrs
+                .insert(PICKLE_BUFFER_SOURCE_ATTR.to_string(), source);
+            instance_data
+                .attrs
                 .insert(PICKLE_BUFFER_RELEASED_ATTR.to_string(), Value::Bool(false));
         }
         Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_picklebuffer_raw(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "PickleBuffer.raw() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "PickleBuffer.raw")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new("PickleBuffer.raw() expects no arguments"));
+        }
+        let source = {
+            let instance_kind = instance.kind();
+            let Object::Instance(instance_data) = &*instance_kind else {
+                return Err(RuntimeError::new(
+                    "PickleBuffer.raw() descriptor requires an instance",
+                ));
+            };
+            if matches!(
+                instance_data.attrs.get(PICKLE_BUFFER_RELEASED_ATTR),
+                Some(Value::Bool(true))
+            ) {
+                return Err(RuntimeError::new(
+                    "ValueError: operation forbidden on released PickleBuffer object",
+                ));
+            }
+            instance_data
+                .attrs
+                .get(PICKLE_BUFFER_SOURCE_ATTR)
+                .cloned()
+                .or_else(|| instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR).cloned())
+                .ok_or_else(|| {
+                    RuntimeError::new(
+                        "ValueError: operation forbidden on released PickleBuffer object",
+                    )
+                })?
+        };
+        let source_obj = match source {
+            Value::Bytes(obj) | Value::ByteArray(obj) | Value::Instance(obj) => obj,
+            Value::MemoryView(obj) => match &*obj.kind() {
+                Object::MemoryView(view_data) => view_data.source.clone(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ValueError: operation forbidden on released PickleBuffer object",
+                    ))
+                }
+            },
+            _ => {
+                return Err(RuntimeError::new(
+                    "ValueError: operation forbidden on released PickleBuffer object",
+                ))
+            }
+        };
+        Ok(self.heap.alloc_memoryview(source_obj))
     }
 
     pub(in crate::vm) fn builtin_picklebuffer_release(
@@ -1000,6 +1094,7 @@ impl Vm {
                 ));
             };
             instance_data.attrs.remove(BYTES_BACKING_STORAGE_ATTR);
+            instance_data.attrs.remove(PICKLE_BUFFER_SOURCE_ATTR);
             instance_data
                 .attrs
                 .insert(PICKLE_BUFFER_RELEASED_ATTR.to_string(), Value::Bool(true));

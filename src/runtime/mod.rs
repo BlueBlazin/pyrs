@@ -211,6 +211,7 @@ pub enum NativeMethodKind {
     BytesJoin,
     MemoryViewEnter,
     MemoryViewExit,
+    MemoryViewToReadOnly,
     MemoryViewRelease,
     StrRemovePrefix,
     StrRemoveSuffix,
@@ -2027,6 +2028,7 @@ pub enum BuiltinFunction {
     PickleUnpicklerInit,
     PickleUnpicklerLoad,
     PickleBufferInit,
+    PickleBufferRaw,
     PickleBufferRelease,
     CopyregReconstructor,
     CopyregNewObj,
@@ -2436,6 +2438,7 @@ impl BuiltinFunction {
             | BuiltinFunction::PickleUnpicklerInit
             | BuiltinFunction::PickleUnpicklerLoad
             | BuiltinFunction::PickleBufferInit
+            | BuiltinFunction::PickleBufferRaw
             | BuiltinFunction::PickleBufferRelease
             | BuiltinFunction::CopyregReconstructor
             | BuiltinFunction::CopyregNewObj
@@ -2484,12 +2487,12 @@ impl BuiltinFunction {
                         _ => Err(RuntimeError::new("len() unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
-                        Object::MemoryView(view) => match &*view.source.kind() {
-                            Object::Bytes(values) | Object::ByteArray(values) => {
+                        Object::MemoryView(view) => {
+                            with_bytes_like_source(&view.source, |values| {
                                 Ok(Value::Int(values.len() as i64))
-                            }
-                            _ => Err(RuntimeError::new("len() unsupported type")),
-                        },
+                            })
+                            .unwrap_or_else(|| Err(RuntimeError::new("len() unsupported type")))
+                        }
                         _ => Err(RuntimeError::new("len() unsupported type")),
                     },
                     Value::Module(obj) => match &*obj.kind() {
@@ -2977,13 +2980,12 @@ impl BuiltinFunction {
                         _ => Err(RuntimeError::new("list() unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
-                        Object::MemoryView(view) => match &*view.source.kind() {
-                            Object::Bytes(values) | Object::ByteArray(values) => Ok(heap
-                                .alloc_list(
-                                    values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
-                                )),
-                            _ => Err(RuntimeError::new("list() unsupported type")),
-                        },
+                        Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                            Ok(heap.alloc_list(
+                                values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                            ))
+                        })
+                        .unwrap_or_else(|| Err(RuntimeError::new("list() unsupported type"))),
                         _ => Err(RuntimeError::new("list() unsupported type")),
                     },
                     _ => Err(RuntimeError::new("list() unsupported type")),
@@ -3054,13 +3056,12 @@ impl BuiltinFunction {
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
-                        Object::MemoryView(view) => match &*view.source.kind() {
-                            Object::Bytes(values) | Object::ByteArray(values) => Ok(heap
-                                .alloc_tuple(
-                                    values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
-                                )),
-                            _ => Err(RuntimeError::new("tuple() unsupported type")),
-                        },
+                        Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                            Ok(heap.alloc_tuple(
+                                values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                            ))
+                        })
+                        .unwrap_or_else(|| Err(RuntimeError::new("tuple() unsupported type"))),
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
                     },
                     _ => Err(RuntimeError::new("tuple() unsupported type")),
@@ -3216,8 +3217,8 @@ impl BuiltinFunction {
                                 ));
                             }
                             match instance_data.attrs.get("__pyrs_bytes_storage__") {
-                                Some(Value::Bytes(storage)) | Some(Value::ByteArray(storage)) => {
-                                    storage.clone()
+                                Some(Value::Bytes(_)) | Some(Value::ByteArray(_)) => {
+                                    obj.clone()
                                 }
                                 _ => {
                                     return Err(RuntimeError::new(
@@ -4826,12 +4827,10 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
             _ => Err(RuntimeError::new("expected iterable")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => match &*view.source.kind() {
-                Object::Bytes(values) | Object::ByteArray(values) => {
-                    Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
-                }
-                _ => Err(RuntimeError::new("expected iterable")),
-            },
+            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
+            })
+            .unwrap_or_else(|| Err(RuntimeError::new("expected iterable"))),
             _ => Err(RuntimeError::new("expected iterable")),
         },
         Value::Iterator(obj) => {
@@ -4916,18 +4915,16 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     _ => Err(RuntimeError::new("expected iterable")),
                 },
                 IteratorKind::MemoryView(memory_obj) => match &*memory_obj.kind() {
-                    Object::MemoryView(view) => match &*view.source.kind() {
-                        Object::Bytes(values) | Object::ByteArray(values) => {
-                            let start = iterator.index.min(values.len());
-                            let out = values[start..]
-                                .iter()
-                                .map(|byte| Value::Int(*byte as i64))
-                                .collect::<Vec<_>>();
-                            iterator.index = values.len();
-                            Ok(out)
-                        }
-                        _ => Err(RuntimeError::new("expected iterable")),
-                    },
+                    Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                        let start = iterator.index.min(values.len());
+                        let out = values[start..]
+                            .iter()
+                            .map(|byte| Value::Int(*byte as i64))
+                            .collect::<Vec<_>>();
+                        iterator.index = values.len();
+                        Ok(out)
+                    })
+                    .unwrap_or_else(|| Err(RuntimeError::new("expected iterable"))),
                     _ => Err(RuntimeError::new("expected iterable")),
                 },
                 IteratorKind::Map { values, .. } => {
@@ -5131,10 +5128,8 @@ fn value_to_bytes_with_encoding(
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => match &*view.source.kind() {
-                Object::Bytes(values) | Object::ByteArray(values) => Ok(values.clone()),
-                _ => Err(RuntimeError::new("bytes() unsupported type")),
-            },
+            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| values.to_vec())
+                .ok_or_else(|| RuntimeError::new("bytes() unsupported type")),
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
         other => {
@@ -5148,6 +5143,24 @@ fn value_to_bytes_with_encoding(
             }
             Ok(out)
         }
+    }
+}
+
+fn with_bytes_like_source<R>(source: &ObjRef, map: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    match &*source.kind() {
+        Object::Bytes(values) | Object::ByteArray(values) => Some(map(values)),
+        Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_bytes_storage__") {
+            Some(Value::Bytes(storage)) => match &*storage.kind() {
+                Object::Bytes(values) => Some(map(values)),
+                _ => None,
+            },
+            Some(Value::ByteArray(storage)) => match &*storage.kind() {
+                Object::ByteArray(values) => Some(map(values)),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -5620,6 +5633,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::MemoryViewExit => {
                         "<bound method memoryview.__exit__>".to_string()
                     }
+                    NativeMethodKind::MemoryViewToReadOnly => {
+                        "<bound method memoryview.toreadonly>".to_string()
+                    }
                     NativeMethodKind::MemoryViewRelease => {
                         "<bound method memoryview.release>".to_string()
                     }
@@ -5922,10 +5938,8 @@ fn is_truthy_value(value: &Value) -> bool {
             _ => true,
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => match &*view.source.kind() {
-                Object::Bytes(values) | Object::ByteArray(values) => !values.is_empty(),
-                _ => true,
-            },
+            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| !values.is_empty())
+                .unwrap_or(true),
             _ => true,
         },
         Value::Iterator(_) => true,
