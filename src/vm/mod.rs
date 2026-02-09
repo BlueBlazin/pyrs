@@ -29437,15 +29437,15 @@ impl Vm {
         };
         let closed = matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true)));
         let current_value = instance_data.attrs.get("_value").cloned();
-        let value_obj = match current_value {
-            Some(Value::ByteArray(obj)) => obj,
+        let (value_obj, needs_store_value) = match current_value {
+            Some(Value::ByteArray(obj)) => (obj, false),
             Some(Value::Bytes(obj)) => {
                 let bytes = match &*obj.kind() {
                     Object::Bytes(values) => values.clone(),
                     _ => Vec::new(),
                 };
                 match self.heap.alloc_bytearray(bytes) {
-                    Value::ByteArray(obj) => obj,
+                    Value::ByteArray(obj) => (obj, true),
                     _ => unreachable!(),
                 }
             }
@@ -29453,18 +29453,24 @@ impl Vm {
                 let bytes = value_to_bytes_payload(other)
                     .map_err(|_| RuntimeError::new("BytesIO internal buffer is invalid"))?;
                 match self.heap.alloc_bytearray(bytes) {
-                    Value::ByteArray(obj) => obj,
+                    Value::ByteArray(obj) => (obj, true),
                     _ => unreachable!(),
                 }
             }
             None => match self.heap.alloc_bytearray(Vec::new()) {
-                Value::ByteArray(obj) => obj,
+                Value::ByteArray(obj) => (obj, true),
                 _ => unreachable!(),
             },
         };
-        instance_data
-            .attrs
-            .insert("_value".to_string(), Value::ByteArray(value_obj.clone()));
+        if needs_store_value {
+            if let Some(slot) = instance_data.attrs.get_mut("_value") {
+                *slot = Value::ByteArray(value_obj.clone());
+            } else {
+                instance_data
+                    .attrs
+                    .insert("_value".to_string(), Value::ByteArray(value_obj.clone()));
+            }
+        }
         Ok((value_obj, pos, closed))
     }
 
@@ -29478,15 +29484,27 @@ impl Vm {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
             return Err(RuntimeError::new("BytesIO receiver must be instance"));
         };
-        instance_data
-            .attrs
-            .insert("_value".to_string(), Value::ByteArray(value_obj));
-        instance_data
-            .attrs
-            .insert("_pos".to_string(), Value::Int(pos as i64));
-        instance_data
-            .attrs
-            .insert("_closed".to_string(), Value::Bool(closed));
+        if let Some(slot) = instance_data.attrs.get_mut("_value") {
+            *slot = Value::ByteArray(value_obj);
+        } else {
+            instance_data
+                .attrs
+                .insert("_value".to_string(), Value::ByteArray(value_obj));
+        }
+        if let Some(slot) = instance_data.attrs.get_mut("_pos") {
+            *slot = Value::Int(pos as i64);
+        } else {
+            instance_data
+                .attrs
+                .insert("_pos".to_string(), Value::Int(pos as i64));
+        }
+        if let Some(slot) = instance_data.attrs.get_mut("_closed") {
+            *slot = Value::Bool(closed);
+        } else {
+            instance_data
+                .attrs
+                .insert("_closed".to_string(), Value::Bool(closed));
+        }
         Ok(())
     }
 
@@ -29717,8 +29735,7 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
-        self.bytesio_store_state(&receiver, value_obj.clone(), pos, closed)?;
+        let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
         Ok(self.heap.alloc_memoryview(value_obj))
     }
 
