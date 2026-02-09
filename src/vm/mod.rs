@@ -20362,6 +20362,9 @@ impl Vm {
     }
 
     fn compare_eq_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = self.compare_eq_via_int_backing(&left, &right) {
+            return Ok(Value::Bool(result));
+        }
         if let Some(result) = self.compare_eq_via_list_backing(&left, &right)? {
             return Ok(Value::Bool(result));
         }
@@ -20405,6 +20408,31 @@ impl Vm {
             _ => false,
         };
         Ok(Value::Bool(!eq))
+    }
+
+    fn compare_eq_via_int_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+        fn int_like(value: &Value) -> Option<BigInt> {
+            match value {
+                Value::Bool(flag) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
+                Value::Int(number) => Some(BigInt::from_i64(*number)),
+                Value::BigInt(number) => Some(number.clone()),
+                _ => None,
+            }
+        }
+
+        let int_like_value = |value: &Value| -> Option<BigInt> {
+            match value {
+                Value::Instance(instance) => {
+                    let backing = self.instance_backing_int(instance)?;
+                    int_like(&backing)
+                }
+                _ => int_like(value),
+            }
+        };
+
+        let left_int = int_like_value(left)?;
+        let right_int = int_like_value(right)?;
+        Some(left_int == right_int)
     }
 
     fn compare_eq_via_list_backing(

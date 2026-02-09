@@ -2356,6 +2356,42 @@ ok = (count_opcode(pickle.SETITEMS, s) >= 2)
 }
 
 #[test]
+fn int_subclass_equality_uses_numeric_value_semantics() {
+    let source = r#"class myint(int):
+    pass
+a = myint(4)
+b = myint(4)
+ok = (a == b and not (a != b) and int(a) == 4 and int(b) == 4)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_roundtrip_preserves_int_subclass_value_equality() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle int-subclass equality test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+class myint(int):
+    pass
+x = myint(5)
+y = pickle.loads(pickle.dumps(x, 4))
+ok = (type(y) is myint and y == x and int(y) == 5)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bytearray_subclass_constructor_accepts_payload_and_supports_bytes_conversion() {
     let source = r#"class Z(bytearray):
     pass
