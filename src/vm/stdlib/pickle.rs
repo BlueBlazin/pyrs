@@ -35,6 +35,7 @@ const PICKLE_DEFAULT_PROTOCOL: i64 = 5;
 const PICKLE_MIN_FAST_PROTOCOL: i64 = 4;
 const PICKLE_MAX_FAST_PROTOCOL: i64 = 5;
 const PICKLE_FRAME_SIZE_TARGET: usize = 65_536;
+const PICKLE_BATCH_SIZE: usize = 1_000;
 const PICKLER_FILE_ATTR: &str = "__pyrs_pickle_file__";
 const PICKLER_PROTOCOL_ATTR: &str = "__pyrs_pickle_protocol__";
 const PICKLER_FIX_IMPORTS_ATTR: &str = "__pyrs_pickle_fix_imports__";
@@ -411,10 +412,13 @@ impl Vm {
                     _ => return Err(()),
                 };
                 encoder.push_byte(b']'); // EMPTY_LIST
-                if !values.is_empty() {
+                for chunk in values.chunks(PICKLE_BATCH_SIZE) {
+                    if chunk.is_empty() {
+                        continue;
+                    }
                     encoder.push_byte(b'('); // MARK
-                    for item in values {
-                        self.fast_pickle_encode_value(encoder, &item)?;
+                    for item in chunk {
+                        self.fast_pickle_encode_value(encoder, item)?;
                     }
                     encoder.push_byte(b'e'); // APPENDS
                 }
@@ -429,11 +433,14 @@ impl Vm {
                     _ => return Err(()),
                 };
                 encoder.push_byte(b'}'); // EMPTY_DICT
-                if !pairs.is_empty() {
+                for chunk in pairs.chunks(PICKLE_BATCH_SIZE) {
+                    if chunk.is_empty() {
+                        continue;
+                    }
                     encoder.push_byte(b'('); // MARK
-                    for (key, value) in pairs {
-                        self.fast_pickle_encode_value(encoder, &key)?;
-                        self.fast_pickle_encode_value(encoder, &value)?;
+                    for (key, value) in chunk {
+                        self.fast_pickle_encode_value(encoder, key)?;
+                        self.fast_pickle_encode_value(encoder, value)?;
                     }
                     encoder.push_byte(b'u'); // SETITEMS
                 }
@@ -488,6 +495,119 @@ impl Vm {
             frame_start = frame_end;
         }
         Some(chunks)
+    }
+
+    fn fast_pickle_graph_has_alias(value: &Value, seen: &mut HashSet<u64>) -> bool {
+        match value {
+            Value::List(obj) => {
+                if !seen.insert(obj.id()) {
+                    return true;
+                }
+                let elements = match &*obj.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => return true,
+                };
+                elements
+                    .iter()
+                    .any(|element| Self::fast_pickle_graph_has_alias(element, seen))
+            }
+            Value::Tuple(obj) => {
+                if !seen.insert(obj.id()) {
+                    return true;
+                }
+                let elements = match &*obj.kind() {
+                    Object::Tuple(values) => values.clone(),
+                    _ => return true,
+                };
+                elements
+                    .iter()
+                    .any(|element| Self::fast_pickle_graph_has_alias(element, seen))
+            }
+            Value::Dict(obj) => {
+                if !seen.insert(obj.id()) {
+                    return true;
+                }
+                let entries = match &*obj.kind() {
+                    Object::Dict(entries) => entries
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<Vec<_>>(),
+                    _ => return true,
+                };
+                entries.iter().any(|(key, value)| {
+                    Self::fast_pickle_graph_has_alias(key, seen)
+                        || Self::fast_pickle_graph_has_alias(value, seen)
+                })
+            }
+            Value::Bytes(obj) => !seen.insert(obj.id()),
+            _ => false,
+        }
+    }
+
+    fn fast_pickle_graph_is_alias_free(value: &Value) -> bool {
+        let mut seen = HashSet::new();
+        !Self::fast_pickle_graph_has_alias(value, &mut seen)
+    }
+
+    fn fast_pickle_graph_has_large_payload(value: &Value, seen: &mut HashSet<u64>) -> bool {
+        match value {
+            Value::Str(text) => text.len() >= PICKLE_FRAME_SIZE_TARGET,
+            Value::Bytes(obj) => {
+                if !seen.insert(obj.id()) {
+                    return false;
+                }
+                match &*obj.kind() {
+                    Object::Bytes(bytes) => bytes.len() >= PICKLE_FRAME_SIZE_TARGET,
+                    _ => true,
+                }
+            }
+            Value::List(obj) => {
+                if !seen.insert(obj.id()) {
+                    return false;
+                }
+                let values = match &*obj.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => return true,
+                };
+                values
+                    .iter()
+                    .any(|item| Self::fast_pickle_graph_has_large_payload(item, seen))
+            }
+            Value::Tuple(obj) => {
+                if !seen.insert(obj.id()) {
+                    return false;
+                }
+                let values = match &*obj.kind() {
+                    Object::Tuple(values) => values.clone(),
+                    _ => return true,
+                };
+                values
+                    .iter()
+                    .any(|item| Self::fast_pickle_graph_has_large_payload(item, seen))
+            }
+            Value::Dict(obj) => {
+                if !seen.insert(obj.id()) {
+                    return false;
+                }
+                let entries = match &*obj.kind() {
+                    Object::Dict(entries) => entries
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<Vec<_>>(),
+                    _ => return true,
+                };
+                entries.iter().any(|(key, value)| {
+                    Self::fast_pickle_graph_has_large_payload(key, seen)
+                        || Self::fast_pickle_graph_has_large_payload(value, seen)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn fast_pickle_graph_is_small_payload(value: &Value) -> bool {
+        let mut seen = HashSet::new();
+        !Self::fast_pickle_graph_has_large_payload(value, &mut seen)
     }
 
     fn fast_pickle_opcode_boundaries(payload: &[u8]) -> Option<Vec<usize>> {
@@ -956,6 +1076,8 @@ impl Vm {
         if fix_imports
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
+            && Self::fast_pickle_graph_is_alias_free(&args[0])
+            && Self::fast_pickle_graph_is_small_payload(&args[0])
         {
             if let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
                 self.pickle_write_chunks_to_file(args[1].clone(), chunks)?;
@@ -994,6 +1116,8 @@ impl Vm {
         if fix_imports
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
+            && Self::fast_pickle_graph_is_alias_free(&args[0])
+            && Self::fast_pickle_graph_is_small_payload(&args[0])
         {
             if let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
                 let mut payload = Vec::new();
@@ -1271,6 +1395,8 @@ impl Vm {
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
             && !has_dispatch_table
+            && Self::fast_pickle_graph_is_alias_free(&args[0])
+            && Self::fast_pickle_graph_is_small_payload(&args[0])
         {
             if let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
                 self.pickle_write_chunks_to_file(file, chunks)?;

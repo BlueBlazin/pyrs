@@ -2317,6 +2317,45 @@ ok = raised
 }
 
 #[test]
+fn pickle_protocol4_preserves_bytes_alias_identity() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle bytes alias test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+b = b""
+x, y = pickle.loads(pickle.dumps((b, b), 4))
+ok = (x is y)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_protocol4_dict_chunking_emits_multiple_setitems_for_large_dicts() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle dict chunking test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.pickletester import count_opcode
+d = dict.fromkeys(range(2500))
+s = pickle.dumps(d, 4)
+ok = (count_opcode(pickle.SETITEMS, s) >= 2)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bytearray_subclass_constructor_accepts_payload_and_supports_bytes_conversion() {
     let source = r#"class Z(bytearray):
     pass
