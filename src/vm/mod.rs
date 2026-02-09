@@ -13608,61 +13608,8 @@ impl Vm {
                     };
                     std::mem::take(values)
                 };
-                let sorted_values_result = if !matches!(key_func, Value::None) {
-                    let mut keyed = Vec::with_capacity(working.len());
-                    for value in &working {
-                        let key = match self.call_internal(
-                            key_func.clone(),
-                            vec![value.clone()],
-                            HashMap::new(),
-                        )? {
-                            InternalCallOutcome::Value(key) => key,
-                            InternalCallOutcome::CallerExceptionHandled => {
-                                return Err(RuntimeError::new("key function raised"));
-                            }
-                        };
-                        keyed.push((value.clone(), key));
-                    }
-                    let mut compare_error: Option<RuntimeError> = None;
-                    keyed.sort_by(|left, right| {
-                        match self.compare_sort_keys_ref(&left.1, &right.1) {
-                            Ok(ordering) => ordering,
-                            Err(err) => {
-                                compare_error = Some(err);
-                                Ordering::Equal
-                            }
-                        }
-                    });
-                    if let Some(err) = compare_error {
-                        return Err(err);
-                    }
-                    if reverse {
-                        keyed.reverse();
-                    }
-                    Ok(keyed.into_iter().map(|(value, _)| value).collect())
-                } else {
-                    let mut compare_error: Option<RuntimeError> = None;
-                    working.sort_by(|left, right| {
-                        match self.compare_order_with_fallback_ref(left, right) {
-                            Ok(ordering) => ordering,
-                            Err(err) => {
-                                compare_error = Some(err);
-                                Ordering::Equal
-                            }
-                        }
-                    });
-                    if let Some(err) = compare_error {
-                        return Err(err);
-                    }
-                    if reverse {
-                        working.reverse();
-                    }
-                    Ok(std::mem::take(&mut working))
-                };
-
-                let sorted_values = match sorted_values_result {
-                    Ok(values) => values,
-                    Err(err) => {
+                if let Err(err) = self.sort_values_with_optional_key(&mut working, &key_func, reverse)
+                {
                         let mut receiver_kind = receiver.kind_mut();
                         let Object::List(values) = &mut *receiver_kind else {
                             return Err(RuntimeError::new("list.sort() receiver must be list"));
@@ -13671,15 +13618,14 @@ impl Vm {
                             *values = working;
                         }
                         return Err(err);
-                    }
-                };
+                }
 
                 let mut receiver_kind = receiver.kind_mut();
                 let Object::List(values) = &mut *receiver_kind else {
                     return Err(RuntimeError::new("list.sort() receiver must be list"));
                 };
                 let modified_during_sort = !values.is_empty();
-                *values = sorted_values;
+                *values = working;
                 if modified_during_sort {
                     return Err(RuntimeError::new("list modified during sort"));
                 }
@@ -19912,39 +19858,17 @@ impl Vm {
         }
 
         let mut values = self.collect_iterable_values(args.remove(0))?;
-        if !matches!(key_func, Value::None) {
-            let mut keyed = Vec::with_capacity(values.len());
-            for value in values {
-                let key = match self.call_internal(
-                    key_func.clone(),
-                    vec![value.clone()],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(key) => key,
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("key function raised"));
-                    }
-                };
-                keyed.push((value, key));
-            }
-            let mut compare_error: Option<RuntimeError> = None;
-            keyed.sort_by(|left, right| {
-                match self.compare_sort_keys_ref(&left.1, &right.1) {
-                    Ok(ordering) => ordering,
-                    Err(err) => {
-                        compare_error = Some(err);
-                        Ordering::Equal
-                    }
-                }
-            });
-            if let Some(err) = compare_error {
-                return Err(err);
-            }
-            if reverse {
-                keyed.reverse();
-            }
-            values = keyed.into_iter().map(|(value, _)| value).collect();
-        } else {
+        self.sort_values_with_optional_key(&mut values, &key_func, reverse)?;
+        Ok(self.heap.alloc_list(values))
+    }
+
+    fn sort_values_with_optional_key(
+        &mut self,
+        values: &mut Vec<Value>,
+        key_func: &Value,
+        reverse: bool,
+    ) -> Result<(), RuntimeError> {
+        if matches!(key_func, Value::None) {
             let mut compare_error: Option<RuntimeError> = None;
             values.sort_by(|left, right| {
                 match self.compare_order_with_fallback_ref(left, right) {
@@ -19961,8 +19885,57 @@ impl Vm {
             if reverse {
                 values.reverse();
             }
+            return Ok(());
         }
-        Ok(self.heap.alloc_list(values))
+
+        let mut slots: Vec<Option<Value>> = values.drain(..).map(Some).collect();
+        let mut keys = Vec::with_capacity(slots.len());
+        for slot in &slots {
+            let value = slot.as_ref().expect("slot populated");
+            let key = match self.call_internal(
+                key_func.clone(),
+                vec![value.clone()],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(key) => key,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    *values = slots
+                        .into_iter()
+                        .map(|slot| slot.expect("slot populated"))
+                        .collect();
+                    return Err(RuntimeError::new("key function raised"));
+                }
+            };
+            keys.push(key);
+        }
+
+        let mut order: Vec<usize> = (0..keys.len()).collect();
+        let mut compare_error: Option<RuntimeError> = None;
+        order.sort_by(|left_idx, right_idx| {
+            match self.compare_sort_keys_ref(&keys[*left_idx], &keys[*right_idx]) {
+                Ok(ordering) => ordering,
+                Err(err) => {
+                    compare_error = Some(err);
+                    Ordering::Equal
+                }
+            }
+        });
+        if let Some(err) = compare_error {
+            *values = slots
+                .into_iter()
+                .map(|slot| slot.expect("slot populated"))
+                .collect();
+            return Err(err);
+        }
+        if reverse {
+            order.reverse();
+        }
+
+        values.reserve(order.len());
+        for index in order {
+            values.push(slots[index].take().expect("slot populated"));
+        }
+        Ok(())
     }
 
     fn compare_sort_keys(&mut self, left: Value, right: Value) -> Result<Ordering, RuntimeError> {
@@ -19996,10 +19969,8 @@ impl Vm {
         match compare_order(left.clone(), right.clone()) {
             Ok(ordering) => Ok(ordering),
             Err(_) => {
-                if let Some((left_values, right_values)) =
-                    self.sequence_values_for_compare(left, right)
-                {
-                    return self.compare_sequence_order_with_fallback(&left_values, &right_values);
+                if let Some(ordering) = self.compare_sequence_order_for_values(left, right)? {
+                    return Ok(ordering);
                 }
                 self.compare_order_via_richcmp(left.clone(), right.clone())?
                     .ok_or_else(|| RuntimeError::new("unsupported operand type for comparison"))
@@ -20007,36 +19978,65 @@ impl Vm {
         }
     }
 
-    fn sequence_values_for_compare(&self, left: &Value, right: &Value) -> Option<(Vec<Value>, Vec<Value>)> {
+    fn compare_sequence_order_for_values(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<Ordering>, RuntimeError> {
         match (left, right) {
-            (Value::Tuple(left), Value::Tuple(right)) => match (&*left.kind(), &*right.kind()) {
-                (Object::Tuple(left_values), Object::Tuple(right_values)) => {
-                    Some((left_values.clone(), right_values.clone()))
-                }
-                _ => None,
-            },
-            (Value::List(left), Value::List(right)) => match (&*left.kind(), &*right.kind()) {
-                (Object::List(left_values), Object::List(right_values)) => {
-                    Some((left_values.clone(), right_values.clone()))
-                }
-                _ => None,
-            },
-            _ => None,
+            (Value::Tuple(left_obj), Value::Tuple(right_obj)) => {
+                Ok(Some(self.compare_sequence_objects_order(left_obj, right_obj)?))
+            }
+            (Value::List(left_obj), Value::List(right_obj)) => {
+                Ok(Some(self.compare_sequence_objects_order(left_obj, right_obj)?))
+            }
+            _ => Ok(None),
         }
     }
 
-    fn compare_sequence_order_with_fallback(
+    fn compare_sequence_objects_order(
         &mut self,
-        left: &[Value],
-        right: &[Value],
+        left_obj: &ObjRef,
+        right_obj: &ObjRef,
     ) -> Result<Ordering, RuntimeError> {
-        for (left_item, right_item) in left.iter().zip(right.iter()) {
-            let ordering = self.compare_order_with_fallback_ref(left_item, right_item)?;
+        let (left_len, right_len) = {
+            let left_kind = left_obj.kind();
+            let right_kind = right_obj.kind();
+            match (&*left_kind, &*right_kind) {
+                (Object::List(left), Object::List(right)) => (left.len(), right.len()),
+                (Object::Tuple(left), Object::Tuple(right)) => (left.len(), right.len()),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "unsupported operand type for comparison",
+                    ));
+                }
+            }
+        };
+
+        for idx in 0..left_len.min(right_len) {
+            let (left_item, right_item) = {
+                let left_kind = left_obj.kind();
+                let right_kind = right_obj.kind();
+                match (&*left_kind, &*right_kind) {
+                    (Object::List(left), Object::List(right)) => {
+                        (left[idx].clone(), right[idx].clone())
+                    }
+                    (Object::Tuple(left), Object::Tuple(right)) => {
+                        (left[idx].clone(), right[idx].clone())
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "unsupported operand type for comparison",
+                        ));
+                    }
+                }
+            };
+            let ordering = self.compare_order_with_fallback_ref(&left_item, &right_item)?;
             if ordering != Ordering::Equal {
                 return Ok(ordering);
             }
         }
-        Ok(left.len().cmp(&right.len()))
+        Ok(left_len.cmp(&right_len))
     }
 
     fn compare_order_via_richcmp(
