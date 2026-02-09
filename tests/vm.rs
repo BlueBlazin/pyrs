@@ -6729,6 +6729,39 @@ ok = caught
 }
 
 #[test]
+fn executes_os_mkdir_raises_file_exists_error() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_mkdir_exists_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let child = temp_dir.join("child");
+
+    let source = format!(
+        r#"import os
+path = '{path}'
+os.mkdir(path)
+caught = False
+try:
+    os.mkdir(path)
+except FileExistsError:
+    caught = True
+ok = caught
+"#,
+        path = child.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_dir(child);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
 fn handles_except_tuple_types() {
     let source = "caught = False\ntry:\n    raise AttributeError\nexcept (ImportError, AttributeError):\n    caught = True\nok = caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -8405,6 +8438,41 @@ ok = (io.text_encoding(None) == 'utf-8' and io.text_encoding('latin-1') == 'lati
 #[test]
 fn os_getenv_handles_default_and_none() {
     let source = "import os\nmissing = os.getenv('__PYRS_ENV_MISSING__')\nwith_default = os.getenv('__PYRS_ENV_MISSING__', 'fallback')\npath_value = os.getenv('PATH', '')\nok = (missing is None and with_default == 'fallback' and isinstance(path_value, str))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_getenv_observes_os_environ_updates() {
+    let source = r#"import os
+key = "__PYRS_ENV_GUARD_TEST__"
+prior = os.environ.get(key)
+os.environ[key] = "present"
+seen = os.getenv(key)
+del os.environ[key]
+missing = os.getenv(key, "fallback")
+if prior is not None:
+    os.environ[key] = prior
+ok = (seen == "present" and missing == "fallback")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_mkdir_creates_directory_with_mode_argument() {
+    let source = r#"import os, time
+name = "__pyrs_mkdir_test__" + str(int(time.time() * 1000000))
+ret = os.mkdir(name, 0o700)
+ok = (ret is None and name in os.listdir("."))
+os.rmdir(name)
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

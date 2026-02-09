@@ -1972,6 +1972,7 @@ pub enum BuiltinFunction {
     OsURandom,
     OsStat,
     OsLStat,
+    OsMkdir,
     OsRmdir,
     OsUTime,
     OsScandir,
@@ -4278,6 +4279,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsURandom
             | BuiltinFunction::OsStat
             | BuiltinFunction::OsLStat
+            | BuiltinFunction::OsMkdir
             | BuiltinFunction::OsRmdir
             | BuiltinFunction::OsUTime
             | BuiltinFunction::OsScandir

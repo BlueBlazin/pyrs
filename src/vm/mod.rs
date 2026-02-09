@@ -1689,6 +1689,7 @@ impl Vm {
                 ("urandom", BuiltinFunction::OsURandom),
                 ("stat", BuiltinFunction::OsStat),
                 ("lstat", BuiltinFunction::OsLStat),
+                ("mkdir", BuiltinFunction::OsMkdir),
                 ("rmdir", BuiltinFunction::OsRmdir),
                 ("utime", BuiltinFunction::OsUTime),
                 ("scandir", BuiltinFunction::OsScandir),
@@ -1823,6 +1824,7 @@ impl Vm {
                 ("waitpid", BuiltinFunction::OsWaitPid),
                 ("stat", BuiltinFunction::OsStat),
                 ("lstat", BuiltinFunction::OsLStat),
+                ("mkdir", BuiltinFunction::OsMkdir),
                 ("rmdir", BuiltinFunction::OsRmdir),
                 ("utime", BuiltinFunction::OsUTime),
                 ("scandir", BuiltinFunction::OsScandir),
@@ -17416,6 +17418,7 @@ impl Vm {
             BuiltinFunction::OsURandom => self.builtin_os_urandom(args, kwargs),
             BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
             BuiltinFunction::OsLStat => self.builtin_os_lstat(args, kwargs),
+            BuiltinFunction::OsMkdir => self.builtin_os_mkdir(args, kwargs),
             BuiltinFunction::OsRmdir => self.builtin_os_rmdir(args, kwargs),
             BuiltinFunction::OsUTime => self.builtin_os_utime(args, kwargs),
             BuiltinFunction::OsScandir => self.builtin_os_scandir(args, kwargs),
@@ -24542,6 +24545,24 @@ impl Vm {
             Value::Str(value) => value,
             _ => return Err(RuntimeError::new("os.getenv() key must be str")),
         };
+        // Mirror CPython behavior: getenv() must observe os.environ mutations
+        // performed in-process by Python code.
+        let lookup = Value::Str(key.clone());
+        for module_name in ["os", "posix"] {
+            let Some(module_obj) = self.modules.get(module_name) else {
+                continue;
+            };
+            let module_kind = module_obj.kind();
+            let Object::Module(module_data) = &*module_kind else {
+                continue;
+            };
+            let Some(Value::Dict(environ_obj)) = module_data.globals.get("environ") else {
+                continue;
+            };
+            if let Some(value) = dict_get_value(environ_obj, &lookup) {
+                return Ok(value);
+            }
+        }
         match std::env::var(&key) {
             Ok(value) => Ok(Value::Str(value)),
             Err(_) => Ok(default),
@@ -24992,6 +25013,45 @@ impl Vm {
         let metadata = fs::symlink_metadata(path)
             .map_err(|err| RuntimeError::new(format!("lstat failed: {err}")))?;
         self.build_stat_result(metadata, true)
+    }
+
+    fn builtin_os_mkdir(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "mkdir() expects path and optional mode",
+            ));
+        }
+        let path = value_to_path(&args.remove(0))?;
+        let mode = if !args.is_empty() {
+            value_to_int(args.remove(0))?
+        } else if let Some(value) = kwargs.remove("mode") {
+            value_to_int(value)?
+        } else {
+            0o777
+        };
+        if let Some(dir_fd) = kwargs.remove("dir_fd") {
+            if !matches!(dir_fd, Value::None) {
+                return Err(RuntimeError::new("mkdir() dir_fd is unsupported"));
+            }
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "mkdir() got an unexpected keyword argument",
+            ));
+        }
+        fs::create_dir(&path).map_err(|err| RuntimeError::new(format!("mkdir failed: {err}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = fs::Permissions::from_mode((mode & 0o777) as u32);
+            fs::set_permissions(&path, permissions)
+                .map_err(|err| RuntimeError::new(format!("mkdir failed: {err}")))?;
+        }
+        Ok(Value::None)
     }
 
     fn builtin_os_rmdir(
@@ -39580,6 +39640,20 @@ fn classify_runtime_error(message: &str) -> &'static str {
             return "NotADirectoryError";
         }
     }
+    if message.contains("mkdir failed:") {
+        if message.contains("File exists") || message.contains("os error 17") {
+            return "FileExistsError";
+        }
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
     if message.contains("remove failed:") {
         if message.contains("No such file or directory") || message.contains("os error 2") {
             return "FileNotFoundError";
@@ -39596,6 +39670,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
     }
     if message.contains("bad file descriptor")
         || message.contains("open failed:")
+        || message.contains("mkdir failed:")
         || message.contains("remove failed:")
         || message.contains("close failed:")
         || message.contains("stat failed:")
