@@ -1895,10 +1895,10 @@ impl Vm {
                     self.heap.alloc_tuple(vec![class_obj, Value::Tuple(tuple)]),
                 )));
             }
-            if let Some(dict) = self.instance_backing_dict(instance) {
+            if self.instance_backing_dict(instance).is_some() {
                 return Ok(Some((
                     self.pickle_copyreg_callable("__newobj__")?,
-                    self.heap.alloc_tuple(vec![class_obj, Value::Dict(dict)]),
+                    self.heap.alloc_tuple(vec![class_obj]),
                 )));
             }
             if let Some(set) = self.instance_backing_set(instance) {
@@ -1969,10 +1969,10 @@ impl Vm {
                 self.heap.alloc_tuple(vec![class_obj, Value::Tuple(tuple)]),
             )));
         }
-        if let Some(dict) = self.instance_backing_dict(instance) {
+        if self.instance_backing_dict(instance).is_some() {
             return Ok(Some((
                 self.pickle_copyreg_callable("__newobj__")?,
-                self.heap.alloc_tuple(vec![class_obj, Value::Dict(dict)]),
+                self.heap.alloc_tuple(vec![class_obj]),
             )));
         }
         if let Some(set) = self.instance_backing_set(instance) {
@@ -2383,17 +2383,60 @@ impl Vm {
         };
         let mut reduced_parts = vec![constructor, constructor_args];
         let state = match &value {
-            Value::Instance(_) => {
-                self.builtin_object_getstate(vec![value.clone()], HashMap::new())?
+            Value::Instance(instance) => {
+                if self.frames.is_empty() {
+                    self.builtin_object_getstate(
+                        vec![Value::Instance(instance.clone())],
+                        HashMap::new(),
+                    )?
+                } else {
+                    let receiver = Value::Instance(instance.clone());
+                    let getstate = self.builtin_getattr(
+                        vec![receiver, Value::Str("__getstate__".to_string())],
+                        HashMap::new(),
+                    )?;
+                    match self.call_internal(getstate, Vec::new(), HashMap::new())? {
+                        InternalCallOutcome::Value(state) => state,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("__getstate__ callback failed"));
+                        }
+                    }
+                }
             }
             _ => Value::None,
         };
         reduced_parts.push(state);
 
         if let Value::Instance(instance) = &value {
-            if let Some(list_backing) = self.instance_backing_list(instance) {
-                let iter_value =
-                    self.call_builtin(BuiltinFunction::Iter, vec![Value::List(list_backing)], HashMap::new())?;
+            let list_iter = if let Some(list_backing) = self.instance_backing_list(instance) {
+                Some(
+                    self.call_builtin(
+                        BuiltinFunction::Iter,
+                        vec![Value::List(list_backing)],
+                        HashMap::new(),
+                    )?,
+                )
+            } else {
+                None
+            };
+            let dict_iter = if let Some(dict_backing) = self.instance_backing_dict(instance) {
+                let items_method = self.load_attr_dict_method(dict_backing, "items")?;
+                let items_value = match self.call_internal(items_method, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("dict.items() failed"));
+                    }
+                };
+                Some(self.call_builtin(BuiltinFunction::Iter, vec![items_value], HashMap::new())?)
+            } else {
+                None
+            };
+            if let Some(iter_value) = list_iter {
+                reduced_parts.push(iter_value);
+            } else if dict_iter.is_some() {
+                reduced_parts.push(Value::None);
+            }
+            if let Some(iter_value) = dict_iter {
                 reduced_parts.push(iter_value);
             }
         }

@@ -7239,6 +7239,116 @@ impl Vm {
                                     self.push_value(Value::List(obj));
                                 }
                             },
+                            Value::ByteArray(obj) => match index {
+                                Value::Slice { lower, upper, step } => {
+                                    let replacement = value_to_bytes_payload(value)?;
+                                    if let Object::ByteArray(values) = &mut *obj.kind_mut() {
+                                        let step_value = step.unwrap_or(1);
+                                        if step_value == 1 {
+                                            let (start, stop) = slice_bounds_for_step_one(
+                                                values.len(),
+                                                lower,
+                                                upper,
+                                            );
+                                            values.splice(start..stop, replacement);
+                                        } else {
+                                            let indices =
+                                                slice_indices(values.len(), lower, upper, step)?;
+                                            if indices.len() != replacement.len() {
+                                                return Err(RuntimeError::new(format!(
+                                                    "attempt to assign sequence of size {} to extended slice of size {}",
+                                                    replacement.len(),
+                                                    indices.len()
+                                                )));
+                                            }
+                                            for (idx, item) in indices.into_iter().zip(replacement)
+                                            {
+                                                values[idx] = item;
+                                            }
+                                        }
+                                    }
+                                    self.push_value(Value::ByteArray(obj));
+                                }
+                                index => {
+                                    if let Object::ByteArray(values) = &mut *obj.kind_mut() {
+                                        let mut idx = value_to_int(index)? as isize;
+                                        if idx < 0 {
+                                            idx += values.len() as isize;
+                                        }
+                                        if idx < 0 || idx as usize >= values.len() {
+                                            return Err(RuntimeError::new("index out of range"));
+                                        }
+                                        let byte = value_to_int(value)?;
+                                        if !(0..=255).contains(&byte) {
+                                            return Err(RuntimeError::new(
+                                                "byte must be in range(0, 256)",
+                                            ));
+                                        }
+                                        values[idx as usize] = byte as u8;
+                                    }
+                                    self.push_value(Value::ByteArray(obj));
+                                }
+                            },
+                            Value::Instance(instance) => match index {
+                                Value::Slice { .. } => {
+                                    if self.instance_backing_dict(&instance).is_some() {
+                                        return Err(RuntimeError::new(
+                                            "slicing unsupported for dict",
+                                        ));
+                                    }
+                                    let target_value = Value::Instance(instance.clone());
+                                    if let Some(setitem) = self
+                                        .lookup_bound_special_method(&target_value, "__setitem__")?
+                                    {
+                                        match self.call_internal(
+                                            setitem,
+                                            vec![index, value],
+                                            HashMap::new(),
+                                        )? {
+                                            InternalCallOutcome::Value(_) => {}
+                                            InternalCallOutcome::CallerExceptionHandled => {
+                                                return Ok(None);
+                                            }
+                                        }
+                                        self.push_value(target_value);
+                                    } else {
+                                        return Err(RuntimeError::new(
+                                            "slice assignment not supported",
+                                        ));
+                                    }
+                                }
+                                index => {
+                                    if let Some(backing_dict) = self.instance_backing_dict(&instance)
+                                    {
+                                        dict_set_value_checked(&backing_dict, index, value)?;
+                                        self.push_value(Value::Instance(instance));
+                                    } else {
+                                        let target_value = Value::Instance(instance.clone());
+                                        if let Some(setitem) = self
+                                            .lookup_bound_special_method(
+                                                &target_value,
+                                                "__setitem__",
+                                            )?
+                                        {
+                                            match self.call_internal(
+                                                setitem,
+                                                vec![index, value],
+                                                HashMap::new(),
+                                            )? {
+                                                InternalCallOutcome::Value(_) => {}
+                                                InternalCallOutcome::CallerExceptionHandled => {
+                                                    return Ok(None);
+                                                }
+                                            }
+                                            self.push_value(target_value);
+                                        } else {
+                                            return Err(RuntimeError::new(
+                                                "store subscript unsupported type",
+                                            ));
+                                        }
+                                    }
+                                }
+                            },
                             target => match index {
                                 Value::Slice { .. } => {
                                     return Err(RuntimeError::new(
@@ -7249,27 +7359,6 @@ impl Vm {
                                     Value::Dict(obj) => {
                                         dict_set_value_checked(&obj, index, value)?;
                                         self.push_value(Value::Dict(obj));
-                                    }
-                                    Value::ByteArray(obj) => {
-                                        if let Object::ByteArray(values) = &mut *obj.kind_mut() {
-                                            let mut idx = value_to_int(index)? as isize;
-                                            if idx < 0 {
-                                                idx += values.len() as isize;
-                                            }
-                                            if idx < 0 || idx as usize >= values.len() {
-                                                return Err(RuntimeError::new(
-                                                    "index out of range",
-                                                ));
-                                            }
-                                            let byte = value_to_int(value)?;
-                                            if !(0..=255).contains(&byte) {
-                                                return Err(RuntimeError::new(
-                                                    "byte must be in range(0, 256)",
-                                                ));
-                                            }
-                                            values[idx as usize] = byte as u8;
-                                        }
-                                        self.push_value(Value::ByteArray(obj));
                                     }
                                     Value::MemoryView(obj) => {
                                         let source = match &*obj.kind() {
@@ -7375,6 +7464,95 @@ impl Vm {
                                     }
                                 }
                             },
+                            Value::ByteArray(obj) => match index {
+                                Value::Slice { lower, upper, step } => {
+                                    if let Object::ByteArray(values) = &mut *obj.kind_mut() {
+                                        let step_value = step.unwrap_or(1);
+                                        if step_value == 1 {
+                                            let (start, stop) =
+                                                slice_bounds_for_step_one(values.len(), lower, upper);
+                                            values.drain(start..stop);
+                                        } else {
+                                            let mut indices =
+                                                slice_indices(values.len(), lower, upper, step)?;
+                                            indices.sort_unstable();
+                                            for idx in indices.into_iter().rev() {
+                                                values.remove(idx);
+                                            }
+                                        }
+                                    }
+                                }
+                                index => {
+                                    if let Object::ByteArray(values) = &mut *obj.kind_mut() {
+                                        let mut idx = value_to_int(index)? as isize;
+                                        if idx < 0 {
+                                            idx += values.len() as isize;
+                                        }
+                                        if idx < 0 || idx as usize >= values.len() {
+                                            return Err(RuntimeError::new("index out of range"));
+                                        }
+                                        values.remove(idx as usize);
+                                    }
+                                }
+                            },
+                            Value::Instance(instance) => match index {
+                                Value::Slice { .. } => {
+                                    if self.instance_backing_dict(&instance).is_some() {
+                                        return Err(RuntimeError::new(
+                                            "slice deletion not supported",
+                                        ));
+                                    }
+                                    let target_value = Value::Instance(instance.clone());
+                                    if let Some(delitem) = self
+                                        .lookup_bound_special_method(&target_value, "__delitem__")?
+                                    {
+                                        match self.call_internal(
+                                            delitem,
+                                            vec![index],
+                                            HashMap::new(),
+                                        )? {
+                                            InternalCallOutcome::Value(_) => {}
+                                            InternalCallOutcome::CallerExceptionHandled => {
+                                                return Ok(None);
+                                            }
+                                        }
+                                    } else {
+                                        return Err(RuntimeError::new(
+                                            "slice deletion not supported",
+                                        ));
+                                    }
+                                }
+                                index => {
+                                    if let Some(backing_dict) = self.instance_backing_dict(&instance)
+                                    {
+                                        ensure_hashable(&index)?;
+                                        if dict_remove_value(&backing_dict, &index).is_none() {
+                                            return Err(RuntimeError::new("key not found"));
+                                        }
+                                    } else {
+                                        let target_value = Value::Instance(instance.clone());
+                                        if let Some(delitem) = self.lookup_bound_special_method(
+                                            &target_value,
+                                            "__delitem__",
+                                        )? {
+                                            match self.call_internal(
+                                                delitem,
+                                                vec![index],
+                                                HashMap::new(),
+                                            )? {
+                                                InternalCallOutcome::Value(_) => {}
+                                                InternalCallOutcome::CallerExceptionHandled => {
+                                                    return Ok(None);
+                                                }
+                                            }
+                                        } else {
+                                            return Err(RuntimeError::new(
+                                                "delete subscript unsupported type",
+                                            ));
+                                        }
+                                    }
+                                }
+                            },
                             target => match index {
                                 Value::Slice { .. } => {
                                     return Err(RuntimeError::new("slice deletion not supported"));
@@ -7384,18 +7562,6 @@ impl Vm {
                                         ensure_hashable(&index)?;
                                         if dict_remove_value(&obj, &index).is_none() {
                                             return Err(RuntimeError::new("key not found"));
-                                        }
-                                    }
-                                    Value::ByteArray(obj) => {
-                                        if let Object::ByteArray(values) = &mut *obj.kind_mut() {
-                                            let mut idx = value_to_int(index)? as isize;
-                                            if idx < 0 {
-                                                idx += values.len() as isize;
-                                            }
-                                            if idx < 0 || idx as usize >= values.len() {
-                                                return Err(RuntimeError::new("index out of range"));
-                                            }
-                                            values.remove(idx as usize);
                                         }
                                     }
                                     _ => {
@@ -11200,7 +11366,7 @@ impl Vm {
         match attr_name {
             "__annotations__" => Ok(Value::Dict(self.ensure_function_annotations(func)?)),
             "__dict__" => Ok(Value::Dict(self.ensure_function_dict(func)?)),
-            "__name__" | "__qualname__" => {
+            "__name__" => {
                 let name = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
@@ -11209,6 +11375,33 @@ impl Vm {
                     func_data.code.name.clone()
                 };
                 Ok(Value::Str(name))
+            }
+            "__qualname__" => {
+                let qualname = {
+                    let func_ref = func.kind();
+                    let Object::Function(func_data) = &*func_ref else {
+                        return Err(RuntimeError::new("attribute access unsupported type"));
+                    };
+                    let base_name = func_data.code.name.clone();
+                    if let Some(owner_class) = &func_data.owner_class {
+                        if let Object::Class(class_data) = &*owner_class.kind() {
+                            let owner_qualname = class_data
+                                .attrs
+                                .get("__qualname__")
+                                .and_then(|value| match value {
+                                    Value::Str(name) => Some(name.clone()),
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| class_data.name.clone());
+                            format!("{owner_qualname}.{base_name}")
+                        } else {
+                            base_name
+                        }
+                    } else {
+                        base_name
+                    }
+                };
+                Ok(Value::Str(qualname))
             }
             "__module__" => {
                 let module_name = {
@@ -12993,19 +13186,33 @@ impl Vm {
             }
         }
 
+        let reduce_attr = attr_name == "__reduce_ex__" || attr_name == "__reduce__";
         if let Some(backing_list) = self.instance_backing_list(instance) {
-            if let Ok(bound_method) = self.load_attr_list_method(backing_list, attr_name) {
-                return Ok(AttrAccessOutcome::Value(bound_method));
+            if !reduce_attr {
+                if let Ok(bound_method) = self.load_attr_list_method(backing_list, attr_name) {
+                    return Ok(AttrAccessOutcome::Value(bound_method));
+                }
             }
         }
         if let Some(backing_tuple) = self.instance_backing_tuple(instance) {
-            if let Ok(bound_method) = self.load_attr_tuple_method(backing_tuple, attr_name) {
-                return Ok(AttrAccessOutcome::Value(bound_method));
+            if !reduce_attr {
+                if let Ok(bound_method) = self.load_attr_tuple_method(backing_tuple, attr_name) {
+                    return Ok(AttrAccessOutcome::Value(bound_method));
+                }
             }
         }
         if let Some(backing_str) = self.instance_backing_str(instance) {
-            if let Ok(bound_method) = self.load_attr_str_method(backing_str, attr_name) {
-                return Ok(AttrAccessOutcome::Value(bound_method));
+            if !reduce_attr {
+                if let Ok(bound_method) = self.load_attr_str_method(backing_str, attr_name) {
+                    return Ok(AttrAccessOutcome::Value(bound_method));
+                }
+            }
+        }
+        if let Some(backing_dict) = self.instance_backing_dict(instance) {
+            if !reduce_attr {
+                if let Ok(bound_method) = self.load_attr_dict_method(backing_dict, attr_name) {
+                    return Ok(AttrAccessOutcome::Value(bound_method));
+                }
             }
         }
 
@@ -13194,6 +13401,14 @@ impl Vm {
         };
         if let Some(attr) = attr {
             return Ok(attr);
+        }
+        if (module_name == "__classmethod__" || module_name == "__staticmethod__")
+            && (attr_name == "__reduce_ex__" || attr_name == "__reduce__")
+        {
+            return Ok(self.alloc_native_bound_method(
+                NativeMethodKind::DescriptorReduceTypeError,
+                module.clone(),
+            ));
         }
         if module_name == "unittest" && attr_name == "IsolatedAsyncioTestCase" {
             if let Some(test_case) = globals_snapshot
@@ -15509,6 +15724,9 @@ impl Vm {
                 exception.notes.push(note);
                 Ok(NativeCallResult::Value(Value::None))
             }
+            NativeMethodKind::DescriptorReduceTypeError => Err(RuntimeError::new(
+                "TypeError: cannot pickle descriptor objects",
+            )),
             NativeMethodKind::ObjectReduceExBound => {
                 let receiver_kind = receiver.kind();
                 let Object::Module(module_data) = &*receiver_kind else {
@@ -34093,6 +34311,9 @@ impl Vm {
             if let Some(backing_list) = self.instance_backing_list(instance) {
                 return self.getitem_value(Value::List(backing_list), index);
             }
+            if let Some(backing_dict) = self.instance_backing_dict(instance) {
+                return self.getitem_value(Value::Dict(backing_dict), index);
+            }
         }
         match index {
             Value::Slice { lower, upper, step } => match value {
@@ -39230,6 +39451,15 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("cannot be a space when skipinitialspace is true")
         || message.contains("lineterminator cannot contain delimiter, quotechar, or escapechar")
         || message.contains("lineterminator must not be empty")
+        || message.contains("bad delimiter value")
+        || message.contains("bad quotechar value")
+        || message.contains("bad escapechar value")
+        || message.contains("bad delimiter or quotechar value")
+        || message.contains("bad delimiter or escapechar value")
+        || message.contains("bad escapechar or quotechar value")
+        || message.contains("bad delimiter or lineterminator value")
+        || message.contains("bad quotechar or lineterminator value")
+        || message.contains("bad escapechar or lineterminator value")
     {
         return "ValueError";
     }

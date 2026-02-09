@@ -2624,6 +2624,21 @@ ok = (type(z) is Z and bytes(z) == b"abc")
 }
 
 #[test]
+fn bytearray_slice_assignment_and_deletion_follow_python_semantics() {
+    let source = r#"buf = bytearray(b"abcd")
+buf[1:3] = b"XY"
+buf[::2] = b"pq"
+del buf[1:3]
+ok = (bytes(buf) == b"pd")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn classmethod_bound_method_reduce_ex_returns_getattr_tuple() {
     let source = r#"class C:
     @classmethod
@@ -2632,6 +2647,26 @@ fn classmethod_bound_method_reduce_ex_returns_getattr_tuple() {
 r = C.f.__reduce_ex__(4)
 rebuilt = r[0](*r[1])
 ok = (r[0] is getattr and r[1][0] is C and r[1][1] == "f" and rebuilt() == "C")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn function_qualname_includes_owner_class_path() {
+    let source = r#"class Outer:
+    class Inner:
+        @staticmethod
+        def cheese():
+            return "cheese"
+        def biscuits(self):
+            return "biscuits"
+
+ok = (Outer.Inner.cheese.__qualname__ == "Outer.Inner.cheese")
+ok = ok and (Outer.Inner.biscuits.__qualname__ == "Outer.Inner.biscuits")
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -2663,6 +2698,52 @@ for proto in range(6):
 }
 
 #[test]
+fn pickle_class_methods_roundtrip_with_qualified_names() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle class-method qualname test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.picklecommon import PyMethodsTest
+payload_a = pickle.dumps(PyMethodsTest.cheese, protocol=4)
+payload_b = pickle.dumps(PyMethodsTest().biscuits, protocol=4)
+a = pickle.loads(payload_a)
+b = pickle.loads(payload_b)
+ok = (a() == PyMethodsTest.cheese() and b() == PyMethodsTest().biscuits())
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_static_and_class_method_descriptors_raise_type_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle descriptor error test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.picklecommon import PyMethodsTest
+ok = True
+for descr in (PyMethodsTest.__dict__['cheese'], PyMethodsTest.__dict__['wine']):
+    try:
+        pickle.dumps(descr, protocol=4)
+        ok = False
+    except TypeError:
+        pass
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn pickle_zero_copy_bytes_oob_buffers_preserve_identity() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping ZeroCopyBytes OOB pickle test (CPython Lib path not available)");
@@ -2676,6 +2757,122 @@ payload = pickle.dumps(obj, protocol=5, buffer_callback=lambda pb: buffers.appen
 a = pickle.loads(payload, buffers=buffers)
 b = pickle.loads(payload, buffers=iter(buffers))
 ok = (a is obj and b is obj and bytes(buffers[0]) == b"abcdefgh")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_proto5_frameless_bytearray_roundtrips() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping protocol-5 frameless pickle test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle, pickletools
+frame_size = 64 * 1024
+obj = {i: bytearray([i]) * frame_size for i in range(20)}
+pickled = pickle.dumps(obj, protocol=5)
+frame_positions = [pos for op, _, pos in pickletools.genops(pickled) if op.name == "FRAME"]
+out = bytearray()
+last = 0
+for pos in frame_positions:
+    out += pickled[last:pos]
+    last = pos + 9
+out += pickled[last:]
+ok = (pickle.loads(out) == obj)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_respects_custom_getstate_and_errors_on_none_setstate() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle setstate-none test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+class C:
+    def __getstate__(self):
+        return 1
+    __setstate__ = None
+payload = pickle.dumps(C())
+try:
+    pickle.loads(payload)
+    ok = False
+except TypeError:
+    ok = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_complex_newobj_preserves_instance_dict_state() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping ComplexNewObj pickle state test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.picklecommon import ComplexNewObj
+x = ComplexNewObj.__new__(ComplexNewObj, 0xface)
+x.abc = 666
+y = pickle.loads(pickle.dumps(x, 4))
+ok = (x == y and x.__dict__ == y.__dict__)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_recursive_dict_subclass_roundtrips_identity() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping recursive dict-subclass pickle test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.picklecommon import MyDict
+d = MyDict()
+d[1] = d
+x = pickle.loads(pickle.dumps(d, 2))
+ok = isinstance(x, MyDict) and list(x.keys()) == [1] and (x[1] is x)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_dict_subclass_reduce_ex_uses_class_constructor_shape() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping dict-subclass reduce_ex shape test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"from test.picklecommon import MyDict
+d = MyDict()
+d[1] = d
+r = d.__reduce_ex__(2)
+item = next(r[4])
+ok = (len(r) == 5 and r[1][0] is MyDict and item[0] == 1 and (item[1] is d))
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
