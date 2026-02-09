@@ -2012,7 +2012,15 @@ pub enum BuiltinFunction {
     SubprocessCheckCall,
     JsonDumps,
     JsonLoads,
+    PickleDump,
+    PickleDumps,
+    PickleLoad,
+    PickleLoads,
     PickleModuleGetAttr,
+    PicklePicklerInit,
+    PicklePicklerDump,
+    PickleUnpicklerInit,
+    PickleUnpicklerLoad,
     PickleBufferInit,
     PickleBufferRelease,
     CopyregReconstructor,
@@ -2413,7 +2421,15 @@ impl BuiltinFunction {
             | BuiltinFunction::CollectionsChainMapDelItem
             | BuiltinFunction::CsvReaderIter
             | BuiltinFunction::CsvReaderNext
+            | BuiltinFunction::PickleDump
+            | BuiltinFunction::PickleDumps
+            | BuiltinFunction::PickleLoad
+            | BuiltinFunction::PickleLoads
             | BuiltinFunction::PickleModuleGetAttr
+            | BuiltinFunction::PicklePicklerInit
+            | BuiltinFunction::PicklePicklerDump
+            | BuiltinFunction::PickleUnpicklerInit
+            | BuiltinFunction::PickleUnpicklerLoad
             | BuiltinFunction::PickleBufferInit
             | BuiltinFunction::PickleBufferRelease
             | BuiltinFunction::CopyregReconstructor

@@ -355,6 +355,7 @@ pub struct Vm {
     csv_dialects: HashMap<String, Value>,
     csv_field_size_limit: i64,
     pickle_copyreg_cache: HashMap<String, Value>,
+    pickle_symbol_cache: HashMap<String, Value>,
     defaultdict_factories: HashMap<u64, Value>,
     exception_parents: HashMap<String, String>,
     atexit_handlers: Vec<AtexitHandler>,
@@ -407,6 +408,7 @@ impl Vm {
             csv_dialects: HashMap::new(),
             csv_field_size_limit: 131_072,
             pickle_copyreg_cache: HashMap::new(),
+            pickle_symbol_cache: HashMap::new(),
             defaultdict_factories: HashMap::new(),
             exception_parents: HashMap::new(),
             atexit_handlers: Vec::new(),
@@ -1981,12 +1983,53 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::PickleBufferRelease),
             );
         }
-        // Minimal _pickle accelerator surface: enough for stdlib feature probing and
-        // PickleBuffer presence while pure-Python pickle remains the semantic source.
+        let pickler_class = match self.heap.alloc_class(ClassObject::new("Pickler".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *pickler_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_pickle".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::PicklePicklerInit),
+            );
+            class_data
+                .attrs
+                .insert("dump".to_string(), Value::Builtin(BuiltinFunction::PicklePicklerDump));
+        }
+        let unpickler_class =
+            match self.heap.alloc_class(ClassObject::new("Unpickler".to_string(), Vec::new())) {
+                Value::Class(class) => class,
+                _ => unreachable!(),
+            };
+        if let Object::Class(class_data) = &mut *unpickler_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_pickle".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::PickleUnpicklerInit),
+            );
+            class_data.attrs.insert(
+                "load".to_string(),
+                Value::Builtin(BuiltinFunction::PickleUnpicklerLoad),
+            );
+        }
         self.install_builtin_module(
             "_pickle",
-            &[("__getattr__", BuiltinFunction::PickleModuleGetAttr)],
+            &[
+                ("dump", BuiltinFunction::PickleDump),
+                ("dumps", BuiltinFunction::PickleDumps),
+                ("load", BuiltinFunction::PickleLoad),
+                ("loads", BuiltinFunction::PickleLoads),
+                ("__getattr__", BuiltinFunction::PickleModuleGetAttr),
+            ],
             vec![
+                ("Pickler", Value::Class(pickler_class)),
+                ("Unpickler", Value::Class(unpickler_class)),
                 ("PickleBuffer", Value::Class(pickle_buffer_class)),
                 ("PickleError", Value::ExceptionType("PickleError".to_string())),
                 (
@@ -4782,6 +4825,10 @@ impl Vm {
 
     fn unregister_module(&mut self, name: &str) {
         self.modules.remove(name);
+        if matches!(name, "pickle" | "_pickle" | "copyreg") {
+            self.pickle_symbol_cache.clear();
+            self.pickle_copyreg_cache.clear();
+        }
         let Some(sys_module) = self.modules.get("sys").cloned() else {
             return;
         };
@@ -10447,7 +10494,15 @@ impl Vm {
             | BuiltinFunction::CsvDialectValidate
             | BuiltinFunction::CsvReaderIter
             | BuiltinFunction::CsvReaderNext => "_csv",
-            BuiltinFunction::PickleModuleGetAttr
+            BuiltinFunction::PickleDump
+            | BuiltinFunction::PickleDumps
+            | BuiltinFunction::PickleLoad
+            | BuiltinFunction::PickleLoads
+            | BuiltinFunction::PickleModuleGetAttr
+            | BuiltinFunction::PicklePicklerInit
+            | BuiltinFunction::PicklePicklerDump
+            | BuiltinFunction::PickleUnpicklerInit
+            | BuiltinFunction::PickleUnpicklerLoad
             | BuiltinFunction::PickleBufferInit
             | BuiltinFunction::PickleBufferRelease => "_pickle",
             BuiltinFunction::CopyregReconstructor
@@ -16907,8 +16962,20 @@ impl Vm {
             }
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
+            BuiltinFunction::PickleDump => self.builtin_pickle_dump(args, kwargs),
+            BuiltinFunction::PickleDumps => self.builtin_pickle_dumps(args, kwargs),
+            BuiltinFunction::PickleLoad => self.builtin_pickle_load(args, kwargs),
+            BuiltinFunction::PickleLoads => self.builtin_pickle_loads(args, kwargs),
             BuiltinFunction::PickleModuleGetAttr => {
                 self.builtin_pickle_module_getattr(args, kwargs)
+            }
+            BuiltinFunction::PicklePicklerInit => self.builtin_pickle_pickler_init(args, kwargs),
+            BuiltinFunction::PicklePicklerDump => self.builtin_pickle_pickler_dump(args, kwargs),
+            BuiltinFunction::PickleUnpicklerInit => {
+                self.builtin_pickle_unpickler_init(args, kwargs)
+            }
+            BuiltinFunction::PickleUnpicklerLoad => {
+                self.builtin_pickle_unpickler_load(args, kwargs)
             }
             BuiltinFunction::PickleBufferInit => self.builtin_picklebuffer_init(args, kwargs),
             BuiltinFunction::PickleBufferRelease => self.builtin_picklebuffer_release(args, kwargs),
