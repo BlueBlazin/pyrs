@@ -256,8 +256,6 @@ const LOCAL_SHIM_MODULES: &[&str] = &[
     "pkgutil",
     "importlib.resources",
     "_json",
-    "_pickle",
-    "copyreg",
 ];
 
 struct Frame {
