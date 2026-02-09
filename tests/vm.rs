@@ -409,6 +409,35 @@ ok = (big == (1 << 160) and neg == -1 and len(roundtrip) == 21 and roundtrip[0] 
 }
 
 #[test]
+fn executes_int_to_bytes_default_and_keyword_paths() {
+    let source = "\
+a = (65).to_bytes()\n\
+b = (65).to_bytes(byteorder='big')\n\
+c = (65).to_bytes(length=2, byteorder='little')\n\
+d = (-1).to_bytes(length=2, byteorder='big', signed=True)\n\
+ok = (a == b'A' and b == b'A' and c == b'A\\x00' and d == b'\\xff\\xff')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn rejects_int_to_bytes_duplicate_argument_paths() {
+    let module = parser::parse_module("(1).to_bytes(1, byteorder='big', length=1)\n")
+        .expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(
+        err.message.contains("multiple values"),
+        "unexpected error: {}",
+        err.message
+    );
+}
+
+#[test]
 fn rejects_invalid_int_literal_underscore_and_base0_forms() {
     for source in [
         "int('010', 0)\n",

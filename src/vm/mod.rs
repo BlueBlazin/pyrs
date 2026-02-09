@@ -13047,6 +13047,7 @@ impl Vm {
                 kind,
                 NativeMethodKind::FunctoolsPartialCall
                     | NativeMethodKind::DictUpdateMethod
+                    | NativeMethodKind::IntToBytes
                     | NativeMethodKind::StrFormat
                     | NativeMethodKind::StrSplit
                     | NativeMethodKind::StrSplitLines
@@ -13676,10 +13677,52 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::IntToBytes => {
-                if args.len() < 2 || args.len() > 3 {
+                if args.len() > 3 {
                     return Err(RuntimeError::new(
-                        "to_bytes() expects length, byteorder, optional signed",
+                        "to_bytes() takes at most 3 positional arguments",
                     ));
+                }
+                let mut length_arg = Value::Int(1);
+                let mut byteorder_arg = Value::Str("big".to_string());
+                let mut signed_arg = Value::Bool(false);
+                if let Some(value) = args.first() {
+                    length_arg = value.clone();
+                }
+                if let Some(value) = args.get(1) {
+                    byteorder_arg = value.clone();
+                }
+                if let Some(value) = args.get(2) {
+                    signed_arg = value.clone();
+                }
+                if let Some(value) = kwargs.remove("length") {
+                    if !args.is_empty() {
+                        return Err(RuntimeError::new(
+                            "to_bytes() got multiple values for argument 'length'",
+                        ));
+                    }
+                    length_arg = value;
+                }
+                if let Some(value) = kwargs.remove("byteorder") {
+                    if args.len() > 1 {
+                        return Err(RuntimeError::new(
+                            "to_bytes() got multiple values for argument 'byteorder'",
+                        ));
+                    }
+                    byteorder_arg = value;
+                }
+                if let Some(value) = kwargs.remove("signed") {
+                    if args.len() > 2 {
+                        return Err(RuntimeError::new(
+                            "to_bytes() got multiple values for argument 'signed'",
+                        ));
+                    }
+                    signed_arg = value;
+                }
+                if let Some(unexpected) = kwargs.keys().next().cloned() {
+                    return Err(RuntimeError::new(format!(
+                        "to_bytes() got an unexpected keyword argument '{}'",
+                        unexpected
+                    )));
                 }
                 let value = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
@@ -13688,11 +13731,11 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::new("int receiver is invalid")),
                 };
-                let length = value_to_int(args[0].clone())?;
+                let length = value_to_int(length_arg)?;
                 if length < 0 {
                     return Err(RuntimeError::new("length argument must be non-negative"));
                 }
-                let byteorder = match &args[1] {
+                let byteorder = match &byteorder_arg {
                     Value::Str(order) if order == "little" || order == "big" => order.clone(),
                     _ => {
                         return Err(RuntimeError::new(
@@ -13700,11 +13743,7 @@ impl Vm {
                         ));
                     }
                 };
-                let signed = if let Some(value) = args.get(2) {
-                    is_truthy(value)
-                } else {
-                    false
-                };
+                let signed = is_truthy(&signed_arg);
                 let bytes =
                     bigint_to_fixed_bytes(&value, length as usize, byteorder == "little", signed)?;
                 Ok(NativeCallResult::Value(self.heap.alloc_bytes(bytes)))

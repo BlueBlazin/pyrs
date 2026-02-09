@@ -35,6 +35,18 @@ Primary rule:
 - For covered modules, runtime must support preferring pure module implementations; rollout may be gated behind explicit opt-in until parity/perf blockers are closed.
 - Regression tests must verify this preference explicitly.
 
+5. Native-core-first sequencing:
+- For stdlib domains that depend on C accelerators in CPython (`_pickle`, `_csv`, `_sre`, core `_io` behaviors), close the native/runtime primitive gaps first.
+- Only then expand strict pure-stdlib unittest lanes that depend on those primitives.
+- Avoid adding temporary high-level shims to bypass missing native-core semantics unless the shim is explicitly documented as temporary in `docs/STUB_ACCOUNTING.md`.
+
+6. CPython source-referenced implementation:
+- Every core-surface change must be anchored to a CPython source reference (file + function/section), using:
+  - `Modules/*.c` for C accelerators,
+  - `Objects/*.c` for object-model builtins,
+  - `Lib/*.py` for pure-stdlib behavior.
+- Each landed change must include focused regression coverage that mirrors the referenced CPython behavior.
+
 ## Current Migration Steps Landed
 
 - VM now supports removing preinstalled native `json` modules when CPython `Lib/json/__init__.py` is present and pure-json preference is explicitly enabled.

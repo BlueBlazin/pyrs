@@ -65,6 +65,8 @@ Current milestone state summary:
 - Maintain correctness first, then performance.
 - Keep dependencies minimal and well‑justified.
 - Prefer clear architecture boundaries: parser, AST, compiler/IR, VM, runtime, stdlib.
+- Implement core stdlib/runtime surfaces by closely following CPython source-of-truth (`Modules/*.c`, `Objects/*.c`, `Lib/*.py`) and record the reference when landing behavior changes.
+- Sequence Milestone 13 work as native-core-first (`_pickle`, `_csv`, `_sre`, core `_io` semantics) before broad strict pure-stdlib unittest expansion.
 - Commit frequently in small, focused checkpoints to minimize loss on interruption/crash.
 - Do not leave long-lived dirty worktrees: commit after each completed logical step and before any full-suite run.
 - At the end of every assistant turn, always include the immediate next `3-6` concrete steps.

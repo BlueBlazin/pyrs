@@ -8,9 +8,6 @@ import sys
 
 
 class _RawBuffer(bytes):
-    contiguous = True
-    readonly = True
-
     def tobytes(self):
         return bytes(self)
 
@@ -24,12 +21,52 @@ class _RawBuffer(bytes):
 class PickleBuffer:
     def __init__(self, obj):
         self._released = False
+        self._readonly_hint = None
+        self._contiguous_hint = None
+        try:
+            if hasattr(obj, "readonly"):
+                self._readonly_hint = bool(getattr(obj, "readonly"))
+        except Exception:
+            pass
+        try:
+            if hasattr(obj, "contiguous"):
+                self._contiguous_hint = bool(getattr(obj, "contiguous"))
+            elif hasattr(obj, "c_contiguous") or hasattr(obj, "f_contiguous"):
+                self._contiguous_hint = bool(getattr(obj, "c_contiguous", False)) or bool(
+                    getattr(obj, "f_contiguous", False)
+                )
+        except Exception:
+            pass
+        if isinstance(obj, bytearray):
+            self._readonly_hint = False
+        elif isinstance(obj, bytes):
+            self._readonly_hint = True
         self._view = memoryview(obj)
 
     def raw(self):
         if self._released:
             raise ValueError("operation forbidden on released PickleBuffer object")
-        return _RawBuffer(bytes(self._view))
+        readonly = self._readonly_hint
+        contiguous = self._contiguous_hint
+        if readonly is None:
+            readonly = True
+            try:
+                readonly = bool(self._view.readonly)
+            except Exception:
+                pass
+        if contiguous is None:
+            contiguous = True
+            try:
+                contiguous = bool(self._view.contiguous)
+            except Exception:
+                try:
+                    contiguous = bool(self._view.c_contiguous) or bool(self._view.f_contiguous)
+                except Exception:
+                    pass
+        raw = _RawBuffer(bytes(self._view))
+        raw.readonly = readonly
+        raw.contiguous = contiguous
+        return raw
 
     def release(self):
         if self._released:
