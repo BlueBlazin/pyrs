@@ -1824,7 +1824,8 @@ impl Vm {
             };
             return !matches!(
                 attr,
-                Value::Builtin(BuiltinFunction::ObjectReduceEx) if class_data.name == "object"
+                Value::Builtin(BuiltinFunction::ObjectReduceEx | BuiltinFunction::ObjectReduce)
+                    if class_data.name == "object"
             );
         }
         false
@@ -2098,22 +2099,13 @@ impl Vm {
         }
     }
 
-    pub(in crate::vm) fn builtin_object_reduce_ex(
+    pub(in crate::vm) fn object_reduce_ex_for_value(
         &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        value: Value,
+        protocol: i64,
+        allow_custom_reduce: bool,
     ) -> Result<Value, RuntimeError> {
-        let _profile = pickle_profile_scope("builtin_object_reduce_ex");
-        if !kwargs.is_empty() || !(1..=2).contains(&args.len()) {
-            return Err(RuntimeError::new(
-                "object.__reduce_ex__() takes one or two arguments",
-            ));
-        }
-        let value = args[0].clone();
-        let mut protocol = 0;
-        if args.len() == 2 {
-            protocol = value_to_int(args[1].clone())?;
-        }
+        let _profile = pickle_profile_scope("object_reduce_ex_for_value");
         if let Value::Builtin(builtin) = &value {
             if matches!(
                 builtin,
@@ -2137,8 +2129,10 @@ impl Vm {
                 }
             }
         }
-        if let Some(reduced) = self.object_reduce_ex_custom_reduce(&value)? {
-            return Ok(reduced);
+        if allow_custom_reduce {
+            if let Some(reduced) = self.object_reduce_ex_custom_reduce(&value)? {
+                return Ok(reduced);
+            }
         }
 
         let (constructor, constructor_args) = if protocol < 2 {
@@ -2170,6 +2164,39 @@ impl Vm {
         }
 
         Ok(self.heap.alloc_tuple(reduced_parts))
+    }
+
+    pub(in crate::vm) fn builtin_object_reduce_ex(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let _profile = pickle_profile_scope("builtin_object_reduce_ex");
+        if !kwargs.is_empty() || !(1..=2).contains(&args.len()) {
+            return Err(RuntimeError::new(
+                "object.__reduce_ex__() takes one or two arguments",
+            ));
+        }
+        let value = args[0].clone();
+        let mut protocol = 0;
+        if args.len() == 2 {
+            protocol = value_to_int(args[1].clone())?;
+        }
+        self.object_reduce_ex_for_value(value, protocol, true)
+    }
+
+    pub(in crate::vm) fn builtin_object_reduce(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let _profile = pickle_profile_scope("builtin_object_reduce");
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "object.__reduce__() takes exactly one argument",
+            ));
+        }
+        self.object_reduce_ex_for_value(args[0].clone(), 0, false)
     }
 }
 

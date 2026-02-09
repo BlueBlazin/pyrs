@@ -1835,6 +1835,7 @@ pub enum BuiltinFunction {
     ObjectGetAttribute,
     ObjectGetState,
     ObjectSetState,
+    ObjectReduce,
     ObjectReduceEx,
     ObjectSetAttr,
     ObjectDelAttr,
@@ -4532,6 +4533,7 @@ impl BuiltinFunction {
             | BuiltinFunction::Dir
             | BuiltinFunction::ObjectGetState
             | BuiltinFunction::ObjectSetState
+            | BuiltinFunction::ObjectReduce
             | BuiltinFunction::ObjectReduceEx
             | BuiltinFunction::StringFormatterParser
             | BuiltinFunction::StringFormatterFieldNameSplit => {

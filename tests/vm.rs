@@ -2392,6 +2392,91 @@ ok = (type(y) is myint and y == x and int(y) == 5)
 }
 
 #[test]
+fn pickle_object_reduce_base_call_does_not_recurse() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle base reduce recursion test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.picklecommon import REX_five
+x = REX_five()
+s = pickle.dumps(x, 4)
+y = pickle.loads(s)
+ok = (x._reduce_called == 1 and y._reduce_called == 1)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn recursive_list_equality_does_not_stack_overflow() {
+    let source = r#"a = []
+a.append(a)
+b = []
+b.append(b)
+ok = (a == a and a == b and not (a != b))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn recursive_list_repr_uses_ellipsis_marker() {
+    let source = r#"l = []
+l.append(l)
+ok = (repr(l) == "[[...]]")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn object_repr_on_instance_uses_fallback_without_recursing() {
+    let source = r#"class C:
+    pass
+c = C()
+c.foo = 1
+text = repr(c)
+ok = ("instance" in text)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn tuple_structural_equality_works_with_instance_members() {
+    let source = r#"class C:
+    def __eq__(self, other):
+        return self.__dict__ == other.__dict__
+a = C()
+a.x = 1
+b = C()
+b.x = 1
+t1 = ("abc", "abc", a, a)
+t2 = ("abc", "abc", b, b)
+ok = (t1 == t2 and not (t1 != t2))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bytearray_subclass_constructor_accepts_payload_and_supports_bytes_conversion() {
     let source = r#"class Z(bytearray):
     pass

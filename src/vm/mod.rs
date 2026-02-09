@@ -361,6 +361,8 @@ pub struct Vm {
     atexit_handlers: Vec<AtexitHandler>,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
+    list_eq_in_progress: Vec<(u64, u64)>,
+    repr_in_progress: Vec<u64>,
 }
 
 impl Drop for Vm {
@@ -414,6 +416,8 @@ impl Vm {
             atexit_handlers: Vec::new(),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
+            list_eq_in_progress: Vec::new(),
+            repr_in_progress: Vec::new(),
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -15229,23 +15233,40 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::ObjectReduceExBound => {
+                let receiver_kind = receiver.kind();
+                let Object::Module(module_data) = &*receiver_kind else {
+                    return Err(RuntimeError::new("object reduce receiver is invalid"));
+                };
+                let Some(stored_value) = module_data.globals.get("value").cloned() else {
+                    return Err(RuntimeError::new("object reduce receiver is invalid"));
+                };
+                let mut protocol = 0;
+                let mut value = stored_value.clone();
+                let explicit_object_base_call =
+                    matches!(stored_value, Value::Builtin(BuiltinFunction::ObjectNew));
+
+                if explicit_object_base_call {
+                    if args.is_empty() {
+                        return Err(RuntimeError::new(
+                            "__reduce_ex__() missing required argument 'self'",
+                        ));
+                    }
+                    value = args.remove(0);
+                }
                 if args.len() > 1 {
                     return Err(RuntimeError::new(
                         "__reduce_ex__() takes at most one protocol argument",
                     ));
                 }
-                let receiver_kind = receiver.kind();
-                let Object::Module(module_data) = &*receiver_kind else {
-                    return Err(RuntimeError::new("object reduce receiver is invalid"));
-                };
-                let Some(value) = module_data.globals.get("value").cloned() else {
-                    return Err(RuntimeError::new("object reduce receiver is invalid"));
-                };
-                let mut forwarded = vec![value];
-                if let Some(protocol) = args.first() {
-                    forwarded.push(protocol.clone());
+                if let Some(protocol_arg) = args.first() {
+                    protocol = value_to_int(protocol_arg.clone())?;
                 }
-                let reduced = self.builtin_object_reduce_ex(forwarded, HashMap::new())?;
+
+                let reduced = self.object_reduce_ex_for_value(
+                    value,
+                    protocol,
+                    !explicit_object_base_call,
+                )?;
                 Ok(NativeCallResult::Value(reduced))
             }
             NativeMethodKind::BoundMethodReduceEx => {
@@ -16767,6 +16788,7 @@ impl Vm {
             BuiltinFunction::ObjectGetAttribute => self.builtin_object_getattribute(args, kwargs),
             BuiltinFunction::ObjectGetState => self.builtin_object_getstate(args, kwargs),
             BuiltinFunction::ObjectSetState => self.builtin_object_setstate(args, kwargs),
+            BuiltinFunction::ObjectReduce => self.builtin_object_reduce(args, kwargs),
             BuiltinFunction::ObjectReduceEx => self.builtin_object_reduce_ex(args, kwargs),
             BuiltinFunction::ObjectSetAttr => self.builtin_object_setattr(args, kwargs),
             BuiltinFunction::ObjectDelAttr => self.builtin_object_delattr(args, kwargs),
@@ -17469,15 +17491,35 @@ impl Vm {
                 vec![value.clone(), Value::Str("__repr__".to_string())],
                 HashMap::new(),
             ) {
-                Ok(repr_method) => match self.call_internal(repr_method, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(Value::Str(text)) => return Ok(Value::Str(text)),
-                    InternalCallOutcome::Value(_) => {
-                        return Err(RuntimeError::new("__repr__ returned non-string"));
+                Ok(repr_method) => {
+                    let is_recursive_builtin_repr = match &repr_method {
+                        Value::BoundMethod(bound) => match &*bound.kind() {
+                            Object::BoundMethod(bound_data) => match &*bound_data.function.kind() {
+                                Object::NativeMethod(native) => matches!(
+                                    native.kind,
+                                    NativeMethodKind::Builtin(BuiltinFunction::Repr)
+                                ),
+                                _ => false,
+                            },
+                            _ => false,
+                        },
+                        Value::Builtin(BuiltinFunction::Repr) => true,
+                        _ => false,
+                    };
+                    if !is_recursive_builtin_repr {
+                        match self.call_internal(repr_method, Vec::new(), HashMap::new())? {
+                            InternalCallOutcome::Value(Value::Str(text)) => {
+                                return Ok(Value::Str(text));
+                            }
+                            InternalCallOutcome::Value(_) => {
+                                return Err(RuntimeError::new("__repr__ returned non-string"));
+                            }
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(self.runtime_error_from_active_exception("repr() failed"));
+                            }
+                        }
                     }
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self.runtime_error_from_active_exception("repr() failed"));
-                    }
-                },
+                }
                 Err(err) => {
                     if !is_missing_attribute_error(&err) {
                         return Err(err);
@@ -17492,7 +17534,21 @@ impl Vm {
             }
         };
 
-        match value {
+        let repr_guard = match &value {
+            Value::List(obj) => Some((obj.id(), "[...]".to_string())),
+            Value::Tuple(obj) => Some((obj.id(), "(...)".to_string())),
+            Value::Dict(obj) => Some((obj.id(), "{...}".to_string())),
+            Value::Set(obj) => Some((obj.id(), "{...}".to_string())),
+            Value::FrozenSet(obj) => Some((obj.id(), "frozenset({...})".to_string())),
+            _ => None,
+        };
+        if let Some((id, marker)) = &repr_guard {
+            if self.repr_in_progress.contains(id) {
+                return Ok(Value::Str(marker.clone()));
+            }
+            self.repr_in_progress.push(*id);
+        }
+        let rendered = match value {
             Value::List(obj) => {
                 let values = match &*obj.kind() {
                     Object::List(values) => values.clone(),
@@ -17558,7 +17614,11 @@ impl Vm {
                 Ok(Value::Str(format!("frozenset({{{}}})", parts.join(", "))))
             }
             other => Ok(Value::Str(format_repr(&other))),
+        };
+        if repr_guard.is_some() {
+            self.repr_in_progress.pop();
         }
+        rendered
     }
 
     fn builtin_ascii(
@@ -20365,6 +20425,9 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_int_backing(&left, &right) {
             return Ok(Value::Bool(result));
         }
+        if let Some(result) = self.compare_eq_via_tuple_backing(&left, &right)? {
+            return Ok(Value::Bool(result));
+        }
         if let Some(result) = self.compare_eq_via_list_backing(&left, &right)? {
             return Ok(Value::Bool(result));
         }
@@ -20386,6 +20449,9 @@ impl Vm {
     }
 
     fn compare_ne_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = self.compare_eq_via_tuple_backing(&left, &right)? {
+            return Ok(Value::Bool(!result));
+        }
         if let Some(result) = self.compare_eq_via_list_backing(&left, &right)? {
             return Ok(Value::Bool(!result));
         }
@@ -20435,31 +20501,94 @@ impl Vm {
         Some(left_int == right_int)
     }
 
-    fn compare_eq_via_list_backing(
+    fn compare_eq_via_tuple_backing(
         &mut self,
         left: &Value,
         right: &Value,
     ) -> Result<Option<bool>, RuntimeError> {
-        let list_from_value = |value: &Value| -> Option<Vec<Value>> {
+        let tuple_from_value = |value: &Value| -> Option<(u64, Vec<Value>)> {
             match value {
-                Value::List(list) => match &*list.kind() {
-                    Object::List(values) => Some(values.clone()),
+                Value::Tuple(tuple) => match &*tuple.kind() {
+                    Object::Tuple(values) => Some((tuple.id(), values.clone())),
                     _ => None,
                 },
                 Value::Instance(instance) => {
-                    let backing = self.instance_backing_list(instance)?;
+                    let backing = self.instance_backing_tuple(instance)?;
                     match &*backing.kind() {
-                        Object::List(values) => Some(values.clone()),
+                        Object::Tuple(values) => Some((backing.id(), values.clone())),
                         _ => None,
                     }
                 }
                 _ => None,
             }
         };
-        let (Some(left_values), Some(right_values)) = (list_from_value(left), list_from_value(right))
+        let (Some((left_id, left_values)), Some((right_id, right_values))) =
+            (tuple_from_value(left), tuple_from_value(right))
         else {
             return Ok(None);
         };
+        if left_id == right_id {
+            return Ok(Some(true));
+        }
+        if self.list_eq_in_progress.iter().any(|(a, b)| {
+            (*a == left_id && *b == right_id) || (*a == right_id && *b == left_id)
+        }) {
+            return Ok(Some(true));
+        }
+        self.list_eq_in_progress.push((left_id, right_id));
+        let result = (|| -> Result<Option<bool>, RuntimeError> {
+            if left_values.len() != right_values.len() {
+                return Ok(Some(false));
+            }
+            for (left_item, right_item) in left_values.into_iter().zip(right_values.into_iter()) {
+                match self.compare_eq_runtime(left_item, right_item)? {
+                    Value::Bool(true) => {}
+                    Value::Bool(false) => return Ok(Some(false)),
+                    _ => return Ok(None),
+                }
+            }
+            Ok(Some(true))
+        })();
+        self.list_eq_in_progress.pop();
+        result
+    }
+
+    fn compare_eq_via_list_backing(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let list_from_value = |value: &Value| -> Option<(u64, Vec<Value>)> {
+            match value {
+                Value::List(list) => match &*list.kind() {
+                    Object::List(values) => Some((list.id(), values.clone())),
+                    _ => None,
+                },
+                Value::Instance(instance) => {
+                    let backing = self.instance_backing_list(instance)?;
+                    match &*backing.kind() {
+                        Object::List(values) => Some((backing.id(), values.clone())),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+        let (Some((left_id, left_values)), Some((right_id, right_values))) =
+            (list_from_value(left), list_from_value(right))
+        else {
+            return Ok(None);
+        };
+        if left_id == right_id {
+            return Ok(Some(true));
+        }
+        if self.list_eq_in_progress.iter().any(|(a, b)| {
+            (*a == left_id && *b == right_id) || (*a == right_id && *b == left_id)
+        }) {
+            return Ok(Some(true));
+        }
+        self.list_eq_in_progress.push((left_id, right_id));
+        let result = (|| -> Result<Option<bool>, RuntimeError> {
         if left_values.len() != right_values.len() {
             return Ok(Some(false));
         }
@@ -20471,6 +20600,9 @@ impl Vm {
             }
         }
         Ok(Some(true))
+        })();
+        self.list_eq_in_progress.pop();
+        result
     }
 
     fn compare_le_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
@@ -33474,7 +33606,7 @@ impl Vm {
             );
             class_data.attrs.insert(
                 "__reduce__".to_string(),
-                Value::Builtin(BuiltinFunction::ObjectReduceEx),
+                Value::Builtin(BuiltinFunction::ObjectReduce),
             );
         }
         let type_class = match self.heap.alloc_class(ClassObject::new(
