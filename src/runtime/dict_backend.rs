@@ -190,12 +190,12 @@ impl DictBackend {
             self.clear();
             return;
         }
-        if self.slots.len() <= MIN_TABLE_SIZE {
-            return;
-        }
         let dummy_count = self.filled.saturating_sub(self.used);
         if dummy_count > self.used {
-            self.resize_slots(self.slots.len());
+            self.resize_slots(self.slots.len().max(MIN_TABLE_SIZE));
+            return;
+        }
+        if self.slots.len() <= MIN_TABLE_SIZE {
             return;
         }
         if self.used * 8 <= self.slots.len() {
@@ -231,7 +231,7 @@ impl DictBackend {
         let mut slot = (hash as usize) & mask;
         let mut perturb = hash as usize;
         let mut first_dummy = None;
-        loop {
+        for _ in 0..self.slots.len() {
             match self.slots[slot] {
                 DictSlot::Empty => return first_dummy.unwrap_or(slot),
                 DictSlot::Dummy => {
@@ -244,6 +244,7 @@ impl DictBackend {
             slot = ((slot * 5).wrapping_add(perturb).wrapping_add(1)) & mask;
             perturb >>= PERTURB_SHIFT;
         }
+        first_dummy.unwrap_or(slot)
     }
 
     fn lookup_slot(&self, key: &Value, hash: u64) -> SlotLookup {
@@ -253,7 +254,7 @@ impl DictBackend {
         let mut perturb = hash as usize;
         let mut first_dummy = None;
 
-        loop {
+        for _ in 0..self.slots.len() {
             match self.slots[slot] {
                 DictSlot::Empty => return SlotLookup::Vacant(first_dummy.unwrap_or(slot)),
                 DictSlot::Dummy => {
@@ -273,6 +274,7 @@ impl DictBackend {
             slot = ((slot * 5).wrapping_add(perturb).wrapping_add(1)) & mask;
             perturb >>= PERTURB_SHIFT;
         }
+        SlotLookup::Vacant(first_dummy.unwrap_or(slot))
     }
 
     fn remove_slot_for_entry(&mut self, expected_entry: usize) {
@@ -378,5 +380,23 @@ mod tests {
                 (Value::Str("b".to_string()), Value::Int(200)),
             ]
         );
+    }
+
+    #[test]
+    fn tombstone_saturation_at_min_table_size_does_not_hang() {
+        let mut backend = DictBackend::new(Vec::new());
+        backend.resize_slots(MIN_TABLE_SIZE);
+        let keys = collide_on_mask(backend.slots.len() - 1, backend.slots.len());
+        for (idx, key) in keys.iter().enumerate() {
+            backend.insert(key.clone(), Value::Int(idx as i64));
+        }
+        for key in keys.iter().skip(1) {
+            let _ = backend.remove_key(key);
+        }
+
+        let missing = Value::Int(987654321);
+        assert_eq!(backend.find(&missing), None);
+        backend.insert(missing.clone(), Value::Int(99));
+        assert_eq!(backend.find(&missing), Some(&Value::Int(99)));
     }
 }

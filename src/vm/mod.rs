@@ -20,6 +20,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -80,7 +81,8 @@ const SOURCE_FILE_LOADER: &str = "pyrs.SourceFileLoader";
 const SOURCELESS_FILE_LOADER: &str = "pyrs.SourcelessFileLoader";
 const NAMESPACE_LOADER: &str = "pyrs.NamespaceLoader";
 const BUILTIN_MODULE_LOADER: &str = "pyrs.BuiltinLoader";
-const PURE_STDLIB_PREFERRED_MODULES: &[&str] = &["json", "json.decoder", "json.scanner"];
+const PURE_STDLIB_JSON_MODULES: &[&str] = &["json", "json.decoder", "json.scanner"];
+const PURE_STDLIB_PICKLE_MODULES: &[&str] = &["pickle", "pickletools", "copyreg"];
 const MT_N: usize = 624;
 const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;
@@ -98,6 +100,7 @@ const BYTES_BACKING_STORAGE_ATTR: &str = "__pyrs_bytes_storage__";
 const INT_BACKING_STORAGE_ATTR: &str = "__pyrs_int_storage__";
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
+static SUBMODULE_TRACE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StructEndian {
@@ -358,6 +361,7 @@ pub struct Vm {
     exception_parents: HashMap<String, String>,
     atexit_handlers: Vec<AtexitHandler>,
     prefer_pure_json_when_available: bool,
+    prefer_pure_pickle_when_available: bool,
 }
 
 impl Drop for Vm {
@@ -408,7 +412,8 @@ impl Vm {
             defaultdict_factories: HashMap::new(),
             exception_parents: HashMap::new(),
             atexit_handlers: Vec::new(),
-            prefer_pure_json_when_available: false,
+            prefer_pure_json_when_available: true,
+            prefer_pure_pickle_when_available: true,
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -454,6 +459,11 @@ impl Vm {
 
     pub fn enable_pure_json_preference(&mut self) {
         self.prefer_pure_json_when_available = true;
+        self.maybe_prefer_cpython_pure_stdlib_modules();
+    }
+
+    pub fn enable_pure_pickle_preference(&mut self) {
+        self.prefer_pure_pickle_when_available = true;
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }
 
@@ -4681,10 +4691,7 @@ impl Vm {
             Object::Module(module_data) => module_data.globals.get("modules").cloned(),
             _ => None,
         };
-        let mut entries = Vec::with_capacity(self.modules.len());
-        for (name, module) in self.modules.iter() {
-            entries.push((Value::Str(name.clone()), Value::Module(module.clone())));
-        }
+        let mut preserved_entries: HashMap<String, Value> = HashMap::new();
         if let Some(Value::Dict(existing)) = existing_modules {
             if let Object::Dict(existing_entries) = &*existing.kind() {
                 for (key, value) in existing_entries.iter() {
@@ -4700,10 +4707,20 @@ impl Vm {
                         _ => true,
                     };
                     if preserve {
-                        entries.push((Value::Str(name.clone()), value.clone()));
+                        preserved_entries.insert(name.clone(), value.clone());
                     }
                 }
             }
+        }
+        let mut entries = Vec::with_capacity(self.modules.len() + preserved_entries.len());
+        for (name, module) in self.modules.iter() {
+            if preserved_entries.contains_key(name) {
+                continue;
+            }
+            entries.push((Value::Str(name.clone()), Value::Module(module.clone())));
+        }
+        for (name, value) in preserved_entries {
+            entries.push((Value::Str(name), value));
         }
         let modules_dict = self.heap.alloc_dict(entries);
         if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
@@ -4733,22 +4750,82 @@ impl Vm {
         }
     }
 
-    fn has_cpython_pure_json_on_module_path(&self) -> bool {
-        self.module_paths
-            .iter()
-            .any(|root| root.join("json").join("__init__.py").is_file())
+    fn has_cpython_pure_module_on_module_path(&self, module_name: &str) -> bool {
+        let rel = module_name.replace('.', "/");
+        self.module_paths.iter().any(|root| {
+            root.join(format!("{rel}.py")).is_file() || root.join(&rel).join("__init__.py").is_file()
+        })
+    }
+
+    fn has_local_shim_module(&self, module_name: &str) -> bool {
+        if !LOCAL_SHIM_MODULES.contains(&module_name) {
+            return false;
+        }
+        let rel = module_name.replace('.', "/");
+        let Some(shim_root) = Self::local_shim_root() else {
+            return false;
+        };
+        shim_root.join(format!("{rel}.py")).is_file() || shim_root.join(rel).join("__init__.py").is_file()
+    }
+
+    fn has_preferred_filesystem_module(&self, module_name: &str) -> bool {
+        self.has_cpython_pure_module_on_module_path(module_name) || self.has_local_shim_module(module_name)
     }
 
     fn maybe_prefer_cpython_pure_stdlib_modules(&mut self) {
-        if !self.prefer_pure_json_when_available {
-            return;
+        if self.prefer_pure_json_when_available {
+            for module_name in PURE_STDLIB_JSON_MODULES {
+                if self.has_preferred_filesystem_module(module_name)
+                    && self.module_preference_requires_unload(module_name)
+                {
+                    self.unregister_module(module_name);
+                }
+            }
         }
-        if !self.has_cpython_pure_json_on_module_path() {
-            return;
+        if self.prefer_pure_pickle_when_available {
+            for module_name in PURE_STDLIB_PICKLE_MODULES {
+                if self.has_preferred_filesystem_module(module_name)
+                    && self.module_preference_requires_unload(module_name)
+                {
+                    self.unregister_module(module_name);
+                }
+            }
         }
-        for module_name in PURE_STDLIB_PREFERRED_MODULES {
-            self.unregister_module(module_name);
+    }
+
+    fn module_preference_requires_unload(&self, module_name: &str) -> bool {
+        let Some(module) = self.modules.get(module_name) else {
+            return false;
+        };
+        if Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER) {
+            return true;
         }
+        Self::module_is_local_shim(module)
+    }
+
+    fn local_shim_root() -> Option<PathBuf> {
+        std::env::current_dir().ok().map(|root| root.join("shims"))
+    }
+
+    fn module_origin_path(module: &ObjRef) -> Option<PathBuf> {
+        let module_kind = module.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return None;
+        };
+        match module_data.globals.get("__file__") {
+            Some(Value::Str(path)) => Some(PathBuf::from(path)),
+            _ => None,
+        }
+    }
+
+    fn module_is_local_shim(module: &ObjRef) -> bool {
+        let Some(shim_root) = Self::local_shim_root() else {
+            return false;
+        };
+        let Some(origin) = Self::module_origin_path(module) else {
+            return false;
+        };
+        origin.starts_with(shim_root)
     }
 
     fn register_module(&mut self, name: &str, module: ObjRef) {
@@ -4757,6 +4834,9 @@ impl Vm {
     }
 
     fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
+        if std::env::var_os("PYRS_TRACE_MODULE_LOAD").is_some() {
+            eprintln!("[module-load] {name}");
+        }
         if let Some(module) = self.modules.get(name).cloned() {
             return Ok(module);
         }
@@ -5191,6 +5271,14 @@ impl Vm {
             Object::Module(module) => module.name.clone(),
             _ => return None,
         };
+        if std::env::var_os("PYRS_TRACE_SUBMODULE").is_some() {
+            let seen = SUBMODULE_TRACE_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
+            if seen < 200 {
+                eprintln!("[submodule] parent={parent_name} attr={attr_name}");
+            } else if seen == 200 {
+                eprintln!("[submodule] trace limit reached; suppressing further output");
+            }
+        }
         let full_name = format!("{}.{}", parent_name, attr_name);
         let key = Value::Str(full_name.clone());
         let mut missing_from_sys_modules = false;
@@ -5445,6 +5533,7 @@ impl Vm {
     }
 
     fn import_module_object(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
+        self.sync_module_paths_from_sys();
         let caller_depth = self.frames.len();
         let existing_modules: HashSet<String> = self.modules.keys().cloned().collect();
         let key = Value::Str(name.to_string());
@@ -5642,16 +5731,30 @@ impl Vm {
     }
 
     fn should_prefer_filesystem_module(&mut self, name: &str, module: &ObjRef) -> bool {
-        if !matches!(
+        let is_json_stack = matches!(
             name,
             "json" | "json.decoder" | "json.scanner" | "json.encoder" | "_json"
-        ) {
+        );
+        let is_pickle_stack = matches!(name, "pickle" | "pickletools" | "copyreg");
+        if !is_json_stack && !is_pickle_stack {
             return false;
         }
-        if Self::module_loader_name(module).as_deref() != Some(BUILTIN_MODULE_LOADER) {
+        if is_json_stack && !self.prefer_pure_json_when_available {
             return false;
         }
-        self.find_module_source(name).is_some()
+        if is_pickle_stack && !self.prefer_pure_pickle_when_available {
+            return false;
+        }
+        if !self.has_preferred_filesystem_module(name) {
+            return false;
+        }
+        if Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER) {
+            return true;
+        }
+        if Self::module_is_local_shim(module) {
+            return true;
+        }
+        false
     }
 
     fn module_for_plain_import(&mut self, name: &str, module: ObjRef) -> ObjRef {
@@ -11941,23 +12044,22 @@ impl Vm {
                 (
                     frame.ip,
                     frame.stack.len(),
-                    frame.blocks.clone(),
+                    (!frame.blocks.is_empty()).then(|| frame.blocks.clone()),
                     frame.active_exception.clone(),
                 )
             })
-            .unwrap_or((0, 0, Vec::new(), None));
+            .unwrap_or((0, 0, None, None));
 
         let outcome = self.call_internal(callable, args, kwargs);
         match outcome {
             Ok(InternalCallOutcome::Value(value)) => {
-                if self.frames.len() == caller_depth {
-                    if let Some(frame) = self.frames.last_mut() {
-                        frame.ip = caller_ip;
-                        frame.stack.truncate(caller_stack_len);
-                        frame.blocks = caller_blocks;
-                        frame.active_exception = caller_active_exception;
-                    }
-                }
+                self.restore_internal_call_caller_state(
+                    caller_depth,
+                    caller_ip,
+                    caller_stack_len,
+                    &caller_blocks,
+                    caller_active_exception.clone(),
+                );
                 Ok(InternalCallOutcome::Value(value))
             }
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
@@ -11965,26 +12067,46 @@ impl Vm {
                     .frames
                     .last()
                     .and_then(|frame| frame.active_exception.clone());
-                if self.frames.len() == caller_depth {
-                    if let Some(frame) = self.frames.last_mut() {
-                        frame.ip = caller_ip;
-                        frame.stack.truncate(caller_stack_len);
-                        frame.blocks = caller_blocks;
-                        frame.active_exception = active_exception;
-                    }
-                }
+                self.restore_internal_call_caller_state(
+                    caller_depth,
+                    caller_ip,
+                    caller_stack_len,
+                    &caller_blocks,
+                    active_exception,
+                );
                 Ok(InternalCallOutcome::CallerExceptionHandled)
             }
             Err(err) => {
-                if self.frames.len() == caller_depth {
-                    if let Some(frame) = self.frames.last_mut() {
-                        frame.ip = caller_ip;
-                        frame.stack.truncate(caller_stack_len);
-                        frame.blocks = caller_blocks;
-                        frame.active_exception = caller_active_exception;
-                    }
-                }
+                self.restore_internal_call_caller_state(
+                    caller_depth,
+                    caller_ip,
+                    caller_stack_len,
+                    &caller_blocks,
+                    caller_active_exception,
+                );
                 Err(err)
+            }
+        }
+    }
+
+    fn restore_internal_call_caller_state(
+        &mut self,
+        caller_depth: usize,
+        caller_ip: usize,
+        caller_stack_len: usize,
+        caller_blocks: &Option<Vec<Block>>,
+        active_exception: Option<Value>,
+    ) {
+        if self.frames.len() == caller_depth {
+            if let Some(frame) = self.frames.last_mut() {
+                frame.ip = caller_ip;
+                frame.stack.truncate(caller_stack_len);
+                if let Some(blocks) = caller_blocks {
+                    frame.blocks = blocks.clone();
+                } else {
+                    frame.blocks.clear();
+                }
+                frame.active_exception = active_exception;
             }
         }
     }
@@ -12652,17 +12774,25 @@ impl Vm {
         module: &ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
-        let (module_name, attr, module_getattr, globals_snapshot) = match &*module.kind() {
+        let (module_name, attr, module_getattr, globals_snapshot, module_is_package) =
+            match &*module.kind() {
             Object::Module(module_data) => {
                 let attr = module_data.globals.get(attr_name).cloned();
                 let module_getattr = module_data.globals.get("__getattr__").cloned();
                 let module_name = module_data.name.clone();
+                let module_is_package = module_data.globals.contains_key("__path__");
                 let globals_snapshot = module_data
                     .globals
                     .iter()
                     .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
                     .collect::<Vec<_>>();
-                (module_name, attr, module_getattr, globals_snapshot)
+                (
+                    module_name,
+                    attr,
+                    module_getattr,
+                    globals_snapshot,
+                    module_is_package,
+                )
             }
             _ => {
                 return Err(RuntimeError::new("attribute access unsupported type"));
@@ -12724,8 +12854,10 @@ impl Vm {
         }) {
             return Ok(attr);
         }
-        if let Some(submodule) = self.load_submodule(module, attr_name) {
-            return Ok(Value::Module(submodule));
+        if module_is_package {
+            if let Some(submodule) = self.load_submodule(module, attr_name) {
+                return Ok(Value::Module(submodule));
+            }
         }
         if attr_name != "__getattr__" {
             if let Some(module_getattr) = module_getattr {

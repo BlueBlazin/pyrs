@@ -1968,6 +1968,67 @@ ok = ("json" not in sys.modules) and ("json.decoder" not in sys.modules) and ("j
 }
 
 #[test]
+fn copyreg_shim_is_replaced_when_cpython_lib_is_added_late() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping copyreg shim replacement test (CPython Lib path not available)");
+        return;
+    };
+    let mut vm = Vm::new();
+
+    let preload = r#"import copyreg
+before = copyreg.__file__
+"#;
+    let preload_module = parser::parse_module(preload).expect("parse should succeed");
+    let preload_code = compiler::compile_module(&preload_module).expect("compile should succeed");
+    vm.execute(&preload_code).expect("execution should succeed");
+
+    vm.enable_pure_pickle_preference();
+    vm.add_module_path(&lib_path);
+
+    let reload = r#"import sys
+sys.modules.pop("copyreg", None)
+import copyreg
+before_norm = before.replace("\\", "/")
+after = copyreg.__file__
+after_norm = after.replace("\\", "/")
+ok = ("/shims/" in before_norm and "/shims/" not in after_norm and after_norm.endswith("/copyreg.py"))
+"#;
+    let reload_module = parser::parse_module(reload).expect("parse should succeed");
+    let reload_code = compiler::compile_module(&reload_module).expect("compile should succeed");
+    vm.execute(&reload_code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn getattribute_fallback_keeps_try_finally_state_stable() {
+    let source = r#"class C:
+    def __getattribute__(self, name):
+        if name == "value":
+            raise AttributeError("missing")
+        return object.__getattribute__(self, name)
+    def __getattr__(self, name):
+        if name == "value":
+            return 7
+        raise AttributeError(name)
+
+c = C()
+
+def read_value():
+    try:
+        return c.value
+    finally:
+        marker = 1
+
+ok = (read_value() == 7)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn struct_pack_unpack_and_offset_helpers_work() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping struct test (CPython Lib path not available)");
