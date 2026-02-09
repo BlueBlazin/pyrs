@@ -13,6 +13,16 @@ const LANGUAGE_SUITE: &str = "tests/cpython_suite_language.txt";
 const IMPORT_SUITE: &str = "tests/cpython_suite_imports.txt";
 const STRICT_STDLIB_SUITE: &str = "tests/cpython_suite_strict_stdlib.txt";
 
+fn enabled(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
 #[derive(Debug, Clone)]
 struct AllowEntry {
     category: String,
@@ -118,6 +128,21 @@ fn module_name(entry: &str) -> Option<String> {
 }
 
 fn pyrs_bin() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PYRS_SUBPROCESS_BIN") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Ok(mode) = std::env::var("PYRS_SUBPROCESS_BIN_MODE") {
+        let mode = mode.trim().to_ascii_lowercase();
+        if matches!(mode.as_str(), "debug" | "release") {
+            let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("target/{mode}/pyrs"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
     if let Some(path) = option_env!("CARGO_BIN_EXE_pyrs") {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -153,27 +178,25 @@ fn strict_unittest_timeout() -> Duration {
     Duration::from_secs(secs.max(1))
 }
 
+fn strict_allowlisted_timeout() -> Duration {
+    let fallback = strict_unittest_timeout();
+    let secs = std::env::var("PYRS_STRICT_ALLOWLIST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(fallback.as_secs().min(30));
+    Duration::from_secs(secs.max(1))
+}
+
 fn strict_stdlib_enabled() -> bool {
-    let enabled = |name: &str| {
-        std::env::var(name)
-            .ok()
-            .map(|value| {
-                let normalized = value.trim().to_ascii_lowercase();
-                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-            })
-            .unwrap_or(false)
-    };
     enabled("PYRS_RUN_STRICT_STDLIB") || enabled("PYRS_PARITY_STRICT")
 }
 
 fn strict_run_allowlisted_entries() -> bool {
-    std::env::var("PYRS_RUN_ALLOWLISTED_STRICT")
-        .ok()
-        .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-        })
-        .unwrap_or(false)
+    enabled("PYRS_RUN_ALLOWLISTED_STRICT")
+}
+
+fn strict_timing_trace_enabled() -> bool {
+    enabled("PYRS_STRICT_TIMING")
 }
 
 fn run_source_in_subprocess(bin: &Path, source: &str, timeout: Duration) -> Result<(), String> {
@@ -213,11 +236,19 @@ enum SuiteMode {
     StrictUnittest,
 }
 
-fn run_entry(lib: &Path, entry: &str, mode: SuiteMode) -> Result<(), String> {
+fn run_entry(
+    lib: &Path,
+    entry: &str,
+    mode: SuiteMode,
+    strict_subprocess_bin: Option<&Path>,
+    strict_timeout: Option<Duration>,
+) -> Result<(), String> {
     let _path = module_path(lib, entry).ok_or_else(|| "missing module".to_string())?;
     let import_name = module_name(entry).ok_or_else(|| "invalid module entry".to_string())?;
     let lib_path = lib.to_string_lossy();
-    let executable_patch = pyrs_bin()
+    let executable_patch = strict_subprocess_bin
+        .map(Path::to_path_buf)
+        .or_else(pyrs_bin)
         .map(|path| format!("sys.executable = {:?}\n", path.to_string_lossy()))
         .unwrap_or_default();
     let source = match mode {
@@ -225,13 +256,14 @@ fn run_entry(lib: &Path, entry: &str, mode: SuiteMode) -> Result<(), String> {
             "import sys\nimport importlib\n{executable_patch}sys.path = [{lib_path:?}]\nimportlib.import_module({import_name:?})\n"
         ),
         SuiteMode::StrictUnittest => format!(
-            "import sys\nimport importlib\nimport unittest\n{executable_patch}sys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nresult = unittest.TextTestRunner(verbosity=0, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
+            "import os\nimport sys\nimport importlib\nimport unittest\n{executable_patch}sys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nverbosity = int(os.environ.get('PYRS_STRICT_UNITTEST_VERBOSITY', '0'))\nresult = unittest.TextTestRunner(verbosity=verbosity, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
         ),
     };
 
     if matches!(mode, SuiteMode::StrictUnittest) {
-        if let Some(bin) = pyrs_bin() {
-            return run_source_in_subprocess(&bin, &source, strict_unittest_timeout());
+        if let Some(bin) = strict_subprocess_bin {
+            let timeout = strict_timeout.unwrap_or_else(strict_unittest_timeout);
+            return run_source_in_subprocess(bin, &source, timeout);
         }
     }
 
@@ -254,20 +286,69 @@ fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
     let suite = read_list(suite_file);
     let allow = read_allowlist(allowlist_file);
 
+    let strict_mode = matches!(mode, SuiteMode::StrictUnittest);
+    let timing_trace = strict_mode && strict_timing_trace_enabled();
+    let strict_bin = if strict_mode { pyrs_bin() } else { None };
+
     let mut unexpected_failures = Vec::new();
     let mut stale_allowlist = Vec::new();
     let mut passed = 0usize;
     let mut allowed = 0usize;
     let mut skipped_allowlisted = 0usize;
-    let run_allowlisted = !matches!(mode, SuiteMode::StrictUnittest) || strict_run_allowlisted_entries();
+    let run_allowlisted = !strict_mode || strict_run_allowlisted_entries();
+
+    if strict_mode {
+        if let Some(bin) = &strict_bin {
+            eprintln!("strict harness subprocess bin: {}", bin.to_string_lossy());
+        } else {
+            eprintln!("strict harness subprocess bin unavailable; using in-process VM fallback");
+        }
+    }
 
     for entry in &suite {
-        if !run_allowlisted && allow.contains_key(entry) {
+        let is_allowlisted = allow.contains_key(entry);
+        if !run_allowlisted && is_allowlisted {
             allowed += 1;
             skipped_allowlisted += 1;
             continue;
         }
-        match run_entry(&lib, entry, mode) {
+
+        let entry_timeout = if strict_mode {
+            Some(if is_allowlisted {
+                strict_allowlisted_timeout()
+            } else {
+                strict_unittest_timeout()
+            })
+        } else {
+            None
+        };
+
+        let start = Instant::now();
+        let result = run_entry(
+            &lib,
+            entry,
+            mode,
+            strict_bin.as_deref(),
+            entry_timeout,
+        );
+        let elapsed = start.elapsed();
+        if timing_trace {
+            let tag = if is_allowlisted {
+                "allowlisted"
+            } else {
+                "owned"
+            };
+            if let Some(timeout) = entry_timeout {
+                eprintln!(
+                    "strict timing: entry={entry} tag={tag} elapsed={:.3}s timeout={}s result={}",
+                    elapsed.as_secs_f64(),
+                    timeout.as_secs(),
+                    if result.is_ok() { "ok" } else { "err" }
+                );
+            }
+        }
+
+        match result {
             Ok(()) => {
                 if let Some(allow_entry) = allow.get(entry) {
                     stale_allowlist.push(format!(

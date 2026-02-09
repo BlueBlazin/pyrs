@@ -1,4 +1,112 @@
 use super::super::*;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+
+#[derive(Default, Clone, Copy)]
+struct PickleProfileStat {
+    calls: u64,
+    total_ns: u128,
+    max_ns: u128,
+}
+
+struct PickleProfileGuard {
+    name: &'static str,
+    start: Option<Instant>,
+}
+
+impl Drop for PickleProfileGuard {
+    fn drop(&mut self) {
+        let Some(start) = self.start else {
+            return;
+        };
+        pickle_profile_record(self.name, start.elapsed().as_nanos());
+    }
+}
+
+static PICKLE_PROFILE_ENABLED: OnceLock<bool> = OnceLock::new();
+static PICKLE_PROFILE_EMIT_EVERY: OnceLock<u64> = OnceLock::new();
+static PICKLE_PROFILE_STATS: OnceLock<Mutex<BTreeMap<&'static str, PickleProfileStat>>> =
+    OnceLock::new();
+static PICKLE_PROFILE_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+fn pickle_profile_flag(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+fn pickle_profile_enabled() -> bool {
+    *PICKLE_PROFILE_ENABLED.get_or_init(|| pickle_profile_flag("PYRS_PROFILE_PICKLE"))
+}
+
+fn pickle_profile_emit_every() -> u64 {
+    *PICKLE_PROFILE_EMIT_EVERY.get_or_init(|| {
+        std::env::var("PYRS_PROFILE_PICKLE_EMIT_EVERY")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(1_000)
+            .max(1)
+    })
+}
+
+fn pickle_profile_scope(name: &'static str) -> PickleProfileGuard {
+    if !pickle_profile_enabled() {
+        return PickleProfileGuard { name, start: None };
+    }
+    PickleProfileGuard {
+        name,
+        start: Some(Instant::now()),
+    }
+}
+
+fn pickle_profile_record(name: &'static str, elapsed_ns: u128) {
+    let stats = PICKLE_PROFILE_STATS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Ok(mut guard) = stats.lock() {
+        let entry = guard.entry(name).or_default();
+        entry.calls += 1;
+        entry.total_ns += elapsed_ns;
+        if elapsed_ns > entry.max_ns {
+            entry.max_ns = elapsed_ns;
+        }
+    }
+    let event_count = PICKLE_PROFILE_EVENTS.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+    let emit_every = pickle_profile_emit_every();
+    if event_count % emit_every == 0 {
+        pickle_profile_emit_summary(event_count);
+    }
+}
+
+fn pickle_profile_emit_summary(event_count: u64) {
+    let Some(stats) = PICKLE_PROFILE_STATS.get() else {
+        return;
+    };
+    let Ok(guard) = stats.lock() else {
+        return;
+    };
+    let mut rows: Vec<(&'static str, PickleProfileStat)> =
+        guard.iter().map(|(name, stat)| (*name, *stat)).collect();
+    rows.sort_by(|a, b| b.1.total_ns.cmp(&a.1.total_ns));
+    eprintln!("pickle-prof summary: events={event_count}");
+    for (name, stat) in rows.into_iter().take(8) {
+        let total_ms = stat.total_ns as f64 / 1_000_000.0;
+        let avg_us = if stat.calls == 0 {
+            0.0
+        } else {
+            (stat.total_ns as f64 / stat.calls as f64) / 1_000.0
+        };
+        let max_us = stat.max_ns as f64 / 1_000.0;
+        eprintln!(
+            "pickle-prof {name}: calls={} total_ms={:.3} avg_us={:.3} max_us={:.3}",
+            stat.calls, total_ms, avg_us, max_us
+        );
+    }
+}
 
 impl Vm {
     fn object_reduce_ex_builtin_singleton_name(&self, value: &Value) -> Option<&'static str> {
@@ -21,13 +129,20 @@ impl Vm {
     }
 
     fn pickle_copyreg_callable(&mut self, attr_name: &str) -> Result<Value, RuntimeError> {
+        let _profile = pickle_profile_scope("pickle_copyreg_callable");
+        if let Some(cached) = self.pickle_copyreg_cache.get(attr_name) {
+            return Ok(cached.clone());
+        }
         let caller_depth = self.frames.len();
         let copyreg_module = Value::Module(self.import_module_object("copyreg")?);
         self.run_pending_import_frames(caller_depth)?;
-        self.builtin_getattr(
+        let resolved = self.builtin_getattr(
             vec![copyreg_module, Value::Str(attr_name.to_string())],
             HashMap::new(),
-        )
+        )?;
+        self.pickle_copyreg_cache
+            .insert(attr_name.to_string(), resolved.clone());
+        Ok(resolved)
     }
 
     fn object_reduce_ex_new_constructor_and_args(
@@ -35,6 +150,7 @@ impl Vm {
         value: &Value,
         protocol: i64,
     ) -> Result<Option<(Value, Value)>, RuntimeError> {
+        let _profile = pickle_profile_scope("object_reduce_ex_new_constructor_and_args");
         let Value::Instance(_) = value else {
             return Ok(None);
         };
@@ -181,6 +297,7 @@ impl Vm {
         &mut self,
         value: &Value,
     ) -> Result<Option<(Value, Value)>, RuntimeError> {
+        let _profile = pickle_profile_scope("object_reduce_ex_legacy_constructor_and_args");
         let Value::Instance(instance) = value else {
             return Ok(None);
         };
@@ -211,6 +328,7 @@ impl Vm {
     }
 
     fn instance_has_non_object_reduce(&self, instance: &ObjRef) -> bool {
+        let _profile = pickle_profile_scope("instance_has_non_object_reduce");
         let class = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return false,
@@ -234,6 +352,7 @@ impl Vm {
         &mut self,
         value: &Value,
     ) -> Result<Option<Value>, RuntimeError> {
+        let _profile = pickle_profile_scope("object_reduce_ex_custom_reduce");
         let Value::Instance(instance) = value else {
             return Ok(None);
         };
@@ -502,6 +621,7 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let _profile = pickle_profile_scope("builtin_object_reduce_ex");
         if !kwargs.is_empty() || !(1..=2).contains(&args.len()) {
             return Err(RuntimeError::new(
                 "object.__reduce_ex__() takes one or two arguments",
@@ -722,6 +842,32 @@ mod tests {
         assert!(!matches!(parts[0], Value::Class(_)));
         let constructor_args = tuple_values(&parts[1]);
         assert_eq!(constructor_args, vec![class_obj]);
+    }
+
+    #[test]
+    fn object_reduce_ex_caches_copyreg_callables() {
+        let mut vm = Vm::new();
+        if vm.import_module_object("copyreg").is_err() {
+            eprintln!("skipping copyreg cache unit test (copyreg unavailable)");
+            return;
+        }
+        let instance = alloc_instance_with_attrs(&mut vm, "NeedsArgs", &[("a", Value::Int(1))]);
+
+        vm.builtin_object_reduce_ex(vec![instance.clone(), Value::Int(2)], HashMap::new())
+            .expect("protocol-2 reduce should succeed");
+        let cached_after_first = vm.pickle_copyreg_cache.len();
+        assert!(
+            vm.pickle_copyreg_cache.contains_key("__newobj__"),
+            "expected __newobj__ callable in cache"
+        );
+
+        vm.builtin_object_reduce_ex(vec![instance, Value::Int(2)], HashMap::new())
+            .expect("second protocol-2 reduce should succeed");
+        assert_eq!(
+            vm.pickle_copyreg_cache.len(),
+            cached_after_first,
+            "copyreg callable cache should be reused instead of growing"
+        );
     }
 
     #[test]
