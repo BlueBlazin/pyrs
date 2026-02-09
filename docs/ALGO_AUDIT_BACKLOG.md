@@ -22,7 +22,7 @@ Status values:
 
 | ID | Area | Risk | Current state | Required closure | Milestone | Status |
 |---|---|---|---|---|---|---|
-| AQ-101 | Dict/set index internals | Algorithmic scaling | Hash index now uses compact single-or-many buckets (replacing always-`Vec` hash buckets), but order-preserving backing vectors and load-factor/growth policy tuning are still open | Complete hash-container hot-path architecture closure; benchmark and regressions | 14 | IN_PROGRESS |
+| AQ-101 | Dict/set index internals | Algorithmic scaling | Dict now uses CPython-style open-addressing probe slots and set uses compact single-or-many buckets, but delete/index-compaction costs and load-factor/growth policy tuning are still open | Complete hash-container hot-path architecture closure; benchmark and regressions | 14 | IN_PROGRESS |
 | AQ-102 | Set/dict growth/load-factor policy | Perf stability | Basic hash index exists, growth strategy not fully tuned/validated | Implement and validate growth/load-factor policies with adversarial tests | 14 | OPEN |
 | AQ-103 | Clone hot spots in VM/runtime | Throughput + memory churn | Clone baseline/report tooling is now in place (`scripts/clone_audit.sh`, `docs/CLONE_BASELINE.txt`, `docs/CLONE_AUDIT.md`), but many hot-path clones remain | Audit, classify, and reduce avoidable clones in hot paths; add perf sentinels | 14 | IN_PROGRESS |
 | AQ-104 | VM monolith reviewability | Defect detection risk | `src/vm/mod.rs` is still large, but CSV helper algorithms were extracted into `src/vm/stdlib/csv.rs` with direct unit tests | Continue extraction by concern with behavior-preserving tests | 14 | IN_PROGRESS |
