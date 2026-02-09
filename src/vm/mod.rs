@@ -8578,29 +8578,33 @@ impl Vm {
                                     return Ok(None);
                                 }
 
-                                let (module_name, attr) = match &*module_obj.kind() {
-                                    Object::Module(module_data) => {
-                                        let attr = module_data.globals.get(&attr_name).cloned();
-                                        let module_name = module_data.name.clone();
-                                        (module_name, attr)
-                                    }
+                                let module_name = match &*module_obj.kind() {
+                                    Object::Module(module_data) => module_data.name.clone(),
                                     _ => {
                                         return Err(RuntimeError::new(
                                             "import from expects module object",
                                         ));
                                     }
                                 };
-                                let attr = if let Some(attr) = attr {
-                                    attr
-                                } else if let Some(module) =
-                                    self.load_submodule(&module_obj, &attr_name)
-                                {
-                                    Value::Module(module)
-                                } else {
-                                    return Err(RuntimeError::new(format!(
-                                        "cannot import name '{}' from '{}'",
-                                        attr_name, module_name
-                                    )));
+                                let attr = match self.load_attr_module(&module_obj, &attr_name) {
+                                    Ok(attr) => attr,
+                                    Err(load_err) => {
+                                        if let Some(module) =
+                                            self.load_submodule(&module_obj, &attr_name)
+                                        {
+                                            Value::Module(module)
+                                        } else if load_err
+                                            .message
+                                            .contains("has no attribute")
+                                        {
+                                            return Err(RuntimeError::new(format!(
+                                                "cannot import name '{}' from '{}'",
+                                                attr_name, module_name
+                                            )));
+                                        } else {
+                                            return Err(load_err);
+                                        }
+                                    }
                                 };
                                 self.push_value_to_caller_frame(caller_idx, attr)?;
                             }
@@ -37844,6 +37848,17 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
     false
 }
 
+#[inline]
+fn runtime_error_line_matches_exception(line: &str, exception: &str) -> bool {
+    if line == exception {
+        return true;
+    }
+    match line.strip_prefix(exception) {
+        Some(rest) => rest.starts_with(':'),
+        None => false,
+    }
+}
+
 fn classify_runtime_error(message: &str) -> &'static str {
     const DIRECT_PREFIX_EXCEPTIONS: [&str; 22] = [
         "TypeError",
@@ -37869,6 +37884,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         "PicklingError",
         "UnpicklingError",
     ];
+    let trimmed = message.trim();
     if message.starts_with("Traceback (most recent call last):") {
         if let Some(last_non_empty_line) = message
             .lines()
@@ -37877,27 +37893,25 @@ fn classify_runtime_error(message: &str) -> &'static str {
             .map(str::trim)
         {
             for exception in DIRECT_PREFIX_EXCEPTIONS {
-                if last_non_empty_line == exception
-                    || last_non_empty_line.starts_with(&format!("{exception}:"))
-                {
+                if runtime_error_line_matches_exception(last_non_empty_line, exception) {
                     return exception;
                 }
             }
         }
     }
     for exception in DIRECT_PREFIX_EXCEPTIONS {
-        if message == exception || message.starts_with(&format!("{exception}:")) {
+        if runtime_error_line_matches_exception(message, exception) {
             return exception;
         }
     }
 
-    if message.trim() == "StopIteration" || message.trim().starts_with("StopIteration:") {
+    if runtime_error_line_matches_exception(trimmed, "StopIteration") {
         return "StopIteration";
     }
-    if message.trim() == "StopAsyncIteration" || message.trim().starts_with("StopAsyncIteration:") {
+    if runtime_error_line_matches_exception(trimmed, "StopAsyncIteration") {
         return "StopAsyncIteration";
     }
-    if message.trim() == "CalledProcessError" || message.trim().starts_with("CalledProcessError:") {
+    if runtime_error_line_matches_exception(trimmed, "CalledProcessError") {
         return "CalledProcessError";
     }
     if message.contains("unknown dialect")
@@ -37942,10 +37956,10 @@ fn classify_runtime_error(message: &str) -> &'static str {
     {
         return "TypeError";
     }
-    if message.trim() == "KeyboardInterrupt" {
+    if runtime_error_line_matches_exception(trimmed, "KeyboardInterrupt") {
         return "KeyboardInterrupt";
     }
-    if message.trim() == "SystemExit" || message.trim().starts_with("SystemExit:") {
+    if runtime_error_line_matches_exception(trimmed, "SystemExit") {
         return "SystemExit";
     }
     if message.contains("index out of range")

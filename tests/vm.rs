@@ -2154,6 +2154,11 @@ else:
     accel_ok = all(hasattr(_pickle, name) for name in (
         "dump", "dumps", "load", "loads", "Pickler", "Unpickler"
     ))
+    from _pickle import dump, dumps, load, loads, Pickler, Unpickler
+    accel_ok = accel_ok and all((
+        callable(dump), callable(dumps), callable(load), callable(loads),
+        Pickler is not None, Unpickler is not None
+    ))
 data = pickle.dumps(Warning, protocol=0)
 loaded = pickle.loads(data)
 ok = (meta_ok and accel_ok and loaded is Warning)
