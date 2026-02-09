@@ -7592,6 +7592,28 @@ impl Vm {
                             base_classes.push(self.class_from_base_value(base)?);
                         }
 
+                        let class_qualname = self
+                            .frames
+                            .last()
+                            .and_then(|frame| {
+                                if !frame.return_class {
+                                    return None;
+                                }
+                                let Object::Module(module_data) = &*frame.module.kind() else {
+                                    return None;
+                                };
+                                let outer_qualname = module_data
+                                    .globals
+                                    .get("__qualname__")
+                                    .and_then(|value| match value {
+                                        Value::Str(name) => Some(name.clone()),
+                                        _ => None,
+                                    })
+                                    .unwrap_or_else(|| module_data.name.clone());
+                                Some(format!("{outer_qualname}.{class_name}"))
+                            })
+                            .unwrap_or_else(|| class_name.clone());
+
                         let class_module = match self
                             .heap
                             .alloc_module(ModuleObject::new(class_name.clone()))
@@ -7603,6 +7625,9 @@ impl Vm {
                             module_data
                                 .globals
                                 .insert("__name__".to_string(), Value::Str(class_name));
+                            module_data
+                                .globals
+                                .insert("__qualname__".to_string(), Value::Str(class_qualname));
                         }
 
                         let (outer_globals, outer_locals) = self
@@ -9770,10 +9795,17 @@ impl Vm {
                 class_data
                     .attrs
                     .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
-                class_data.attrs.insert(
-                    "__qualname__".to_string(),
-                    Value::Str(class_data.name.clone()),
-                );
+                let qualname = class_data
+                    .attrs
+                    .get("__qualname__")
+                    .and_then(|value| match value {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| class_data.name.clone());
+                class_data
+                    .attrs
+                    .insert("__qualname__".to_string(), Value::Str(qualname));
                 class_data
                     .attrs
                     .entry("__module__".to_string())
@@ -12261,6 +12293,17 @@ impl Vm {
             Value::Str(class_name.clone())
         } else if attr_name == "__qualname__" {
             Value::Str(class_name.clone())
+        } else if attr_name == "__base__" {
+            let class_kind = class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return Err(RuntimeError::new("attribute access unsupported type"));
+            };
+            class_data
+                .bases
+                .first()
+                .cloned()
+                .map(Value::Class)
+                .unwrap_or(Value::None)
         } else if attr_name == "__module__" {
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {

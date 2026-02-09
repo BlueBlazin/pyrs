@@ -2291,6 +2291,61 @@ ok = (
 }
 
 #[test]
+fn nested_class_qualname_tracks_enclosing_class_path() {
+    let source = r#"class Nested:
+    class A:
+        class B:
+            pass
+ok = (
+    Nested.__qualname__ == "Nested" and
+    Nested.A.__qualname__ == "Nested.A" and
+    Nested.A.B.__qualname__ == "Nested.A.B"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_roundtrips_nested_classes_from_picklecommon() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle nested-class roundtrip test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.picklecommon import Nested
+ok = True
+for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+    for obj in (Nested.A, Nested.A.B, Nested.A.B.C):
+        ok = ok and (pickle.loads(pickle.dumps(obj, proto)) is obj)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn class_base_attribute_returns_first_base_class() {
+    let source = r#"class A:
+    pass
+class B(A):
+    pass
+ok = (B.__base__ is A and A.__base__ is object)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn pickle_dispatch_table_none_item_raises_type_error() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pickle dispatch-table test (CPython Lib path not available)");
