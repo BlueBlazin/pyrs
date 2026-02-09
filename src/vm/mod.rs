@@ -29425,29 +29425,53 @@ impl Vm {
     }
 
     fn bytesio_state_from_instance(
-        &self,
+        &mut self,
         instance: &ObjRef,
-    ) -> Result<(Vec<u8>, usize, bool), RuntimeError> {
-        let Object::Instance(instance_data) = &*instance.kind() else {
+    ) -> Result<(ObjRef, usize, bool), RuntimeError> {
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
             return Err(RuntimeError::new("BytesIO receiver must be instance"));
-        };
-        let bytes = match instance_data.attrs.get("_value") {
-            Some(value) => value_to_bytes_payload(value.clone())
-                .map_err(|_| RuntimeError::new("BytesIO internal buffer is invalid"))?,
-            None => Vec::new(),
         };
         let pos = match instance_data.attrs.get("_pos") {
             Some(Value::Int(value)) if *value >= 0 => *value as usize,
             _ => 0,
         };
         let closed = matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true)));
-        Ok((bytes, pos, closed))
+        let current_value = instance_data.attrs.get("_value").cloned();
+        let value_obj = match current_value {
+            Some(Value::ByteArray(obj)) => obj,
+            Some(Value::Bytes(obj)) => {
+                let bytes = match &*obj.kind() {
+                    Object::Bytes(values) => values.clone(),
+                    _ => Vec::new(),
+                };
+                match self.heap.alloc_bytearray(bytes) {
+                    Value::ByteArray(obj) => obj,
+                    _ => unreachable!(),
+                }
+            }
+            Some(other) => {
+                let bytes = value_to_bytes_payload(other)
+                    .map_err(|_| RuntimeError::new("BytesIO internal buffer is invalid"))?;
+                match self.heap.alloc_bytearray(bytes) {
+                    Value::ByteArray(obj) => obj,
+                    _ => unreachable!(),
+                }
+            }
+            None => match self.heap.alloc_bytearray(Vec::new()) {
+                Value::ByteArray(obj) => obj,
+                _ => unreachable!(),
+            },
+        };
+        instance_data
+            .attrs
+            .insert("_value".to_string(), Value::ByteArray(value_obj.clone()));
+        Ok((value_obj, pos, closed))
     }
 
     fn bytesio_store_state(
         &mut self,
         instance: &ObjRef,
-        bytes: Vec<u8>,
+        value_obj: ObjRef,
         pos: usize,
         closed: bool,
     ) -> Result<(), RuntimeError> {
@@ -29456,7 +29480,7 @@ impl Vm {
         };
         instance_data
             .attrs
-            .insert("_value".to_string(), self.heap.alloc_bytearray(bytes));
+            .insert("_value".to_string(), Value::ByteArray(value_obj));
         instance_data
             .attrs
             .insert("_pos".to_string(), Value::Int(pos as i64));
@@ -29467,8 +29491,10 @@ impl Vm {
     }
 
     fn bytesio_ensure_open(&self, instance: &ObjRef) -> Result<(), RuntimeError> {
-        let (_, _, closed) = self.bytesio_state_from_instance(instance)?;
-        if closed {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+        };
+        if matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true))) {
             Err(RuntimeError::new("I/O operation on closed file."))
         } else {
             Ok(())
@@ -29492,7 +29518,11 @@ impl Vm {
             None => Vec::new(),
             Some(value) => bytes_like_from_value(value)?,
         };
-        self.bytesio_store_state(&receiver, bytes, 0, false)?;
+        let value_obj = match self.heap.alloc_bytearray(bytes) {
+            Value::ByteArray(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.bytesio_store_state(&receiver, value_obj, 0, false)?;
         Ok(Value::None)
     }
 
@@ -29507,18 +29537,24 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
         let payload = bytes_like_from_value(args.remove(0))?;
-        let (mut buffer, mut pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        if pos > buffer.len() {
-            buffer.resize(pos, 0);
-        }
-        let end = pos.saturating_add(payload.len());
-        if end > buffer.len() {
-            buffer.resize(end, 0);
-        }
-        buffer[pos..end].copy_from_slice(&payload);
-        pos = end;
-        self.bytesio_store_state(&receiver, buffer, pos, false)?;
-        Ok(Value::Int(payload.len() as i64))
+        let written = payload.len();
+        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        pos = {
+            let Object::ByteArray(buffer) = &mut *value_obj.kind_mut() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            if pos > buffer.len() {
+                buffer.resize(pos, 0);
+            }
+            let end = pos.saturating_add(written);
+            if end > buffer.len() {
+                buffer.resize(end, 0);
+            }
+            buffer[pos..end].copy_from_slice(&payload);
+            end
+        };
+        self.bytesio_store_state(&receiver, value_obj, pos, closed)?;
+        Ok(Value::Int(written as i64))
     }
 
     fn builtin_bytesio_read(
@@ -29532,17 +29568,22 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
         let size = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
-        let (buffer, mut pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        if pos > buffer.len() {
-            pos = buffer.len();
-        }
-        let end = if size < 0 {
-            buffer.len()
-        } else {
-            (pos + size as usize).min(buffer.len())
+        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let (out, end) = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            if pos > buffer.len() {
+                pos = buffer.len();
+            }
+            let end = if size < 0 {
+                buffer.len()
+            } else {
+                (pos + size as usize).min(buffer.len())
+            };
+            (buffer[pos..end].to_vec(), end)
         };
-        let out = buffer[pos..end].to_vec();
-        self.bytesio_store_state(&receiver, buffer, end, false)?;
+        self.bytesio_store_state(&receiver, value_obj, end, closed)?;
         Ok(self.heap.alloc_bytes(out))
     }
 
@@ -29557,26 +29598,35 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
         let limit = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
-        let (buffer, mut pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        if pos > buffer.len() {
-            pos = buffer.len();
-        }
-        if pos >= buffer.len() {
+        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let line_out = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            if pos > buffer.len() {
+                pos = buffer.len();
+            }
+            if pos >= buffer.len() {
+                None
+            } else {
+                let mut end = pos;
+                while end < buffer.len() {
+                    if buffer[end] == b'\n' {
+                        end += 1;
+                        break;
+                    }
+                    end += 1;
+                    if limit >= 0 && (end - pos) as i64 >= limit {
+                        break;
+                    }
+                }
+                Some((buffer[pos..end].to_vec(), end))
+            }
+        };
+        let Some((out, end)) = line_out else {
             return Ok(self.heap.alloc_bytes(Vec::new()));
-        }
-        let mut end = pos;
-        while end < buffer.len() {
-            if buffer[end] == b'\n' {
-                end += 1;
-                break;
-            }
-            end += 1;
-            if limit >= 0 && (end - pos) as i64 >= limit {
-                break;
-            }
-        }
-        let out = buffer[pos..end].to_vec();
-        self.bytesio_store_state(&receiver, buffer, end, false)?;
+        };
+        self.bytesio_store_state(&receiver, value_obj, end, closed)?;
         Ok(self.heap.alloc_bytes(out))
     }
 
@@ -29591,11 +29641,16 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
         let target = args.remove(0);
-        let (buffer, mut pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        if pos > buffer.len() {
-            pos = buffer.len();
-        }
-        let remaining = &buffer[pos..];
+        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let remaining = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            if pos > buffer.len() {
+                pos = buffer.len();
+            }
+            buffer[pos..].to_vec()
+        };
         let copied = match target {
             Value::ByteArray(obj) => {
                 let Object::ByteArray(values) = &mut *obj.kind_mut() else {
@@ -29631,7 +29686,7 @@ impl Vm {
                 ));
             }
         };
-        self.bytesio_store_state(&receiver, buffer, pos + copied, false)?;
+        self.bytesio_store_state(&receiver, value_obj, pos + copied, closed)?;
         Ok(Value::Int(copied as i64))
     }
 
@@ -29645,8 +29700,11 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let (buffer, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        Ok(self.heap.alloc_bytes(buffer))
+        let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        let Object::ByteArray(buffer) = &*value_obj.kind() else {
+            return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+        };
+        Ok(self.heap.alloc_bytes(buffer.to_vec()))
     }
 
     fn builtin_bytesio_getbuffer(
@@ -29659,20 +29717,9 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let source = {
-            let Object::Instance(instance_data) = &*receiver.kind() else {
-                return Err(RuntimeError::new("BytesIO receiver must be instance"));
-            };
-            match instance_data.attrs.get("_value") {
-                Some(Value::ByteArray(obj)) => obj.clone(),
-                Some(Value::Bytes(obj)) => obj.clone(),
-                _ => match self.heap.alloc_bytearray(Vec::new()) {
-                    Value::ByteArray(obj) => obj,
-                    _ => unreachable!(),
-                },
-            }
-        };
-        Ok(self.heap.alloc_memoryview(source))
+        let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        self.bytesio_store_state(&receiver, value_obj.clone(), pos, closed)?;
+        Ok(self.heap.alloc_memoryview(value_obj))
     }
 
     fn builtin_bytesio_seek(
@@ -29691,19 +29738,24 @@ impl Vm {
         } else {
             value_to_int(args.remove(0))?
         };
-        let (buffer, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        let base = match whence {
-            0 => 0i64,
-            1 => pos as i64,
-            2 => buffer.len() as i64,
-            _ => return Err(RuntimeError::new("BytesIO.seek invalid whence")),
+        let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let new_pos = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            let base = match whence {
+                0 => 0i64,
+                1 => pos as i64,
+                2 => buffer.len() as i64,
+                _ => return Err(RuntimeError::new("BytesIO.seek invalid whence")),
+            };
+            let new_pos = base + offset;
+            if new_pos < 0 {
+                return Err(RuntimeError::new("negative seek value"));
+            }
+            new_pos as usize
         };
-        let new_pos = base + offset;
-        if new_pos < 0 {
-            return Err(RuntimeError::new("negative seek value"));
-        }
-        let new_pos = new_pos as usize;
-        self.bytesio_store_state(&receiver, buffer, new_pos, false)?;
+        self.bytesio_store_state(&receiver, value_obj, new_pos, closed)?;
         Ok(Value::Int(new_pos as i64))
     }
 
@@ -29717,7 +29769,7 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let (_buffer, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        let (_value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
         Ok(Value::Int(pos as i64))
     }
 
@@ -29776,8 +29828,8 @@ impl Vm {
             ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        let (buffer, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        self.bytesio_store_state(&receiver, buffer, pos, true)?;
+        let (value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        self.bytesio_store_state(&receiver, value_obj, pos, true)?;
         Ok(Value::Bool(false))
     }
 
@@ -29790,8 +29842,8 @@ impl Vm {
             return Err(RuntimeError::new("BytesIO.close expects no arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        let (buffer, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        self.bytesio_store_state(&receiver, buffer, pos, true)?;
+        let (value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        self.bytesio_store_state(&receiver, value_obj, pos, true)?;
         Ok(Value::None)
     }
 
