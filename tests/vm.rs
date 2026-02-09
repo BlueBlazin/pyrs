@@ -2447,6 +2447,69 @@ ok = (type(y) is myint and y == x and int(y) == 5)
 }
 
 #[test]
+fn pickle_newobj_generic_matrix_from_pickletester_roundtrips() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle newobj generic matrix test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.pickletester import myclasses, protocols
+
+ok = True
+for proto in protocols:
+    for C in myclasses:
+        B = C.__base__
+        x = C(C.sample)
+        x.foo = 42
+        y = pickle.loads(pickle.dumps(x, proto))
+        ok = ok and (x == y) and (B(x) == B(y)) and (x.__dict__ == y.__dict__)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_slot_list_roundtrip_preserves_slots_and_dynamic_dict_attrs() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle SlotList roundtrip test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+from test.pickletester import SlotList
+x = SlotList([1, 2, 3])
+x.foo = 42
+x.bar = "hello"
+y = pickle.loads(pickle.dumps(x, 2))
+ok = (x == y and x.foo == y.foo and x.bar == y.bar and x.__dict__ == y.__dict__)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn int_instance_exposes_new_and_rejects_non_type_receiver() {
+    let source = r#"ok = False
+try:
+    (42).__new__(42)
+except TypeError:
+    ok = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn pickle_object_reduce_base_call_does_not_recurse() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pickle base reduce recursion test (CPython Lib path not available)");

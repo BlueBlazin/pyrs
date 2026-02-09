@@ -1525,6 +1525,11 @@ impl Vm {
             return Err(RuntimeError::new("__newobj__() expects class and args"));
         }
         let class_value = args.remove(0);
+        if !matches!(class_value, Value::Class(_)) {
+            return Err(RuntimeError::new(
+                "TypeError: __newobj__() first argument must be a type",
+            ));
+        }
         let new_method = self.builtin_getattr(
             vec![class_value.clone(), Value::Str("__new__".to_string())],
             HashMap::new(),
@@ -1551,6 +1556,11 @@ impl Vm {
             ));
         }
         let class_value = args.remove(0);
+        if !matches!(class_value, Value::Class(_)) {
+            return Err(RuntimeError::new(
+                "TypeError: __newobj_ex__() first argument must be a type",
+            ));
+        }
         let tuple_args = match args.remove(0) {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(values) => values.clone(),
@@ -1764,6 +1774,51 @@ impl Vm {
                     self.heap.alloc_tuple(vec![class_obj, int_value]),
                 )));
             }
+            if let Some(float_value) = self.instance_backing_float(instance) {
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj__")?,
+                    self.heap
+                        .alloc_tuple(vec![class_obj, Value::Float(float_value)]),
+                )));
+            }
+            if let Some((real, imag)) = self.instance_backing_complex(instance) {
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj__")?,
+                    self.heap
+                        .alloc_tuple(vec![class_obj, Value::Complex { real, imag }]),
+                )));
+            }
+            if let Some(text) = self.instance_backing_str(instance) {
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj__")?,
+                    self.heap.alloc_tuple(vec![class_obj, Value::Str(text)]),
+                )));
+            }
+            if let Some(tuple) = self.instance_backing_tuple(instance) {
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj__")?,
+                    self.heap.alloc_tuple(vec![class_obj, Value::Tuple(tuple)]),
+                )));
+            }
+            if let Some(dict) = self.instance_backing_dict(instance) {
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj__")?,
+                    self.heap.alloc_tuple(vec![class_obj, Value::Dict(dict)]),
+                )));
+            }
+            if let Some(set) = self.instance_backing_set(instance) {
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj__")?,
+                    self.heap.alloc_tuple(vec![class_obj, Value::Set(set)]),
+                )));
+            }
+            if let Some(frozenset) = self.instance_backing_frozenset(instance) {
+                return Ok(Some((
+                    self.pickle_copyreg_callable("__newobj__")?,
+                    self.heap
+                        .alloc_tuple(vec![class_obj, Value::FrozenSet(frozenset)]),
+                )));
+            }
             // Default protocol >=2 constructor path for user instances:
             // use __newobj__(cls, *args) so unpickling bypasses __init__.
             return Ok(Some((
@@ -1786,27 +1841,88 @@ impl Vm {
         let Some(class_obj) = self.class_of_value(value).map(Value::Class) else {
             return Ok(None);
         };
-        let constructor_args = if let Some(integer_value) = self.instance_backing_int(instance) {
+        if let Some(integer_value) = self.instance_backing_int(instance) {
             let int_value = BuiltinFunction::Int.call(&self.heap, vec![integer_value])?;
-            self.heap.alloc_tuple(vec![
-                class_obj,
-                Value::Builtin(BuiltinFunction::Int),
-                int_value,
-            ])
-        } else {
-            // For protocol 0/1, regular user instances must use copyreg._reconstructor.
-            // Emitting (Class, ()) here incorrectly routes through __init__ on load.
-            let base = self
-                .builtins
-                .get("object")
-                .cloned()
-                .ok_or_else(|| RuntimeError::new("object type is unavailable"))?;
-            self.heap.alloc_tuple(vec![class_obj, base, Value::None])
-        };
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap.alloc_tuple(vec![class_obj, int_value]),
+            )));
+        }
+        if let Some(float_value) = self.instance_backing_float(instance) {
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap
+                    .alloc_tuple(vec![class_obj, Value::Float(float_value)]),
+            )));
+        }
+        if let Some((real, imag)) = self.instance_backing_complex(instance) {
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap
+                    .alloc_tuple(vec![class_obj, Value::Complex { real, imag }]),
+            )));
+        }
+        if let Some(text) = self.instance_backing_str(instance) {
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap.alloc_tuple(vec![class_obj, Value::Str(text)]),
+            )));
+        }
+        if let Some(tuple) = self.instance_backing_tuple(instance) {
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap.alloc_tuple(vec![class_obj, Value::Tuple(tuple)]),
+            )));
+        }
+        if let Some(dict) = self.instance_backing_dict(instance) {
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap.alloc_tuple(vec![class_obj, Value::Dict(dict)]),
+            )));
+        }
+        if let Some(set) = self.instance_backing_set(instance) {
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap.alloc_tuple(vec![class_obj, Value::Set(set)]),
+            )));
+        }
+        if let Some(frozenset) = self.instance_backing_frozenset(instance) {
+            return Ok(Some((
+                self.pickle_copyreg_callable("__newobj__")?,
+                self.heap
+                    .alloc_tuple(vec![class_obj, Value::FrozenSet(frozenset)]),
+            )));
+        }
+
+        // For protocol 0/1, regular user instances must use copyreg._reconstructor.
+        // Emitting (Class, ()) here incorrectly routes through __init__ on load.
+        let base = self
+            .builtins
+            .get("object")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("object type is unavailable"))?;
         Ok(Some((
             self.pickle_copyreg_callable("_reconstructor")?,
-            constructor_args,
+            self.heap.alloc_tuple(vec![class_obj, base, Value::None]),
         )))
+    }
+
+    fn class_has_pickled_slots(&self, class: &ObjRef) -> bool {
+        for candidate in self.class_mro_entries(class) {
+            let Object::Class(class_data) = &*candidate.kind() else {
+                continue;
+            };
+            let Some(slots) = &class_data.slots else {
+                continue;
+            };
+            if slots
+                .iter()
+                .any(|slot| slot != "__dict__" && slot != "__weakref__")
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn instance_has_non_object_reduce(&self, instance: &ObjRef) -> bool {
@@ -1839,6 +1955,21 @@ impl Vm {
         let Value::Instance(instance) = value else {
             return Ok(None);
         };
+        // Builtin-backed subclasses (e.g. float/tuple/dict descendants) should
+        // follow object.__reduce_ex__ constructor/state rules so protocol 0/1
+        // and >=2 paths stay consistent with our VM-backed payload model.
+        if self.instance_backing_int(instance).is_some()
+            || self.instance_backing_float(instance).is_some()
+            || self.instance_backing_complex(instance).is_some()
+            || self.instance_backing_str(instance).is_some()
+            || self.instance_backing_tuple(instance).is_some()
+            || self.instance_backing_list(instance).is_some()
+            || self.instance_backing_dict(instance).is_some()
+            || self.instance_backing_set(instance).is_some()
+            || self.instance_backing_frozenset(instance).is_some()
+        {
+            return Ok(None);
+        }
         if !self.instance_has_non_object_reduce(instance) {
             return Ok(None);
         }
@@ -2136,6 +2267,15 @@ impl Vm {
         }
 
         let (constructor, constructor_args) = if protocol < 2 {
+            if let Value::Instance(instance) = &value {
+                if let Object::Instance(instance_data) = &*instance.kind() {
+                    if self.class_has_pickled_slots(&instance_data.class) {
+                        return Err(RuntimeError::new(
+                            "TypeError: __slots__ classes are unsupported for protocol < 2",
+                        ));
+                    }
+                }
+            }
             match self.object_reduce_ex_legacy_constructor_and_args(&value)? {
                 Some(pair) => pair,
                 None => self.reduce_ex_constructor_and_args(&value),

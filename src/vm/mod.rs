@@ -98,6 +98,11 @@ const TUPLE_BACKING_STORAGE_ATTR: &str = "__pyrs_tuple_storage__";
 const STR_BACKING_STORAGE_ATTR: &str = "__pyrs_str_storage__";
 const BYTES_BACKING_STORAGE_ATTR: &str = "__pyrs_bytes_storage__";
 const INT_BACKING_STORAGE_ATTR: &str = "__pyrs_int_storage__";
+const FLOAT_BACKING_STORAGE_ATTR: &str = "__pyrs_float_storage__";
+const COMPLEX_BACKING_STORAGE_ATTR: &str = "__pyrs_complex_storage__";
+const DICT_BACKING_STORAGE_ATTR: &str = "__pyrs_dict_storage__";
+const SET_BACKING_STORAGE_ATTR: &str = "__pyrs_set_storage__";
+const FROZENSET_BACKING_STORAGE_ATTR: &str = "__pyrs_frozenset_storage__";
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 static SUBMODULE_TRACE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -9781,16 +9786,13 @@ impl Vm {
                         .entry("_value_repr_".to_string())
                         .or_insert(Value::Builtin(BuiltinFunction::Repr));
                 }
-                if let Some(slot_names) =
-                    slot_names_from_value(class_data.attrs.get("__slots__").cloned())
-                {
-                    class_data.slots = Some(slot_names.clone());
-                    class_data.attrs.insert(
-                        "__slots__".to_string(),
-                        self.heap.alloc_tuple(
-                            slot_names.into_iter().map(Value::Str).collect::<Vec<_>>(),
-                        ),
-                    );
+                if let Some(slots_value) = class_data.attrs.get("__slots__").cloned() {
+                    if let Some(slot_names) = slot_names_from_value(Some(slots_value.clone())) {
+                        class_data.slots = Some(slot_names);
+                        // Preserve the declared __slots__ object shape (str/list/tuple/etc.)
+                        // while retaining normalized slot names in ClassObject::slots.
+                        class_data.attrs.insert("__slots__".to_string(), slots_value);
+                    }
                 }
                 class_data
                     .attrs
@@ -10837,6 +10839,9 @@ impl Vm {
     }
 
     fn load_attr_int_method(&self, value: Value, attr_name: &str) -> Result<Value, RuntimeError> {
+        if attr_name == "__new__" {
+            return Ok(Value::Builtin(BuiltinFunction::ObjectNew));
+        }
         let kind = match attr_name {
             "to_bytes" => NativeMethodKind::IntToBytes,
             "bit_length" => NativeMethodKind::IntBitLengthMethod,
@@ -12156,6 +12161,71 @@ impl Vm {
                         } else {
                             return Err(RuntimeError::new("int instance construction failed"));
                         }
+                    } else if self.class_has_builtin_float_base(&class) {
+                        let float_value = self.builtin_float(args, kwargs)?;
+                        let Value::Float(_) = float_value else {
+                            return Err(RuntimeError::new("float constructor returned non-float"));
+                        };
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert(FLOAT_BACKING_STORAGE_ATTR.to_string(), float_value);
+                        } else {
+                            return Err(RuntimeError::new("float instance construction failed"));
+                        }
+                    } else if self.class_has_builtin_complex_base(&class) {
+                        let complex_value = self.builtin_complex(args, kwargs)?;
+                        let Value::Complex { .. } = complex_value else {
+                            return Err(RuntimeError::new(
+                                "complex constructor returned non-complex",
+                            ));
+                        };
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert(COMPLEX_BACKING_STORAGE_ATTR.to_string(), complex_value);
+                        } else {
+                            return Err(RuntimeError::new("complex instance construction failed"));
+                        }
+                    } else if self.class_has_builtin_dict_base(&class) {
+                        let dict_value = self.call_builtin(BuiltinFunction::Dict, args, kwargs)?;
+                        let Value::Dict(_) = dict_value else {
+                            return Err(RuntimeError::new("dict constructor returned non-dict"));
+                        };
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert(DICT_BACKING_STORAGE_ATTR.to_string(), dict_value);
+                        } else {
+                            return Err(RuntimeError::new("dict instance construction failed"));
+                        }
+                    } else if self.class_has_builtin_set_base(&class) {
+                        let set_value = self.call_builtin(BuiltinFunction::Set, args, kwargs)?;
+                        let Value::Set(_) = set_value else {
+                            return Err(RuntimeError::new("set constructor returned non-set"));
+                        };
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert(SET_BACKING_STORAGE_ATTR.to_string(), set_value);
+                        } else {
+                            return Err(RuntimeError::new("set instance construction failed"));
+                        }
+                    } else if self.class_has_builtin_frozenset_base(&class) {
+                        let frozenset_value =
+                            self.call_builtin(BuiltinFunction::FrozenSet, args, kwargs)?;
+                        let Value::FrozenSet(_) = frozenset_value else {
+                            return Err(RuntimeError::new(
+                                "frozenset constructor returned non-frozenset",
+                            ));
+                        };
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert(FROZENSET_BACKING_STORAGE_ATTR.to_string(), frozenset_value);
+                        } else {
+                            return Err(RuntimeError::new("frozenset instance construction failed"));
+                        }
                     } else if !kwargs.is_empty() || !args.is_empty() {
                         return Err(RuntimeError::new("class constructor takes no arguments"));
                     }
@@ -12451,6 +12521,51 @@ impl Vm {
             })
     }
 
+    fn class_has_builtin_float_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "float",
+                _ => false,
+            })
+    }
+
+    fn class_has_builtin_complex_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "complex",
+                _ => false,
+            })
+    }
+
+    fn class_has_builtin_dict_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "dict",
+                _ => false,
+            })
+    }
+
+    fn class_has_builtin_set_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "set",
+                _ => false,
+            })
+    }
+
+    fn class_has_builtin_frozenset_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "frozenset",
+                _ => false,
+            })
+    }
+
     fn class_has_builtin_type_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
@@ -12576,6 +12691,48 @@ impl Vm {
                     .insert(INT_BACKING_STORAGE_ATTR.to_string(), Value::Int(0));
             }
         }
+        if self.class_has_builtin_float_base(class) {
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(FLOAT_BACKING_STORAGE_ATTR.to_string(), Value::Float(0.0));
+            }
+        }
+        if self.class_has_builtin_complex_base(class) {
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data.attrs.insert(
+                    COMPLEX_BACKING_STORAGE_ATTR.to_string(),
+                    Value::Complex {
+                        real: 0.0,
+                        imag: 0.0,
+                    },
+                );
+            }
+        }
+        if self.class_has_builtin_dict_base(class) {
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data.attrs.insert(
+                    DICT_BACKING_STORAGE_ATTR.to_string(),
+                    self.heap.alloc_dict(Vec::new()),
+                );
+            }
+        }
+        if self.class_has_builtin_set_base(class) {
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data.attrs.insert(
+                    SET_BACKING_STORAGE_ATTR.to_string(),
+                    self.heap.alloc_set(Vec::new()),
+                );
+            }
+        }
+        if self.class_has_builtin_frozenset_base(class) {
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data.attrs.insert(
+                    FROZENSET_BACKING_STORAGE_ATTR.to_string(),
+                    self.heap.alloc_frozenset(Vec::new()),
+                );
+            }
+        }
         instance
     }
 
@@ -12621,6 +12778,56 @@ impl Vm {
         }
     }
 
+    fn instance_backing_float(&self, instance: &ObjRef) -> Option<f64> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        match instance_data.attrs.get(FLOAT_BACKING_STORAGE_ATTR) {
+            Some(Value::Float(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    fn instance_backing_complex(&self, instance: &ObjRef) -> Option<(f64, f64)> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        match instance_data.attrs.get(COMPLEX_BACKING_STORAGE_ATTR) {
+            Some(Value::Complex { real, imag }) => Some((*real, *imag)),
+            _ => None,
+        }
+    }
+
+    fn instance_backing_dict(&self, instance: &ObjRef) -> Option<ObjRef> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        match instance_data.attrs.get(DICT_BACKING_STORAGE_ATTR) {
+            Some(Value::Dict(dict)) => Some(dict.clone()),
+            _ => None,
+        }
+    }
+
+    fn instance_backing_set(&self, instance: &ObjRef) -> Option<ObjRef> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        match instance_data.attrs.get(SET_BACKING_STORAGE_ATTR) {
+            Some(Value::Set(set)) => Some(set.clone()),
+            _ => None,
+        }
+    }
+
+    fn instance_backing_frozenset(&self, instance: &ObjRef) -> Option<ObjRef> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        match instance_data.attrs.get(FROZENSET_BACKING_STORAGE_ATTR) {
+            Some(Value::FrozenSet(set)) => Some(set.clone()),
+            _ => None,
+        }
+    }
+
     fn instance_dict_entries(instance_data: &InstanceObject) -> Vec<(Value, Value)> {
         instance_data
             .attrs
@@ -12630,7 +12837,12 @@ impl Vm {
                 | TUPLE_BACKING_STORAGE_ATTR
                 | STR_BACKING_STORAGE_ATTR
                 | BYTES_BACKING_STORAGE_ATTR
-                | INT_BACKING_STORAGE_ATTR => None,
+                | INT_BACKING_STORAGE_ATTR
+                | FLOAT_BACKING_STORAGE_ATTR
+                | COMPLEX_BACKING_STORAGE_ATTR
+                | DICT_BACKING_STORAGE_ATTR
+                | SET_BACKING_STORAGE_ATTR
+                | FROZENSET_BACKING_STORAGE_ATTR => None,
                 _ => Some((Value::Str(name.clone()), value.clone())),
             })
             .collect()
@@ -12717,7 +12929,10 @@ impl Vm {
 
         if attr_name == "__dict__" {
             let has_dynamic_dict = match collect_slot_names(&class_ref) {
-                Some(allowed_slots) => allowed_slots.iter().any(|name| name == "__dict__"),
+                Some(allowed_slots) => {
+                    allowed_slots.iter().any(|name| name == "__dict__")
+                        || class_inherits_dynamic_instance_dict(&class_ref)
+                }
                 None => true,
             };
             if !has_dynamic_dict {
@@ -13118,7 +13333,8 @@ impl Vm {
         }
 
         if let Some(allowed_slots) = collect_slot_names(&class_ref) {
-            let has_dynamic_dict = allowed_slots.iter().any(|name| name == "__dict__");
+            let has_dynamic_dict = allowed_slots.iter().any(|name| name == "__dict__")
+                || class_inherits_dynamic_instance_dict(&class_ref);
             if has_dynamic_dict {
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                     instance_data.attrs.insert(attr_name.to_string(), value);
@@ -16808,6 +17024,8 @@ impl Vm {
             BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStreamIsATty => self.builtin_sys_stream_isatty(args, kwargs),
             BuiltinFunction::Int => self.builtin_int(args, kwargs),
+            BuiltinFunction::Float => self.builtin_float(args, kwargs),
+            BuiltinFunction::Complex => self.builtin_complex(args, kwargs),
             BuiltinFunction::Str => self.builtin_str(args, kwargs),
             BuiltinFunction::FloatFromHex => self.builtin_float_fromhex(args, kwargs),
             BuiltinFunction::FloatHex => self.builtin_float_hex(args, kwargs),
@@ -18604,6 +18822,80 @@ impl Vm {
         call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)
     }
 
+    fn builtin_float(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(Value::Class(class)) = args.first() {
+            if self.class_has_builtin_float_base(class) {
+                let class = class.clone();
+                args.remove(0);
+                let float_value = if kwargs.is_empty() {
+                    BuiltinFunction::Float.call(&self.heap, args)?
+                } else {
+                    call_builtin_with_kwargs(&self.heap, BuiltinFunction::Float, args, kwargs)?
+                };
+                let instance = self.alloc_instance_for_class(&class);
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(FLOAT_BACKING_STORAGE_ATTR.to_string(), float_value);
+                }
+                return Ok(Value::Instance(instance));
+            }
+        }
+        if kwargs.is_empty() && args.len() == 1 {
+            if let Value::Instance(instance) = &args[0] {
+                if let Some(backing) = self.instance_backing_float(instance) {
+                    return Ok(Value::Float(backing));
+                }
+            }
+            return BuiltinFunction::Float.call(&self.heap, args);
+        }
+        if kwargs.is_empty() {
+            return BuiltinFunction::Float.call(&self.heap, args);
+        }
+        call_builtin_with_kwargs(&self.heap, BuiltinFunction::Float, args, kwargs)
+    }
+
+    fn builtin_complex(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(Value::Class(class)) = args.first() {
+            if self.class_has_builtin_complex_base(class) {
+                let class = class.clone();
+                args.remove(0);
+                let complex_value = if kwargs.is_empty() {
+                    BuiltinFunction::Complex.call(&self.heap, args)?
+                } else {
+                    call_builtin_with_kwargs(&self.heap, BuiltinFunction::Complex, args, kwargs)?
+                };
+                let instance = self.alloc_instance_for_class(&class);
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(COMPLEX_BACKING_STORAGE_ATTR.to_string(), complex_value);
+                }
+                return Ok(Value::Instance(instance));
+            }
+        }
+        if kwargs.is_empty() && args.len() == 1 {
+            if let Value::Instance(instance) = &args[0] {
+                if let Some((real, imag)) = self.instance_backing_complex(instance) {
+                    return Ok(Value::Complex { real, imag });
+                }
+            }
+            return BuiltinFunction::Complex.call(&self.heap, args);
+        }
+        if kwargs.is_empty() {
+            return BuiltinFunction::Complex.call(&self.heap, args);
+        }
+        call_builtin_with_kwargs(&self.heap, BuiltinFunction::Complex, args, kwargs)
+    }
+
     fn builtin_str(
         &self,
         mut args: Vec<Value>,
@@ -19590,6 +19882,130 @@ impl Vm {
             }
             return Ok(Value::Instance(instance));
         }
+        if self.class_has_builtin_float_base(&class_ref) {
+            let float_value = self.builtin_float(args, kwargs)?;
+            let Value::Float(_) = float_value else {
+                return Err(RuntimeError::new("float constructor returned non-float"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(FLOAT_BACKING_STORAGE_ATTR.to_string(), float_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_complex_base(&class_ref) {
+            let complex_value = self.builtin_complex(args, kwargs)?;
+            let Value::Complex { .. } = complex_value else {
+                return Err(RuntimeError::new("complex constructor returned non-complex"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(COMPLEX_BACKING_STORAGE_ATTR.to_string(), complex_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_list_base(&class_ref) {
+            let list_value = self.call_builtin(BuiltinFunction::List, args, kwargs)?;
+            let Value::List(_) = list_value else {
+                return Err(RuntimeError::new("list constructor returned non-list"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(LIST_BACKING_STORAGE_ATTR.to_string(), list_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_tuple_base(&class_ref) {
+            let tuple_value = self.call_builtin(BuiltinFunction::Tuple, args, kwargs)?;
+            let Value::Tuple(_) = tuple_value else {
+                return Err(RuntimeError::new("tuple constructor returned non-tuple"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(TUPLE_BACKING_STORAGE_ATTR.to_string(), tuple_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_str_base(&class_ref) {
+            let str_value = self.call_builtin(BuiltinFunction::Str, args, kwargs)?;
+            let Value::Str(_) = str_value else {
+                return Err(RuntimeError::new("str constructor returned non-str"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(STR_BACKING_STORAGE_ATTR.to_string(), str_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_bytes_base(&class_ref) {
+            let bytes_value = self.call_builtin(BuiltinFunction::Bytes, args, kwargs)?;
+            let Value::Bytes(_) = bytes_value else {
+                return Err(RuntimeError::new("bytes constructor returned non-bytes"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(BYTES_BACKING_STORAGE_ATTR.to_string(), bytes_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_bytearray_base(&class_ref) {
+            let bytearray_value = self.call_builtin(BuiltinFunction::ByteArray, args, kwargs)?;
+            let Value::ByteArray(_) = bytearray_value else {
+                return Err(RuntimeError::new(
+                    "bytearray constructor returned non-bytearray",
+                ));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(BYTES_BACKING_STORAGE_ATTR.to_string(), bytearray_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_dict_base(&class_ref) {
+            let dict_value = self.call_builtin(BuiltinFunction::Dict, args, kwargs)?;
+            let Value::Dict(_) = dict_value else {
+                return Err(RuntimeError::new("dict constructor returned non-dict"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(DICT_BACKING_STORAGE_ATTR.to_string(), dict_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_set_base(&class_ref) {
+            let set_value = self.call_builtin(BuiltinFunction::Set, args, kwargs)?;
+            let Value::Set(_) = set_value else {
+                return Err(RuntimeError::new("set constructor returned non-set"));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(SET_BACKING_STORAGE_ATTR.to_string(), set_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
+        if self.class_has_builtin_frozenset_base(&class_ref) {
+            let frozenset_value = self.call_builtin(BuiltinFunction::FrozenSet, args, kwargs)?;
+            let Value::FrozenSet(_) = frozenset_value else {
+                return Err(RuntimeError::new(
+                    "frozenset constructor returned non-frozenset",
+                ));
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(FROZENSET_BACKING_STORAGE_ATTR.to_string(), frozenset_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new(
                 "object.__new__() takes exactly one argument",
@@ -19804,7 +20220,19 @@ impl Vm {
             _ => return Err(RuntimeError::new("tuple() expects at most one argument")),
         };
         let values = if let Some(source) = source {
-            self.collect_iterable_values(source)?
+            match source {
+                Value::Instance(instance) => {
+                    if let Some(backing) = self.instance_backing_tuple(&instance) {
+                        match &*backing.kind() {
+                            Object::Tuple(values) => values.clone(),
+                            _ => self.collect_iterable_values(Value::Instance(instance))?,
+                        }
+                    } else {
+                        self.collect_iterable_values(Value::Instance(instance))?
+                    }
+                }
+                other => self.collect_iterable_values(other)?,
+            }
         } else {
             Vec::new()
         };
@@ -19816,8 +20244,28 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if args.len() > 1 {
+        if args.len() > 2 {
             return Err(RuntimeError::new("dict() expects at most one argument"));
+        }
+
+        if args.len() == 2 {
+            let cls = args.remove(0);
+            match cls {
+                Value::Builtin(BuiltinFunction::Dict) => {}
+                Value::Class(class) => {
+                    if !self.class_has_builtin_dict_base(&class) {
+                        let class_name = match &*class.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => "<class>".to_string(),
+                        };
+                        return Err(RuntimeError::new(format!(
+                            "dict.__new__({}): {} is not a subtype of dict",
+                            class_name, class_name
+                        )));
+                    }
+                }
+                _ => return Err(RuntimeError::new("dict() expects at most one argument")),
+            }
         }
 
         let dict_obj = match self.heap.alloc_dict(Vec::new()) {
@@ -19831,6 +20279,53 @@ impl Vm {
                     if let Object::Dict(entries) = &*obj.kind() {
                         for (key, value) in entries {
                             dict_set_value_checked(&dict_obj, key.clone(), value.clone())?;
+                        }
+                    }
+                }
+                Value::Instance(instance) => {
+                    if let Some(backing) = self.instance_backing_dict(&instance) {
+                        if let Object::Dict(entries) = &*backing.kind() {
+                            for (key, value) in entries {
+                                dict_set_value_checked(&dict_obj, key.clone(), value.clone())?;
+                            }
+                        }
+                    } else {
+                        for item in self.collect_iterable_values(Value::Instance(instance))? {
+                            match item {
+                                Value::Tuple(pair) => match &*pair.kind() {
+                                    Object::Tuple(parts) if parts.len() == 2 => {
+                                        dict_set_value_checked(
+                                            &dict_obj,
+                                            parts[0].clone(),
+                                            parts[1].clone(),
+                                        )?;
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "dict() sequence elements must be length 2",
+                                        ));
+                                    }
+                                },
+                                Value::List(pair) => match &*pair.kind() {
+                                    Object::List(parts) if parts.len() == 2 => {
+                                        dict_set_value_checked(
+                                            &dict_obj,
+                                            parts[0].clone(),
+                                            parts[1].clone(),
+                                        )?;
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "dict() sequence elements must be length 2",
+                                        ));
+                                    }
+                                },
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "dict() argument must be a mapping or iterable of pairs",
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -19908,13 +20403,46 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() > 1 {
+        if !kwargs.is_empty() || args.len() > 2 {
             return Err(RuntimeError::new("set() expects at most one argument"));
+        }
+        if args.len() == 2 {
+            let cls = args.remove(0);
+            match cls {
+                Value::Builtin(BuiltinFunction::Set) => {}
+                Value::Class(class) => {
+                    if !self.class_has_builtin_set_base(&class) {
+                        let class_name = match &*class.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => "<class>".to_string(),
+                        };
+                        return Err(RuntimeError::new(format!(
+                            "set.__new__({}): {} is not a subtype of set",
+                            class_name, class_name
+                        )));
+                    }
+                }
+                _ => return Err(RuntimeError::new("set() expects at most one argument")),
+            }
         }
         let values = if args.is_empty() {
             Vec::new()
+        } else if args.len() == 1 {
+            match &args[0] {
+                Value::Instance(instance) => {
+                    if let Some(backing) = self.instance_backing_set(instance) {
+                        match &*backing.kind() {
+                            Object::Set(values) => values.to_vec(),
+                            _ => self.collect_iterable_values(args.remove(0))?,
+                        }
+                    } else {
+                        self.collect_iterable_values(args.remove(0))?
+                    }
+                }
+                _ => self.collect_iterable_values(args.remove(0))?,
+            }
         } else {
-            self.collect_iterable_values(args.remove(0))?
+            return Err(RuntimeError::new("set() expects at most one argument"));
         };
         Ok(self.heap.alloc_set(dedup_hashable_values(values)?))
     }
@@ -19924,15 +20452,48 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() > 1 {
+        if !kwargs.is_empty() || args.len() > 2 {
             return Err(RuntimeError::new(
                 "frozenset() expects at most one argument",
             ));
         }
+        if args.len() == 2 {
+            let cls = args.remove(0);
+            match cls {
+                Value::Builtin(BuiltinFunction::FrozenSet) => {}
+                Value::Class(class) => {
+                    if !self.class_has_builtin_frozenset_base(&class) {
+                        let class_name = match &*class.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => "<class>".to_string(),
+                        };
+                        return Err(RuntimeError::new(format!(
+                            "frozenset.__new__({}): {} is not a subtype of frozenset",
+                            class_name, class_name
+                        )));
+                    }
+                }
+                _ => return Err(RuntimeError::new("frozenset() expects at most one argument")),
+            }
+        }
         let values = if args.is_empty() {
             Vec::new()
+        } else if args.len() == 1 {
+            match &args[0] {
+                Value::Instance(instance) => {
+                    if let Some(backing) = self.instance_backing_frozenset(instance) {
+                        match &*backing.kind() {
+                            Object::FrozenSet(values) => values.to_vec(),
+                            _ => self.collect_iterable_values(args.remove(0))?,
+                        }
+                    } else {
+                        self.collect_iterable_values(args.remove(0))?
+                    }
+                }
+                _ => self.collect_iterable_values(args.remove(0))?,
+            }
         } else {
-            self.collect_iterable_values(args.remove(0))?
+            return Err(RuntimeError::new("frozenset() expects at most one argument"));
         };
         Ok(self.heap.alloc_frozenset(dedup_hashable_values(values)?))
     }
@@ -20468,6 +21029,21 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_int_backing(&left, &right) {
             return Ok(Value::Bool(result));
         }
+        if let Some(result) = self.compare_eq_via_float_backing(&left, &right) {
+            return Ok(Value::Bool(result));
+        }
+        if let Some(result) = self.compare_eq_via_complex_backing(&left, &right) {
+            return Ok(Value::Bool(result));
+        }
+        if let Some(result) = self.compare_eq_via_str_backing(&left, &right) {
+            return Ok(Value::Bool(result));
+        }
+        if let Some(result) = self.compare_eq_via_dict_backing(&left, &right) {
+            return Ok(Value::Bool(result));
+        }
+        if let Some(result) = self.compare_eq_via_set_backing(&left, &right) {
+            return Ok(Value::Bool(result));
+        }
         if let Some(result) = self.compare_eq_via_tuple_backing(&left, &right)? {
             return Ok(Value::Bool(result));
         }
@@ -20492,6 +21068,21 @@ impl Vm {
     }
 
     fn compare_ne_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = self.compare_eq_via_float_backing(&left, &right) {
+            return Ok(Value::Bool(!result));
+        }
+        if let Some(result) = self.compare_eq_via_complex_backing(&left, &right) {
+            return Ok(Value::Bool(!result));
+        }
+        if let Some(result) = self.compare_eq_via_str_backing(&left, &right) {
+            return Ok(Value::Bool(!result));
+        }
+        if let Some(result) = self.compare_eq_via_dict_backing(&left, &right) {
+            return Ok(Value::Bool(!result));
+        }
+        if let Some(result) = self.compare_eq_via_set_backing(&left, &right) {
+            return Ok(Value::Bool(!result));
+        }
         if let Some(result) = self.compare_eq_via_tuple_backing(&left, &right)? {
             return Ok(Value::Bool(!result));
         }
@@ -20542,6 +21133,80 @@ impl Vm {
         let left_int = int_like_value(left)?;
         let right_int = int_like_value(right)?;
         Some(left_int == right_int)
+    }
+
+    fn compare_eq_via_float_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+        let float_like = |value: &Value| -> Option<f64> {
+            match value {
+                Value::Float(number) => Some(*number),
+                Value::Int(number) => Some(*number as f64),
+                Value::Bool(flag) => Some(if *flag { 1.0 } else { 0.0 }),
+                Value::Instance(instance) => self.instance_backing_float(instance),
+                _ => None,
+            }
+        };
+        let left_float = float_like(left)?;
+        let right_float = float_like(right)?;
+        Some(left_float == right_float)
+    }
+
+    fn compare_eq_via_complex_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+        let complex_like = |value: &Value| -> Option<(f64, f64)> {
+            match value {
+                Value::Complex { real, imag } => Some((*real, *imag)),
+                Value::Instance(instance) => self.instance_backing_complex(instance),
+                _ => None,
+            }
+        };
+        let (left_real, left_imag) = complex_like(left)?;
+        let (right_real, right_imag) = complex_like(right)?;
+        Some(left_real.to_bits() == right_real.to_bits() && left_imag.to_bits() == right_imag.to_bits())
+    }
+
+    fn compare_eq_via_str_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+        let str_like = |value: &Value| -> Option<String> {
+            match value {
+                Value::Str(text) => Some(text.clone()),
+                Value::Instance(instance) => self.instance_backing_str(instance),
+                _ => None,
+            }
+        };
+        let left_text = str_like(left)?;
+        let right_text = str_like(right)?;
+        Some(left_text == right_text)
+    }
+
+    fn compare_eq_via_dict_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+        let dict_like = |value: &Value| -> Option<ObjRef> {
+            match value {
+                Value::Dict(dict) => Some(dict.clone()),
+                Value::Instance(instance) => self.instance_backing_dict(instance),
+                _ => None,
+            }
+        };
+        let left_dict = dict_like(left)?;
+        let right_dict = dict_like(right)?;
+        Some(Value::Dict(left_dict) == Value::Dict(right_dict))
+    }
+
+    fn compare_eq_via_set_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+        let set_like = |value: &Value| -> Option<Value> {
+            match value {
+                Value::Set(set) => Some(Value::Set(set.clone())),
+                Value::FrozenSet(set) => Some(Value::FrozenSet(set.clone())),
+                Value::Instance(instance) => {
+                    if let Some(set) = self.instance_backing_set(instance) {
+                        return Some(Value::Set(set));
+                    }
+                    self.instance_backing_frozenset(instance)
+                        .map(Value::FrozenSet)
+                }
+                _ => None,
+            }
+        };
+        let left_set = set_like(left)?;
+        let right_set = set_like(right)?;
+        Some(left_set == right_set)
     }
 
     fn compare_eq_via_tuple_backing(
@@ -37863,6 +38528,28 @@ fn collect_slot_names(class: &ObjRef) -> Option<Vec<String>> {
     Some(names)
 }
 
+fn class_inherits_dynamic_instance_dict(class: &ObjRef) -> bool {
+    let mro = class_attr_walk(class);
+    for candidate in mro.into_iter().skip(1) {
+        let Object::Class(class_data) = &*candidate.kind() else {
+            continue;
+        };
+        match &class_data.slots {
+            Some(slots) => {
+                if slots.iter().any(|name| name == "__dict__") {
+                    return true;
+                }
+            }
+            None => {
+                if class_data.name != "object" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn class_of_class(class: &ObjRef) -> Option<ObjRef> {
     match &*class.kind() {
         Object::Class(class_data) => class_data.metaclass.clone(),
@@ -38223,6 +38910,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("decoding str is not supported")
         || message.contains("cannot pickle 'Dialect' instances")
         || message.contains("attempted to call non-function")
+        || message.contains("is not a type object")
     {
         return "TypeError";
     }
