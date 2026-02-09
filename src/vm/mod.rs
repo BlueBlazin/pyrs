@@ -13625,7 +13625,7 @@ impl Vm {
                     }
                     let mut compare_error: Option<RuntimeError> = None;
                     keyed.sort_by(|left, right| {
-                        match self.compare_sort_keys(left.1.clone(), right.1.clone()) {
+                        match self.compare_sort_keys_ref(&left.1, &right.1) {
                             Ok(ordering) => ordering,
                             Err(err) => {
                                 compare_error = Some(err);
@@ -13643,7 +13643,7 @@ impl Vm {
                 } else {
                     let mut compare_error: Option<RuntimeError> = None;
                     working.sort_by(|left, right| {
-                        match self.compare_order_with_fallback(left.clone(), right.clone()) {
+                        match self.compare_order_with_fallback_ref(left, right) {
                             Ok(ordering) => ordering,
                             Err(err) => {
                                 compare_error = Some(err);
@@ -19929,7 +19929,7 @@ impl Vm {
             }
             let mut compare_error: Option<RuntimeError> = None;
             keyed.sort_by(|left, right| {
-                match self.compare_sort_keys(left.1.clone(), right.1.clone()) {
+                match self.compare_sort_keys_ref(&left.1, &right.1) {
                     Ok(ordering) => ordering,
                     Err(err) => {
                         compare_error = Some(err);
@@ -19947,7 +19947,7 @@ impl Vm {
         } else {
             let mut compare_error: Option<RuntimeError> = None;
             values.sort_by(|left, right| {
-                match self.compare_order_with_fallback(left.clone(), right.clone()) {
+                match self.compare_order_with_fallback_ref(left, right) {
                     Ok(ordering) => ordering,
                     Err(err) => {
                         compare_error = Some(err);
@@ -19966,10 +19966,18 @@ impl Vm {
     }
 
     fn compare_sort_keys(&mut self, left: Value, right: Value) -> Result<Ordering, RuntimeError> {
+        self.compare_sort_keys_ref(&left, &right)
+    }
+
+    fn compare_sort_keys_ref(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Ordering, RuntimeError> {
         if let Some(ordering) = self.compare_cmp_to_key_wrappers(&left, &right)? {
             return Ok(ordering);
         }
-        self.compare_order_with_fallback(left, right)
+        self.compare_order_with_fallback_ref(left, right)
     }
 
     fn compare_order_with_fallback(
@@ -19977,15 +19985,23 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Ordering, RuntimeError> {
+        self.compare_order_with_fallback_ref(&left, &right)
+    }
+
+    fn compare_order_with_fallback_ref(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Ordering, RuntimeError> {
         match compare_order(left.clone(), right.clone()) {
             Ok(ordering) => Ok(ordering),
             Err(_) => {
                 if let Some((left_values, right_values)) =
-                    self.sequence_values_for_compare(&left, &right)
+                    self.sequence_values_for_compare(left, right)
                 {
                     return self.compare_sequence_order_with_fallback(&left_values, &right_values);
                 }
-                self.compare_order_via_richcmp(left, right)?
+                self.compare_order_via_richcmp(left.clone(), right.clone())?
                     .ok_or_else(|| RuntimeError::new("unsupported operand type for comparison"))
             }
         }
@@ -20015,7 +20031,7 @@ impl Vm {
         right: &[Value],
     ) -> Result<Ordering, RuntimeError> {
         for (left_item, right_item) in left.iter().zip(right.iter()) {
-            let ordering = self.compare_order_with_fallback(left_item.clone(), right_item.clone())?;
+            let ordering = self.compare_order_with_fallback_ref(left_item, right_item)?;
             if ordering != Ordering::Equal {
                 return Ok(ordering);
             }
