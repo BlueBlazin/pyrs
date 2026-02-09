@@ -396,9 +396,100 @@ fn value_lookup_hash(value: &Value) -> Option<u64> {
 }
 
 #[derive(Debug, Clone)]
+enum IndexBucket {
+    One(usize),
+    Many(Vec<usize>),
+}
+
+impl IndexBucket {
+    fn new(index: usize) -> Self {
+        Self::One(index)
+    }
+
+    fn push(&mut self, index: usize) {
+        match self {
+            Self::One(existing) => {
+                let first = *existing;
+                *self = Self::Many(vec![first, index]);
+            }
+            Self::Many(indices) => indices.push(index),
+        }
+    }
+
+    fn find_index_with<F>(&self, mut predicate: F) -> Option<usize>
+    where
+        F: FnMut(usize) -> bool,
+    {
+        match self {
+            Self::One(index) => predicate(*index).then_some(*index),
+            Self::Many(indices) => indices.iter().copied().find(|index| predicate(*index)),
+        }
+    }
+
+    fn remove_index(&mut self, index: usize) {
+        match self {
+            Self::One(existing) => {
+                if *existing == index {
+                    *self = Self::Many(Vec::new());
+                }
+            }
+            Self::Many(indices) => {
+                if let Some(position) = indices.iter().position(|existing| *existing == index) {
+                    indices.swap_remove(position);
+                }
+            }
+        }
+    }
+
+    fn replace_index(&mut self, old_index: usize, new_index: usize) {
+        match self {
+            Self::One(index) => {
+                if *index == old_index {
+                    *index = new_index;
+                }
+            }
+            Self::Many(indices) => {
+                if let Some(position) = indices.iter().position(|existing| *existing == old_index) {
+                    indices[position] = new_index;
+                }
+            }
+        }
+    }
+
+    fn adjust_indices_after_remove(&mut self, removed_index: usize) {
+        match self {
+            Self::One(index) => {
+                if *index > removed_index {
+                    *index -= 1;
+                }
+            }
+            Self::Many(indices) => {
+                for index in indices {
+                    if *index > removed_index {
+                        *index -= 1;
+                    }
+                }
+            }
+        }
+    }
+
+    fn normalize(&mut self) {
+        if let Self::Many(indices) = self {
+            if indices.len() == 1 {
+                *self = Self::One(indices[0]);
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self, Self::Many(indices) if indices.is_empty())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DictObject {
     entries: Vec<(Value, Value)>,
-    index: HashMap<u64, Vec<usize>>,
+    index: HashMap<u64, IndexBucket>,
 }
 
 impl DictObject {
@@ -476,7 +567,10 @@ impl DictObject {
         let index = self.entries.len();
         self.entries.push((key, value));
         if let Some(hash) = value_lookup_hash(&self.entries[index].0) {
-            self.index.entry(hash).or_default().push(index);
+            self.index
+                .entry(hash)
+                .and_modify(|bucket| bucket.push(index))
+                .or_insert_with(|| IndexBucket::new(index));
         }
     }
 
@@ -487,11 +581,11 @@ impl DictObject {
 
     fn find_index(&self, key: &Value) -> Option<usize> {
         if let Some(hash) = value_lookup_hash(key) {
-            if let Some(indices) = self.index.get(&hash) {
-                for index in indices {
-                    if value_key_equal(&self.entries[*index].0, key) {
-                        return Some(*index);
-                    }
+            if let Some(bucket) = self.index.get(&hash) {
+                if let Some(index) = bucket.find_index_with(|index| {
+                    value_key_equal(&self.entries[index].0, key)
+                }) {
+                    return Some(index);
                 }
                 return None;
             }
@@ -505,18 +599,20 @@ impl DictObject {
         self.index.clear();
         for (index, (key, _)) in self.entries.iter().enumerate() {
             if let Some(hash) = value_lookup_hash(key) {
-                self.index.entry(hash).or_default().push(index);
+                self.index
+                    .entry(hash)
+                    .and_modify(|bucket| bucket.push(index))
+                    .or_insert_with(|| IndexBucket::new(index));
             }
         }
     }
 
     fn remove_hash_index(&mut self, hash: u64, entry_index: usize) {
         let mut bucket_is_empty = false;
-        if let Some(indices) = self.index.get_mut(&hash) {
-            if let Some(position) = indices.iter().position(|existing| *existing == entry_index) {
-                indices.swap_remove(position);
-            }
-            bucket_is_empty = indices.is_empty();
+        if let Some(bucket) = self.index.get_mut(&hash) {
+            bucket.remove_index(entry_index);
+            bucket.normalize();
+            bucket_is_empty = bucket.is_empty();
         }
         if bucket_is_empty {
             self.index.remove(&hash);
@@ -525,11 +621,7 @@ impl DictObject {
 
     fn adjust_indices_after_remove(&mut self, removed_index: usize) {
         for bucket in self.index.values_mut() {
-            for index in bucket {
-                if *index > removed_index {
-                    *index -= 1;
-                }
-            }
+            bucket.adjust_indices_after_remove(removed_index);
         }
     }
 }
@@ -587,7 +679,7 @@ impl Index<usize> for DictObject {
 #[derive(Debug, Clone)]
 pub struct SetObject {
     values: Vec<Value>,
-    index: HashMap<u64, Vec<usize>>,
+    index: HashMap<u64, IndexBucket>,
 }
 
 impl SetObject {
@@ -640,11 +732,8 @@ impl SetObject {
         if index < self.values.len() {
             let moved = &self.values[index];
             if let Some(moved_hash) = value_lookup_hash(moved) {
-                if let Some(indices) = self.index.get_mut(&moved_hash) {
-                    if let Some(position) = indices.iter().position(|existing| *existing == last_index)
-                    {
-                        indices[position] = index;
-                    }
+                if let Some(bucket) = self.index.get_mut(&moved_hash) {
+                    bucket.replace_index(last_index, index);
                 }
             }
         }
@@ -661,10 +750,10 @@ impl SetObject {
 
     pub fn contains(&self, value: &Value) -> bool {
         if let Some(hash) = value_lookup_hash(value) {
-            if let Some(indices) = self.index.get(&hash) {
-                return indices
-                    .iter()
-                    .any(|index| value_key_equal(&self.values[*index], value));
+            if let Some(bucket) = self.index.get(&hash) {
+                return bucket
+                    .find_index_with(|index| value_key_equal(&self.values[index], value))
+                    .is_some();
             }
             return false;
         }
@@ -678,7 +767,10 @@ impl SetObject {
         let index = self.values.len();
         self.values.push(value);
         if let Some(hash) = value_lookup_hash(&self.values[index]) {
-            self.index.entry(hash).or_default().push(index);
+            self.index
+                .entry(hash)
+                .and_modify(|bucket| bucket.push(index))
+                .or_insert_with(|| IndexBucket::new(index));
         }
         true
     }
@@ -693,11 +785,11 @@ impl SetObject {
 
     fn find_index(&self, value: &Value) -> Option<usize> {
         if let Some(hash) = value_lookup_hash(value) {
-            if let Some(indices) = self.index.get(&hash) {
-                for index in indices {
-                    if value_key_equal(&self.values[*index], value) {
-                        return Some(*index);
-                    }
+            if let Some(bucket) = self.index.get(&hash) {
+                if let Some(index) = bucket
+                    .find_index_with(|index| value_key_equal(&self.values[index], value))
+                {
+                    return Some(index);
                 }
                 return None;
             }
@@ -711,18 +803,20 @@ impl SetObject {
         self.index.clear();
         for (index, value) in self.values.iter().enumerate() {
             if let Some(hash) = value_lookup_hash(value) {
-                self.index.entry(hash).or_default().push(index);
+                self.index
+                    .entry(hash)
+                    .and_modify(|bucket| bucket.push(index))
+                    .or_insert_with(|| IndexBucket::new(index));
             }
         }
     }
 
     fn remove_hash_index(&mut self, hash: u64, entry_index: usize) {
         let mut bucket_is_empty = false;
-        if let Some(indices) = self.index.get_mut(&hash) {
-            if let Some(position) = indices.iter().position(|existing| *existing == entry_index) {
-                indices.swap_remove(position);
-            }
-            bucket_is_empty = indices.is_empty();
+        if let Some(bucket) = self.index.get_mut(&hash) {
+            bucket.remove_index(entry_index);
+            bucket.normalize();
+            bucket_is_empty = bucket.is_empty();
         }
         if bucket_is_empty {
             self.index.remove(&hash);
@@ -6018,6 +6112,34 @@ mod tests {
         assert!(!set.remove_value(&Value::Int(2)));
         assert!(set.insert(Value::Int(4)));
         assert!(set.contains(&Value::Int(4)));
+    }
+
+    #[test]
+    fn index_bucket_push_remove_and_normalize() {
+        let mut bucket = IndexBucket::new(3);
+        assert_eq!(bucket.find_index_with(|idx| idx == 3), Some(3));
+        bucket.push(7);
+        assert_eq!(bucket.find_index_with(|idx| idx == 7), Some(7));
+        bucket.remove_index(3);
+        bucket.normalize();
+        assert_eq!(bucket.find_index_with(|idx| idx == 3), None);
+        assert_eq!(bucket.find_index_with(|idx| idx == 7), Some(7));
+        bucket.remove_index(7);
+        bucket.normalize();
+        assert!(bucket.is_empty());
+    }
+
+    #[test]
+    fn index_bucket_replace_and_adjust_indices() {
+        let mut bucket = IndexBucket::new(8);
+        bucket.push(10);
+        bucket.push(12);
+        bucket.replace_index(12, 5);
+        assert_eq!(bucket.find_index_with(|idx| idx == 5), Some(5));
+        bucket.adjust_indices_after_remove(7);
+        assert_eq!(bucket.find_index_with(|idx| idx == 8), None);
+        assert_eq!(bucket.find_index_with(|idx| idx == 7), Some(7));
+        assert_eq!(bucket.find_index_with(|idx| idx == 5), Some(5));
     }
 
     #[test]
