@@ -1,6 +1,7 @@
 //! Runtime object model (stubbed).
 
 pub mod bigint;
+mod dict_backend;
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
@@ -13,6 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::bytecode::CodeObject;
 pub use bigint::BigInt;
+use dict_backend::DictBackend;
 
 #[derive(Debug)]
 pub struct ModuleObject {
@@ -353,7 +355,7 @@ fn frozenset_key_equal(left: &ObjRef, right: &ObjRef) -> bool {
     true
 }
 
-fn value_key_equal(left: &Value, right: &Value) -> bool {
+pub(super) fn value_key_equal(left: &Value, right: &Value) -> bool {
     if left == right {
         return true;
     }
@@ -391,7 +393,7 @@ fn value_key_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
-fn value_lookup_hash(value: &Value) -> Option<u64> {
+pub(super) fn value_lookup_hash(value: &Value) -> Option<u64> {
     value_hash_key(value)
 }
 
@@ -456,6 +458,7 @@ impl IndexBucket {
         }
     }
 
+    #[cfg(test)]
     fn adjust_indices_after_remove(&mut self, removed_index: usize) {
         match self {
             Self::One(index) => {
@@ -488,45 +491,38 @@ impl IndexBucket {
 
 #[derive(Debug, Clone)]
 pub struct DictObject {
-    entries: Vec<(Value, Value)>,
-    index: HashMap<u64, IndexBucket>,
+    backend: DictBackend,
 }
 
 impl DictObject {
     pub fn new(entries: Vec<(Value, Value)>) -> Self {
-        let mut out = Self {
-            entries: Vec::new(),
-            index: HashMap::new(),
-        };
-        for (key, value) in entries {
-            out.insert(key, value);
+        Self {
+            backend: DictBackend::new(entries),
         }
-        out
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.backend.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.backend.is_empty()
     }
 
     pub fn clear(&mut self) {
-        self.entries.clear();
-        self.index.clear();
+        self.backend.clear();
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, (Value, Value)> {
-        self.entries.iter()
+        self.backend.iter()
     }
 
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, (Value, Value)> {
-        self.entries.iter_mut()
+        self.backend.iter_mut()
     }
 
     pub fn to_vec(&self) -> Vec<(Value, Value)> {
-        self.entries.clone()
+        self.backend.to_vec()
     }
 
     pub fn push(&mut self, pair: (Value, Value)) {
@@ -534,95 +530,30 @@ impl DictObject {
     }
 
     pub fn remove(&mut self, index: usize) -> (Value, Value) {
-        let removed = self.entries.remove(index);
-        if let Some(hash) = value_lookup_hash(&removed.0) {
-            self.remove_hash_index(hash, index);
-        }
-        self.adjust_indices_after_remove(index);
-        removed
+        self.backend.remove(index)
     }
 
     pub fn retain<F>(&mut self, mut f: F)
     where
         F: FnMut(&(Value, Value)) -> bool,
     {
-        self.entries.retain(|entry| f(entry));
-        self.rebuild_index();
+        self.backend.retain(|entry| f(entry));
     }
 
     pub fn find(&self, key: &Value) -> Option<&Value> {
-        let index = self.find_index(key)?;
-        Some(&self.entries[index].1)
+        self.backend.find(key)
     }
 
     pub fn contains_key(&self, key: &Value) -> bool {
-        self.find_index(key).is_some()
+        self.backend.contains_key(key)
     }
 
     pub fn insert(&mut self, key: Value, value: Value) {
-        if let Some(index) = self.find_index(&key) {
-            self.entries[index].1 = value;
-            return;
-        }
-        let index = self.entries.len();
-        self.entries.push((key, value));
-        if let Some(hash) = value_lookup_hash(&self.entries[index].0) {
-            self.index
-                .entry(hash)
-                .and_modify(|bucket| bucket.push(index))
-                .or_insert_with(|| IndexBucket::new(index));
-        }
+        self.backend.insert(key, value);
     }
 
     pub fn remove_key(&mut self, key: &Value) -> Option<(Value, Value)> {
-        let index = self.find_index(key)?;
-        Some(self.remove(index))
-    }
-
-    fn find_index(&self, key: &Value) -> Option<usize> {
-        if let Some(hash) = value_lookup_hash(key) {
-            if let Some(bucket) = self.index.get(&hash) {
-                if let Some(index) = bucket.find_index_with(|index| {
-                    value_key_equal(&self.entries[index].0, key)
-                }) {
-                    return Some(index);
-                }
-                return None;
-            }
-        }
-        self.entries
-            .iter()
-            .position(|(stored, _)| value_key_equal(stored, key))
-    }
-
-    fn rebuild_index(&mut self) {
-        self.index.clear();
-        for (index, (key, _)) in self.entries.iter().enumerate() {
-            if let Some(hash) = value_lookup_hash(key) {
-                self.index
-                    .entry(hash)
-                    .and_modify(|bucket| bucket.push(index))
-                    .or_insert_with(|| IndexBucket::new(index));
-            }
-        }
-    }
-
-    fn remove_hash_index(&mut self, hash: u64, entry_index: usize) {
-        let mut bucket_is_empty = false;
-        if let Some(bucket) = self.index.get_mut(&hash) {
-            bucket.remove_index(entry_index);
-            bucket.normalize();
-            bucket_is_empty = bucket.is_empty();
-        }
-        if bucket_is_empty {
-            self.index.remove(&hash);
-        }
-    }
-
-    fn adjust_indices_after_remove(&mut self, removed_index: usize) {
-        for bucket in self.index.values_mut() {
-            bucket.adjust_indices_after_remove(removed_index);
-        }
+        self.backend.remove_key(key)
     }
 }
 
@@ -631,7 +562,7 @@ impl PartialEq for DictObject {
         if self.len() != other.len() {
             return false;
         }
-        self.entries.iter().all(|(key, value)| {
+        self.iter().all(|(key, value)| {
             other
                 .find(key)
                 .is_some_and(|other_value| other_value == value)
@@ -646,7 +577,7 @@ impl<'a> IntoIterator for &'a DictObject {
     type IntoIter = std::slice::Iter<'a, (Value, Value)>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.entries.iter()
+        self.backend.iter()
     }
 }
 
@@ -655,7 +586,7 @@ impl<'a> IntoIterator for &'a mut DictObject {
     type IntoIter = std::slice::IterMut<'a, (Value, Value)>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.entries.iter_mut()
+        self.backend.iter_mut()
     }
 }
 
@@ -664,7 +595,7 @@ impl IntoIterator for DictObject {
     type IntoIter = std::vec::IntoIter<(Value, Value)>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.entries.into_iter()
+        self.backend.into_entries().into_iter()
     }
 }
 
@@ -672,7 +603,7 @@ impl Index<usize> for DictObject {
     type Output = (Value, Value);
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.entries[index]
+        self.backend.entry_at(index)
     }
 }
 
