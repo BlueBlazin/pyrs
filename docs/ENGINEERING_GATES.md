@@ -81,6 +81,11 @@ Native VM handlers are allowed only when:
 - behavior is tracked in `docs/STUB_ACCOUNTING.md`
 - parity tests exist for the handler surface
 
+Additional Milestone 13 controls:
+- Follow module ownership in `docs/STDLIB_MIGRATION_PLAN.md`.
+- For `json`/`csv`/`pickle`/`re`, treat native handlers as accelerator/runtime layers, not primary semantics.
+- Net-new native feature work in those handlers requires a tracked gap with explicit closure criteria.
+
 ## Gate 5: Monolith and Reviewability Control (P1)
 
 Large monolithic files hide semantic defects.

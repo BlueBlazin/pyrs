@@ -80,6 +80,7 @@ const SOURCE_FILE_LOADER: &str = "pyrs.SourceFileLoader";
 const SOURCELESS_FILE_LOADER: &str = "pyrs.SourcelessFileLoader";
 const NAMESPACE_LOADER: &str = "pyrs.NamespaceLoader";
 const BUILTIN_MODULE_LOADER: &str = "pyrs.BuiltinLoader";
+const PURE_STDLIB_PREFERRED_MODULES: &[&str] = &["json", "json.decoder", "json.scanner"];
 const MT_N: usize = 624;
 const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;
@@ -348,6 +349,7 @@ pub struct Vm {
     defaultdict_factories: HashMap<u64, Value>,
     exception_parents: HashMap<String, String>,
     atexit_handlers: Vec<AtexitHandler>,
+    prefer_pure_json_when_available: bool,
 }
 
 impl Drop for Vm {
@@ -397,6 +399,7 @@ impl Vm {
             defaultdict_factories: HashMap::new(),
             exception_parents: HashMap::new(),
             atexit_handlers: Vec::new(),
+            prefer_pure_json_when_available: false,
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -429,6 +432,7 @@ impl Vm {
         }
         self.module_paths.push(path);
         self.sync_sys_path_from_module_paths();
+        self.maybe_prefer_cpython_pure_stdlib_modules();
     }
 
     pub fn add_module_path_front(&mut self, path: impl Into<PathBuf>) {
@@ -436,6 +440,12 @@ impl Vm {
         self.module_paths.retain(|existing| existing != &path);
         self.module_paths.insert(0, path);
         self.sync_sys_path_from_module_paths();
+        self.maybe_prefer_cpython_pure_stdlib_modules();
+    }
+
+    pub fn enable_pure_json_preference(&mut self) {
+        self.prefer_pure_json_when_available = true;
+        self.maybe_prefer_cpython_pure_stdlib_modules();
     }
 
     pub fn import_module(&mut self, name: &str) -> Result<(), RuntimeError> {
@@ -4650,6 +4660,7 @@ impl Vm {
             }
         }
         self.module_paths = new_paths;
+        self.maybe_prefer_cpython_pure_stdlib_modules();
     }
 
     fn refresh_sys_modules_dict(&mut self) {
@@ -4690,6 +4701,44 @@ impl Vm {
             module_data
                 .globals
                 .insert("modules".to_string(), modules_dict);
+        }
+    }
+
+    fn unregister_module(&mut self, name: &str) {
+        self.modules.remove(name);
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return;
+        };
+        let modules_dict = match &*sys_module.kind() {
+            Object::Module(module_data) => module_data.globals.get("modules").cloned(),
+            _ => None,
+        };
+        let Some(Value::Dict(modules_dict)) = modules_dict else {
+            return;
+        };
+        if let Object::Dict(entries) = &mut *modules_dict.kind_mut() {
+            entries.retain(|(key, _)| match key {
+                Value::Str(entry_name) => entry_name != name,
+                _ => true,
+            });
+        }
+    }
+
+    fn has_cpython_pure_json_on_module_path(&self) -> bool {
+        self.module_paths
+            .iter()
+            .any(|root| root.join("json").join("__init__.py").is_file())
+    }
+
+    fn maybe_prefer_cpython_pure_stdlib_modules(&mut self) {
+        if !self.prefer_pure_json_when_available {
+            return;
+        }
+        if !self.has_cpython_pure_json_on_module_path() {
+            return;
+        }
+        for module_name in PURE_STDLIB_PREFERRED_MODULES {
+            self.unregister_module(module_name);
         }
     }
 
