@@ -37,6 +37,7 @@ pub struct FunctionObject {
     pub module: ObjRef,
     pub defaults: Vec<Value>,
     pub kwonly_defaults: HashMap<String, Value>,
+    pub plain_positional_call_arity: Option<usize>,
     pub closure: Vec<ObjRef>,
     pub annotations: Option<ObjRef>,
     pub owner_class: Option<ObjRef>,
@@ -52,16 +53,30 @@ impl FunctionObject {
         closure: Vec<ObjRef>,
         annotations: Option<ObjRef>,
     ) -> Self {
+        let plain_positional_call_arity = if defaults.is_empty() && kwonly_defaults.is_empty() {
+            code.plain_positional_arity
+        } else {
+            None
+        };
         Self {
             code,
             module,
             defaults,
             kwonly_defaults,
+            plain_positional_call_arity,
             closure,
             annotations,
             owner_class: None,
             dict: None,
         }
+    }
+
+    pub fn refresh_plain_positional_call_arity(&mut self) {
+        self.plain_positional_call_arity = if self.defaults.is_empty() && self.kwonly_defaults.is_empty() {
+            self.code.plain_positional_arity
+        } else {
+            None
+        };
     }
 }
 
@@ -1548,6 +1563,7 @@ fn clear_object_refs(obj: &ObjRef) {
         Object::Function(func) => {
             func.defaults.clear();
             func.kwonly_defaults.clear();
+            func.refresh_plain_positional_call_arity();
             func.closure.clear();
             func.annotations = None;
             func.dict = None;

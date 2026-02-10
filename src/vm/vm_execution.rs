@@ -1953,6 +1953,7 @@ impl Vm {
                                 };
                                 if let Object::Function(func_data) = &mut *func.kind_mut() {
                                     func_data.defaults = defaults;
+                                    func_data.refresh_plain_positional_call_arity();
                                 }
                             }
                             0x02 => {
@@ -1987,6 +1988,7 @@ impl Vm {
                                 };
                                 if let Object::Function(func_data) = &mut *func.kind_mut() {
                                     func_data.kwonly_defaults = kwonly;
+                                    func_data.refresh_plain_positional_call_arity();
                                 }
                             }
                             0x04 => {
@@ -4518,9 +4520,7 @@ impl Vm {
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
             let code = func_data.code.clone();
-            let simple_positional_path = func_data.defaults.is_empty()
-                && func_data.kwonly_defaults.is_empty()
-                && code.plain_positional_arity == Some(1);
+            let simple_positional_path = func_data.plain_positional_call_arity == Some(1);
             (
                 code,
                 func_data.module.clone(),
@@ -4624,10 +4624,8 @@ impl Vm {
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
             let code = func_data.code.clone();
-            let simple_positional_path = kwargs.is_empty()
-                && func_data.defaults.is_empty()
-                && func_data.kwonly_defaults.is_empty()
-                && code.plain_positional_arity == Some(args.len());
+            let simple_positional_path =
+                kwargs.is_empty() && func_data.plain_positional_call_arity == Some(args.len());
             (
                 code,
                 func_data.module.clone(),
