@@ -517,7 +517,11 @@ impl Frame {
                 self.fast_locals.truncate(fast_locals_len);
             }
         }
-        self.fast_locals.fill(None);
+        let single_arg_direct_slot =
+            self.code.fast_local_count == 1 && self.code.plain_positional_arg0_slot == Some(0);
+        if !single_arg_direct_slot {
+            self.fast_locals.fill(None);
+        }
     }
 
 }
@@ -792,7 +796,11 @@ impl Vm {
         frame.is_module = false;
         frame.return_module = false;
         frame.simple_one_arg_no_cells = true;
-        frame.fast_locals.fill(None);
+        let single_arg_direct_slot =
+            frame.code.fast_local_count == 1 && frame.code.plain_positional_arg0_slot == Some(0);
+        if !single_arg_direct_slot {
+            frame.fast_locals.fill(None);
+        }
         self.simple_frame_pool.push(frame);
     }
 
