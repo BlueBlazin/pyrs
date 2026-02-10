@@ -20,6 +20,7 @@ use dict_backend::DictBackend;
 pub struct ModuleObject {
     pub name: String,
     pub globals: HashMap<String, Value>,
+    pub globals_version: u64,
 }
 
 impl ModuleObject {
@@ -27,6 +28,14 @@ impl ModuleObject {
         Self {
             name: name.into(),
             globals: HashMap::new(),
+            globals_version: 1,
+        }
+    }
+
+    pub fn touch_globals_version(&mut self) {
+        self.globals_version = self.globals_version.wrapping_add(1);
+        if self.globals_version == 0 {
+            self.globals_version = 1;
         }
     }
 }

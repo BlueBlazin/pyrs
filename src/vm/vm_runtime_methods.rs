@@ -1193,6 +1193,7 @@ impl Vm {
             "GeneratorExit".to_string(),
             Value::ExceptionType("GeneratorExit".to_string()),
         );
+        self.touch_builtins_version();
     }
 
     pub(super) fn call_build_class(

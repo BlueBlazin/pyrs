@@ -287,7 +287,9 @@ struct OneArgCallSiteCacheEntry {
 
 #[derive(Clone)]
 struct LoadGlobalSiteCacheEntry {
-    cache_epoch: u64,
+    globals_module_id: u64,
+    globals_version: u64,
+    builtins_version: u64,
     value: Value,
 }
 
@@ -502,7 +504,7 @@ pub struct Vm {
     prefer_pure_re_when_available: bool,
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
-    global_name_cache_epoch: u64,
+    builtins_version: u64,
 }
 
 impl Drop for Vm {
@@ -563,7 +565,7 @@ impl Vm {
             prefer_pure_re_when_available: true,
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
-            global_name_cache_epoch: 1,
+            builtins_version: 1,
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -577,19 +579,18 @@ impl Vm {
     }
 
     pub fn set_global(&mut self, name: impl Into<String>, value: Value) {
-        let mut mutated = false;
         if let Object::Module(module) = &mut *self.main_module.kind_mut() {
             module.globals.insert(name.into(), value);
-            mutated = true;
-        }
-        if mutated {
-            self.bump_global_name_cache_epoch();
+            module.touch_globals_version();
         }
     }
 
     #[inline]
-    fn bump_global_name_cache_epoch(&mut self) {
-        self.global_name_cache_epoch = self.global_name_cache_epoch.wrapping_add(1).max(1);
+    fn touch_builtins_version(&mut self) {
+        self.builtins_version = self.builtins_version.wrapping_add(1);
+        if self.builtins_version == 0 {
+            self.builtins_version = 1;
+        }
     }
 
     fn acquire_frame(
