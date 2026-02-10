@@ -155,6 +155,9 @@ pub struct CodeObject {
     pub name_to_index: HashMap<String, usize>,
     pub cellvar_to_index: HashMap<String, usize>,
     pub fast_local_count: usize,
+    pub plain_positional_arity: Option<usize>,
+    pub plain_positional_arg0_slot: Option<usize>,
+    pub plain_positional_arg0_cell: Option<usize>,
     pub positional_param_slot_indexes: Vec<Option<usize>>,
     pub positional_param_cell_indexes: Vec<Option<usize>>,
     pub is_generator: bool,
@@ -181,6 +184,9 @@ impl CodeObject {
             name_to_index: HashMap::new(),
             cellvar_to_index: HashMap::new(),
             fast_local_count: 0,
+            plain_positional_arity: None,
+            plain_positional_arg0_slot: None,
+            plain_positional_arg0_cell: None,
             positional_param_slot_indexes: Vec::new(),
             positional_param_cell_indexes: Vec::new(),
             is_generator: false,
@@ -259,6 +265,19 @@ impl CodeObject {
             }
         }
         self.fast_local_count = fast_local_count;
+        self.plain_positional_arg0_slot = self
+            .positional_param_slot_indexes
+            .first()
+            .and_then(|idx| *idx);
+        self.plain_positional_arg0_cell = self
+            .positional_param_cell_indexes
+            .first()
+            .and_then(|idx| *idx);
+        if self.kwonly_params.is_empty() && self.vararg.is_none() && self.kwarg.is_none() {
+            self.plain_positional_arity = Some(self.posonly_params.len() + self.params.len());
+        } else {
+            self.plain_positional_arity = None;
+        }
     }
 
     pub fn disassemble(&self) -> String {

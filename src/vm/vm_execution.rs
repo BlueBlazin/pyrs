@@ -4518,13 +4518,9 @@ impl Vm {
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
             let code = func_data.code.clone();
-            let total_positional = code.posonly_params.len() + code.params.len();
             let simple_positional_path = func_data.defaults.is_empty()
                 && func_data.kwonly_defaults.is_empty()
-                && code.kwonly_params.is_empty()
-                && code.vararg.is_none()
-                && code.kwarg.is_none()
-                && total_positional == 1;
+                && code.plain_positional_arity == Some(1);
             (
                 code,
                 func_data.module.clone(),
@@ -4553,7 +4549,11 @@ impl Vm {
         closure: Vec<ObjRef>,
         arg0: Value,
     ) -> Result<(), RuntimeError> {
-        let cells = self.build_cells(&code, closure);
+        let cells = if code.cellvars.is_empty() && closure.is_empty() {
+            Vec::new()
+        } else {
+            self.build_cells(&code, closure)
+        };
         let caller_active_exception = self
             .frames
             .last()
@@ -4575,14 +4575,13 @@ impl Vm {
             }
         }
 
-        if let Some(cell_idx) = code.positional_param_cell_indexes.get(0).and_then(|idx| *idx) {
+        if let Some(cell_idx) = code.plain_positional_arg0_cell {
             if let Some(cell) = frame.cells.get(cell_idx) {
                 if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
                     cell_data.value = Some(arg0);
                 }
             }
-        } else if let Some(slot_idx) = code.positional_param_slot_indexes.get(0).and_then(|idx| *idx)
-        {
+        } else if let Some(slot_idx) = code.plain_positional_arg0_slot {
             if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                 *slot = Some(arg0);
             }
@@ -4625,14 +4624,10 @@ impl Vm {
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
             let code = func_data.code.clone();
-            let total_positional = code.posonly_params.len() + code.params.len();
             let simple_positional_path = kwargs.is_empty()
                 && func_data.defaults.is_empty()
                 && func_data.kwonly_defaults.is_empty()
-                && code.kwonly_params.is_empty()
-                && code.vararg.is_none()
-                && code.kwarg.is_none()
-                && args.len() == total_positional;
+                && code.plain_positional_arity == Some(args.len());
             (
                 code,
                 func_data.module.clone(),
@@ -4658,7 +4653,11 @@ impl Vm {
             };
             bind_arguments(func_data, &self.heap, args, kwargs)?
         };
-        let cells = self.build_cells(&code, closure);
+        let cells = if code.cellvars.is_empty() && closure.is_empty() {
+            Vec::new()
+        } else {
+            self.build_cells(&code, closure)
+        };
         self.push_function_frame(code, module, owner_class, bindings, cells)
     }
 
@@ -4670,7 +4669,11 @@ impl Vm {
         closure: Vec<ObjRef>,
         args: Vec<Value>,
     ) -> Result<(), RuntimeError> {
-        let cells = self.build_cells(&code, closure);
+        let cells = if code.cellvars.is_empty() && closure.is_empty() {
+            Vec::new()
+        } else {
+            self.build_cells(&code, closure)
+        };
         let caller_active_exception = self
             .frames
             .last()
