@@ -280,6 +280,7 @@ struct Frame {
     last_ip: usize,
     stack: Vec<Value>,
     locals: HashMap<String, Value>,
+    module_locals_dict: Option<ObjRef>,
     cells: Vec<ObjRef>,
     module: ObjRef,
     function_globals: ObjRef,
@@ -320,6 +321,7 @@ impl Frame {
             last_ip: 0,
             stack: Vec::new(),
             locals: HashMap::new(),
+            module_locals_dict: None,
             cells,
             module: module.clone(),
             function_globals: module,
@@ -6448,6 +6450,9 @@ impl Vm {
 
             if should_return {
                 let frame = self.frames.pop().expect("frame exists");
+                if let Some(module_dict) = frame.module_locals_dict.clone() {
+                    self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
+                }
                 if let Some(owner) = frame.generator_owner {
                     self.finish_generator_resume(owner, Value::None);
                     continue;
@@ -7047,6 +7052,12 @@ impl Vm {
                         if let Some(frame) = self.frames.last_mut() {
                             if !frame.is_module {
                                 removed = frame.locals.remove(&name).is_some();
+                            }
+                            if !removed {
+                                if let Some(dict) = frame.module_locals_dict.clone() {
+                                    removed =
+                                        dict_remove_value(&dict, &Value::Str(name.clone())).is_some();
+                                }
                             }
                             if !removed {
                                 if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
@@ -9660,6 +9671,9 @@ impl Vm {
                                 })?
                             };
                         let frame = self.frames.pop().expect("frame exists");
+                        if let Some(module_dict) = frame.module_locals_dict.clone() {
+                            self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
+                        }
                         if frame.expect_none_return && value != Value::None {
                             return Err(RuntimeError::new("__init__() should return None"));
                         }
@@ -9695,6 +9709,9 @@ impl Vm {
                     Opcode::ReturnValue => {
                         let value = self.pop_value().unwrap_or(Value::None);
                         let frame = self.frames.pop().expect("frame exists");
+                        if let Some(module_dict) = frame.module_locals_dict.clone() {
+                            self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
+                        }
                         if frame.expect_none_return && value != Value::None {
                             return Err(RuntimeError::new("__init__() should return None"));
                         }
@@ -10661,6 +10678,51 @@ impl Vm {
         }
     }
 
+    fn ensure_frame_module_locals_dict(&mut self, frame_index: usize) -> ObjRef {
+        if let Some(existing) = self.frames[frame_index].module_locals_dict.clone() {
+            return existing;
+        }
+        let module = self.frames[frame_index].module.clone();
+        let entries = match &*module.kind() {
+            Object::Module(module_data) => module_data
+                .globals
+                .iter()
+                .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let dict = match self.heap.alloc_dict(entries) {
+            Value::Dict(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.frames[frame_index].module_locals_dict = Some(dict.clone());
+        dict
+    }
+
+    fn sync_module_locals_dict_to_module(&mut self, module: &ObjRef, dict: &ObjRef) {
+        let mut map = HashMap::new();
+        if let Object::Dict(entries) = &*dict.kind() {
+            for (key, value) in entries {
+                if let Value::Str(name) = key {
+                    map.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data.globals = map;
+        }
+    }
+
+    fn module_namespace_lookup(&self, frame: &Frame, name: &str) -> Option<Value> {
+        if let Some(dict) = &frame.module_locals_dict {
+            return dict_get_value(dict, &Value::Str(name.to_string()));
+        }
+        if let Object::Module(module_data) = &*frame.module.kind() {
+            return module_data.globals.get(name).cloned();
+        }
+        None
+    }
+
     fn lookup_name(&self, name: &str) -> Result<Value, RuntimeError> {
         if let Some(frame) = self.frames.last() {
             if let Some(value) = frame.locals.get(name) {
@@ -10671,10 +10733,8 @@ impl Vm {
                     return Ok(value.clone());
                 }
             }
-            if let Object::Module(module_data) = &*frame.module.kind() {
-                if let Some(value) = module_data.globals.get(name) {
-                    return Ok(value.clone());
-                }
+            if let Some(value) = self.module_namespace_lookup(frame, name) {
+                return Ok(value);
             }
             if let Some(fallback) = &frame.globals_fallback {
                 if let Object::Module(module_data) = &*fallback.kind() {
@@ -10693,6 +10753,9 @@ impl Vm {
     fn store_name(&mut self, name: String, value: Value) {
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
+                if let Some(dict) = frame.module_locals_dict.clone() {
+                    dict_set_value(&dict, Value::Str(name.clone()), value.clone());
+                }
                 if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
                     module_data.globals.insert(name, value);
                 }
@@ -13975,23 +14038,48 @@ impl Vm {
         module: &ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        let active_frame_module_dict = self
+            .frames
+            .iter()
+            .rposition(|frame| frame.is_module && frame.module.id() == module.id())
+            .map(|frame_index| self.ensure_frame_module_locals_dict(frame_index));
         let (module_name, attr, module_getattr, globals_snapshot, module_is_package) =
             match &*module.kind() {
-            Object::Module(module_data) => {
-                let attr = module_data.globals.get(attr_name).cloned();
-                let module_getattr = module_data.globals.get("__getattr__").cloned();
-                let module_name = module_data.name.clone();
-                let module_is_package = module_data.globals.contains_key("__path__");
-                let globals_snapshot = module_data
-                    .globals
-                    .iter()
-                    .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
-                    .collect::<Vec<_>>();
-                (
-                    module_name,
-                    attr,
-                    module_getattr,
-                    globals_snapshot,
+                Object::Module(module_data) => {
+                    let attr_key = Value::Str(attr_name.to_string());
+                    let getattr_key = Value::Str("__getattr__".to_string());
+                    let path_key = Value::Str("__path__".to_string());
+                    let attr = active_frame_module_dict
+                        .as_ref()
+                        .and_then(|dict| dict_get_value(dict, &attr_key))
+                        .or_else(|| module_data.globals.get(attr_name).cloned());
+                    let module_getattr = active_frame_module_dict
+                        .as_ref()
+                        .and_then(|dict| dict_get_value(dict, &getattr_key))
+                        .or_else(|| module_data.globals.get("__getattr__").cloned());
+                    let module_name = module_data.name.clone();
+                    let module_is_package = active_frame_module_dict
+                        .as_ref()
+                        .and_then(|dict| dict_get_value(dict, &path_key))
+                        .is_some()
+                        || module_data.globals.contains_key("__path__");
+                    let globals_snapshot = if let Some(dict) = &active_frame_module_dict {
+                        match &*dict.kind() {
+                            Object::Dict(entries) => entries.to_vec(),
+                            _ => Vec::new(),
+                        }
+                    } else {
+                        module_data
+                            .globals
+                            .iter()
+                            .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                            .collect::<Vec<_>>()
+                    };
+                    (
+                        module_name,
+                        attr,
+                        module_getattr,
+                        globals_snapshot,
                     module_is_package,
                 )
             }
@@ -14025,6 +14113,9 @@ impl Vm {
             ));
         }
         if attr_name == "__dict__" {
+            if let Some(dict) = active_frame_module_dict {
+                return Ok(Value::Dict(dict));
+            }
             return Ok(self.heap.alloc_dict(globals_snapshot));
         }
         if module_name == "__re_pattern__" {
@@ -18950,26 +19041,23 @@ impl Vm {
     }
 
     fn builtin_locals(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("locals() expects no arguments"));
         }
-        let frame = self
+        let frame_index = self
             .frames
-            .last()
+            .len()
+            .checked_sub(1)
             .ok_or_else(|| RuntimeError::new("no frame"))?;
-        if frame.is_module {
-            if let Object::Module(module_data) = &*frame.module.kind() {
-                let mut entries = Vec::with_capacity(module_data.globals.len());
-                for (name, value) in module_data.globals.iter() {
-                    entries.push((Value::Str(name.clone()), value.clone()));
-                }
-                return Ok(self.heap.alloc_dict(entries));
-            }
+        if self.frames[frame_index].is_module {
+            let dict = self.ensure_frame_module_locals_dict(frame_index);
+            return Ok(Value::Dict(dict));
         }
+        let frame = &self.frames[frame_index];
         let mut map = frame.locals.clone();
         for (idx, name) in frame.code.cellvars.iter().enumerate() {
             if !map.contains_key(name) {
@@ -18998,7 +19086,7 @@ impl Vm {
     }
 
     fn builtin_globals(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -19009,11 +19097,21 @@ impl Vm {
             .frames
             .last()
             .ok_or_else(|| RuntimeError::new("no frame"))?;
-        if let Object::Module(module_data) = &*frame.function_globals.kind() {
-            let mut entries = Vec::with_capacity(module_data.globals.len());
-            for (name, value) in module_data.globals.iter() {
-                entries.push((Value::Str(name.clone()), value.clone()));
-            }
+        let globals_module = frame.function_globals.clone();
+        if let Some(frame_index) = self
+            .frames
+            .iter()
+            .rposition(|item| item.is_module && item.module.id() == globals_module.id())
+        {
+            let dict = self.ensure_frame_module_locals_dict(frame_index);
+            return Ok(Value::Dict(dict));
+        }
+        if let Object::Module(module_data) = &*globals_module.kind() {
+            let entries = module_data
+                .globals
+                .iter()
+                .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                .collect::<Vec<_>>();
             Ok(self.heap.alloc_dict(entries))
         } else {
             Ok(self.heap.alloc_dict(Vec::new()))
