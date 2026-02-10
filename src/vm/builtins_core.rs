@@ -3890,6 +3890,64 @@ impl Vm {
         }
     }
 
+    fn contains_via_iteration(
+        &mut self,
+        needle: &Value,
+        iterator: Value,
+    ) -> Result<bool, RuntimeError> {
+        loop {
+            match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(item) => {
+                    let equals = self.compare_eq_runtime(item, needle.clone())?;
+                    if self.truthy_from_value(&equals)? {
+                        return Ok(true);
+                    }
+                }
+                GeneratorResumeOutcome::Complete(_) => return Ok(false),
+                GeneratorResumeOutcome::PropagatedException => {
+                    return Err(self.iteration_error_from_state("membership iteration failed")?);
+                }
+            }
+        }
+    }
+
+    pub(super) fn compare_in_runtime(
+        &mut self,
+        needle: Value,
+        container: Value,
+    ) -> Result<bool, RuntimeError> {
+        match compare_in(&needle, &container) {
+            Ok(found) => Ok(found),
+            Err(err) if err.message == "unsupported operand type for in" => {
+                if let Some(contains_method) =
+                    self.lookup_bound_special_method(&container, "__contains__")?
+                {
+                    let contains_result = match self.call_internal(
+                        contains_method,
+                        vec![needle],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(self.runtime_error_from_active_exception(
+                                "__contains__() failed",
+                            ));
+                        }
+                    };
+                    return self.truthy_from_value(&contains_result);
+                }
+                let iterator = self.to_iterator_value(container.clone()).map_err(|_| {
+                    RuntimeError::new(format!(
+                        "argument of type '{}' is not iterable",
+                        self.value_type_name_for_error(&container)
+                    ))
+                })?;
+                self.contains_via_iteration(&needle, iterator)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     pub(super) fn call_binary_special_method(
         &mut self,
         receiver: &Value,

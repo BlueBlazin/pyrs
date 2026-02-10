@@ -32,12 +32,16 @@ Primary references used for this audit:
   - `__bool__` non-bool return -> `TypeError`
   - non-integer `__len__` in truth context -> `TypeError`
   - negative `__len__` in truth context -> `ValueError`
+- Implemented membership protocol baseline for `in` / `not in`:
+  - direct fast path for native containers remains
+  - fallback to `__contains__` when available
+  - fallback to iterator protocol (`__iter__`)
+  - fallback to sequence protocol (`__getitem__`-driven iteration)
 
 ## Remaining Object-Model Parity Work (Milestone 13)
 
-- Membership protocol closure (`in` / `not in`): full `__contains__` + iterator/getitem fallback parity.
-- Old-sequence iterator fallback closure via `__getitem__` for non-iterator objects.
-- Additional slot edge behavior from CPython tests in `test_bool`, `test_contains`, and `test_descr`.
+- Long-tail membership edge parity from CPython tests (`test_contains`, `test_descr`), including explicit blocking cases (for example `__contains__ = None`) and exact error text parity.
+- Broader slot edge behavior from CPython tests in `test_bool` and `test_descr`.
 - Continue reducing static truthiness shortcuts in call sites where Python-level coercion is required.
 
 ## Validation Expectations

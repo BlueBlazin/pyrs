@@ -1055,12 +1055,14 @@ impl Vm {
                     Opcode::CompareIn => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(Value::Bool(compare_in(&left, &right)?));
+                        let contains = self.compare_in_runtime(left, right)?;
+                        self.push_value(Value::Bool(contains));
                     }
                     Opcode::CompareNotIn => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(Value::Bool(!compare_in(&left, &right)?));
+                        let contains = self.compare_in_runtime(left, right)?;
+                        self.push_value(Value::Bool(!contains));
                     }
                     Opcode::CompareIs => {
                         let right = self.pop_value()?;

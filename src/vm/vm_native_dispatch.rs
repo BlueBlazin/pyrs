@@ -3283,6 +3283,9 @@ impl Vm {
 
                 let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
                 else {
+                    if let Some(iterator) = self.sequence_iterator_via_getitem(other.clone())? {
+                        return Ok(iterator);
+                    }
                     return Err(RuntimeError::new("yield from expects iterable"));
                 };
 

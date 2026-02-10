@@ -128,7 +128,9 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("operator.contains expects two arguments"));
         }
-        Ok(Value::Bool(compare_in(&args[1], &args[0])?))
+        Ok(Value::Bool(
+            self.compare_in_runtime(args[1].clone(), args[0].clone())?,
+        ))
     }
 
     pub(super) fn builtin_operator_getitem(

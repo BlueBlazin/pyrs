@@ -6225,6 +6225,36 @@ fn executes_frozenset_contains_method() {
 }
 
 #[test]
+fn membership_uses_custom_contains_method() {
+    let source = "class C:\n    def __contains__(self, value):\n        return value == 3\nok = (3 in C()) and ((2 in C()) is False)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn membership_falls_back_to_iter_when_contains_missing() {
+    let source = "class C:\n    def __iter__(self):\n        return iter([1, 2, 3])\nok = (2 in C()) and ((9 in C()) is False)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn membership_falls_back_to_getitem_sequence_protocol() {
+    let source = "class C:\n    def __getitem__(self, idx):\n        if idx < 3:\n            return idx + 10\n        raise IndexError\nok = (11 in C()) and ((99 in C()) is False)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_custom_metaclass_fallback() {
     let source = "class Meta(type):\n    pass\nclass C(metaclass=Meta):\n    pass\nok = isinstance(C, type)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
