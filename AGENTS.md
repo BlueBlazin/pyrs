@@ -3,6 +3,14 @@
 ## Vision
 Build a production-grade Python interpreter in Rust with full source + bytecode compatibility for CPython 3.14, minimal third-party dependencies, and an architecture that can support future JIT/extension work.
 
+## Non-Negotiable Engineering Rule
+- Do not make \"fast changes\" or \"quick fixes\" as a substitute for proper design.
+- Favor careful, fundamental fixes over tactical patches, even if they take longer.
+- If a temporary workaround is unavoidable, it must be:
+  1. explicitly marked temporary in code/docs,
+  2. tracked with owner + closure criteria in `docs/STUB_ACCOUNTING.md` or `docs/ALGO_AUDIT_BACKLOG.md`,
+  3. scheduled for near-term removal.
+
 ## Scope and Constraints
 - Target version: CPython 3.14
 - Current goals:
