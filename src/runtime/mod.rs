@@ -1200,6 +1200,45 @@ impl Heap {
     }
 
     pub fn collect_cycles(&self, roots: &[Value]) {
+        let marked = self.reachable_object_ids(roots);
+
+        let mut registry = self.registry.borrow_mut();
+        registry.retain(|weak| weak.strong_count() > 0);
+        for weak in registry.iter() {
+            if let Some(obj) = weak.upgrade() {
+                let obj_ref = ObjRef::from_rc(obj);
+                if !marked.contains_key(&obj_ref.id()) {
+                    clear_object_refs(&obj_ref);
+                }
+            }
+        }
+    }
+
+    pub fn unreachable_objects(&self, roots: &[Value]) -> Vec<ObjRef> {
+        let marked = self.reachable_object_ids(roots);
+        let mut registry = self.registry.borrow_mut();
+        registry.retain(|weak| weak.strong_count() > 0);
+        let mut out = Vec::new();
+        for weak in registry.iter() {
+            if let Some(obj) = weak.upgrade() {
+                let obj_ref = ObjRef::from_rc(obj);
+                if !marked.contains_key(&obj_ref.id()) {
+                    out.push(obj_ref);
+                }
+            }
+        }
+        out
+    }
+
+    pub fn live_objects_count(&self) -> usize {
+        self.registry
+            .borrow()
+            .iter()
+            .filter(|weak| weak.strong_count() > 0)
+            .count()
+    }
+
+    fn reachable_object_ids(&self, roots: &[Value]) -> HashMap<u64, bool> {
         let mut marked = HashMap::new();
         let mut stack: Vec<ObjRef> = Vec::new();
 
@@ -1214,25 +1253,7 @@ impl Heap {
             }
             trace_object(&obj, &mut stack, &mut marked);
         }
-
-        let mut registry = self.registry.borrow_mut();
-        registry.retain(|weak| weak.strong_count() > 0);
-        for weak in registry.iter() {
-            if let Some(obj) = weak.upgrade() {
-                let obj_ref = ObjRef::from_rc(obj);
-                if !marked.contains_key(&obj_ref.id()) {
-                    clear_object_refs(&obj_ref);
-                }
-            }
-        }
-    }
-
-    pub fn live_objects_count(&self) -> usize {
-        self.registry
-            .borrow()
-            .iter()
-            .filter(|weak| weak.strong_count() > 0)
-            .count()
+        marked
     }
 }
 
@@ -1988,6 +2009,7 @@ pub enum BuiltinFunction {
     OsStat,
     OsLStat,
     OsMkdir,
+    OsChmod,
     OsRmdir,
     OsUTime,
     OsScandir,
@@ -1999,6 +2021,7 @@ pub enum BuiltinFunction {
     OsWIfExited,
     OsWExitStatus,
     OsListDir,
+    OsAccess,
     OsFspath,
     OsFsEncode,
     OsFsDecode,
@@ -4381,6 +4404,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsStat
             | BuiltinFunction::OsLStat
             | BuiltinFunction::OsMkdir
+            | BuiltinFunction::OsChmod
             | BuiltinFunction::OsRmdir
             | BuiltinFunction::OsUTime
             | BuiltinFunction::OsScandir
@@ -4392,6 +4416,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsWIfExited
             | BuiltinFunction::OsWExitStatus
             | BuiltinFunction::OsListDir
+            | BuiltinFunction::OsAccess
             | BuiltinFunction::OsFspath
             | BuiltinFunction::OsFsEncode
             | BuiltinFunction::OsFsDecode
