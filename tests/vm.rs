@@ -8913,6 +8913,34 @@ ok = (x == [1, 2, 3] and y == [(0, 1), (1, 2), (2, 3)])
 }
 
 #[test]
+fn next_accepts_instance_with_next_without_iter() {
+    let source = r#"class NextOnly:
+    def __init__(self):
+        self.i = 0
+    def __next__(self):
+        self.i += 1
+        if self.i > 2:
+            raise StopIteration
+        return self.i
+
+it = NextOnly()
+a = next(it)
+b = next(it)
+done = False
+try:
+    next(it)
+except StopIteration:
+    done = True
+ok = (a == 1 and b == 2 and done)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn mktemp_style_temp_object_finalizer_runs_before_rmdir() {
     let Some(lib) = cpython_lib_path() else {
         return;

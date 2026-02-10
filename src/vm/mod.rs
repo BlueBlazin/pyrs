@@ -16681,8 +16681,14 @@ impl Vm {
                     return self.to_iterator_value(Value::List(backing_list));
                 }
                 let other = Value::Instance(instance);
+                let maybe_next = self.lookup_bound_special_method(&other, "__next__")?;
                 let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
                 else {
+                    if maybe_next.is_some() {
+                        // `next(obj)` accepts iterator-like objects that only provide
+                        // `__next__` even when `__iter__` is absent.
+                        return Ok(other);
+                    }
                     return Err(RuntimeError::new("yield from expects iterable"));
                 };
                 match self.call_internal(iter_method, Vec::new(), HashMap::new())? {
