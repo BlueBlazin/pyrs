@@ -1693,7 +1693,7 @@ impl Vm {
                         frame.expect_none_return = true;
                         apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
                         let depth_before = self.frames.len();
-                        self.frames.push(frame);
+                        self.frames.push(Box::new(frame));
                         self.frames.len() > depth_before
                     } else {
                         let mut init_args = Vec::with_capacity(args.len() + 1);

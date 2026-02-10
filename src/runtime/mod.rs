@@ -38,6 +38,7 @@ pub struct FunctionObject {
     pub defaults: Vec<Value>,
     pub kwonly_defaults: HashMap<String, Value>,
     pub plain_positional_call_arity: Option<usize>,
+    pub call_cache_epoch: u64,
     pub closure: Vec<ObjRef>,
     pub annotations: Option<ObjRef>,
     pub owner_class: Option<ObjRef>,
@@ -64,6 +65,7 @@ impl FunctionObject {
             defaults,
             kwonly_defaults,
             plain_positional_call_arity,
+            call_cache_epoch: 1,
             closure,
             annotations,
             owner_class: None,
@@ -77,6 +79,14 @@ impl FunctionObject {
         } else {
             None
         };
+        self.touch_call_cache_epoch();
+    }
+
+    pub fn touch_call_cache_epoch(&mut self) {
+        self.call_cache_epoch = self.call_cache_epoch.wrapping_add(1);
+        if self.call_cache_epoch == 0 {
+            self.call_cache_epoch = 1;
+        }
     }
 }
 

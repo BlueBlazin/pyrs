@@ -1237,7 +1237,7 @@ impl Vm {
         let outer_locals = self
             .frames
             .last()
-            .and_then(Self::class_lookup_fallback_from_frame);
+            .and_then(|frame| Self::class_lookup_fallback_from_frame(frame));
         let cells = self.build_cells(&func_data.code, func_data.closure.clone());
         let mut frame = Frame::new(
             func_data.code.clone(),
@@ -1258,7 +1258,7 @@ impl Vm {
         frame.class_bases = base_classes;
         frame.class_metaclass = metaclass.filter(|value| !matches!(value, Value::None));
         frame.class_keywords = kwargs;
-        self.frames.push(frame);
+        self.frames.push(Box::new(frame));
         Ok(None)
     }
 

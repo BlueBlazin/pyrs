@@ -275,6 +275,25 @@ enum RePatternValue {
     Bytes(Vec<u8>),
 }
 
+#[derive(Clone)]
+struct OneArgCallSiteCacheEntry {
+    func_id: u64,
+    func_epoch: u64,
+    code: Rc<CodeObject>,
+    module: ObjRef,
+    owner_class: Option<ObjRef>,
+    closure: Vec<ObjRef>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuickenedSiteKind {
+    None,
+    AddInt,
+    SubInt,
+    CompareLtInt,
+    CallFunctionOneArg,
+}
+
 const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
@@ -312,6 +331,8 @@ struct Frame {
     generator_pending_throw: Option<Value>,
     generator_resume_kind: Option<GeneratorResumeKind>,
     yield_from_iter: Option<Value>,
+    quickened_sites: Vec<QuickenedSiteKind>,
+    one_arg_inline_cache: Vec<Option<OneArgCallSiteCacheEntry>>,
 }
 
 impl Frame {
@@ -324,6 +345,7 @@ impl Frame {
         owner_class: Option<ObjRef>,
     ) -> Self {
         let fast_locals_len = code.fast_local_count;
+        let instruction_len = code.instructions.len();
         Self {
             code,
             ip: 0,
@@ -355,6 +377,8 @@ impl Frame {
             generator_pending_throw: None,
             generator_resume_kind: None,
             yield_from_iter: None,
+            quickened_sites: vec![QuickenedSiteKind::None; instruction_len],
+            one_arg_inline_cache: vec![None; instruction_len],
         }
     }
 
@@ -367,6 +391,8 @@ impl Frame {
         cells: Vec<ObjRef>,
         owner_class: Option<ObjRef>,
     ) {
+        let same_code = Rc::ptr_eq(&self.code, &code);
+        let instruction_len = code.instructions.len();
         self.code = code;
         self.ip = 0;
         self.last_ip = 0;
@@ -397,6 +423,23 @@ impl Frame {
         self.generator_resume_kind = None;
         self.yield_from_iter = None;
 
+        if !same_code {
+            self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
+            self.one_arg_inline_cache = vec![None; instruction_len];
+        } else {
+            if self.quickened_sites.len() < instruction_len {
+                self.quickened_sites
+                    .resize(instruction_len, QuickenedSiteKind::None);
+            } else {
+                self.quickened_sites.truncate(instruction_len);
+            }
+            if self.one_arg_inline_cache.len() < instruction_len {
+                self.one_arg_inline_cache.resize(instruction_len, None);
+            } else {
+                self.one_arg_inline_cache.truncate(instruction_len);
+            }
+        }
+
         let fast_locals_len = self.code.fast_local_count;
         if self.fast_locals.len() < fast_locals_len {
             self.fast_locals.resize(fast_locals_len, None);
@@ -409,15 +452,15 @@ impl Frame {
 }
 
 pub struct Vm {
-    frames: Vec<Frame>,
-    frame_pool: Vec<Frame>,
+    frames: Vec<Box<Frame>>,
+    frame_pool: Vec<Box<Frame>>,
     builtins: HashMap<String, Value>,
     modules: HashMap<String, ObjRef>,
     main_module: ObjRef,
     module_paths: Vec<PathBuf>,
     heap: Heap,
     random: Mt19937,
-    generator_states: HashMap<u64, Frame>,
+    generator_states: HashMap<u64, Box<Frame>>,
     generator_returns: HashMap<u64, Value>,
     pending_generator_exception: Option<Value>,
     active_generator_resume: Option<u64>,
@@ -534,16 +577,23 @@ impl Vm {
         return_module: bool,
         cells: Vec<ObjRef>,
         owner_class: Option<ObjRef>,
-    ) -> Frame {
+    ) -> Box<Frame> {
         if let Some(mut frame) = self.frame_pool.pop() {
             frame.reset_for_reuse(code, module, is_module, return_module, cells, owner_class);
             frame
         } else {
-            Frame::new(code, module, is_module, return_module, cells, owner_class)
+            Box::new(Frame::new(
+                code,
+                module,
+                is_module,
+                return_module,
+                cells,
+                owner_class,
+            ))
         }
     }
 
-    fn recycle_frame(&mut self, mut frame: Frame) {
+    fn recycle_frame(&mut self, mut frame: Box<Frame>) {
         if self.frame_pool.len() >= 256 {
             return;
         }
@@ -585,7 +635,7 @@ impl Vm {
                 Vec::new(),
                 None,
             );
-            self.frames.push(shutdown_frame);
+            self.frames.push(Box::new(shutdown_frame));
             true
         } else {
             false
@@ -1062,14 +1112,14 @@ impl Vm {
         self.run_stop_depth = None;
         let code = Rc::new(code.clone());
         let cells = self.build_cells(&code, Vec::new());
-        self.frames.push(Frame::new(
+        self.frames.push(Box::new(Frame::new(
             code,
             self.main_module.clone(),
             true,
             false,
             cells,
             None,
-        ));
+        )));
         self.run()
     }
 

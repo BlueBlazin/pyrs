@@ -2988,7 +2988,7 @@ impl Vm {
             .last()
             .map(|frame| frame.module.clone())
             .unwrap_or_else(|| self.main_module.clone());
-        let mut frame = Frame::new(code, module, false, false, Vec::new(), None);
+        let mut frame = Box::new(Frame::new(code, module, false, false, Vec::new(), None));
         let generator = match self.heap.alloc_generator(GeneratorObject::new(true, false)) {
             Value::Generator(obj) => obj,
             _ => unreachable!(),

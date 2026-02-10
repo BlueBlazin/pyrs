@@ -752,7 +752,7 @@ impl Vm {
             frame.globals_fallback = Some(globals_module.clone());
         }
         frame.discard_result = true;
-        self.frames.push(frame);
+        self.frames.push(Box::new(frame));
 
         let previous_stop = self.run_stop_depth;
         self.run_stop_depth = Some(caller_depth);

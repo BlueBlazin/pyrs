@@ -3598,7 +3598,7 @@ impl Vm {
                 let cells = self.build_cells(&code, Vec::new());
                 let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
                 frame.discard_result = true;
-                self.frames.push(frame);
+                self.frames.push(Box::new(frame));
                 Ok(())
             }
             SOURCELESS_FILE_LOADER => {
@@ -3614,7 +3614,7 @@ impl Vm {
                 let cells = self.build_cells(&code, Vec::new());
                 let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
                 frame.discard_result = true;
-                self.frames.push(frame);
+                self.frames.push(Box::new(frame));
                 Ok(())
             }
             _ => Err(RuntimeError::new(format!(
