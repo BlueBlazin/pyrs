@@ -1,6 +1,34 @@
 use super::*;
 
 impl Vm {
+    #[inline]
+    fn write_fast_local_slot(slot: &mut Option<Value>, value: Value) {
+        match value {
+            Value::Int(new_value) => {
+                if let Some(Value::Int(existing)) = slot.as_mut() {
+                    *existing = new_value;
+                } else {
+                    *slot = Some(Value::Int(new_value));
+                }
+            }
+            Value::Bool(new_value) => {
+                if let Some(Value::Bool(existing)) = slot.as_mut() {
+                    *existing = new_value;
+                } else {
+                    *slot = Some(Value::Bool(new_value));
+                }
+            }
+            Value::None => {
+                if !matches!(slot, Some(Value::None)) {
+                    *slot = Some(Value::None);
+                }
+            }
+            other => {
+                *slot = Some(other);
+            }
+        }
+    }
+
     pub(super) fn run(&mut self) -> Result<Value, RuntimeError> {
         loop {
             if let Some(stop_depth) = self.run_stop_depth {
@@ -3185,7 +3213,7 @@ impl Vm {
                                             {
                                                 if let Some(slot) = frame.fast_locals.get_mut(slot_idx)
                                                 {
-                                                    *slot = Some(value.clone());
+                                                    Self::write_fast_local_slot(slot, value.clone());
                                                 }
                                                 if let Some(existing) = frame.locals.get_mut(&name) {
                                                     *existing = value.clone();
@@ -4703,7 +4731,7 @@ impl Vm {
         let value = value.ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
         if let Some(frame) = self.frames.last_mut() {
             if let Some(slot) = frame.fast_locals.get_mut(idx) {
-                *slot = Some(value.clone());
+                Self::write_fast_local_slot(slot, value.clone());
             }
         }
         Ok(value)
@@ -4721,7 +4749,7 @@ impl Vm {
         };
         let frame = self.frames.last_mut().expect("frame exists");
         if let Some(slot) = frame.fast_locals.get_mut(idx) {
-            *slot = Some(value.clone());
+            Self::write_fast_local_slot(slot, value.clone());
         } else {
             return Err(RuntimeError::new("name index out of range"));
         }
@@ -4849,7 +4877,7 @@ impl Vm {
             } else {
                 if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
                     if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
-                        *slot = Some(value.clone());
+                        Self::write_fast_local_slot(slot, value.clone());
                     }
                 }
                 if let Some(existing) = frame.locals.get_mut(&name) {
@@ -5440,7 +5468,7 @@ impl Vm {
         }
         if let Some(slot_idx) = slot_idx {
             if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
-                *slot = Some(value);
+                Self::write_fast_local_slot(slot, value);
                 return;
             }
         }
