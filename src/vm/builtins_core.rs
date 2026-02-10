@@ -5411,12 +5411,12 @@ impl Vm {
                 "__cause__" => Ok(exception
                     .cause
                     .as_ref()
-                    .map(|cause| Value::Exception((**cause).clone()))
+                    .map(|cause| Value::Exception(Box::new((**cause).clone())))
                     .unwrap_or(Value::None)),
                 "__context__" => Ok(exception
                     .context
                     .as_ref()
-                    .map(|context| Value::Exception((**context).clone()))
+                    .map(|context| Value::Exception(Box::new((**context).clone())))
                     .unwrap_or(Value::None)),
                 "__traceback__" => Ok(Value::None),
                 "__suppress_context__" => Ok(Value::Bool(exception.suppress_context)),
@@ -5425,7 +5425,7 @@ impl Vm {
                         .exceptions
                         .iter()
                         .cloned()
-                        .map(Value::Exception)
+                        .map(|member| Value::Exception(Box::new(member)))
                         .collect::<Vec<_>>();
                     Ok(self.heap.alloc_tuple(members))
                 }

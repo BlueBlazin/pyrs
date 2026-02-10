@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::SliceValue;
 
 impl Vm {
     #[inline]
@@ -589,7 +590,7 @@ impl Vm {
                                                         self.frames.last_mut().expect("frame exists");
                                                     caller.ip += 3;
                                                 }
-                                                self.push_simple_positional_function_frame_one_arg_no_cells_ref(
+                                                self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
                                                     code,
                                                     module,
                                                     owner_class.as_ref(),
@@ -748,7 +749,7 @@ impl Vm {
                                             if let Some((code, module, owner_class)) =
                                                 fused_direct_cached.as_ref()
                                             {
-                                                self.push_simple_positional_function_frame_one_arg_no_cells_ref(
+                                                self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
                                                     code,
                                                     module,
                                                     owner_class.as_ref(),
@@ -1048,12 +1049,14 @@ impl Vm {
                                     "__cause__" => exception
                                         .cause
                                         .as_ref()
-                                        .map(|cause| Value::Exception((**cause).clone()))
+                                        .map(|cause| Value::Exception(Box::new((**cause).clone())))
                                         .unwrap_or(Value::None),
                                     "__context__" => exception
                                         .context
                                         .as_ref()
-                                        .map(|context| Value::Exception((**context).clone()))
+                                        .map(|context| {
+                                            Value::Exception(Box::new((**context).clone()))
+                                        })
                                         .unwrap_or(Value::None),
                                     "__traceback__" => Value::None,
                                     "__suppress_context__" => {
@@ -1064,7 +1067,7 @@ impl Vm {
                                             .exceptions
                                             .iter()
                                             .cloned()
-                                            .map(Value::Exception)
+                                            .map(|member| Value::Exception(Box::new(member)))
                                             .collect::<Vec<_>>();
                                         self.heap.alloc_tuple(members)
                                     }
@@ -1938,7 +1941,9 @@ impl Vm {
                         let lower = value_to_optional_index(lower)?;
                         let upper = value_to_optional_index(upper)?;
                         let step = value_to_optional_index(step)?;
-                        self.push_value(Value::Slice { lower, upper, step });
+                        self.push_value(Value::Slice(Box::new(SliceValue::new(
+                            lower, upper, step,
+                        ))));
                     }
                     Opcode::Subscript => {
                         let index = self.pop_value()?;
@@ -1952,7 +1957,10 @@ impl Vm {
                         let target = self.pop_value()?;
                         match target {
                             Value::List(obj) => match index {
-                                Value::Slice { lower, upper, step } => {
+                                Value::Slice(slice) => {
+                                    let lower = slice.lower;
+                                    let upper = slice.upper;
+                                    let step = slice.step;
                                     let replacement =
                                         self.collect_iterable_values(value).map_err(|_| {
                                             RuntimeError::new("can only assign an iterable")
@@ -2001,7 +2009,10 @@ impl Vm {
                                 }
                             },
                             Value::ByteArray(obj) => match index {
-                                Value::Slice { lower, upper, step } => {
+                                Value::Slice(slice) => {
+                                    let lower = slice.lower;
+                                    let upper = slice.upper;
+                                    let step = slice.step;
                                     let replacement = self.value_to_bytes_payload(value)?;
                                     if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                         let step_value = step.unwrap_or(1);
@@ -2051,7 +2062,7 @@ impl Vm {
                                 }
                             },
                             Value::Instance(instance) => match index {
-                                Value::Slice { .. } => {
+                                Value::Slice(_) => {
                                     if self.instance_backing_dict(&instance).is_some() {
                                         return Err(RuntimeError::new(
                                             "slicing unsupported for dict",
@@ -2111,7 +2122,7 @@ impl Vm {
                                 }
                             },
                             target => match index {
-                                Value::Slice { .. } => {
+                                Value::Slice(_) => {
                                     return Err(RuntimeError::new(
                                         "slice assignment not supported",
                                     ));
@@ -2193,7 +2204,10 @@ impl Vm {
                         let target = self.pop_value()?;
                         match target {
                             Value::List(obj) => match index {
-                                Value::Slice { lower, upper, step } => {
+                                Value::Slice(slice) => {
+                                    let lower = slice.lower;
+                                    let upper = slice.upper;
+                                    let step = slice.step;
                                     if let Object::List(values) = &mut *obj.kind_mut() {
                                         let step_value = step.unwrap_or(1);
                                         if step_value == 1 {
@@ -2226,7 +2240,10 @@ impl Vm {
                                 }
                             },
                             Value::ByteArray(obj) => match index {
-                                Value::Slice { lower, upper, step } => {
+                                Value::Slice(slice) => {
+                                    let lower = slice.lower;
+                                    let upper = slice.upper;
+                                    let step = slice.step;
                                     if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                         let step_value = step.unwrap_or(1);
                                         if step_value == 1 {
@@ -2257,7 +2274,7 @@ impl Vm {
                                 }
                             },
                             Value::Instance(instance) => match index {
-                                Value::Slice { .. } => {
+                                Value::Slice(_) => {
                                     if self.instance_backing_dict(&instance).is_some() {
                                         return Err(RuntimeError::new(
                                             "slice deletion not supported",
@@ -2315,7 +2332,7 @@ impl Vm {
                                 }
                             },
                             target => match index {
-                                Value::Slice { .. } => {
+                                Value::Slice(_) => {
                                     return Err(RuntimeError::new("slice deletion not supported"));
                                 }
                                 index => match target {
@@ -3962,7 +3979,9 @@ impl Vm {
                         let exception = self.pop_value()?;
                         let (matched, remaining) =
                             self.exception_split_for_star(&exception, &handler_type)?;
-                        let matched_value = matched.map(Value::Exception).unwrap_or(Value::None);
+                        let matched_value = matched
+                            .map(|exception| Value::Exception(Box::new(exception)))
+                            .unwrap_or(Value::None);
                         if let Some(frame) = self.frames.last_mut() {
                             frame.active_exception = match &matched_value {
                                 Value::Exception(exc) => Some(Value::Exception(exc.clone())),
@@ -3970,7 +3989,11 @@ impl Vm {
                             };
                         }
                         self.push_value(matched_value);
-                        self.push_value(remaining.map(Value::Exception).unwrap_or(Value::None));
+                        self.push_value(
+                            remaining
+                                .map(|exception| Value::Exception(Box::new(exception)))
+                                .unwrap_or(Value::None),
+                        );
                     }
                     Opcode::ClearException => {
                         if let Some(frame) = self.frames.last_mut() {
@@ -4211,7 +4234,7 @@ impl Vm {
                 } else {
                     let cause = self.normalize_exception_value(cause_value)?;
                     if let Value::Exception(cause_data) = cause {
-                        exc_data.cause = Some(Box::new(cause_data));
+                        exc_data.cause = Some(cause_data);
                         exc_data.suppress_context = true;
                     }
                 }
@@ -4222,7 +4245,7 @@ impl Vm {
             {
                 let context = self.normalize_exception_value(current)?;
                 if let Value::Exception(context_data) = context {
-                    exc_data.context = Some(Box::new(context_data));
+                    exc_data.context = Some(context_data);
                 }
             }
         }
@@ -4303,21 +4326,25 @@ impl Vm {
                     .insert("name".to_string(), Value::Str(name));
             }
         }
-        let exception = Value::Exception(exception);
+        let exception = Value::Exception(Box::new(exception));
         self.raise_exception(exception)
     }
 
     pub(super) fn normalize_exception_value(&self, value: Value) -> Result<Value, RuntimeError> {
         match value {
             Value::Exception(_) => Ok(value),
-            Value::ExceptionType(name) => Ok(Value::Exception(ExceptionObject::new(name, None))),
+            Value::ExceptionType(name) => {
+                Ok(Value::Exception(Box::new(ExceptionObject::new(name, None))))
+            }
             Value::Class(class) => {
                 if self.class_is_exception_class(&class) {
                     let class_name = match &*class.kind() {
                         Object::Class(class_data) => class_data.name.clone(),
                         _ => "Exception".to_string(),
                     };
-                    Ok(Value::Exception(ExceptionObject::new(class_name, None)))
+                    Ok(Value::Exception(Box::new(ExceptionObject::new(
+                        class_name, None,
+                    ))))
                 } else {
                     Err(RuntimeError::new("can only raise Exception types"))
                 }
@@ -4336,7 +4363,7 @@ impl Vm {
                             .extend(instance_data.attrs.clone());
                     }
                 }
-                Ok(Value::Exception(exception))
+                Ok(Value::Exception(Box::new(exception)))
             }
             _ => Err(RuntimeError::new("can only raise Exception types")),
         }
@@ -4435,7 +4462,10 @@ impl Vm {
             return Ok((matched_group, remaining_group));
         }
 
-        let matches = self.exception_matches(&Value::Exception(exception.clone()), handler_type)?;
+        let matches = self.exception_matches(
+            &Value::Exception(Box::new(exception.clone())),
+            handler_type,
+        )?;
         if matches {
             Ok((Some(exception.clone()), None))
         } else {
@@ -4565,18 +4595,18 @@ impl Vm {
             } else {
                 Vec::new()
             };
-            return Ok(Value::Exception(ExceptionObject::with_members(
+            return Ok(Value::Exception(Box::new(ExceptionObject::with_members(
                 name.to_string(),
                 message,
                 members,
-            )));
+            ))));
         }
 
         let message = exception_message_from_call_args(args);
-        Ok(Value::Exception(ExceptionObject::new(
+        Ok(Value::Exception(Box::new(ExceptionObject::new(
             name.to_string(),
             message,
-        )))
+        ))))
     }
 
     pub(super) fn exception_members_from_value(
@@ -4614,7 +4644,7 @@ impl Vm {
                     "ExceptionGroup members must be exceptions",
                 ));
             };
-            members.push(exception);
+            members.push(*exception);
         }
         Ok(members)
     }
@@ -5653,14 +5683,30 @@ impl Vm {
         func: &ObjRef,
         arg0: Value,
     ) -> Result<(), RuntimeError> {
+        enum CachedCallAction {
+            SimpleNoCells {
+                code: Rc<CodeObject>,
+                module: ObjRef,
+                owner_class: Option<ObjRef>,
+            },
+            SimpleNoCellsFromFunc,
+            SimplePositional {
+                code: Rc<CodeObject>,
+                module: ObjRef,
+                owner_class: Option<ObjRef>,
+                closure: Vec<ObjRef>,
+            },
+            SimplePositionalFromFunc,
+            Generic,
+        }
+
         let site_index = self.current_site_index();
         let mut clear_cached = false;
-        let cached_entry = self
+        let cached_action = self
             .frames
             .last()
             .and_then(|frame| frame.one_arg_inline_cache.get(site_index))
             .and_then(|slot| slot.as_ref())
-            .cloned()
             .and_then(|entry| {
                 if entry.func_id != func.id() {
                     clear_cached = true;
@@ -5677,48 +5723,66 @@ impl Vm {
                     clear_cached = true;
                     return None;
                 }
-                Some(entry)
+                match entry.hot_path {
+                    OneArgCallHotPath::SimplePositionalNoCells => {
+                        if let (Some(code), Some(module)) =
+                            (entry.cached_code.as_ref(), entry.cached_module.as_ref())
+                        {
+                            Some(CachedCallAction::SimpleNoCells {
+                                code: code.clone(),
+                                module: module.clone(),
+                                owner_class: entry.cached_owner_class.clone(),
+                            })
+                        } else {
+                            Some(CachedCallAction::SimpleNoCellsFromFunc)
+                        }
+                    }
+                    OneArgCallHotPath::SimplePositional => {
+                        if let (Some(code), Some(module), Some(closure)) = (
+                            entry.cached_code.as_ref(),
+                            entry.cached_module.as_ref(),
+                            entry.cached_closure.as_ref(),
+                        ) {
+                            Some(CachedCallAction::SimplePositional {
+                                code: code.clone(),
+                                module: module.clone(),
+                                owner_class: entry.cached_owner_class.clone(),
+                                closure: closure.clone(),
+                            })
+                        } else {
+                            Some(CachedCallAction::SimplePositionalFromFunc)
+                        }
+                    }
+                    OneArgCallHotPath::Generic => Some(CachedCallAction::Generic),
+                }
             });
-        if let Some(entry) = cached_entry {
-            let OneArgCallSiteCacheEntry {
-                hot_path,
-                cached_code,
-                cached_module,
-                cached_owner_class,
-                cached_closure,
-                ..
-            } = entry;
-            return match hot_path {
-                OneArgCallHotPath::SimplePositionalNoCells => {
-                    if let (Some(code), Some(module)) = (cached_code, cached_module) {
-                        self.push_simple_positional_function_frame_one_arg_no_cells(
-                            code,
-                            module,
-                            cached_owner_class,
-                            arg0,
-                        )
-                    } else {
-                        self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
-                            func, arg0,
-                        )
-                    }
+        if let Some(action) = cached_action {
+            return match action {
+                CachedCallAction::SimpleNoCells {
+                    code,
+                    module,
+                    owner_class,
+                } => self.push_simple_positional_function_frame_one_arg_no_cells(
+                    code,
+                    module,
+                    owner_class,
+                    arg0,
+                ),
+                CachedCallAction::SimpleNoCellsFromFunc => {
+                    self.push_simple_positional_function_frame_one_arg_no_cells_from_func(func, arg0)
                 }
-                OneArgCallHotPath::SimplePositional => {
-                    if let (Some(code), Some(module), Some(closure)) =
-                        (cached_code, cached_module, cached_closure)
-                    {
-                        self.push_simple_positional_function_frame_one_arg(
-                            code,
-                            module,
-                            cached_owner_class,
-                            closure,
-                            arg0,
-                        )
-                    } else {
-                        self.push_simple_positional_function_frame_one_arg_from_func(func, arg0)
-                    }
+                CachedCallAction::SimplePositional {
+                    code,
+                    module,
+                    owner_class,
+                    closure,
+                } => self.push_simple_positional_function_frame_one_arg(
+                    code, module, owner_class, closure, arg0,
+                ),
+                CachedCallAction::SimplePositionalFromFunc => {
+                    self.push_simple_positional_function_frame_one_arg_from_func(func, arg0)
                 }
-                OneArgCallHotPath::Generic => {
+                CachedCallAction::Generic => {
                     self.push_function_call_from_obj(func, vec![arg0], HashMap::new())
                 }
             };
@@ -5862,12 +5926,10 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         let slot_idx = code.plain_positional_arg0_slot;
         let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
-        if let Some(active_exception) = self
-            .frames
-            .last()
-            .and_then(|caller| caller.active_exception.as_ref())
-        {
-            frame.active_exception = Some(active_exception.clone());
+        if let Some(caller) = self.frames.last() {
+            if let Some(active_exception) = caller.active_exception.as_ref() {
+                frame.active_exception = Some(active_exception.clone());
+            }
         }
         if slot_idx == Some(0) && frame.fast_locals.len() == 1 {
             frame.fast_locals[0] = Some(arg0);
@@ -5899,6 +5961,52 @@ impl Vm {
         Ok(())
     }
 
+    #[inline]
+    fn push_simple_positional_function_frame_one_arg_slot0_no_cells_ref(
+        &mut self,
+        code: &Rc<CodeObject>,
+        module: &ObjRef,
+        owner_class: Option<&ObjRef>,
+        arg0: Value,
+    ) -> Result<(), RuntimeError> {
+        debug_assert!(code.plain_positional_arg0_slot == Some(0));
+        debug_assert!(code.fast_local_count == 1);
+        let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
+        if let Some(caller) = self.frames.last() {
+            if let Some(active_exception) = caller.active_exception.as_ref() {
+                frame.active_exception = Some(active_exception.clone());
+            }
+        }
+        frame.fast_locals[0] = Some(arg0);
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    #[inline]
+    fn push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
+        &mut self,
+        code: &Rc<CodeObject>,
+        module: &ObjRef,
+        owner_class: Option<&ObjRef>,
+        arg0: Value,
+    ) -> Result<(), RuntimeError> {
+        if code.fast_local_count == 1 && code.plain_positional_arg0_slot == Some(0) {
+            self.push_simple_positional_function_frame_one_arg_slot0_no_cells_ref(
+                code,
+                module,
+                owner_class,
+                arg0,
+            )
+        } else {
+            self.push_simple_positional_function_frame_one_arg_no_cells_ref(
+                code,
+                module,
+                owner_class,
+                arg0,
+            )
+        }
+    }
+
     fn push_simple_positional_function_frame_one_arg_no_cells(
         &mut self,
         code: Rc<CodeObject>,
@@ -5906,7 +6014,7 @@ impl Vm {
         owner_class: Option<ObjRef>,
         arg0: Value,
     ) -> Result<(), RuntimeError> {
-        self.push_simple_positional_function_frame_one_arg_no_cells_ref(
+        self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
             &code,
             &module,
             owner_class.as_ref(),

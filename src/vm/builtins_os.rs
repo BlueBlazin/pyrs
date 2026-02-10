@@ -1068,7 +1068,7 @@ impl Vm {
                 }
                 attrs.insert("strerror".to_string(), Value::Str(err.to_string()));
             }
-            Value::Exception(exception)
+            Value::Exception(Box::new(exception))
         }
 
         fn collect_walk(

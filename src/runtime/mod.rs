@@ -999,7 +999,7 @@ fn value_hash_key(value: &Value) -> Option<u64> {
         | Value::Set(_)
         | Value::ByteArray(_)
         | Value::MemoryView(_)
-        | Value::Slice { .. } => return None,
+        | Value::Slice(_) => return None,
         Value::None | Value::Bool(_) | Value::Int(_) | Value::Float(_) => unreachable!(),
     }
     Some(hasher.finish())
@@ -1287,8 +1287,8 @@ impl Heap {
             Value::ExceptionType(name) => {
                 self.id_for_immediate(ImmediateKey::ExceptionType(name.clone()))
             }
-            Value::Slice { lower, upper, step } => {
-                self.id_for_immediate(ImmediateKey::Slice(*lower, *upper, *step))
+            Value::Slice(slice) => {
+                self.id_for_immediate(ImmediateKey::Slice(slice.lower, slice.upper, slice.step))
             }
             Value::Builtin(builtin) => self.id_for_immediate(ImmediateKey::Builtin(*builtin)),
             Value::Code(code) => {
@@ -1687,15 +1687,24 @@ pub enum Value {
     BoundMethod(ObjRef),
     Function(ObjRef),
     Cell(ObjRef),
-    Exception(ExceptionObject),
+    Exception(Box<ExceptionObject>),
     ExceptionType(String),
-    Slice {
-        lower: Option<i64>,
-        upper: Option<i64>,
-        step: Option<i64>,
-    },
+    Slice(Box<SliceValue>),
     Code(Rc<CodeObject>),
     Builtin(BuiltinFunction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SliceValue {
+    pub lower: Option<i64>,
+    pub upper: Option<i64>,
+    pub step: Option<i64>,
+}
+
+impl SliceValue {
+    pub fn new(lower: Option<i64>, upper: Option<i64>, step: Option<i64>) -> Self {
+        Self { lower, upper, step }
+    }
 }
 
 impl Value {
@@ -1924,18 +1933,9 @@ impl PartialEq for Value {
             }
             (Value::Exception(a), Value::Exception(b)) => a == b,
             (Value::ExceptionType(a), Value::ExceptionType(b)) => a == b,
-            (
-                Value::Slice {
-                    lower: a_lower,
-                    upper: a_upper,
-                    step: a_step,
-                },
-                Value::Slice {
-                    lower: b_lower,
-                    upper: b_upper,
-                    step: b_step,
-                },
-            ) => a_lower == b_lower && a_upper == b_upper && a_step == b_step,
+            (Value::Slice(a), Value::Slice(b)) => {
+                a.lower == b.lower && a.upper == b.upper && a.step == b.step
+            }
             (Value::Code(a), Value::Code(b)) => Rc::ptr_eq(a, b),
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
             _ => false,
@@ -2817,7 +2817,7 @@ impl BuiltinFunction {
                     _ => (parts[0], parts[1], parts[2]),
                 };
 
-                Ok(Value::Slice { lower, upper, step })
+                Ok(Value::Slice(Box::new(SliceValue::new(lower, upper, step))))
             }
             BuiltinFunction::Bool => {
                 if args.len() != 1 {
@@ -5460,7 +5460,7 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::BoundMethod(_) => "method",
         Value::Exception(_) => "exception",
         Value::ExceptionType(_) => "exceptiontype",
-        Value::Slice { .. } => "slice",
+        Value::Slice(_) => "slice",
         Value::Code(_) => "code",
         Value::Builtin(_) => "builtin_function_or_method",
         Value::Cell(_) => "cell",
@@ -5792,7 +5792,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::Cell(_) => Value::Str("cell".to_string()),
         Value::Exception(exception) => Value::ExceptionType(exception.name.clone()),
         Value::ExceptionType(_) => Value::Builtin(BuiltinFunction::Type),
-        Value::Slice { .. } => Value::Builtin(BuiltinFunction::Slice),
+        Value::Slice(_) => Value::Builtin(BuiltinFunction::Slice),
         Value::Code(_) => Value::Str("code".to_string()),
         Value::Builtin(_) => Value::Builtin(BuiltinFunction::Type),
     };
@@ -6192,10 +6192,16 @@ pub fn format_value(value: &Value) -> String {
         Value::Cell(_) => "<cell>".to_string(),
         Value::Exception(exception) => exception.message.clone().unwrap_or_default(),
         Value::ExceptionType(name) => format!("<class '{}'>", name),
-        Value::Slice { lower, upper, step } => {
-            let lower = lower.map_or("None".to_string(), |value| value.to_string());
-            let upper = upper.map_or("None".to_string(), |value| value.to_string());
-            let step = step.map_or("None".to_string(), |value| value.to_string());
+        Value::Slice(slice) => {
+            let lower = slice
+                .lower
+                .map_or("None".to_string(), |value| value.to_string());
+            let upper = slice
+                .upper
+                .map_or("None".to_string(), |value| value.to_string());
+            let step = slice
+                .step
+                .map_or("None".to_string(), |value| value.to_string());
             format!("slice({lower}, {upper}, {step})")
         }
         Value::Code(_) => "<code>".to_string(),
@@ -6389,7 +6395,7 @@ fn is_truthy_value(value: &Value) -> bool {
         },
         Value::Iterator(_) => true,
         Value::Generator(_) => true,
-        Value::Slice { .. } => true,
+        Value::Slice(_) => true,
         Value::Module(_)
         | Value::Class(_)
         | Value::Instance(_)

@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::SliceValue;
 
 impl Vm {
     pub(super) fn builtin_warnings_filters_mutated(
@@ -101,7 +102,11 @@ impl Vm {
             }
         }
         match index {
-            Value::Slice { lower, upper, step } => match value {
+            Value::Slice(slice) => {
+                let lower = slice.lower;
+                let upper = slice.upper;
+                let step = slice.step;
+                match value {
                 Value::List(obj) => match &*obj.kind() {
                     Object::List(values) => {
                         let indices = slice_indices(values.len(), lower, upper, step)?;
@@ -194,7 +199,13 @@ impl Vm {
                     if let Some(getitem) =
                         self.lookup_bound_special_method(&other, "__getitem__")?
                     {
-                        match self.call_internal(getitem, vec![Value::Slice { lower, upper, step }], HashMap::new())? {
+                        match self.call_internal(
+                            getitem,
+                            vec![Value::Slice(Box::new(SliceValue::new(
+                                lower, upper, step,
+                            )))],
+                            HashMap::new(),
+                        )? {
                             InternalCallOutcome::Value(value) => Ok(value),
                             InternalCallOutcome::CallerExceptionHandled => Err(
                                 self.runtime_error_from_active_exception(
@@ -206,7 +217,8 @@ impl Vm {
                         Err(RuntimeError::new("subscript unsupported type"))
                     }
                 }
-            },
+            }
+            }
             index => match value {
                 Value::List(obj) => match &*obj.kind() {
                     Object::List(values) => {

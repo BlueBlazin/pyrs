@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::pyc::{PycHeader, parse_pyc_header, write_pyc_header};
 use crate::bytecode::{CodeObject, Instruction, Opcode};
-use crate::runtime::{Heap, Value};
+use crate::runtime::{Heap, SliceValue, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpythonError {
@@ -610,7 +610,7 @@ impl<'a> Translator<'a> {
                     },
                     None => None,
                 };
-                Ok(Value::Slice { lower, upper, step })
+                Ok(Value::Slice(Box::new(SliceValue::new(lower, upper, step))))
             }
             PyObject::Bytes(_) => Err(CpythonError::new("bytes constants unsupported")),
             PyObject::Null => Err(CpythonError::new("unexpected null constant")),

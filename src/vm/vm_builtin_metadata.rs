@@ -1203,7 +1203,7 @@ impl Vm {
                     Ok(())
                 }
                 Value::Exception(cause) => {
-                    exception.cause = Some(Box::new(cause));
+                    exception.cause = Some(cause);
                     Ok(())
                 }
                 _ => Err(RuntimeError::new("__cause__ must be an exception or None")),
@@ -1214,7 +1214,7 @@ impl Vm {
                     Ok(())
                 }
                 Value::Exception(context) => {
-                    exception.context = Some(Box::new(context));
+                    exception.context = Some(context);
                     Ok(())
                 }
                 _ => Err(RuntimeError::new(
