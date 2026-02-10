@@ -27,12 +27,29 @@ It is intentionally forward-looking and should not be used as an append-only cha
 | 10 | Async/concurrency foundations | Complete |
 | 11 | Test/parity gate infrastructure | Complete |
 | 12 | Curated language/import harness closure | Complete |
-| 13 | Long-tail parity + stdlib usability closure | In Progress |
+| 13 | Long-tail parity + stdlib usability closure | In Progress (Temporarily Paused for Perf Sprint) |
 | 14 | Performance + observability + architecture hardening | Pending |
 | 15 | Native extension ecosystem compatibility | Pending |
 | 16 | Release hardening/certification | Pending |
 
-## Active Milestone: 13
+## Active Priority Override: Performance Sprint
+
+Milestone 13 functional closure is temporarily paused while performance is brought to a usable baseline.
+
+Primary gate:
+- `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
+- Target: `< 0.10s` (user-time reference target)
+- Current measured baseline after recent fixes: ~`1.00s` user-time
+
+This sprint is implementation-driven from CPython internals:
+- Eval loop and opcode specialization patterns: `Python/ceval.c`, `Python/generated_cases.c.h`
+- Frame/local layout patterns (`f_localsplus`, frame lifecycle): `Include/internal/pycore_frame.h`, `Python/frame.c`
+- Call/fastcall/vectorcall behavior: `Objects/call.c`, `Include/cpython/abstract.h`
+- Integer fast paths and small-int behavior: `Objects/longobject.c`
+
+Detailed execution plan: `docs/OPTIMIZATION_PLAN.md`
+
+## Active Milestone: 13 (Paused During Perf Sprint)
 
 ### Milestone 13 Exit Criteria
 Milestone 13 is complete only when all are true:

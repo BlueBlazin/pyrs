@@ -11,6 +11,17 @@ Status:
 - `[~]` in progress
 - `[x]` complete
 
+## Current Priority Override
+
+Performance sprint is the active top priority before further Milestone 13 closure work.
+
+Required benchmark gate for this sprint:
+- `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
+- Target: `< 0.10s` user-time reference target
+- Current baseline after latest foundational optimizations: ~`1.00s` user-time
+
+Implementation strategy is tracked in `docs/OPTIMIZATION_PLAN.md` and is explicitly CPython-referenced.
+
 ## P0 Release Blockers
 
 | Area | Status | Notes |

@@ -27,7 +27,7 @@ Build a production-grade Python interpreter in Rust with full source + bytecode 
 
 ## Milestone Status (Canonical Summary)
 - Milestones 0-12: complete
-- Milestone 13: in progress (long-tail runtime/language parity + stdlib usability closure)
+- Milestone 13: in progress, but temporarily paused while the performance sprint is active
 - Milestones 14-16: pending (performance/observability, extension ecosystem, release hardening)
 
 Milestone 13 completion is blocked on P0 closure of:
@@ -43,6 +43,9 @@ Milestone 13 completion is blocked on P0 closure of:
 - Sequence Milestone 13 work as native-core-first:
   1. Native/runtime core surfaces (`_io`, `_csv`, `_sre`, `_pickle`, object protocol)
   2. Then strict pure-stdlib suite expansion and closure
+- Performance override rule:
+  - If optimization sprint is active, performance work takes precedence over Milestone 13 functional closure tasks.
+  - Required benchmark gate: `fib(29)` under `0.10s` user-time before returning to normal Milestone 13 execution order.
 - Prefer official CPython pure-Python stdlib implementations where feasible.
 - Keep native VM handlers as accelerator/runtime layers, not full high-level reimplementations.
 - Commit frequently in small focused checkpoints.
@@ -68,6 +71,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - VM architecture map: `docs/VM_ARCHITECTURE_MAP.md`
 - Compatibility matrix: `docs/COMPATIBILITY.md`
 - Coverage gate workflow: `scripts/run_coverage_gate.sh`
+- Optimization execution plan: `docs/OPTIMIZATION_PLAN.md`
 
 ## Reference Artifacts
 - Milestone 12 closure report: `docs/MILESTONE_12_BACKLOG.md`
@@ -77,9 +81,9 @@ Milestone 13 completion is blocked on P0 closure of:
 - No-op inventory snapshot: `docs/NOOP_BUILTIN_INVENTORY.txt`
 
 ## Current Focus
-- Milestone 13 remains the active priority with native-core-first closure.
-- Current optimization wave:
-  - frame fast-local slots are in place for `LOAD_FAST*`/`STORE_FAST*` execution paths and are now authoritative for function-local state (CPython `f_localsplus` style),
-  - object-backed function call dispatch avoids cloning full `FunctionObject` payloads in opcode call paths,
-  - release profile tuning (`lto = "thin"`, `codegen-units = 1`) is enabled.
-- Keep object-model parity work tracked in `docs/OBJECT_MODEL_AUDIT.md` and prioritize protocol-dispatch correctness over short-term patching.
+- Active top priority: optimization sprint.
+- Performance gate:
+  - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
+  - Target: `< 0.10s` user-time
+  - Current baseline: ~`1.00s` user-time
+- Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
