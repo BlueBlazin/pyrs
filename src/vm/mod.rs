@@ -778,23 +778,57 @@ impl Vm {
         if !frame.stack.is_empty() {
             frame.stack.clear();
         }
-        frame.module_locals_dict = None;
-        frame.globals_fallback = None;
-        frame.locals_fallback = None;
-        frame.return_instance = None;
-        frame.class_metaclass = None;
-        frame.generator_owner = None;
-        frame.generator_resume_value = None;
-        frame.generator_pending_throw = None;
-        frame.generator_resume_kind = None;
-        frame.yield_from_iter = None;
-        frame.active_exception = None;
-        frame.discard_result = false;
-        frame.return_class = false;
-        frame.expect_none_return = false;
-        frame.generator_awaiting_resume_value = false;
-        frame.is_module = false;
-        frame.return_module = false;
+        if frame.module_locals_dict.is_some() {
+            frame.module_locals_dict = None;
+        }
+        if frame.globals_fallback.is_some() {
+            frame.globals_fallback = None;
+        }
+        if frame.locals_fallback.is_some() {
+            frame.locals_fallback = None;
+        }
+        if frame.return_instance.is_some() {
+            frame.return_instance = None;
+        }
+        if frame.class_metaclass.is_some() {
+            frame.class_metaclass = None;
+        }
+        if frame.generator_owner.is_some() {
+            frame.generator_owner = None;
+        }
+        if frame.generator_resume_value.is_some() {
+            frame.generator_resume_value = None;
+        }
+        if frame.generator_pending_throw.is_some() {
+            frame.generator_pending_throw = None;
+        }
+        if frame.generator_resume_kind.is_some() {
+            frame.generator_resume_kind = None;
+        }
+        if frame.yield_from_iter.is_some() {
+            frame.yield_from_iter = None;
+        }
+        if frame.active_exception.is_some() {
+            frame.active_exception = None;
+        }
+        if frame.discard_result {
+            frame.discard_result = false;
+        }
+        if frame.return_class {
+            frame.return_class = false;
+        }
+        if frame.expect_none_return {
+            frame.expect_none_return = false;
+        }
+        if frame.generator_awaiting_resume_value {
+            frame.generator_awaiting_resume_value = false;
+        }
+        if frame.is_module {
+            frame.is_module = false;
+        }
+        if frame.return_module {
+            frame.return_module = false;
+        }
         frame.simple_one_arg_no_cells = true;
         let single_arg_direct_slot =
             frame.code.fast_local_count == 1 && frame.code.plain_positional_arg0_slot == Some(0);

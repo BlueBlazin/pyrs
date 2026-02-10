@@ -21,7 +21,7 @@ Last updated: 2026-02-10
 - Target:
   - `< 0.10s` user-time
 - Current:
-  - ~`0.28s` user-time (after branch/call fusion passes on recursive hot paths)
+  - ~`0.26-0.27s` user-time (after branch/call fusion and simple-frame recycle/call-path cleanup passes)
 
 ## CPython Reference Map
 
@@ -95,7 +95,7 @@ Last updated: 2026-02-10
   - one-arg plain-function fast path now bypasses generic cell/binding setup for no-closure, non-generator call shapes;
   - compiler now lowers one-positional-arg calls to dedicated `CallFunction1` opcode;
   - runtime fuses `CompareLt* + JumpIfFalse` and `LoadGlobal + LoadFast + BinarySubConst + CallFunction1` on release builds;
-  - benchmark currently stabilizes around `0.28-0.29s` user-time for `fib(29)` (still above target).
+  - benchmark currently stabilizes around `0.26-0.27s` user-time for `fib(29)` (still above target).
 - `OPT-009` remains in progress: boxed-frame pool and reuse path are active, but profiling still shows frame setup/reset as a visible hotspot in recursive call workloads.
 - Latest dict-path checkpoint:
   - fixed `Vm::getitem_value` for `Value::Dict` to route through `DictObject` backend lookup APIs (`find_with_hash`) instead of linear `entries.iter().find(...)` scans with generic `==`,
@@ -103,4 +103,4 @@ Last updated: 2026-02-10
 - Latest call-path checkpoint:
   - simple-frame pool preparation now avoids duplicate full scrub on acquire (frames are scrubbed on recycle and minimally prepared on acquire),
   - fused `LOAD_FAST - CONST` one-arg call path now uses by-reference int/bool arithmetic fast path before generic `Value` cloning fallback,
-  - recursive benchmark is currently stable around `0.28s` user-time for `fib(29)` across repeated runs.
+  - recursive benchmark is currently stable around `0.26-0.27s` user-time for `fib(29)` across repeated runs.

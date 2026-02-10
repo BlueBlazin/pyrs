@@ -5411,14 +5411,6 @@ impl Vm {
         arg0: Value,
     ) -> Result<(), RuntimeError> {
         let slot_idx = code.plain_positional_arg0_slot;
-        let fallback_name = if slot_idx.is_none() {
-            code.posonly_params
-                .first()
-                .or_else(|| code.params.first())
-                .cloned()
-        } else {
-            None
-        };
         let mut frame = self.acquire_simple_frame_no_cells(code, module, owner_class);
         if let Some(active_exception) = self
             .frames
@@ -5428,12 +5420,24 @@ impl Vm {
             frame.active_exception = Some(active_exception.clone());
         }
         if let Some(slot_idx) = slot_idx {
-            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
-                *slot = Some(arg0);
-            } else if let Some(name) = fallback_name {
+            if slot_idx < frame.fast_locals.len() {
+                frame.fast_locals[slot_idx] = Some(arg0);
+            } else if let Some(name) = frame
+                .code
+                .posonly_params
+                .first()
+                .or_else(|| frame.code.params.first())
+                .cloned()
+            {
                 frame.locals.insert(name, arg0);
             }
-        } else if let Some(name) = fallback_name {
+        } else if let Some(name) = frame
+            .code
+            .posonly_params
+            .first()
+            .or_else(|| frame.code.params.first())
+            .cloned()
+        {
             frame.locals.insert(name, arg0);
         }
         self.frames.push(frame);
