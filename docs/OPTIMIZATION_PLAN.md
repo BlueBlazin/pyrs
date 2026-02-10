@@ -20,7 +20,7 @@ These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
 Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
 - Target: `< 0.10s` user-time
-- Current baseline (latest run): about `1.00s` user-time
+- Current baseline (latest run): about `0.88s` user-time (`~1.20s` wall with startup)
 
 ## Ground Rules
 
@@ -53,14 +53,17 @@ Primary benchmark gate:
 3. Added simple positional function-call fast path for common Python function calls.
 4. Removed eager error-formatting overhead in `pop_value()` success path.
 5. Added precomputed positional parameter binding indexes on `CodeObject`.
+6. Added `LOAD_GLOBAL` cache path keyed by `(code, name index)` with invalidation on global mutation paths.
+7. Added hot-opcode fast paths for `LoadFast`, `LoadFast2`, `BinaryAdd`, `BinarySub`, `CompareLt`, and `CallFunction(argc=1)` stack pop.
+8. Reduced per-opcode finalizer polling overhead by gating on pending-finalizer state.
 
 ## Current Hotspots (Post-Change)
 
-1. Function frame setup overhead (`push_simple_positional_function_frame`, `Frame::new`).
-2. Name hashing during binding/global lookup (`hashbrown::map::make_hash`).
-3. Generic opcode dispatch overhead in the eval loop.
-4. Attribute/method lookup overhead (missing `LOAD_ATTR` specialization).
-5. Repeated string allocation/hash work for identifiers/attribute names (missing intern pipeline).
+1. Function-call setup overhead (`push_function_call_one_arg_from_obj`) remains dominant.
+2. Generic opcode dispatch overhead in the eval loop (`run::_closure`) remains dominant.
+3. Frame construction/reset overhead (`acquire_frame`) still visible in recursion-heavy code.
+4. Stack movement/copy work (`_platform_memmove`) remains significant in tight recursive loops.
+5. Attribute/method lookup and interning gaps remain for broader workloads (`OPT-022`, `OPT-023`).
 
 ## Execution Plan
 

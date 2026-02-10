@@ -39,7 +39,7 @@ Milestone 13 functional closure is temporarily paused while performance is broug
 Primary gate:
 - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
 - Target: `< 0.10s` (user-time reference target)
-- Current measured baseline after recent fixes: ~`1.00s` user-time
+- Current measured baseline after recent fixes: ~`0.88s` user-time
 
 This sprint is implementation-driven from CPython internals:
 - Eval loop and opcode specialization patterns: `Python/ceval.c`, `Python/generated_cases.c.h`

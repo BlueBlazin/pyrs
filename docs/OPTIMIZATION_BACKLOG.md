@@ -21,7 +21,7 @@ Last updated: 2026-02-10
 - Target:
   - `< 0.10s` user-time
 - Current:
-  - ~`1.00s` user-time (after latest foundational pass)
+  - ~`0.88s` user-time (after latest foundational pass)
 
 ## CPython Reference Map
 
@@ -55,10 +55,10 @@ Last updated: 2026-02-10
 | `OPT-006` | P0 | calls | Single-arg `CALL_FUNCTION` specialization path | `call.c` | `[x]` |
 | `OPT-007` | P0 | binding | Precompute positional param slot/cell indexes on `CodeObject` | `pycore_frame.h` locals indexing | `[x]` |
 | `OPT-008` | P0 | frames | Lightweight function-frame type/path (remove class/module baggage from pure function calls) | `pycore_frame.h`, `ceval.c` | `[~]` |
-| `OPT-009` | P0 | frames | Frame freelist/pool for non-generator frames | `frame.c` freelist patterns | `[ ]` |
+| `OPT-009` | P0 | frames | Frame freelist/pool for non-generator frames | `frame.c` freelist patterns | `[~]` |
 | `OPT-010` | P0 | calls | Fast arity call paths (`argc=2`, `argc=3`) without temporary vec/hashmap churn | `call.c` vectorcall fast arities | `[ ]` |
-| `OPT-011` | P0 | dispatch | Add adaptive specialized opcodes for hot integer compare/add/sub paths | `generated_cases.c.h` | `[ ]` |
-| `OPT-012` | P0 | lookup | `LOAD_GLOBAL` cached lookup with invalidation on globals/builtins mutation | `ceval.c` inline cache strategy | `[ ]` |
+| `OPT-011` | P0 | dispatch | Add adaptive specialized opcodes for hot integer compare/add/sub paths | `generated_cases.c.h` | `[~]` |
+| `OPT-012` | P0 | lookup | `LOAD_GLOBAL` cached lookup with invalidation on globals/builtins mutation | `ceval.c` inline cache strategy | `[x]` |
 | `OPT-013` | P0 | lookup | Reduce local/global hash churn for repeated name access in hot loops | `ceval.c`, name cache patterns | `[~]` |
 | `OPT-014` | P1 | dispatch | Reduce per-opcode branch/indirection overhead in main eval loop | `ceval.c` dispatch structure | `[ ]` |
 | `OPT-015` | P1 | containers | Dict/set hot-path operations benchmark and algorithmic closure | `dictobject.c`, `setobject.c` | `[~]` |
@@ -79,3 +79,7 @@ Last updated: 2026-02-10
 1. Every optimization commit must update relevant item status here.
 2. New optimization ideas must be added as new `OPT-*` rows before implementation.
 3. Do not mark sprint complete until all P0 items required for target gate are `[x]`.
+
+## Current Notes
+
+- `OPT-009` has prototype coverage but is not finalized: an initial frame-pool implementation was functionally correct but did not improve the recursive benchmark enough to keep as-is. Further work should follow CPython `frame.c` patterns more closely and be validated with flamegraph deltas.
