@@ -287,6 +287,7 @@ struct Frame {
     last_ip: usize,
     stack: Vec<Value>,
     locals: HashMap<String, Value>,
+    fast_locals: Vec<Option<Value>>,
     module_locals_dict: Option<ObjRef>,
     cells: Vec<ObjRef>,
     module: ObjRef,
@@ -322,12 +323,14 @@ impl Frame {
         cells: Vec<ObjRef>,
         owner_class: Option<ObjRef>,
     ) -> Self {
+        let fast_locals_len = code.names.len();
         Self {
             code,
             ip: 0,
             last_ip: 0,
             stack: Vec::new(),
             locals: HashMap::new(),
+            fast_locals: vec![None; fast_locals_len],
             module_locals_dict: None,
             cells,
             module: module.clone(),
@@ -840,6 +843,7 @@ impl Vm {
         for frame in &self.frames {
             roots.extend(frame.stack.iter().cloned());
             roots.extend(frame.locals.values().cloned());
+            roots.extend(frame.fast_locals.iter().flatten().cloned());
             for cell in &frame.cells {
                 roots.push(Value::Cell(cell.clone()));
             }
@@ -871,6 +875,7 @@ impl Vm {
         for frame in self.generator_states.values() {
             roots.extend(frame.stack.iter().cloned());
             roots.extend(frame.locals.values().cloned());
+            roots.extend(frame.fast_locals.iter().flatten().cloned());
             for cell in &frame.cells {
                 roots.push(Value::Cell(cell.clone()));
             }
@@ -5058,6 +5063,36 @@ fn bind_arguments(
     let kwonly_len = func.code.kwonly_params.len();
     let defaults_len = func.defaults.len();
     let total_positional = posonly_len + params_len;
+
+    // Common fast path for plain positional calls (no defaults/kwargs/varargs).
+    if kwargs.is_empty()
+        && defaults_len == 0
+        && kwonly_len == 0
+        && func.code.vararg.is_none()
+        && func.code.kwarg.is_none()
+    {
+        if positional.len() != total_positional {
+            return Err(RuntimeError::new("argument count mismatch"));
+        }
+        if posonly_len == 0 {
+            return Ok(BoundArguments {
+                posonly: Vec::new(),
+                positional,
+                kwonly: Vec::new(),
+                vararg: None,
+                kwarg: None,
+            });
+        }
+        let positional_values = positional.split_off(posonly_len);
+        return Ok(BoundArguments {
+            posonly: positional,
+            positional: positional_values,
+            kwonly: Vec::new(),
+            vararg: None,
+            kwarg: None,
+        });
+    }
+
     if defaults_len > total_positional {
         return Err(RuntimeError::new("invalid function defaults"));
     }
@@ -5156,8 +5191,8 @@ fn bind_arguments(
 }
 
 fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments, heap: &Heap) {
-    let mut assign = |name: String, value: Value| {
-        if let Some(idx) = code.cellvars.iter().position(|cell| cell == &name) {
+    let mut assign = |name: &str, value: Value| {
+        if let Some(idx) = code.cellvars.iter().position(|cell| cell == name) {
             if let Some(cell) = frame.cells.get(idx) {
                 if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
                     cell_data.value = Some(value);
@@ -5165,30 +5200,24 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
                 }
             }
         }
-        frame.locals.insert(name, value);
+        if let Some(slot_idx) = code.names.iter().position(|local| local == name) {
+            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                *slot = Some(value.clone());
+            }
+        }
+        if let Some(existing) = frame.locals.get_mut(name) {
+            *existing = value;
+        } else {
+            frame.locals.insert(name.to_string(), value);
+        }
     };
-    for (name, value) in code
-        .posonly_params
-        .iter()
-        .cloned()
-        .zip(bindings.posonly.into_iter())
-    {
+    for (name, value) in code.posonly_params.iter().zip(bindings.posonly.into_iter()) {
         assign(name, value);
     }
-    for (name, value) in code
-        .params
-        .iter()
-        .cloned()
-        .zip(bindings.positional.into_iter())
-    {
+    for (name, value) in code.params.iter().zip(bindings.positional.into_iter()) {
         assign(name, value);
     }
-    for (name, value) in code
-        .kwonly_params
-        .iter()
-        .cloned()
-        .zip(bindings.kwonly.into_iter())
-    {
+    for (name, value) in code.kwonly_params.iter().zip(bindings.kwonly.into_iter()) {
         assign(name, value);
     }
 
@@ -5196,14 +5225,14 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
         let value = bindings
             .vararg
             .unwrap_or_else(|| heap.alloc_tuple(Vec::new()));
-        assign(name.clone(), value);
+        assign(name, value);
     }
 
     if let Some(name) = code.kwarg.as_ref() {
         let value = bindings
             .kwarg
             .unwrap_or_else(|| heap.alloc_dict(Vec::new()));
-        assign(name.clone(), value);
+        assign(name, value);
     }
 }
 

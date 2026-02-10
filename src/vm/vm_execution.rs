@@ -149,20 +149,7 @@ impl Vm {
                             .arg
                             .ok_or_else(|| RuntimeError::new("missing local argument"))?
                             as usize;
-                        let name = {
-                            let frame = self.frames.last().expect("frame exists");
-                            frame
-                                .code
-                                .names
-                                .get(idx)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone()
-                        };
-                        let value = self
-                            .frames
-                            .last()
-                            .and_then(|frame| frame.locals.get(&name).cloned())
-                            .ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
+                        let value = self.load_fast_local(idx)?;
                         self.push_value(value);
                     }
                     Opcode::LoadDeref => {
@@ -187,34 +174,8 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing locals argument"))?;
                         let first = (arg >> 16) as usize;
                         let second = (arg & 0xFFFF) as usize;
-                        let (first_name, second_name) = {
-                            let frame = self.frames.last().expect("frame exists");
-                            let first = frame
-                                .code
-                                .names
-                                .get(first)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone();
-                            let second = frame
-                                .code
-                                .names
-                                .get(second)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone();
-                            (first, second)
-                        };
-                        let (first_value, second_value) = {
-                            let frame = self.frames.last().expect("frame exists");
-                            let first = frame.locals.get(&first_name).cloned();
-                            let second = frame.locals.get(&second_name).cloned();
-                            (first, second)
-                        };
-                        let first_value = first_value.ok_or_else(|| {
-                            RuntimeError::new(format!("local '{first_name}' not set"))
-                        })?;
-                        let second_value = second_value.ok_or_else(|| {
-                            RuntimeError::new(format!("local '{second_name}' not set"))
-                        })?;
+                        let first_value = self.load_fast_local(first)?;
+                        let second_value = self.load_fast_local(second)?;
                         self.push_value(first_value);
                         self.push_value(second_value);
                     }
@@ -223,20 +184,7 @@ impl Vm {
                             .arg
                             .ok_or_else(|| RuntimeError::new("missing local argument"))?
                             as usize;
-                        let name = {
-                            let frame = self.frames.last().expect("frame exists");
-                            frame
-                                .code
-                                .names
-                                .get(idx)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone()
-                        };
-                        let value = self
-                            .frames
-                            .last_mut()
-                            .and_then(|frame| frame.locals.remove(&name))
-                            .ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
+                        let value = self.take_fast_local(idx)?;
                         self.push_value(value);
                     }
                     Opcode::LoadGlobal => {
@@ -246,45 +194,41 @@ impl Vm {
                             as usize;
                         let push_null = raw & 1 == 1;
                         let idx = raw >> 1;
-                        let name = {
+                        let value = {
                             let frame = self.frames.last().expect("frame exists");
-                            frame
+                            let name = frame
                                 .code
                                 .names
                                 .get(idx)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone()
-                        };
-                        let value = {
-                            let frame = self.frames.last().expect("frame exists");
-                            if let Object::Module(module_data) = &*frame.function_globals.kind() {
-                                if let Some(value) = module_data.globals.get(&name) {
+                                .ok_or_else(|| RuntimeError::new("name index out of range"))?;
+                            let value = if let Object::Module(module_data) = &*frame.function_globals.kind() {
+                                if let Some(value) = module_data.globals.get(name) {
                                     Some(value.clone())
                                 } else {
                                     None
                                 }
                             } else {
                                 None
-                            }
-                        }
-                        .or_else(|| {
-                            let frame = self.frames.last().expect("frame exists");
-                            if let Some(fallback) = &frame.locals_fallback {
-                                if let Some(value) = fallback.get(&name) {
-                                    return Some(value.clone());
+                            };
+                            let value = value.or_else(|| {
+                                if let Some(fallback) = &frame.locals_fallback {
+                                    if let Some(value) = fallback.get(name) {
+                                        return Some(value.clone());
+                                    }
                                 }
-                            }
-                            if let Some(fallback) = &frame.globals_fallback {
-                                if let Object::Module(module_data) = &*fallback.kind() {
-                                    return module_data.globals.get(&name).cloned();
+                                if let Some(fallback) = &frame.globals_fallback {
+                                    if let Object::Module(module_data) = &*fallback.kind() {
+                                        return module_data.globals.get(name).cloned();
+                                    }
                                 }
-                            }
-                            None
-                        })
-                        .or_else(|| self.builtins.get(&name).cloned())
-                        .ok_or_else(|| {
-                            RuntimeError::new(format!("name '{name}' is not defined"))
-                        })?;
+                                None
+                            });
+                            value
+                                .or_else(|| self.builtins.get(name).cloned())
+                                .ok_or_else(|| {
+                                    RuntimeError::new(format!("name '{name}' is not defined"))
+                                })
+                        }?;
                         if push_null {
                             self.push_value(Value::None);
                         }
@@ -659,7 +603,18 @@ impl Vm {
                         let mut removed = false;
                         if let Some(frame) = self.frames.last_mut() {
                             if !frame.is_module {
-                                removed = frame.locals.remove(&name).is_some();
+                                if let Some(slot_idx) =
+                                    frame.code.names.iter().position(|entry| entry == &name)
+                                {
+                                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                                        removed = slot.take().is_some();
+                                    }
+                                }
+                                if removed {
+                                    frame.locals.remove(&name);
+                                } else {
+                                    removed = frame.locals.remove(&name).is_some();
+                                }
                             }
                             if !removed {
                                 if let Some(dict) = frame.module_locals_dict.clone() {
@@ -685,19 +640,8 @@ impl Vm {
                             .arg
                             .ok_or_else(|| RuntimeError::new("missing local argument"))?
                             as usize;
-                        let name = {
-                            let frame = self.frames.last().expect("frame exists");
-                            frame
-                                .code
-                                .names
-                                .get(idx)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone()
-                        };
                         let value = self.pop_value()?;
-                        if let Some(frame) = self.frames.last_mut() {
-                            frame.locals.insert(name, value);
-                        }
+                        self.store_fast_local(idx, value)?;
                     }
                     Opcode::StoreDeref => {
                         let idx = instr
@@ -713,31 +657,10 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing locals argument"))?;
                         let first = (arg >> 16) as usize;
                         let second = (arg & 0xFFFF) as usize;
-                        let (first_name, second_name) = {
-                            let frame = self.frames.last().expect("frame exists");
-                            let first = frame
-                                .code
-                                .names
-                                .get(first)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone();
-                            let second = frame
-                                .code
-                                .names
-                                .get(second)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone();
-                            (first, second)
-                        };
                         let value = self.pop_value()?;
-                        if let Some(frame) = self.frames.last_mut() {
-                            frame.locals.insert(first_name, value);
-                            let value =
-                                frame.locals.get(&second_name).cloned().ok_or_else(|| {
-                                    RuntimeError::new(format!("local '{second_name}' not set"))
-                                })?;
-                            self.push_value(value);
-                        }
+                        self.store_fast_local(first, value)?;
+                        let second_value = self.load_fast_local(second)?;
+                        self.push_value(second_value);
                     }
                     Opcode::StoreFastStoreFast => {
                         let arg = instr
@@ -745,28 +668,10 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing locals argument"))?;
                         let first = (arg >> 16) as usize;
                         let second = (arg & 0xFFFF) as usize;
-                        let (first_name, second_name) = {
-                            let frame = self.frames.last().expect("frame exists");
-                            let first = frame
-                                .code
-                                .names
-                                .get(first)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone();
-                            let second = frame
-                                .code
-                                .names
-                                .get(second)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                                .clone();
-                            (first, second)
-                        };
                         let value2 = self.pop_value()?;
                         let value1 = self.pop_value()?;
-                        if let Some(frame) = self.frames.last_mut() {
-                            frame.locals.insert(first_name, value1);
-                            frame.locals.insert(second_name, value2);
-                        }
+                        self.store_fast_local(first, value1)?;
+                        self.store_fast_local(second, value2)?;
                     }
                     Opcode::StoreAttr => {
                         let idx = instr
@@ -2032,15 +1937,7 @@ impl Vm {
                         let func = self.pop_value()?;
                         match func {
                             Value::Function(func) => {
-                                let func_data = match &*func.kind() {
-                                    Object::Function(data) => data.clone(),
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attempted to call non-function",
-                                        ));
-                                    }
-                                };
-                                self.push_function_call(&func_data, args, HashMap::new())?;
+                                self.push_function_call_from_obj(&func, args, HashMap::new())?;
                             }
                             Value::BoundMethod(method) => {
                                 let method_data = match &*method.kind() {
@@ -2052,12 +1949,16 @@ impl Vm {
                                     }
                                 };
                                 match &*method_data.function.kind() {
-                                    Object::Function(data) => {
+                                    Object::Function(_) => {
                                         let mut bound_args = Vec::with_capacity(args.len() + 1);
                                         bound_args
                                             .push(self.receiver_value(&method_data.receiver)?);
                                         bound_args.extend(args);
-                                        self.push_function_call(data, bound_args, HashMap::new())?;
+                                        self.push_function_call_from_obj(
+                                            &method_data.function,
+                                            bound_args,
+                                            HashMap::new(),
+                                        )?;
                                     }
                                     Object::NativeMethod(native) => {
                                         let caller_depth = self.frames.len();
@@ -2219,15 +2120,7 @@ impl Vm {
 
                         match func {
                             Value::Function(func) => {
-                                let func_data = match &*func.kind() {
-                                    Object::Function(data) => data.clone(),
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attempted to call non-function",
-                                        ));
-                                    }
-                                };
-                                self.push_function_call(&func_data, args, kwargs)?;
+                                self.push_function_call_from_obj(&func, args, kwargs)?;
                             }
                             Value::BoundMethod(method) => {
                                 let method_data = match &*method.kind() {
@@ -2239,12 +2132,16 @@ impl Vm {
                                     }
                                 };
                                 match &*method_data.function.kind() {
-                                    Object::Function(data) => {
+                                    Object::Function(_) => {
                                         let mut bound_args = Vec::with_capacity(args.len() + 1);
                                         bound_args
                                             .push(self.receiver_value(&method_data.receiver)?);
                                         bound_args.extend(args);
-                                        self.push_function_call(data, bound_args, kwargs)?;
+                                        self.push_function_call_from_obj(
+                                            &method_data.function,
+                                            bound_args,
+                                            kwargs,
+                                        )?;
                                     }
                                     Object::NativeMethod(native) => {
                                         let caller_depth = self.frames.len();
@@ -2379,15 +2276,7 @@ impl Vm {
 
                         match func {
                             Value::Function(func) => {
-                                let func_data = match &*func.kind() {
-                                    Object::Function(data) => data.clone(),
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attempted to call non-function",
-                                        ));
-                                    }
-                                };
-                                self.push_function_call(&func_data, args, kwargs)?;
+                                self.push_function_call_from_obj(&func, args, kwargs)?;
                             }
                             Value::BoundMethod(method) => {
                                 let method_data = match &*method.kind() {
@@ -2399,12 +2288,16 @@ impl Vm {
                                     }
                                 };
                                 match &*method_data.function.kind() {
-                                    Object::Function(data) => {
+                                    Object::Function(_) => {
                                         let mut bound_args = Vec::with_capacity(args.len() + 1);
                                         bound_args
                                             .push(self.receiver_value(&method_data.receiver)?);
                                         bound_args.extend(args);
-                                        self.push_function_call(data, bound_args, kwargs)?;
+                                        self.push_function_call_from_obj(
+                                            &method_data.function,
+                                            bound_args,
+                                            kwargs,
+                                        )?;
                                     }
                                     Object::NativeMethod(native) => {
                                         let caller_depth = self.frames.len();
@@ -2506,15 +2399,7 @@ impl Vm {
                         let func = self.pop_value()?;
                         match func {
                             Value::Function(func) => {
-                                let func_data = match &*func.kind() {
-                                    Object::Function(data) => data.clone(),
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attempted to call non-function",
-                                        ));
-                                    }
-                                };
-                                self.push_function_call(&func_data, args, kwargs)?;
+                                self.push_function_call_from_obj(&func, args, kwargs)?;
                             }
                             Value::BoundMethod(method) => {
                                 let method_data = match &*method.kind() {
@@ -2526,12 +2411,16 @@ impl Vm {
                                     }
                                 };
                                 match &*method_data.function.kind() {
-                                    Object::Function(data) => {
+                                    Object::Function(_) => {
                                         let mut bound_args = Vec::with_capacity(args.len() + 1);
                                         bound_args
                                             .push(self.receiver_value(&method_data.receiver)?);
                                         bound_args.extend(args);
-                                        self.push_function_call(data, bound_args, kwargs)?;
+                                        self.push_function_call_from_obj(
+                                            &method_data.function,
+                                            bound_args,
+                                            kwargs,
+                                        )?;
                                     }
                                     Object::NativeMethod(native) => {
                                         let caller_depth = self.frames.len();
@@ -2641,15 +2530,7 @@ impl Vm {
 
                         match func {
                             Value::Function(func) => {
-                                let func_data = match &*func.kind() {
-                                    Object::Function(data) => data.clone(),
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attempted to call non-function",
-                                        ));
-                                    }
-                                };
-                                self.push_function_call(&func_data, args, kwargs)?;
+                                self.push_function_call_from_obj(&func, args, kwargs)?;
                             }
                             Value::BoundMethod(method) => {
                                 let method_data = match &*method.kind() {
@@ -2661,12 +2542,16 @@ impl Vm {
                                     }
                                 };
                                 match &*method_data.function.kind() {
-                                    Object::Function(data) => {
+                                    Object::Function(_) => {
                                         let mut bound_args = Vec::with_capacity(args.len() + 1);
                                         bound_args
                                             .push(self.receiver_value(&method_data.receiver)?);
                                         bound_args.extend(args);
-                                        self.push_function_call(data, bound_args, kwargs)?;
+                                        self.push_function_call_from_obj(
+                                            &method_data.function,
+                                            bound_args,
+                                            kwargs,
+                                        )?;
                                     }
                                     Object::NativeMethod(native) => {
                                         let caller_depth = self.frames.len();
@@ -4290,6 +4175,81 @@ impl Vm {
         }
     }
 
+    pub(super) fn load_fast_local(&mut self, idx: usize) -> Result<Value, RuntimeError> {
+        let cached = {
+            let frame = self.frames.last().expect("frame exists");
+            frame.fast_locals.get(idx).and_then(|slot| slot.clone())
+        };
+        if let Some(value) = cached {
+            return Ok(value);
+        }
+
+        let (name, value) = {
+            let frame = self.frames.last().expect("frame exists");
+            let name = frame
+                .code
+                .names
+                .get(idx)
+                .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                .clone();
+            let value = frame.locals.get(&name).cloned();
+            (name, value)
+        };
+
+        let value = value.ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
+        if let Some(frame) = self.frames.last_mut() {
+            if let Some(slot) = frame.fast_locals.get_mut(idx) {
+                *slot = Some(value.clone());
+            }
+        }
+        Ok(value)
+    }
+
+    pub(super) fn store_fast_local(&mut self, idx: usize, value: Value) -> Result<(), RuntimeError> {
+        let name = {
+            let frame = self.frames.last().expect("frame exists");
+            frame
+                .code
+                .names
+                .get(idx)
+                .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                .clone()
+        };
+        let frame = self.frames.last_mut().expect("frame exists");
+        if let Some(slot) = frame.fast_locals.get_mut(idx) {
+            *slot = Some(value.clone());
+        } else {
+            return Err(RuntimeError::new("name index out of range"));
+        }
+        if let Some(existing) = frame.locals.get_mut(&name) {
+            *existing = value;
+        } else {
+            frame.locals.insert(name, value);
+        }
+        Ok(())
+    }
+
+    pub(super) fn take_fast_local(&mut self, idx: usize) -> Result<Value, RuntimeError> {
+        let name = {
+            let frame = self.frames.last().expect("frame exists");
+            frame
+                .code
+                .names
+                .get(idx)
+                .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                .clone()
+        };
+        let frame = self.frames.last_mut().expect("frame exists");
+        let value = if let Some(slot) = frame.fast_locals.get_mut(idx) {
+            slot.take()
+        } else {
+            None
+        }
+        .or_else(|| frame.locals.remove(&name));
+        frame.locals.remove(&name);
+        value.ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))
+    }
+
     pub(super) fn ensure_frame_module_locals_dict(&mut self, frame_index: usize) -> ObjRef {
         if let Some(existing) = self.frames[frame_index].module_locals_dict.clone() {
             return existing;
@@ -4372,44 +4332,77 @@ impl Vm {
                     module_data.globals.insert(name, value);
                 }
             } else {
-                frame.locals.insert(name, value);
+                if let Some(slot_idx) = frame.code.names.iter().position(|entry| entry == &name) {
+                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                        *slot = Some(value.clone());
+                    }
+                }
+                if let Some(existing) = frame.locals.get_mut(&name) {
+                    *existing = value;
+                } else {
+                    frame.locals.insert(name, value);
+                }
             }
         }
     }
 
-    pub(super) fn push_function_call(
+    pub(super) fn push_function_call_from_obj(
         &mut self,
-        func_data: &FunctionObject,
+        func: &ObjRef,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<(), RuntimeError> {
-        let bindings = bind_arguments(func_data, &self.heap, args, kwargs)?;
-        let cells = self.build_cells(&func_data.code, func_data.closure.clone());
+        let (bindings, code, module, closure, owner_class) = {
+            let func_kind = func.kind();
+            let func_data = match &*func_kind {
+                Object::Function(data) => data,
+                _ => return Err(RuntimeError::new("attempted to call non-function")),
+            };
+            (
+                bind_arguments(func_data, &self.heap, args, kwargs)?,
+                func_data.code.clone(),
+                func_data.module.clone(),
+                func_data.closure.clone(),
+                func_data.owner_class.clone(),
+            )
+        };
+        let cells = self.build_cells(&code, closure);
+        self.push_function_frame(code, module, owner_class, bindings, cells)
+    }
+
+    fn push_function_frame(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+        bindings: BoundArguments,
+        cells: Vec<ObjRef>,
+    ) -> Result<(), RuntimeError> {
         let caller_active_exception = self
             .frames
             .last()
             .and_then(|frame| frame.active_exception.clone());
         let mut frame = Frame::new(
-            func_data.code.clone(),
-            func_data.module.clone(),
+            code.clone(),
+            module.clone(),
             false,
             false,
             cells,
-            func_data.owner_class.clone(),
+            owner_class,
         );
         frame.active_exception = caller_active_exception;
-        if is_comprehension_code(&func_data.code) {
+        if is_comprehension_code(&code) {
             if let Some(caller) = self.frames.last() {
-                if caller.return_class && caller.module.id() == func_data.module.id() {
+                if caller.return_class && caller.module.id() == module.id() {
                     frame.globals_fallback = Some(caller.function_globals.clone());
                 }
             }
         }
-        apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-        if func_data.code.is_generator {
+        apply_bindings(&mut frame, &code, bindings, &self.heap);
+        if code.is_generator {
             let generator = match self.heap.alloc_generator(GeneratorObject::new(
-                func_data.code.is_coroutine,
-                func_data.code.is_async_generator,
+                code.is_coroutine,
+                code.is_async_generator,
             )) {
                 Value::Generator(obj) => obj,
                 _ => unreachable!(),
@@ -4421,6 +4414,23 @@ impl Vm {
         }
         self.frames.push(frame);
         Ok(())
+    }
+
+    pub(super) fn push_function_call(
+        &mut self,
+        func_data: &FunctionObject,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<(), RuntimeError> {
+        let bindings = bind_arguments(func_data, &self.heap, args, kwargs)?;
+        let cells = self.build_cells(&func_data.code, func_data.closure.clone());
+        self.push_function_frame(
+            func_data.code.clone(),
+            func_data.module.clone(),
+            func_data.owner_class.clone(),
+            bindings,
+            cells,
+        )
     }
 
     pub(super) fn receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
