@@ -33,7 +33,7 @@ Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 | `_io` behavioral parity needed by stdlib | `[~]` | Core mode/newline/validation landed; full stream parity pending |
 | `_sre` parity needed for pure `re` default | `[~]` | Core surface exists; long-tail behavior still pending |
 | Hash-container parity and performance closure (`dict`/`set`/`frozenset`) | `[~]` | Backend upgraded; long-tail semantic/perf closure pending |
-| VM throughput/perf closure vs CPython for production workloads | `[~]` | Foundational CPython-style fast-locals design landed (`f_localsplus`-like slot-backed locals + lazy dict sync), plus function-call clone reduction and release LTO tuning; substantial gap remains and needs continued dispatch/allocation optimization |
+| VM throughput/perf closure vs CPython for production workloads | `[~]` | Foundational CPython-style fast-locals design landed (`f_localsplus`-like slot-backed locals + lazy dict sync), plus function-call clone reduction and release LTO tuning; substantial gap remains and requires closure of backlog items including explicit small-int/immortal strategy, string interning strategy, and `LOAD_ATTR`/method-call cache specialization (`docs/OPTIMIZATION_BACKLOG.md`) |
 | P0 engineering gate backlog (`docs/ALGO_AUDIT_BACKLOG.md`) | `[~]` | Must be fully closed before Milestone 13 completion |
 
 ## Core Interpreter Readiness

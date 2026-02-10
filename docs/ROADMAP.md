@@ -50,6 +50,11 @@ This sprint is implementation-driven from CPython internals:
 Detailed execution plan: `docs/OPTIMIZATION_PLAN.md`
 Canonical optimization status tracker: `docs/OPTIMIZATION_BACKLOG.md`
 
+Mandatory foundational optimization scope during sprint includes:
+- small-int/immortal integer strategy closure (`OPT-021`)
+- explicit string interning strategy closure (`OPT-022`)
+- `LOAD_ATTR`/method-call cache specialization (`OPT-023`)
+
 ## Active Milestone: 13 (Paused During Perf Sprint)
 
 ### Milestone 13 Exit Criteria

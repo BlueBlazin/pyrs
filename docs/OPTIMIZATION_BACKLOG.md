@@ -36,6 +36,12 @@ Last updated: 2026-02-10
   - `/Users/$USER/Downloads/Python-3.14.3/Include/cpython/abstract.h`
 - Integer model:
   - `/Users/$USER/Downloads/Python-3.14.3/Objects/longobject.c`
+- Unicode/interning model:
+  - `/Users/$USER/Downloads/Python-3.14.3/Objects/unicodeobject.c`
+  - `/Users/$USER/Downloads/Python-3.14.3/Include/internal/pycore_unicodeobject.h`
+- Dict/set internals:
+  - `/Users/$USER/Downloads/Python-3.14.3/Objects/dictobject.c`
+  - `/Users/$USER/Downloads/Python-3.14.3/Objects/setobject.c`
 
 ## Backlog
 
@@ -61,6 +67,12 @@ Last updated: 2026-02-10
 | `OPT-018` | P1 | toolchain | Evaluate local `target-cpu=native` measurement profile | N/A (toolchain) | `[ ]` |
 | `OPT-019` | P2 | toolchain | Evaluate PGO/BOLT branch for release artifacts | CPython PGO precedent | `[ ]` |
 | `OPT-020` | P0 | validation | Keep benchmark + flamegraph regression gate for each optimization wave | N/A | `[~]` |
+| `OPT-021` | P0 | integer model | CPython small-int/immortal integer strategy review and implementation decision (`[-5, 256]` cache equivalent or explicit immediate-int justification with parity/perf proof) | `longobject.c` | `[!]` |
+| `OPT-022` | P0 | unicode | Implement explicit string interning strategy for identifiers/attribute names/module globals (and wire compiler/import call sites) | `unicodeobject.c`, `pycore_unicodeobject.h` | `[ ]` |
+| `OPT-023` | P0 | dispatch | Add `LOAD_ATTR`/method-call inline cache specialization path (type/version guarded) | `ceval.c`, `generated_cases.c.h` | `[ ]` |
+| `OPT-024` | P1 | calls | Extend call specialization beyond `CALL_FUNCTION` (`CALL_KW`, bound-method calls, builtin/vectorcall analog path) | `call.c`, `ceval.c` | `[ ]` |
+| `OPT-025` | P1 | containers | Dict/set probe/load-factor/resizing tuning against CPython behavior (not just correctness) | `dictobject.c`, `setobject.c` | `[ ]` |
+| `OPT-026` | P1 | allocations | Add allocator/freelist strategy for hot temporary objects and call argument buffers | `frame.c`, `dictobject.c`, `call.c` | `[ ]` |
 
 ## Rules For This Backlog
 

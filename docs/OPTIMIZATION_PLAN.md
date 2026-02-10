@@ -6,6 +6,17 @@ This document is the active execution plan for the performance sprint.
 During this sprint, performance work takes precedence over Milestone 13 functional closure.
 The permanent optimization status ledger is `docs/OPTIMIZATION_BACKLOG.md`.
 
+## Gap Audit (2026-02-10)
+
+The previous optimization plan under-specified several foundational CPython performance surfaces.
+These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
+- `OPT-021` small-int/immortal integer strategy
+- `OPT-022` explicit string interning strategy
+- `OPT-023` `LOAD_ATTR`/method-call inline cache specialization
+- `OPT-024` broader call-path specialization (`CALL_KW`, bound-method, builtin/vectorcall analogs)
+- `OPT-025` dict/set probing/resizing performance tuning
+- `OPT-026` allocator/freelist strategy for hot temporaries
+
 Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
 - Target: `< 0.10s` user-time
@@ -48,6 +59,8 @@ Primary benchmark gate:
 1. Function frame setup overhead (`push_simple_positional_function_frame`, `Frame::new`).
 2. Name hashing during binding/global lookup (`hashbrown::map::make_hash`).
 3. Generic opcode dispatch overhead in the eval loop.
+4. Attribute/method lookup overhead (missing `LOAD_ATTR` specialization).
+5. Repeated string allocation/hash work for identifiers/attribute names (missing intern pipeline).
 
 ## Execution Plan
 
@@ -65,12 +78,15 @@ Primary benchmark gate:
    - sub-int
 2. Add cached global/builtin lookup path for repeated `LOAD_GLOBAL` names.
 3. Use profiler-driven opcode frequency data to choose first specialization set.
+4. Add `LOAD_ATTR` + method-call inline cache specialization with guarded invalidation.
 
 ### Phase 3: Data/Lookup Fast Paths
 
 1. Reduce hash-map churn in local/global lookups on hot code paths.
 2. Introduce compact per-frame lookup caches where semantics permit.
 3. Validate against CPython behavior for invalidation and shadowing rules.
+4. Add explicit string interning policy (identifier names, attribute names, module global keys).
+5. Land small-int/immortal integer strategy decision and implementation with parity/perf proof.
 
 ### Phase 4: Toolchain and Build Optimizations
 
