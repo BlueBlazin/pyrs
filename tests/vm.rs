@@ -8941,6 +8941,68 @@ ok = (a == 1 and b == 2 and done)
 }
 
 #[test]
+fn unittest_mock_open_callable_path_works() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("unittest-mock-open".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import unittest.mock as mock
+m = mock.mock_open(read_data="hello")
+h = m()
+ok = (h is not None and h.read() == "hello")
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn unittest mock_open regression thread");
+    handle
+        .join()
+        .expect("unittest mock_open regression thread should complete");
+}
+
+#[test]
+fn tempfile_namedtemporaryfile_unexpected_error_path_closes_file() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("tempfile-unexpected-error".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import os
+import tempfile
+from unittest import mock
+dir = tempfile.mkdtemp()
+raised = False
+with mock.patch("tempfile._TemporaryFileWrapper") as mock_ntf, mock.patch("io.open", mock.mock_open()) as mock_open:
+    mock_ntf.side_effect = KeyboardInterrupt()
+    try:
+        tempfile.NamedTemporaryFile(dir=dir)
+    except KeyboardInterrupt:
+        raised = True
+ok = raised and os.listdir(dir) == []
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn tempfile unexpected-error regression thread");
+    handle
+        .join()
+        .expect("tempfile unexpected-error regression thread should complete");
+}
+
+#[test]
 fn mktemp_style_temp_object_finalizer_runs_before_rmdir() {
     let Some(lib) = cpython_lib_path() else {
         return;

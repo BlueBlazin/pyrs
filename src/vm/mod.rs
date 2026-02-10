@@ -11582,6 +11582,7 @@ impl Vm {
                 }
             }
             "__doc__" => Ok(Value::None),
+            "__call__" => Ok(Value::Function(func.clone())),
             "__defaults__" => {
                 let defaults = {
                     let func_ref = func.kind();
