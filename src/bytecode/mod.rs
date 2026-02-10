@@ -6,7 +6,7 @@ pub mod pyc;
 
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Opcode {
     Nop,
     LoadConst,
@@ -112,7 +112,7 @@ pub enum Opcode {
     ReturnValue,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Instruction {
     pub opcode: Opcode,
     pub arg: Option<u32>,

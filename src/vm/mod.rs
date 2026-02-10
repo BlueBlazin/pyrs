@@ -1,6 +1,5 @@
 //! Bytecode virtual machine (minimal subset).
 
-mod containers;
 mod builtins_collections;
 mod builtins_core;
 mod builtins_import;
@@ -8,6 +7,7 @@ mod builtins_io;
 mod builtins_numeric_time;
 mod builtins_os;
 mod builtins_system_misc;
+mod containers;
 mod ops;
 mod stdlib;
 mod vm_bootstrap_import;
@@ -32,8 +32,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::containers::{
@@ -52,10 +52,10 @@ use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::parser;
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
-    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
-    NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError, SuperObject, Value,
-    format_repr, format_value,
+    format_repr, format_value, BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject,
+    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
+    ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
+    SuperObject, Value,
 };
 
 #[derive(Debug, Clone)]
@@ -287,6 +287,10 @@ struct OneArgCallSiteCacheEntry {
     func_id: u64,
     func_epoch: u64,
     hot_path: OneArgCallHotPath,
+    cached_code: Option<Rc<CodeObject>>,
+    cached_module: Option<ObjRef>,
+    cached_owner_class: Option<ObjRef>,
+    cached_closure: Option<Vec<ObjRef>>,
 }
 
 #[derive(Clone)]
@@ -298,6 +302,9 @@ struct LoadGlobalSiteCacheEntry {
     fused_local_idx: Option<u32>,
     fused_const_idx: Option<u32>,
     fused_direct_one_arg_no_cells: bool,
+    fused_direct_code: Option<Rc<CodeObject>>,
+    fused_direct_module: Option<ObjRef>,
+    fused_direct_owner_class: Option<ObjRef>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -498,12 +505,6 @@ impl Frame {
         self.function_globals_version = module_globals_version(&module);
         self.function_globals = module;
         self.owner_class = owner_class;
-        self.is_module = false;
-        self.return_module = false;
-        self.discard_result = false;
-        self.return_class = false;
-        self.expect_none_return = false;
-        self.generator_awaiting_resume_value = false;
         self.simple_one_arg_no_cells = true;
 
         if !same_code {
@@ -523,7 +524,6 @@ impl Frame {
             self.fast_locals.fill(None);
         }
     }
-
 }
 
 pub struct Vm {
@@ -2716,7 +2716,11 @@ fn erfc_approx(x: f64) -> f64 {
                             + t * (-1.135_203_98
                                 + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
     let ans = t * poly.exp();
-    if x >= 0.0 { ans } else { 2.0 - ans }
+    if x >= 0.0 {
+        ans
+    } else {
+        2.0 - ans
+    }
 }
 
 fn binary_operator<F>(
@@ -3927,7 +3931,11 @@ fn class_matches(class: &ReCharClass, ch: char) -> bool {
             code >= start_code && code <= end_code
         });
     }
-    if class.negated { !matched } else { matched }
+    if class.negated {
+        !matched
+    } else {
+        matched
+    }
 }
 
 fn atom_matches_char(atom: &ReAtom, ch: char) -> bool {

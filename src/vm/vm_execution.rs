@@ -139,7 +139,7 @@ impl Vm {
             let instr = {
                 let frame = self.frames.last_mut().expect("frame exists");
                 frame.last_ip = frame.ip;
-                let instr = frame.code.instructions[frame.ip].clone();
+                let instr = frame.code.instructions[frame.ip];
                 frame.ip += 1;
                 instr
             };
@@ -293,6 +293,8 @@ impl Vm {
                         let mut value = None;
                         let mut fused_candidate: Option<(usize, usize)> = None;
                         let mut fused_direct_one_arg_no_cells = false;
+                        let mut fused_direct_cached: Option<(Rc<CodeObject>, ObjRef, Option<ObjRef>)> =
+                            None;
                         if let Some(frame) = self.frames.last() {
                             if let Some(entry) = frame.load_global_inline_cache.get(site_index) {
                                 if let Some(cached) = entry {
@@ -309,6 +311,16 @@ impl Vm {
                                         }
                                         fused_direct_one_arg_no_cells =
                                             cached.fused_direct_one_arg_no_cells;
+                                        if let (Some(code), Some(module)) = (
+                                            cached.fused_direct_code.clone(),
+                                            cached.fused_direct_module.clone(),
+                                        ) {
+                                            fused_direct_cached = Some((
+                                                code,
+                                                module,
+                                                cached.fused_direct_owner_class.clone(),
+                                            ));
+                                        }
                                     }
                                 }
                             }
@@ -364,13 +376,27 @@ impl Vm {
                             };
                             if cacheable {
                                 if fused_candidate.is_some() {
+                                    fused_direct_cached =
+                                        self.fused_direct_one_arg_no_cells_metadata(&value);
                                     fused_direct_one_arg_no_cells =
-                                        self.is_fused_direct_one_arg_no_cells(&value);
+                                        fused_direct_cached.is_some();
                                 }
                                 if let Some(frame) = self.frames.last_mut() {
                                     if let Some(slot) =
                                         frame.load_global_inline_cache.get_mut(site_index)
                                     {
+                                        let (
+                                            fused_direct_code,
+                                            fused_direct_module,
+                                            fused_direct_owner_class,
+                                        ) = match &fused_direct_cached {
+                                            Some((code, module, owner_class)) => (
+                                                Some(code.clone()),
+                                                Some(module.clone()),
+                                                owner_class.clone(),
+                                            ),
+                                            None => (None, None, None),
+                                        };
                                         *slot = Some(LoadGlobalSiteCacheEntry {
                                             globals_module_id,
                                             globals_version,
@@ -383,6 +409,9 @@ impl Vm {
                                                 .as_ref()
                                                 .map(|(_, const_idx)| *const_idx as u32),
                                             fused_direct_one_arg_no_cells,
+                                            fused_direct_code,
+                                            fused_direct_module,
+                                            fused_direct_owner_class,
                                         });
                                     }
                                 }
@@ -403,9 +432,17 @@ impl Vm {
                                         self.fused_fast_local_sub_const_arg(local_idx, const_idx)?;
                                     if let Value::Function(func_obj) = &value {
                                         if fused_direct_one_arg_no_cells {
-                                            self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
-                                                func_obj, arg,
-                                            )?;
+                                            if let Some((code, module, owner_class)) =
+                                                fused_direct_cached.clone()
+                                            {
+                                                self.push_simple_positional_function_frame_one_arg_no_cells(
+                                                    code, module, owner_class, arg,
+                                                )?;
+                                            } else {
+                                                self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
+                                                    func_obj, arg,
+                                                )?;
+                                            }
                                         } else {
                                             self.push_function_call_one_arg_from_obj(func_obj, arg)?;
                                         }
@@ -4978,23 +5015,36 @@ impl Vm {
     }
 
     #[inline]
-    fn is_fused_direct_one_arg_no_cells(&self, value: &Value) -> bool {
+    fn fused_direct_one_arg_no_cells_metadata(
+        &self,
+        value: &Value,
+    ) -> Option<(Rc<CodeObject>, ObjRef, Option<ObjRef>)> {
         let func = match value {
             Value::Function(func) => func,
-            _ => return false,
+            _ => return None,
         };
         let func_kind = func.kind();
         let func_data = match &*func_kind {
             Object::Function(data) => data,
-            _ => return false,
+            _ => return None,
         };
-        let code = func_data.code.clone();
-        func_data.plain_positional_call_arity == Some(1)
-            && code.plain_positional_arg0_cell.is_none()
-            && code.cellvars.is_empty()
-            && func_data.closure.is_empty()
-            && !code.is_generator
-            && !code.is_comprehension
+        let code = &func_data.code;
+        if func_data.plain_positional_call_arity != Some(1) {
+            return None;
+        }
+        if code.plain_positional_arg0_cell.is_some()
+            || !code.cellvars.is_empty()
+            || !func_data.closure.is_empty()
+            || code.is_generator
+            || code.is_comprehension
+        {
+            return None;
+        }
+        Some((
+            func_data.code.clone(),
+            func_data.module.clone(),
+            func_data.owner_class.clone(),
+        ))
     }
 
     #[inline]
@@ -5156,11 +5206,12 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         let site_index = self.current_site_index();
         let mut clear_cached = false;
-        let cached_hot = self
+        let cached_entry = self
             .frames
             .last()
             .and_then(|frame| frame.one_arg_inline_cache.get(site_index))
             .and_then(|slot| slot.as_ref())
+            .cloned()
             .and_then(|entry| {
                 if entry.func_id != func.id() {
                     clear_cached = true;
@@ -5177,15 +5228,46 @@ impl Vm {
                     clear_cached = true;
                     return None;
                 }
-                Some(entry.hot_path)
+                Some(entry)
             });
-        if let Some(hot_path) = cached_hot {
+        if let Some(entry) = cached_entry {
+            let OneArgCallSiteCacheEntry {
+                hot_path,
+                cached_code,
+                cached_module,
+                cached_owner_class,
+                cached_closure,
+                ..
+            } = entry;
             return match hot_path {
                 OneArgCallHotPath::SimplePositionalNoCells => {
-                    self.push_simple_positional_function_frame_one_arg_no_cells_from_func(func, arg0)
+                    if let (Some(code), Some(module)) = (cached_code, cached_module) {
+                        self.push_simple_positional_function_frame_one_arg_no_cells(
+                            code,
+                            module,
+                            cached_owner_class,
+                            arg0,
+                        )
+                    } else {
+                        self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
+                            func, arg0,
+                        )
+                    }
                 }
                 OneArgCallHotPath::SimplePositional => {
-                    self.push_simple_positional_function_frame_one_arg_from_func(func, arg0)
+                    if let (Some(code), Some(module), Some(closure)) =
+                        (cached_code, cached_module, cached_closure)
+                    {
+                        self.push_simple_positional_function_frame_one_arg(
+                            code,
+                            module,
+                            cached_owner_class,
+                            closure,
+                            arg0,
+                        )
+                    } else {
+                        self.push_simple_positional_function_frame_one_arg_from_func(func, arg0)
+                    }
                 }
                 OneArgCallHotPath::Generic => {
                     self.push_function_call_from_obj(func, vec![arg0], HashMap::new())
@@ -5235,6 +5317,14 @@ impl Vm {
                         } else {
                             OneArgCallHotPath::SimplePositional
                         },
+                        cached_code: Some(code.clone()),
+                        cached_module: Some(module.clone()),
+                        cached_owner_class: owner_class.clone(),
+                        cached_closure: if no_cells_hot {
+                            None
+                        } else {
+                            Some(closure.clone())
+                        },
                     });
                 }
             }
@@ -5260,6 +5350,10 @@ impl Vm {
                     func_id: func.id(),
                     func_epoch,
                     hot_path: OneArgCallHotPath::Generic,
+                    cached_code: None,
+                    cached_module: None,
+                    cached_owner_class: None,
+                    cached_closure: None,
                 });
             }
         }

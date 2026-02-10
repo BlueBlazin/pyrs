@@ -32,6 +32,9 @@ Primary benchmark gate:
 3. Every optimization wave should map explicitly to CPython internals.
 4. Item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint.
 
+Canonical profiler command for this sprint:
+- `mkdir -p perf && CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin pyrs --output perf/fib35_after_single_slot_fill.svg -- -S -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(35))"`
+
 ## CPython Source References
 
 - Eval loop and adaptive dispatch:
