@@ -358,60 +358,10 @@ impl Frame {
         }
     }
 
-    fn reset_for_call(
-        &mut self,
-        code: Rc<CodeObject>,
-        module: ObjRef,
-        is_module: bool,
-        return_module: bool,
-        cells: Vec<ObjRef>,
-        owner_class: Option<ObjRef>,
-    ) {
-        let fast_locals_len = code.fast_local_count;
-        self.code = code;
-        self.ip = 0;
-        self.last_ip = 0;
-        self.stack.clear();
-        self.locals.clear();
-        if self.fast_locals.len() < fast_locals_len {
-            self.fast_locals.resize_with(fast_locals_len, || None);
-        } else {
-            self.fast_locals.truncate(fast_locals_len);
-        }
-        for slot in &mut self.fast_locals {
-            *slot = None;
-        }
-        self.module_locals_dict = None;
-        self.cells = cells;
-        self.module = module.clone();
-        self.function_globals = module;
-        self.globals_fallback = None;
-        self.locals_fallback = None;
-        self.owner_class = owner_class;
-        self.is_module = is_module;
-        self.return_module = return_module;
-        self.discard_result = false;
-        self.return_instance = None;
-        self.return_class = false;
-        self.class_bases.clear();
-        self.class_metaclass = None;
-        self.class_keywords.clear();
-        self.blocks.clear();
-        self.active_exception = None;
-        self.expect_none_return = false;
-        self.generator_owner = None;
-        self.generator_awaiting_resume_value = false;
-        self.generator_resume_value = None;
-        self.generator_pending_throw = None;
-        self.generator_resume_kind = None;
-        self.yield_from_iter = None;
-    }
-
 }
 
 pub struct Vm {
     frames: Vec<Frame>,
-    frame_pool: Vec<Frame>,
     builtins: HashMap<String, Value>,
     modules: HashMap<String, ObjRef>,
     main_module: ObjRef,
@@ -472,7 +422,6 @@ impl Vm {
 
         let mut vm = Self {
             frames: Vec::with_capacity(128),
-            frame_pool: Vec::with_capacity(128),
             builtins: HashMap::new(),
             modules,
             main_module,
@@ -536,20 +485,10 @@ impl Vm {
         cells: Vec<ObjRef>,
         owner_class: Option<ObjRef>,
     ) -> Frame {
-        if let Some(mut frame) = self.frame_pool.pop() {
-            frame.reset_for_call(code, module, is_module, return_module, cells, owner_class);
-            frame
-        } else {
-            Frame::new(code, module, is_module, return_module, cells, owner_class)
-        }
+        Frame::new(code, module, is_module, return_module, cells, owner_class)
     }
 
-    fn recycle_frame(&mut self, frame: Frame) {
-        // Keep the pool bounded to avoid retaining unbounded frame memory.
-        if self.frame_pool.len() >= 256 {
-            return;
-        }
-        self.frame_pool.push(frame);
+    fn recycle_frame(&mut self, _frame: Frame) {
     }
 
     pub fn get_global(&self, name: &str) -> Option<Value> {

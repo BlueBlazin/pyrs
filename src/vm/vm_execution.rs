@@ -166,7 +166,18 @@ impl Vm {
                             .arg
                             .ok_or_else(|| RuntimeError::new("missing local argument"))?
                             as usize;
-                        let value = self.load_fast_local(idx)?;
+                        let value = {
+                            let frame = self.frames.last().expect("frame exists");
+                            frame
+                                .fast_locals
+                                .get(idx)
+                                .and_then(|slot| slot.as_ref())
+                                .cloned()
+                        };
+                        let value = match value {
+                            Some(value) => value,
+                            None => self.load_fast_local(idx)?,
+                        };
                         self.push_value(value);
                     }
                     Opcode::LoadDeref => {
@@ -191,8 +202,29 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing locals argument"))?;
                         let first = (arg >> 16) as usize;
                         let second = (arg & 0xFFFF) as usize;
-                        let first_value = self.load_fast_local(first)?;
-                        let second_value = self.load_fast_local(second)?;
+                        let (first_value, second_value) = {
+                            let frame = self.frames.last().expect("frame exists");
+                            (
+                                frame
+                                    .fast_locals
+                                    .get(first)
+                                    .and_then(|slot| slot.as_ref())
+                                    .cloned(),
+                                frame
+                                    .fast_locals
+                                    .get(second)
+                                    .and_then(|slot| slot.as_ref())
+                                    .cloned(),
+                            )
+                        };
+                        let first_value = match first_value {
+                            Some(value) => value,
+                            None => self.load_fast_local(first)?,
+                        };
+                        let second_value = match second_value {
+                            Some(value) => value,
+                            None => self.load_fast_local(second)?,
+                        };
                         self.push_value(first_value);
                         self.push_value(second_value);
                     }
@@ -883,14 +915,48 @@ impl Vm {
                         }
                     }
                     Opcode::BinaryAdd => {
-                        let right = self.pop_value()?;
-                        let left = self.pop_value()?;
-                        self.push_value(add_values(left, right, &self.heap)?);
+                        let (left, right) = {
+                            let frame = self.frames.last_mut().expect("frame exists");
+                            let right = frame
+                                .stack
+                                .pop()
+                                .ok_or_else(|| RuntimeError::new("stack underflow (BinaryAdd rhs)"))?;
+                            let left = frame
+                                .stack
+                                .pop()
+                                .ok_or_else(|| RuntimeError::new("stack underflow (BinaryAdd lhs)"))?;
+                            (left, right)
+                        };
+                        let value = match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => match a.checked_add(b) {
+                                Some(sum) => Value::Int(sum),
+                                None => add_values(Value::Int(a), Value::Int(b), &self.heap)?,
+                            },
+                            (left, right) => add_values(left, right, &self.heap)?,
+                        };
+                        self.push_value(value);
                     }
                     Opcode::BinarySub => {
-                        let right = self.pop_value()?;
-                        let left = self.pop_value()?;
-                        self.push_value(sub_values(left, right, &self.heap)?);
+                        let (left, right) = {
+                            let frame = self.frames.last_mut().expect("frame exists");
+                            let right = frame
+                                .stack
+                                .pop()
+                                .ok_or_else(|| RuntimeError::new("stack underflow (BinarySub rhs)"))?;
+                            let left = frame
+                                .stack
+                                .pop()
+                                .ok_or_else(|| RuntimeError::new("stack underflow (BinarySub lhs)"))?;
+                            (left, right)
+                        };
+                        let value = match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => match a.checked_sub(b) {
+                                Some(diff) => Value::Int(diff),
+                                None => sub_values(Value::Int(a), Value::Int(b), &self.heap)?,
+                            },
+                            (left, right) => sub_values(left, right, &self.heap)?,
+                        };
+                        self.push_value(value);
                     }
                     Opcode::BinaryMul => {
                         let right = self.pop_value()?;
@@ -961,9 +1027,22 @@ impl Vm {
                         self.push_value(result);
                     }
                     Opcode::CompareLt => {
-                        let right = self.pop_value()?;
-                        let left = self.pop_value()?;
-                        let result = self.compare_lt_runtime(left, right)?;
+                        let (left, right) = {
+                            let frame = self.frames.last_mut().expect("frame exists");
+                            let right = frame
+                                .stack
+                                .pop()
+                                .ok_or_else(|| RuntimeError::new("stack underflow (CompareLt rhs)"))?;
+                            let left = frame
+                                .stack
+                                .pop()
+                                .ok_or_else(|| RuntimeError::new("stack underflow (CompareLt lhs)"))?;
+                            (left, right)
+                        };
+                        let result = match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
+                            (left, right) => self.compare_lt_runtime(left, right)?,
+                        };
                         self.push_value(result);
                     }
                     Opcode::CompareLe => {
@@ -1958,8 +2037,18 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing call argument"))?
                             as usize;
                         if argc == 1 {
-                            let arg0 = self.pop_value()?;
-                            let func = self.pop_value()?;
+                            let (func, arg0) = {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                let arg0 = frame
+                                    .stack
+                                    .pop()
+                                    .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction arg0)"))?;
+                                let func = frame
+                                    .stack
+                                    .pop()
+                                    .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction func)"))?;
+                                (func, arg0)
+                            };
                             match func {
                                 Value::Function(func_obj) => {
                                     self.push_function_call_one_arg_from_obj(&func_obj, arg0)?;
