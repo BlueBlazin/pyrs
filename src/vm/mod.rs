@@ -84,6 +84,13 @@ const NAMESPACE_LOADER: &str = "pyrs.NamespaceLoader";
 const BUILTIN_MODULE_LOADER: &str = "pyrs.BuiltinLoader";
 const PURE_STDLIB_JSON_MODULES: &[&str] = &["json", "json.decoder", "json.scanner"];
 const PURE_STDLIB_PICKLE_MODULES: &[&str] = &["pickle", "pickletools", "copyreg"];
+const PURE_STDLIB_RE_MODULES: &[&str] = &[
+    "re",
+    "re._compiler",
+    "re._constants",
+    "re._parser",
+    "re._casefix",
+];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const MT_N: usize = 624;
 const MT_M: usize = 397;
@@ -373,6 +380,7 @@ pub struct Vm {
     atexit_handlers: Vec<AtexitHandler>,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
+    prefer_pure_re_when_available: bool,
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
 }
@@ -431,6 +439,7 @@ impl Vm {
             atexit_handlers: Vec::new(),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
+            prefer_pure_re_when_available: false,
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
         };
@@ -508,6 +517,11 @@ impl Vm {
 
     pub fn enable_pure_pickle_preference(&mut self) {
         self.prefer_pure_pickle_when_available = true;
+        self.maybe_prefer_cpython_pure_stdlib_modules();
+    }
+
+    pub fn enable_pure_re_preference(&mut self) {
+        self.prefer_pure_re_when_available = true;
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }
 
@@ -2581,6 +2595,25 @@ impl Vm {
                 ("QUOTE_NONE", Value::Int(3)),
                 ("QUOTE_STRINGS", Value::Int(4)),
                 ("QUOTE_NOTNULL", Value::Int(5)),
+            ],
+        );
+        // CPython accelerator shim for Lib/re package.
+        // Reference: Python-3.14.3 Modules/_sre/sre.c and Lib/re/_compiler.py.
+        self.install_builtin_module(
+            "_sre",
+            &[
+                ("compile", BuiltinFunction::SreCompile),
+                ("template", BuiltinFunction::SreTemplate),
+                ("ascii_iscased", BuiltinFunction::SreAsciiIsCased),
+                ("ascii_tolower", BuiltinFunction::SreAsciiToLower),
+                ("unicode_iscased", BuiltinFunction::SreUnicodeIsCased),
+                ("unicode_tolower", BuiltinFunction::SreUnicodeToLower),
+            ],
+            vec![
+                ("MAGIC", Value::Int(20230612)),
+                ("CODESIZE", Value::Int(4)),
+                ("MAXREPEAT", Value::Int(i32::MAX as i64)),
+                ("MAXGROUPS", Value::Int(i32::MAX as i64)),
             ],
         );
         self.install_builtin_module(
@@ -5280,6 +5313,15 @@ impl Vm {
                 }
             }
         }
+        if self.prefer_pure_re_when_available {
+            for module_name in PURE_STDLIB_RE_MODULES {
+                if self.has_preferred_filesystem_module(module_name)
+                    && self.module_preference_requires_unload(module_name)
+                {
+                    self.unregister_module(module_name);
+                }
+            }
+        }
         for module_name in PURE_STDLIB_PATHLIB_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
@@ -6232,13 +6274,20 @@ impl Vm {
             "json" | "json.decoder" | "json.scanner" | "json.encoder" | "_json"
         );
         let is_pickle_stack = matches!(name, "pickle" | "pickletools" | "copyreg");
-        if !is_json_stack && !is_pickle_stack {
+        let is_re_stack = matches!(
+            name,
+            "re" | "re._compiler" | "re._constants" | "re._parser" | "re._casefix"
+        );
+        if !is_json_stack && !is_pickle_stack && !is_re_stack {
             return false;
         }
         if is_json_stack && !self.prefer_pure_json_when_available {
             return false;
         }
         if is_pickle_stack && !self.prefer_pure_pickle_when_available {
+            return false;
+        }
+        if is_re_stack && !self.prefer_pure_re_when_available {
             return false;
         }
         if !self.has_preferred_filesystem_module(name) {
@@ -11095,6 +11144,12 @@ impl Vm {
             BuiltinFunction::JsonScannerPyMakeScanner => "py_make_scanner".to_string(),
             BuiltinFunction::JsonScannerScanOnce => "scan_once".to_string(),
             BuiltinFunction::JsonDecoderScanString => "scanstring".to_string(),
+            BuiltinFunction::SreCompile => "compile".to_string(),
+            BuiltinFunction::SreTemplate => "template".to_string(),
+            BuiltinFunction::SreAsciiIsCased => "ascii_iscased".to_string(),
+            BuiltinFunction::SreAsciiToLower => "ascii_tolower".to_string(),
+            BuiltinFunction::SreUnicodeIsCased => "unicode_iscased".to_string(),
+            BuiltinFunction::SreUnicodeToLower => "unicode_tolower".to_string(),
             BuiltinFunction::OperatorContains => "contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_runtime_name(builtin),
@@ -11116,6 +11171,12 @@ impl Vm {
             BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner.py_make_scanner".to_string(),
             BuiltinFunction::JsonScannerScanOnce => "_json.scan_once".to_string(),
             BuiltinFunction::JsonDecoderScanString => "_json.scanstring".to_string(),
+            BuiltinFunction::SreCompile => "_sre.compile".to_string(),
+            BuiltinFunction::SreTemplate => "_sre.template".to_string(),
+            BuiltinFunction::SreAsciiIsCased => "_sre.ascii_iscased".to_string(),
+            BuiltinFunction::SreAsciiToLower => "_sre.ascii_tolower".to_string(),
+            BuiltinFunction::SreUnicodeIsCased => "_sre.unicode_iscased".to_string(),
+            BuiltinFunction::SreUnicodeToLower => "_sre.unicode_tolower".to_string(),
             BuiltinFunction::OperatorContains => "operator.contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_attribute_name(builtin),
@@ -11195,6 +11256,12 @@ impl Vm {
             | BuiltinFunction::JsonEncodeBaseStringAscii
             | BuiltinFunction::JsonScannerScanOnce
             | BuiltinFunction::JsonDecoderScanString => "_json",
+            BuiltinFunction::SreCompile
+            | BuiltinFunction::SreTemplate
+            | BuiltinFunction::SreAsciiIsCased
+            | BuiltinFunction::SreAsciiToLower
+            | BuiltinFunction::SreUnicodeIsCased
+            | BuiltinFunction::SreUnicodeToLower => "_sre",
             BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner",
             BuiltinFunction::OperatorContains => "operator",
             BuiltinFunction::FunctoolsReduce => "functools",
@@ -12656,9 +12723,11 @@ impl Vm {
                 } else {
                 let class_value = Value::Class(class.clone());
                 let mut instance = self.alloc_instance_for_class(&class);
+                let mut used_custom_new = false;
                 if let Some(new_callable) = class_attr_lookup(&class, "__new__").filter(
                     |callable| !matches!(callable, Value::Builtin(BuiltinFunction::ObjectNew)),
                 ) {
+                    used_custom_new = true;
                     let mut new_args = Vec::with_capacity(args.len() + 1);
                     new_args.push(class_value.clone());
                     new_args.extend(args.clone());
@@ -12723,7 +12792,8 @@ impl Vm {
                         }
                     }
                 } else {
-                    if let Some(fields) = self.class_namedtuple_fields(&class) {
+                    if !used_custom_new {
+                        if let Some(fields) = self.class_namedtuple_fields(&class) {
                         let mut bound_values: Vec<Option<Value>> = vec![None; fields.len()];
                         if args.len() > fields.len() {
                             return Err(RuntimeError::new("namedtuple() argument count mismatch"));
@@ -12914,6 +12984,7 @@ impl Vm {
                         }
                     } else if !kwargs.is_empty() || !args.is_empty() {
                         return Err(RuntimeError::new("class constructor takes no arguments"));
+                    }
                     }
                     self.push_value(Value::Instance(instance));
                     false
@@ -13874,6 +13945,23 @@ impl Vm {
                 }
                 return Ok(AttrAccessOutcome::Value(attr));
             }
+        }
+
+        // Synthetic builtin base classes used by class inheritance currently
+        // may not carry explicit `__new__`/`__init__` attrs in their class dict.
+        // CPython still resolves these through `super(...)` in paths like
+        // `super(Subclass, cls).__new__(cls, value)`.
+        if attr_name == "__new__" {
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::ObjectNew,
+                object_type,
+            )));
+        }
+        if attr_name == "__init__" {
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::ObjectInit,
+                receiver,
+            )));
         }
 
         Err(RuntimeError::new(format!(
@@ -18241,6 +18329,16 @@ impl Vm {
             BuiltinFunction::ReFullMatch => self.builtin_re_fullmatch(args, kwargs),
             BuiltinFunction::ReCompile => self.builtin_re_compile(args, kwargs),
             BuiltinFunction::ReEscape => self.builtin_re_escape(args, kwargs),
+            BuiltinFunction::SreCompile => self.builtin_sre_compile(args, kwargs),
+            BuiltinFunction::SreTemplate => self.builtin_sre_template(args, kwargs),
+            BuiltinFunction::SreAsciiIsCased => self.builtin_sre_ascii_iscased(args, kwargs),
+            BuiltinFunction::SreAsciiToLower => self.builtin_sre_ascii_tolower(args, kwargs),
+            BuiltinFunction::SreUnicodeIsCased => {
+                self.builtin_sre_unicode_iscased(args, kwargs)
+            }
+            BuiltinFunction::SreUnicodeToLower => {
+                self.builtin_sre_unicode_tolower(args, kwargs)
+            }
             BuiltinFunction::RePatternFindAll => self.builtin_re_pattern_findall(args, kwargs),
             BuiltinFunction::RePatternFindIter => self.builtin_re_pattern_finditer(args, kwargs),
             BuiltinFunction::OperatorAdd => self.builtin_operator_add(args, kwargs),

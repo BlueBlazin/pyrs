@@ -2016,7 +2016,48 @@ ok = norm.endswith('/json/__init__.py') and ('/shims/' not in norm) and hasattr(
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
+    vm.enable_pure_json_preference();
     vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_module_exposes_sre_surface_and_basic_match_works() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping re module surface test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import re
+import _sre
+m = re.match(r'a+', 'aaab')
+ok = (
+    hasattr(_sre, 'compile')
+    and hasattr(_sre, 'ascii_tolower')
+    and m is not None
+    and m.group(0) == 'aaa'
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn int_subclass_custom_new_skips_double_builtin_initialization() {
+    let source = r#"class X(int):
+    def __new__(cls, value, name):
+        return super(X, cls).__new__(cls, value)
+
+obj = X(5, 'tag')
+ok = isinstance(obj, X) and (obj == 5)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }

@@ -463,6 +463,144 @@ impl Vm {
         Ok(Value::Module(compiled))
     }
 
+    pub(in crate::vm) fn builtin_sre_compile(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 6 {
+            return Err(RuntimeError::new("_sre.compile() expects 6 arguments"));
+        }
+        let pattern = args[0].clone();
+        let flags = value_to_int(args[1].clone())
+            .map_err(|_| RuntimeError::new("an integer is required"))?;
+        let code_seq = match &args[2] {
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("compile() code must be list of integers")),
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("compile() code must be list of integers")),
+            },
+            _ => return Err(RuntimeError::new("compile() code must be list of integers")),
+        };
+        for value in code_seq {
+            let code = value_to_int(value).map_err(|_| RuntimeError::new("an integer is required"))?;
+            if !(i32::MIN as i64..=i32::MAX as i64).contains(&code) {
+                return Err(RuntimeError::new("integer overflow"));
+            }
+        }
+        let groups = value_to_int(args[3].clone())
+            .map_err(|_| RuntimeError::new("an integer is required"))?;
+        let groupindex = match &args[4] {
+            Value::Dict(_) => args[4].clone(),
+            _ => return Err(RuntimeError::new("groupindex must be a dict")),
+        };
+        match &args[5] {
+            Value::Tuple(_) | Value::List(_) => {}
+            _ => return Err(RuntimeError::new("indexgroup must be a tuple")),
+        }
+
+        let compiled = self.builtin_re_compile(vec![pattern, Value::Int(flags)], HashMap::new())?;
+        if let Value::Module(compiled_obj) = &compiled {
+            if let Object::Module(module_data) = &mut *compiled_obj.kind_mut() {
+                module_data.globals.insert("flags".to_string(), Value::Int(flags));
+                module_data
+                    .globals
+                    .insert("groups".to_string(), Value::Int(groups.max(0)));
+                module_data
+                    .globals
+                    .insert("groupindex".to_string(), groupindex);
+            }
+        }
+        Ok(compiled)
+    }
+
+    pub(in crate::vm) fn builtin_sre_template(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("_sre.template() expects 2 arguments"));
+        }
+        let pieces: Vec<Value> = match &args[1] {
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values.clone(),
+                _ => return Err(RuntimeError::new("template must be a list")),
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => return Err(RuntimeError::new("template must be a list")),
+            },
+            _ => return Err(RuntimeError::new("template must be a list")),
+        };
+        for piece in pieces {
+            match &piece {
+                Value::Int(value) => {
+                    if *value < 0 {
+                        return Err(RuntimeError::new("invalid template"));
+                    }
+                }
+                Value::Str(_)
+                | Value::Bytes(_)
+                | Value::ByteArray(_)
+                | Value::MemoryView(_)
+                | Value::None => {}
+                _ => return Err(RuntimeError::new("an integer is required")),
+            }
+        }
+        Ok(args[1].clone())
+    }
+
+    pub(in crate::vm) fn builtin_sre_ascii_iscased(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let code = parse_sre_char_arg(args, kwargs, "_sre.ascii_iscased")?;
+        let is_ascii_letter =
+            (b'a' as u32..=b'z' as u32).contains(&code)
+                || (b'A' as u32..=b'Z' as u32).contains(&code);
+        Ok(Value::Bool(is_ascii_letter))
+    }
+
+    pub(in crate::vm) fn builtin_sre_ascii_tolower(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let code = parse_sre_char_arg(args, kwargs, "_sre.ascii_tolower")?;
+        let lowered = if (b'A' as u32..=b'Z' as u32).contains(&code) {
+            (code + 32) as i64
+        } else {
+            code as i64
+        };
+        Ok(Value::Int(lowered))
+    }
+
+    pub(in crate::vm) fn builtin_sre_unicode_iscased(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let code = parse_sre_char_arg(args, kwargs, "_sre.unicode_iscased")?;
+        let ch = char::from_u32(code).ok_or_else(|| RuntimeError::new("invalid character code"))?;
+        Ok(Value::Bool(ch != ch.to_lowercase().next().unwrap_or(ch) || ch != ch.to_uppercase().next().unwrap_or(ch)))
+    }
+
+    pub(in crate::vm) fn builtin_sre_unicode_tolower(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let code = parse_sre_char_arg(args, kwargs, "_sre.unicode_tolower")?;
+        let ch = char::from_u32(code).ok_or_else(|| RuntimeError::new("invalid character code"))?;
+        let lowered = ch.to_lowercase().next().unwrap_or(ch) as i64;
+        Ok(Value::Int(lowered))
+    }
+
     pub(in crate::vm) fn builtin_re_escape(
         &mut self,
         args: Vec<Value>,
@@ -841,6 +979,21 @@ fn csv_sniffer_groupindex_entries(pattern: &str) -> Option<Vec<(&'static str, i6
     }
 }
 
+fn parse_sre_char_arg(
+    args: Vec<Value>,
+    kwargs: HashMap<String, Value>,
+    fn_name: &str,
+) -> Result<u32, RuntimeError> {
+    if !kwargs.is_empty() || args.len() != 1 {
+        return Err(RuntimeError::new(format!("{fn_name}() expects one integer argument")));
+    }
+    let value = value_to_int(args[0].clone()).map_err(|_| RuntimeError::new("an integer is required"))?;
+    if !(0..=0x10ffff).contains(&value) {
+        return Err(RuntimeError::new("character code out of range"));
+    }
+    Ok(value as u32)
+}
+
 fn csv_sniffer_is_word_char(ch: char) -> bool {
     ch == '_' || ch.is_alphanumeric()
 }
@@ -1148,5 +1301,104 @@ mod tests {
         assert!(entries.contains(&(Value::Str("pkg".to_string()), Value::Str("pkg.mod".to_string()))));
         assert!(entries.contains(&(Value::Str("cln".to_string()), Value::Str(":attr.child".to_string()))));
         assert!(entries.contains(&(Value::Str("obj".to_string()), Value::Str("attr.child".to_string()))));
+    }
+
+    #[test]
+    fn sre_case_helpers_follow_cpython_reference_examples() {
+        let mut vm = Vm::new();
+        let ascii_lower = vm
+            .builtin_sre_ascii_tolower(vec![Value::Int('A' as i64)], HashMap::new())
+            .expect("ascii_tolower should succeed");
+        assert_eq!(ascii_lower, Value::Int('a' as i64));
+
+        let unicode_lower = vm
+            .builtin_sre_unicode_tolower(vec![Value::Int(0x0130)], HashMap::new())
+            .expect("unicode_tolower should succeed");
+        assert_eq!(unicode_lower, Value::Int('i' as i64));
+
+        let ascii_non_ascii = vm
+            .builtin_sre_ascii_tolower(vec![Value::Int(0x0130)], HashMap::new())
+            .expect("ascii_tolower should keep non-ascii unchanged");
+        assert_eq!(ascii_non_ascii, Value::Int(0x0130));
+
+        let ascii_cased = vm
+            .builtin_sre_ascii_iscased(vec![Value::Int('Z' as i64)], HashMap::new())
+            .expect("ascii_iscased should succeed");
+        assert_eq!(ascii_cased, Value::Bool(true));
+
+        let ascii_not_cased = vm
+            .builtin_sre_ascii_iscased(vec![Value::Int(0x0130)], HashMap::new())
+            .expect("ascii_iscased should treat non-ascii as uncased");
+        assert_eq!(ascii_not_cased, Value::Bool(false));
+
+        let unicode_cased = vm
+            .builtin_sre_unicode_iscased(vec![Value::Int(0x0130)], HashMap::new())
+            .expect("unicode_iscased should succeed");
+        assert_eq!(unicode_cased, Value::Bool(true));
+    }
+
+    #[test]
+    fn sre_template_rejects_invalid_template_items() {
+        let mut vm = Vm::new();
+        let err = vm
+            .builtin_sre_template(
+                vec![
+                    Value::Str(String::new()),
+                    vm.heap.alloc_list(vec![
+                        Value::Str(String::new()),
+                        Value::Int(-1),
+                        Value::Str(String::new()),
+                    ]),
+                ],
+                HashMap::new(),
+            )
+            .expect_err("negative template group index should fail");
+        assert!(err.message.contains("invalid template"));
+
+        let err = vm
+            .builtin_sre_template(
+                vec![
+                    Value::Str(String::new()),
+                    vm.heap.alloc_list(vec![
+                        Value::Str(String::new()),
+                        vm.heap.alloc_tuple(vec![Value::Int(1)]),
+                        Value::Str(String::new()),
+                    ]),
+                ],
+                HashMap::new(),
+            )
+            .expect_err("non-int template group should fail");
+        assert!(err.message.contains("an integer is required"));
+    }
+
+    #[test]
+    fn sre_compile_accepts_cpython_signature_and_populates_pattern_attrs() {
+        let mut vm = Vm::new();
+        let groupindex = vm
+            .heap
+            .alloc_dict(vec![(Value::Str("name".to_string()), Value::Int(1))]);
+        let compiled = vm
+            .builtin_sre_compile(
+                vec![
+                    Value::Str("abc".to_string()),
+                    Value::Int(0),
+                    vm.heap.alloc_list(vec![Value::Int(1), Value::Int(2)]),
+                    Value::Int(1),
+                    groupindex.clone(),
+                    vm.heap.alloc_tuple(vec![Value::None, Value::Str("name".to_string())]),
+                ],
+                HashMap::new(),
+            )
+            .expect("_sre.compile should succeed");
+        let Value::Module(module_obj) = compiled else {
+            panic!("_sre.compile should return compiled pattern module");
+        };
+        let Object::Module(module_data) = &*module_obj.kind() else {
+            panic!("compiled pattern should be module object");
+        };
+        assert_eq!(module_data.name, "__re_pattern__");
+        assert_eq!(module_data.globals.get("flags"), Some(&Value::Int(0)));
+        assert_eq!(module_data.globals.get("groups"), Some(&Value::Int(1)));
+        assert_eq!(module_data.globals.get("groupindex"), Some(&groupindex));
     }
 }

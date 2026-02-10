@@ -13,7 +13,7 @@ Primary rule:
 | `json` | `Lib/json/*` + optional `_json` accelerator | `_json` compatibility surface only (`scanstring`/`make_scanner`) | VM now defaults to pure `json` when CPython stdlib paths are discoverable; native high-level `json` remains only as stdlib-less fallback | Strict/parity suites pass with pure `json` path and native high-level fallback is retired |
 | `csv` | `Lib/csv.py` + `_csv` C module | `_csv` behavior-compatible accelerator surface | Pure `csv.py` path is primary; `_csv` is native | `test_csv` strict closure + `_csv` edge/perf parity |
 | `pickle`/`pickletools`/`copyreg` | `Lib/pickle.py`, `Lib/pickletools.py`, `Lib/copyreg.py` + optional `_pickle` accelerator | object protocol hooks + `_pickle` compatibility surface | Pure modules are primary; active strict lane now excludes pickle and pickle strict is tracked separately in deferred suite (`tests/cpython_suite_deferred_pickle.txt`) | Re-enable pickle in active strict lane and close deferred suite failures with perf proof gates |
-| `re` | `Lib/re/*` + `_sre` C module | `_sre`-equivalent runtime surface | Still native-heavy because `_sre` parity layer is incomplete | Implement `_sre`-equivalent surface and switch to pure `Lib/re/*` |
+| `re` | `Lib/re/*` + `_sre` C module | `_sre`-equivalent runtime surface | `_sre` core surface is now bootstrapped (`compile`, `template`, `ascii_iscased`, `ascii_tolower`, `unicode_iscased`, `unicode_tolower`, constants), but pure `Lib/re/*` import is still not default because long-tail parity gaps remain in `_sre`/runtime interactions | Close `_sre` parity and switch to pure `Lib/re/*` by default |
 
 ## Engineering Policy
 
@@ -56,5 +56,5 @@ Primary rule:
 ## Remaining P0 Work
 
 1. Complete `_csv` parity closure and keep active strict lane green (`json`/`csv`/`copyreg`/`genericalias`).
-2. Implement `_sre`-equivalent surface and migrate `re` to pure CPython package.
+2. Finish `_sre` parity closure and enable pure `Lib/re/*` import path by default.
 3. Re-enable deferred pickle strict lane and close `_pickle`/`pickletools` parity + performance blockers.

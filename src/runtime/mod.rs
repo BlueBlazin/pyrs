@@ -2128,6 +2128,12 @@ pub enum BuiltinFunction {
     ReFullMatch,
     ReCompile,
     ReEscape,
+    SreCompile,
+    SreTemplate,
+    SreAsciiIsCased,
+    SreAsciiToLower,
+    SreUnicodeIsCased,
+    SreUnicodeToLower,
     RePatternFindAll,
     RePatternFindIter,
     OperatorAdd,
@@ -2523,6 +2529,12 @@ impl BuiltinFunction {
             | BuiltinFunction::IoFileDetach
             | BuiltinFunction::RePatternFindAll
             | BuiltinFunction::RePatternFindIter
+            | BuiltinFunction::SreCompile
+            | BuiltinFunction::SreTemplate
+            | BuiltinFunction::SreAsciiIsCased
+            | BuiltinFunction::SreAsciiToLower
+            | BuiltinFunction::SreUnicodeIsCased
+            | BuiltinFunction::SreUnicodeToLower
             | BuiltinFunction::CollectionsChainMapInit
             | BuiltinFunction::CollectionsChainMapNewChild
             | BuiltinFunction::CollectionsChainMapRepr
