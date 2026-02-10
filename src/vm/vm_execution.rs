@@ -336,10 +336,98 @@ impl Vm {
                             }
                             value
                         };
-                        if push_null {
-                            self.push_value(Value::None);
+                        #[cfg(not(debug_assertions))]
+                        let mut fused = false;
+                        #[cfg(debug_assertions)]
+                        let fused = false;
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            if !push_null {
+                                if let Some((local_idx, const_idx)) =
+                                    self.fused_global_fast_sub_call_one_arg_pattern()
+                                {
+                                    if let Value::Function(func_obj) = &value {
+                                        let caller_idx = self.frames.len().saturating_sub(1);
+                                        let left_fast = {
+                                            let frame = self.frames.last().expect("frame exists");
+                                            if local_idx < frame.fast_locals.len() {
+                                                match &frame.fast_locals[local_idx] {
+                                                    Some(value) => Some(value.clone()),
+                                                    None => None,
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        };
+                                        let left = if let Some(value) = left_fast {
+                                            value
+                                        } else {
+                                            self.load_fast_local(local_idx)?
+                                        };
+                                        let arg = {
+                                            let frame = self.frames.last().expect("frame exists");
+                                            if const_idx >= frame.code.constants.len() {
+                                                return Err(RuntimeError::new(
+                                                    "constant index out of range",
+                                                ));
+                                            }
+                                            match &frame.code.constants[const_idx] {
+                                                Value::Int(right) => match left {
+                                                    Value::Int(left_int) => {
+                                                        match left_int.checked_sub(*right) {
+                                                            Some(diff) => Value::Int(diff),
+                                                            None => sub_values(
+                                                                Value::Int(left_int),
+                                                                Value::Int(*right),
+                                                                &self.heap,
+                                                            )?,
+                                                        }
+                                                    }
+                                                    other => sub_values(
+                                                        other,
+                                                        Value::Int(*right),
+                                                        &self.heap,
+                                                    )?,
+                                                },
+                                                Value::Bool(flag) => {
+                                                    let right = if *flag { 1 } else { 0 };
+                                                    match left {
+                                                        Value::Int(left_int) => {
+                                                            match left_int.checked_sub(right) {
+                                                                Some(diff) => Value::Int(diff),
+                                                                None => sub_values(
+                                                                    Value::Int(left_int),
+                                                                    Value::Int(right),
+                                                                    &self.heap,
+                                                                )?,
+                                                            }
+                                                        }
+                                                        other => sub_values(
+                                                            other,
+                                                            Value::Int(right),
+                                                            &self.heap,
+                                                        )?,
+                                                    }
+                                                }
+                                                right => sub_values(left, right.clone(), &self.heap)?,
+                                            }
+                                        };
+                                        self.push_function_call_one_arg_from_obj(func_obj, arg)?;
+                                        if let Some(frame) = self.frames.get_mut(caller_idx) {
+                                            frame.ip += 3;
+                                        }
+                                        fused = true;
+                                    }
+                                }
+                            }
                         }
-                        self.push_value(value);
+                        if !fused {
+                            if push_null {
+                                self.push_value(Value::None);
+                            }
+                            self.push_value(value);
+                        }
                     }
                     Opcode::LoadBuildClass => {
                         self.push_value(Value::Builtin(BuiltinFunction::BuildClass));
@@ -1015,7 +1103,11 @@ impl Vm {
                         if can_quicken {
                             self.mark_quickened_site(site_index, QuickenedSiteKind::AddInt);
                         }
-                        self.push_value(value);
+                        self.frames
+                            .last_mut()
+                            .expect("frame exists")
+                            .stack
+                            .push(value);
                     }
                     Opcode::BinarySub => {
                         let site_index = self.current_site_index();
@@ -1060,29 +1152,48 @@ impl Vm {
                         if can_quicken {
                             self.mark_quickened_site(site_index, QuickenedSiteKind::SubInt);
                         }
-                        self.push_value(value);
+                        self.frames
+                            .last_mut()
+                            .expect("frame exists")
+                            .stack
+                            .push(value);
                     }
                     Opcode::BinarySubConst => {
                         let idx = instr
                             .arg
                             .ok_or_else(|| RuntimeError::new("missing const argument"))?
                             as usize;
-                        let left = self.pop_value()?;
-                        let right = {
-                            let frame = self.frames.last().expect("frame exists");
+                        let (left, right_int, right_value) = {
+                            let frame = self.frames.last_mut().expect("frame exists");
                             if idx >= frame.code.constants.len() {
                                 return Err(RuntimeError::new("constant index out of range"));
                             }
-                            frame.code.constants[idx].clone()
+                            let left = frame.stack.pop().ok_or_else(|| {
+                                RuntimeError::new("stack underflow (BinarySubConst lhs)")
+                            })?;
+                            let (right_int, right_value) = match &frame.code.constants[idx] {
+                                Value::Int(value) => (Some(*value), None),
+                                Value::Bool(flag) => (Some(if *flag { 1 } else { 0 }), None),
+                                value => (None, Some(value.clone())),
+                            };
+                            (left, right_int, right_value)
                         };
-                        let value = match (left, right) {
-                            (Value::Int(a), Value::Int(b)) => match a.checked_sub(b) {
+                        let value = match (left, right_int, right_value) {
+                            (Value::Int(a), Some(b), _) => match a.checked_sub(b) {
                                 Some(diff) => Value::Int(diff),
                                 None => sub_values(Value::Int(a), Value::Int(b), &self.heap)?,
                             },
-                            (left, right) => sub_values(left, right, &self.heap)?,
+                            (left, Some(b), _) => sub_values(left, Value::Int(b), &self.heap)?,
+                            (left, None, Some(right)) => sub_values(left, right, &self.heap)?,
+                            (_, None, None) => {
+                                return Err(RuntimeError::new("invalid constant for BinarySubConst"));
+                            }
                         };
-                        self.push_value(value);
+                        self.frames
+                            .last_mut()
+                            .expect("frame exists")
+                            .stack
+                            .push(value);
                     }
                     Opcode::BinaryMul => {
                         let right = self.pop_value()?;
@@ -1186,26 +1297,71 @@ impl Vm {
                         if can_quicken {
                             self.mark_quickened_site(site_index, QuickenedSiteKind::CompareLtInt);
                         }
-                        self.push_value(result);
+                        if let Some(target) = self.next_jump_if_false_target() {
+                            let truthy = match result {
+                                Value::Bool(flag) => flag,
+                                other => self.truthy_from_value(&other)?,
+                            };
+                            let frame = self.frames.last_mut().expect("frame exists");
+                            if truthy {
+                                frame.ip += 1;
+                            } else {
+                                frame.ip = target;
+                            }
+                        } else {
+                            self.frames
+                                .last_mut()
+                                .expect("frame exists")
+                                .stack
+                                .push(result);
+                        }
                     }
                     Opcode::CompareLtConst => {
                         let idx = instr
                             .arg
                             .ok_or_else(|| RuntimeError::new("missing const argument"))?
                             as usize;
-                        let left = self.pop_value()?;
-                        let right = {
-                            let frame = self.frames.last().expect("frame exists");
+                        let (left, right_int, right_value) = {
+                            let frame = self.frames.last_mut().expect("frame exists");
                             if idx >= frame.code.constants.len() {
                                 return Err(RuntimeError::new("constant index out of range"));
                             }
-                            frame.code.constants[idx].clone()
+                            let left = frame.stack.pop().ok_or_else(|| {
+                                RuntimeError::new("stack underflow (CompareLtConst lhs)")
+                            })?;
+                            let (right_int, right_value) = match &frame.code.constants[idx] {
+                                Value::Int(value) => (Some(*value), None),
+                                Value::Bool(flag) => (Some(if *flag { 1 } else { 0 }), None),
+                                value => (None, Some(value.clone())),
+                            };
+                            (left, right_int, right_value)
                         };
-                        let result = match (left, right) {
-                            (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
-                            (left, right) => self.compare_lt_runtime(left, right)?,
+                        let result = match (left, right_int, right_value) {
+                            (Value::Int(a), Some(b), _) => Value::Bool(a < b),
+                            (left, Some(b), _) => self.compare_lt_runtime(left, Value::Int(b))?,
+                            (left, None, Some(right)) => self.compare_lt_runtime(left, right)?,
+                            (_, None, None) => {
+                                return Err(RuntimeError::new("invalid constant for CompareLtConst"));
+                            }
                         };
-                        self.push_value(result);
+                        if let Some(target) = self.next_jump_if_false_target() {
+                            let truthy = match result {
+                                Value::Bool(flag) => flag,
+                                other => self.truthy_from_value(&other)?,
+                            };
+                            let frame = self.frames.last_mut().expect("frame exists");
+                            if truthy {
+                                frame.ip += 1;
+                            } else {
+                                frame.ip = target;
+                            }
+                        } else {
+                            self.frames
+                                .last_mut()
+                                .expect("frame exists")
+                                .stack
+                                .push(result);
+                        }
                     }
                     Opcode::CompareLe => {
                         let right = self.pop_value()?;
@@ -4775,6 +4931,37 @@ impl Vm {
             .copied()
             .map(|stored| stored == kind)
             .unwrap_or(false)
+    }
+
+    #[inline]
+    fn next_jump_if_false_target(&self) -> Option<usize> {
+        let frame = self.frames.last()?;
+        let next = frame.code.instructions.get(frame.ip)?;
+        if next.opcode == Opcode::JumpIfFalse {
+            return next.arg.map(|arg| arg as usize);
+        }
+        None
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    fn fused_global_fast_sub_call_one_arg_pattern(&self) -> Option<(usize, usize)> {
+        let frame = self.frames.last()?;
+        let load_fast = frame.code.instructions.get(frame.ip)?;
+        let binary_sub_const = frame.code.instructions.get(frame.ip + 1)?;
+        let call = frame.code.instructions.get(frame.ip + 2)?;
+        if load_fast.opcode != Opcode::LoadFast {
+            return None;
+        }
+        if binary_sub_const.opcode != Opcode::BinarySubConst {
+            return None;
+        }
+        let call_is_one_arg = call.opcode == Opcode::CallFunction1
+            || (call.opcode == Opcode::CallFunction && call.arg == Some(1));
+        if !call_is_one_arg {
+            return None;
+        }
+        Some((load_fast.arg? as usize, binary_sub_const.arg? as usize))
     }
 
     fn dispatch_call_no_kwargs(&mut self, func: Value, args: Vec<Value>) -> Result<(), RuntimeError> {
