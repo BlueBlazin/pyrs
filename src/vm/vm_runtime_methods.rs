@@ -1249,6 +1249,7 @@ impl Vm {
             None,
         );
         frame.function_globals = outer_globals.clone();
+        frame.function_globals_version = module_globals_version(&outer_globals);
         frame.globals_fallback = Some(outer_globals);
         frame.locals_fallback = outer_locals;
         frame.locals.insert(

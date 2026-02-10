@@ -319,6 +319,7 @@ struct Frame {
     cells: Vec<ObjRef>,
     module: ObjRef,
     function_globals: ObjRef,
+    function_globals_version: u64,
     globals_fallback: Option<ObjRef>,
     locals_fallback: Option<HashMap<String, Value>>,
     owner_class: Option<ObjRef>,
@@ -365,6 +366,7 @@ impl Frame {
             module_locals_dict: None,
             cells,
             module: module.clone(),
+            function_globals_version: module_globals_version(&module),
             function_globals: module,
             globals_fallback: None,
             locals_fallback: None,
@@ -411,6 +413,7 @@ impl Frame {
         self.cells = cells;
         self.module_locals_dict = None;
         self.module = module.clone();
+        self.function_globals_version = module_globals_version(&module);
         self.function_globals = module;
         self.globals_fallback = None;
         self.locals_fallback = None;
@@ -579,9 +582,14 @@ impl Vm {
     }
 
     pub fn set_global(&mut self, name: impl Into<String>, value: Value) {
+        let mut touched_version = None;
         if let Object::Module(module) = &mut *self.main_module.kind_mut() {
             module.globals.insert(name.into(), value);
             module.touch_globals_version();
+            touched_version = Some(module.globals_version);
+        }
+        if let Some(version) = touched_version {
+            self.propagate_module_globals_version(self.main_module.id(), version);
         }
     }
 
@@ -590,6 +598,19 @@ impl Vm {
         self.builtins_version = self.builtins_version.wrapping_add(1);
         if self.builtins_version == 0 {
             self.builtins_version = 1;
+        }
+    }
+
+    fn propagate_module_globals_version(&mut self, module_id: u64, version: u64) {
+        for frame in &mut self.frames {
+            if frame.function_globals.id() == module_id {
+                frame.function_globals_version = version;
+            }
+        }
+        for frame in self.generator_states.values_mut() {
+            if frame.function_globals.id() == module_id {
+                frame.function_globals_version = version;
+            }
         }
     }
 
@@ -5794,11 +5815,15 @@ fn decode_call_counts(arg: u32) -> (usize, usize) {
     (pos, kw)
 }
 
+fn module_globals_version(module: &ObjRef) -> u64 {
+    match &*module.kind() {
+        Object::Module(module_data) => module_data.globals_version,
+        _ => 0,
+    }
+}
+
 fn is_comprehension_code(code: &CodeObject) -> bool {
-    matches!(
-        code.name.as_str(),
-        "<listcomp>" | "<dictcomp>" | "<genexpr>"
-    )
+    code.is_comprehension
 }
 
 fn exception_message_from_call_args(args: &[Value]) -> Option<String> {

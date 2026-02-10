@@ -1061,6 +1061,7 @@ pub struct MemoryViewObject {
 pub struct Heap {
     next_id: Cell<u64>,
     registry: RefCell<Vec<Weak<Obj>>>,
+    small_int_ids: RefCell<Vec<u64>>,
     immediate_ids: RefCell<HashMap<ImmediateKey, u64>>,
 }
 
@@ -1080,6 +1081,10 @@ enum ImmediateKey {
     Builtin(BuiltinFunction),
 }
 
+const SMALL_INT_MIN: i64 = -5;
+const SMALL_INT_MAX: i64 = 256;
+const SMALL_INT_COUNT: usize = (SMALL_INT_MAX - SMALL_INT_MIN + 1) as usize;
+
 static NEXT_EXCEPTION_OBJECT_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_exception_object_id() -> u64 {
@@ -1091,6 +1096,7 @@ impl Heap {
         Self {
             next_id: Cell::new(1),
             registry: RefCell::new(Vec::new()),
+            small_int_ids: RefCell::new(vec![0; SMALL_INT_COUNT]),
             immediate_ids: RefCell::new(HashMap::new()),
         }
     }
@@ -1212,7 +1218,13 @@ impl Heap {
         match value {
             Value::None => self.id_for_immediate(ImmediateKey::None),
             Value::Bool(value) => self.id_for_immediate(ImmediateKey::Bool(*value)),
-            Value::Int(value) => self.id_for_immediate(ImmediateKey::Int(*value)),
+            Value::Int(value) => {
+                if *value >= SMALL_INT_MIN && *value <= SMALL_INT_MAX {
+                    self.id_for_small_int(*value)
+                } else {
+                    self.id_for_immediate(ImmediateKey::Int(*value))
+                }
+            }
             Value::BigInt(value) => self.id_for_immediate(ImmediateKey::BigInt(value.clone())),
             Value::Float(value) => self.id_for_immediate(ImmediateKey::Float(value.to_bits())),
             Value::Complex { real, imag } => {
@@ -1261,6 +1273,18 @@ impl Heap {
         }
         let id = self.next_id();
         map.insert(key, id);
+        id
+    }
+
+    fn id_for_small_int(&self, value: i64) -> u64 {
+        let index = (value - SMALL_INT_MIN) as usize;
+        let mut ids = self.small_int_ids.borrow_mut();
+        let id = ids[index];
+        if id != 0 {
+            return id;
+        }
+        let id = self.next_id();
+        ids[index] = id;
         id
     }
 
@@ -6491,6 +6515,23 @@ mod tests {
         assert_eq!(str_a, str_b);
         assert_ne!(bool_true, bool_false);
         assert_ne!(int_a, str_a);
+    }
+
+    #[test]
+    fn small_int_ids_are_stable_on_cpython_range() {
+        let heap = Heap::new();
+        let low_a = heap.id_of(&Value::Int(-5));
+        let low_b = heap.id_of(&Value::Int(-5));
+        let high_a = heap.id_of(&Value::Int(256));
+        let high_b = heap.id_of(&Value::Int(256));
+        let outside_a = heap.id_of(&Value::Int(257));
+        let outside_b = heap.id_of(&Value::Int(257));
+
+        assert_eq!(low_a, low_b);
+        assert_eq!(high_a, high_b);
+        assert_eq!(outside_a, outside_b);
+        assert_ne!(low_a, high_a);
+        assert_ne!(high_a, outside_a);
     }
 
     #[test]

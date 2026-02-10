@@ -246,12 +246,7 @@ impl Vm {
                         let site_index = self.current_site_index();
                         let (globals_module_id, globals_version) = {
                             let frame = self.frames.last().expect("frame exists");
-                            match &*frame.function_globals.kind() {
-                                Object::Module(module_data) => {
-                                    (frame.function_globals.id(), module_data.globals_version)
-                                }
-                                _ => (0, 0),
-                            }
+                            (frame.function_globals.id(), frame.function_globals_version)
                         };
                         let value = if let Some(cached) = self
                             .frames
@@ -280,15 +275,12 @@ impl Vm {
                                     .names
                                     .get(idx)
                                     .ok_or_else(|| RuntimeError::new("name index out of range"))?;
-                                let (value, globals_version) = if let Object::Module(module_data) =
+                                let value = if let Object::Module(module_data) =
                                     &*frame.function_globals.kind()
                                 {
-                                    (
-                                        module_data.globals.get(name).cloned(),
-                                        module_data.globals_version,
-                                    )
+                                    module_data.globals.get(name).cloned()
                                 } else {
-                                    (None, 0)
+                                    None
                                 };
                                 let value = value.or_else(|| {
                                     if let Some(fallback) = &frame.locals_fallback {
@@ -310,8 +302,13 @@ impl Vm {
                                     })?;
                                 let cacheable =
                                     frame.locals_fallback.is_none() && frame.globals_fallback.is_none()
-                                        && globals_version != 0;
-                                (value, cacheable, frame.function_globals.id(), globals_version)
+                                        && frame.function_globals_version != 0;
+                                (
+                                    value,
+                                    cacheable,
+                                    frame.function_globals.id(),
+                                    frame.function_globals_version,
+                                )
                             };
                             if cacheable {
                                 if let Some(frame) = self.frames.last_mut() {
@@ -701,6 +698,7 @@ impl Vm {
                                 .clone()
                         };
                         let mut removed = false;
+                        let mut touched_module_version: Option<(u64, u64)> = None;
                         if let Some(frame) = self.frames.last_mut() {
                             if !frame.is_module {
                                 if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
@@ -725,6 +723,8 @@ impl Vm {
                                     removed = module_data.globals.remove(&name).is_some();
                                     if removed {
                                         module_data.touch_globals_version();
+                                        touched_module_version =
+                                            Some((frame.module.id(), module_data.globals_version));
                                     }
                                 }
                             }
@@ -734,6 +734,9 @@ impl Vm {
                                 "name '{}' is not defined",
                                 name
                             )));
+                        }
+                        if let Some((module_id, version)) = touched_module_version {
+                            self.propagate_module_globals_version(module_id, version);
                         }
                     }
                     Opcode::StoreFast => {
@@ -792,10 +795,7 @@ impl Vm {
                         let target = self.pop_value()?;
                         match target {
                             Value::Module(module) => {
-                                if let Object::Module(module_data) = &mut *module.kind_mut() {
-                                    module_data.globals.insert(attr_name, value);
-                                    module_data.touch_globals_version();
-                                }
+                                self.upsert_module_global(&module, &attr_name, value);
                             }
                             Value::Instance(instance) => {
                                 match self.store_attr_instance(&instance, &attr_name, value)? {
@@ -843,10 +843,7 @@ impl Vm {
                         let value = self.pop_value()?;
                         match target {
                             Value::Module(module) => {
-                                if let Object::Module(module_data) = &mut *module.kind_mut() {
-                                    module_data.globals.insert(attr_name, value);
-                                    module_data.touch_globals_version();
-                                }
+                                self.upsert_module_global(&module, &attr_name, value);
                             }
                             Value::Instance(instance) => {
                                 match self.store_attr_instance(&instance, &attr_name, value)? {
@@ -891,6 +888,7 @@ impl Vm {
                                 .clone()
                         };
                         let target = self.pop_value()?;
+                        let mut touched_module_version: Option<(u64, u64)> = None;
                         match target {
                             Value::Module(module) => {
                                 if let Object::Module(module_data) = &mut *module.kind_mut() {
@@ -901,6 +899,8 @@ impl Vm {
                                         )));
                                     }
                                     module_data.touch_globals_version();
+                                    touched_module_version =
+                                        Some((module.id(), module_data.globals_version));
                                 }
                             }
                             Value::Class(class) => {
@@ -935,6 +935,9 @@ impl Vm {
                                 ));
                             }
                         }
+                        if let Some((module_id, version)) = touched_module_version {
+                            self.propagate_module_globals_version(module_id, version);
+                        }
                     }
                     Opcode::StoreGlobal => {
                         let idx = instr
@@ -951,13 +954,12 @@ impl Vm {
                                 .clone()
                         };
                         let value = self.pop_value()?;
-                        if let Some(frame) = self.frames.last() {
-                            if let Object::Module(module_data) =
-                                &mut *frame.function_globals.kind_mut()
-                            {
-                                module_data.globals.insert(name, value);
-                                module_data.touch_globals_version();
-                            }
+                        let globals_module = self
+                            .frames
+                            .last()
+                            .map(|frame| frame.function_globals.clone());
+                        if let Some(globals_module) = globals_module {
+                            self.upsert_module_global(&globals_module, &name, value);
                         }
                     }
                     Opcode::BinaryAdd => {
@@ -2181,6 +2183,53 @@ impl Vm {
                                     self.dispatch_call_no_kwargs(other, vec![arg0])?
                                 }
                             }
+                        } else if argc == 2 {
+                            let (func, arg0, arg1) = {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                let arg1 = frame.stack.pop().ok_or_else(|| {
+                                    RuntimeError::new("stack underflow (CallFunction arg1)")
+                                })?;
+                                let arg0 = frame.stack.pop().ok_or_else(|| {
+                                    RuntimeError::new("stack underflow (CallFunction arg0)")
+                                })?;
+                                let func = frame.stack.pop().ok_or_else(|| {
+                                    RuntimeError::new("stack underflow (CallFunction func)")
+                                })?;
+                                (func, arg0, arg1)
+                            };
+                            match func {
+                                Value::Function(func_obj) => {
+                                    self.push_function_call_two_args_from_obj(&func_obj, arg0, arg1)?;
+                                }
+                                other => self.dispatch_call_no_kwargs(other, vec![arg0, arg1])?,
+                            }
+                        } else if argc == 3 {
+                            let (func, arg0, arg1, arg2) = {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                let arg2 = frame.stack.pop().ok_or_else(|| {
+                                    RuntimeError::new("stack underflow (CallFunction arg2)")
+                                })?;
+                                let arg1 = frame.stack.pop().ok_or_else(|| {
+                                    RuntimeError::new("stack underflow (CallFunction arg1)")
+                                })?;
+                                let arg0 = frame.stack.pop().ok_or_else(|| {
+                                    RuntimeError::new("stack underflow (CallFunction arg0)")
+                                })?;
+                                let func = frame.stack.pop().ok_or_else(|| {
+                                    RuntimeError::new("stack underflow (CallFunction func)")
+                                })?;
+                                (func, arg0, arg1, arg2)
+                            };
+                            match func {
+                                Value::Function(func_obj) => {
+                                    self.push_function_call_three_args_from_obj(
+                                        &func_obj, arg0, arg1, arg2,
+                                    )?;
+                                }
+                                other => {
+                                    self.dispatch_call_no_kwargs(other, vec![arg0, arg1, arg2])?
+                                }
+                            }
                         } else {
                             let mut args = Vec::with_capacity(argc);
                             for _ in 0..argc {
@@ -2920,6 +2969,7 @@ impl Vm {
                                             "import caller frame missing",
                                         ));
                                     };
+                                    let mut touched_globals_version = None;
                                     {
                                         for (name, value) in values {
                                             if let Some(slot_idx) =
@@ -2940,9 +2990,16 @@ impl Vm {
                                             {
                                                 module_data.globals.insert(name, value);
                                                 module_data.touch_globals_version();
+                                                touched_globals_version = Some((
+                                                    frame.function_globals.id(),
+                                                    module_data.globals_version,
+                                                ));
                                             }
                                         }
                                         frame.stack.push(Value::None);
+                                    }
+                                    if let Some((module_id, version)) = touched_globals_version {
+                                        self.propagate_module_globals_version(module_id, version);
                                     }
                                     return Ok(None);
                                 }
@@ -4536,15 +4593,13 @@ impl Vm {
     }
 
     pub(super) fn store_name(&mut self, name: String, value: Value) {
+        let mut module_write: Option<(ObjRef, String, Value)> = None;
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
                 if let Some(dict) = frame.module_locals_dict.clone() {
                     dict_set_value(&dict, Value::Str(name.clone()), value.clone());
                 }
-                if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
-                    module_data.globals.insert(name, value);
-                    module_data.touch_globals_version();
-                }
+                module_write = Some((frame.module.clone(), name, value));
             } else {
                 if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
                     if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
@@ -4560,6 +4615,26 @@ impl Vm {
                     }
                 }
             }
+        }
+        if let Some((module, name, value)) = module_write {
+            self.upsert_module_global(&module, &name, value);
+        }
+    }
+
+    #[inline]
+    fn upsert_module_global(&mut self, module: &ObjRef, name: &str, value: Value) {
+        let mut version = None;
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            if let Some(existing) = module_data.globals.get_mut(name) {
+                *existing = value;
+            } else {
+                module_data.globals.insert(name.to_string(), value);
+            }
+            module_data.touch_globals_version();
+            version = Some(module_data.globals_version);
+        }
+        if let Some(version) = version {
+            self.propagate_module_globals_version(module.id(), version);
         }
     }
 
@@ -4774,6 +4849,63 @@ impl Vm {
         self.push_function_call_from_obj(func, vec![arg0], HashMap::new())
     }
 
+    fn push_function_call_two_args_from_obj(
+        &mut self,
+        func: &ObjRef,
+        arg0: Value,
+        arg1: Value,
+    ) -> Result<(), RuntimeError> {
+        let (code, module, closure, owner_class, simple_positional_path) = {
+            let func_kind = func.kind();
+            let func_data = match &*func_kind {
+                Object::Function(data) => data,
+                _ => return Err(RuntimeError::new("attempted to call non-function")),
+            };
+            (
+                func_data.code.clone(),
+                func_data.module.clone(),
+                func_data.closure.clone(),
+                func_data.owner_class.clone(),
+                func_data.plain_positional_call_arity == Some(2),
+            )
+        };
+        if simple_positional_path {
+            return self.push_simple_positional_function_frame_two_args(
+                code, module, owner_class, closure, arg0, arg1,
+            );
+        }
+        self.push_function_call_from_obj(func, vec![arg0, arg1], HashMap::new())
+    }
+
+    fn push_function_call_three_args_from_obj(
+        &mut self,
+        func: &ObjRef,
+        arg0: Value,
+        arg1: Value,
+        arg2: Value,
+    ) -> Result<(), RuntimeError> {
+        let (code, module, closure, owner_class, simple_positional_path) = {
+            let func_kind = func.kind();
+            let func_data = match &*func_kind {
+                Object::Function(data) => data,
+                _ => return Err(RuntimeError::new("attempted to call non-function")),
+            };
+            (
+                func_data.code.clone(),
+                func_data.module.clone(),
+                func_data.closure.clone(),
+                func_data.owner_class.clone(),
+                func_data.plain_positional_call_arity == Some(3),
+            )
+        };
+        if simple_positional_path {
+            return self.push_simple_positional_function_frame_three_args(
+                code, module, owner_class, closure, arg0, arg1, arg2,
+            );
+        }
+        self.push_function_call_from_obj(func, vec![arg0, arg1, arg2], HashMap::new())
+    }
+
     fn push_simple_positional_function_frame_one_arg(
         &mut self,
         code: Rc<CodeObject>,
@@ -4787,6 +4919,81 @@ impl Vm {
         } else {
             self.build_cells(&code, closure)
         };
+        let mut frame = self.prepare_function_frame(code.clone(), module, owner_class, cells);
+
+        self.store_fast_positional_arg(&code, &mut frame, 0, arg0);
+
+        if code.is_generator {
+            let generator = match self.heap.alloc_generator(GeneratorObject::new(
+                code.is_coroutine,
+                code.is_async_generator,
+            )) {
+                Value::Generator(obj) => obj,
+                _ => unreachable!(),
+            };
+            frame.generator_owner = Some(generator.clone());
+            self.generator_states.insert(generator.id(), frame);
+            self.push_value(Value::Generator(generator));
+            return Ok(());
+        }
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    #[inline]
+    fn store_fast_positional_arg(
+        &self,
+        code: &CodeObject,
+        frame: &mut Frame,
+        arg_index: usize,
+        value: Value,
+    ) {
+        let (slot_idx, cell_idx) = match arg_index {
+            0 => (code.plain_positional_arg0_slot, code.plain_positional_arg0_cell),
+            1 => (code.plain_positional_arg1_slot, code.plain_positional_arg1_cell),
+            2 => (code.plain_positional_arg2_slot, code.plain_positional_arg2_cell),
+            _ => (
+                code.positional_param_slot_indexes
+                    .get(arg_index)
+                    .and_then(|idx| *idx),
+                code.positional_param_cell_indexes
+                    .get(arg_index)
+                    .and_then(|idx| *idx),
+            ),
+        };
+        if let Some(cell_idx) = cell_idx {
+            if let Some(cell) = frame.cells.get(cell_idx) {
+                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                    cell_data.value = Some(value);
+                    return;
+                }
+            }
+        }
+        if let Some(slot_idx) = slot_idx {
+            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                *slot = Some(value);
+                return;
+            }
+        }
+        let posonly_len = code.posonly_params.len();
+        let fallback_name = if arg_index < posonly_len {
+            code.posonly_params.get(arg_index)
+        } else {
+            code.params.get(arg_index - posonly_len)
+        };
+        if let Some(name) = fallback_name {
+            frame.locals.insert(name.clone(), value);
+        }
+    }
+
+    #[inline]
+    fn prepare_function_frame(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+        cells: Vec<ObjRef>,
+    ) -> Box<Frame> {
         let caller_active_exception = self
             .frames
             .last()
@@ -4800,32 +5007,72 @@ impl Vm {
             owner_class,
         );
         frame.active_exception = caller_active_exception;
-        if is_comprehension_code(&code) {
+        if code.is_comprehension {
             if let Some(caller) = self.frames.last() {
                 if caller.return_class && caller.module.id() == module.id() {
                     frame.globals_fallback = Some(caller.function_globals.clone());
                 }
             }
         }
+        frame
+    }
 
-        if let Some(cell_idx) = code.plain_positional_arg0_cell {
-            if let Some(cell) = frame.cells.get(cell_idx) {
-                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
-                    cell_data.value = Some(arg0);
-                }
-            }
-        } else if let Some(slot_idx) = code.plain_positional_arg0_slot {
-            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
-                *slot = Some(arg0);
-            }
-        } else if let Some(name) = code
-            .posonly_params
-            .first()
-            .or_else(|| code.params.first())
-            .cloned()
-        {
-            frame.locals.insert(name, arg0);
+    fn push_simple_positional_function_frame_two_args(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+        closure: Vec<ObjRef>,
+        arg0: Value,
+        arg1: Value,
+    ) -> Result<(), RuntimeError> {
+        let cells = if code.cellvars.is_empty() && closure.is_empty() {
+            Vec::new()
+        } else {
+            self.build_cells(&code, closure)
+        };
+        let mut frame = self.prepare_function_frame(code.clone(), module, owner_class, cells);
+
+        self.store_fast_positional_arg(&code, &mut frame, 0, arg0);
+        self.store_fast_positional_arg(&code, &mut frame, 1, arg1);
+
+        if code.is_generator {
+            let generator = match self.heap.alloc_generator(GeneratorObject::new(
+                code.is_coroutine,
+                code.is_async_generator,
+            )) {
+                Value::Generator(obj) => obj,
+                _ => unreachable!(),
+            };
+            frame.generator_owner = Some(generator.clone());
+            self.generator_states.insert(generator.id(), frame);
+            self.push_value(Value::Generator(generator));
+            return Ok(());
         }
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    fn push_simple_positional_function_frame_three_args(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+        closure: Vec<ObjRef>,
+        arg0: Value,
+        arg1: Value,
+        arg2: Value,
+    ) -> Result<(), RuntimeError> {
+        let cells = if code.cellvars.is_empty() && closure.is_empty() {
+            Vec::new()
+        } else {
+            self.build_cells(&code, closure)
+        };
+        let mut frame = self.prepare_function_frame(code.clone(), module, owner_class, cells);
+
+        self.store_fast_positional_arg(&code, &mut frame, 0, arg0);
+        self.store_fast_positional_arg(&code, &mut frame, 1, arg1);
+        self.store_fast_positional_arg(&code, &mut frame, 2, arg2);
 
         if code.is_generator {
             let generator = match self.heap.alloc_generator(GeneratorObject::new(
@@ -4905,59 +5152,10 @@ impl Vm {
         } else {
             self.build_cells(&code, closure)
         };
-        let caller_active_exception = self
-            .frames
-            .last()
-            .and_then(|frame| frame.active_exception.clone());
-        let mut frame = self.acquire_frame(
-            code.clone(),
-            module.clone(),
-            false,
-            false,
-            cells,
-            owner_class,
-        );
-        frame.active_exception = caller_active_exception;
-        if is_comprehension_code(&code) {
-            if let Some(caller) = self.frames.last() {
-                if caller.return_class && caller.module.id() == module.id() {
-                    frame.globals_fallback = Some(caller.function_globals.clone());
-                }
-            }
-        }
+        let mut frame = self.prepare_function_frame(code.clone(), module, owner_class, cells);
 
-        let posonly_len = code.posonly_params.len();
         for (arg_idx, value) in args.into_iter().enumerate() {
-            if let Some(cell_idx) = code
-                .positional_param_cell_indexes
-                .get(arg_idx)
-                .and_then(|idx| *idx)
-            {
-                if let Some(cell) = frame.cells.get(cell_idx) {
-                    if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
-                        cell_data.value = Some(value);
-                        continue;
-                    }
-                }
-            }
-            if let Some(slot_idx) = code
-                .positional_param_slot_indexes
-                .get(arg_idx)
-                .and_then(|idx| *idx)
-            {
-                if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
-                    *slot = Some(value);
-                    continue;
-                }
-            }
-            let fallback_name = if arg_idx < posonly_len {
-                code.posonly_params.get(arg_idx)
-            } else {
-                code.params.get(arg_idx - posonly_len)
-            };
-            if let Some(name) = fallback_name {
-                frame.locals.insert(name.clone(), value);
-            }
+            self.store_fast_positional_arg(&code, &mut frame, arg_idx, value);
         }
 
         if code.is_generator {
@@ -4985,26 +5183,7 @@ impl Vm {
         bindings: BoundArguments,
         cells: Vec<ObjRef>,
     ) -> Result<(), RuntimeError> {
-        let caller_active_exception = self
-            .frames
-            .last()
-            .and_then(|frame| frame.active_exception.clone());
-        let mut frame = self.acquire_frame(
-            code.clone(),
-            module.clone(),
-            false,
-            false,
-            cells,
-            owner_class,
-        );
-        frame.active_exception = caller_active_exception;
-        if is_comprehension_code(&code) {
-            if let Some(caller) = self.frames.last() {
-                if caller.return_class && caller.module.id() == module.id() {
-                    frame.globals_fallback = Some(caller.function_globals.clone());
-                }
-            }
-        }
+        let mut frame = self.prepare_function_frame(code.clone(), module, owner_class, cells);
         apply_bindings(&mut frame, &code, bindings, &self.heap);
         if code.is_generator {
             let generator = match self.heap.alloc_generator(GeneratorObject::new(
