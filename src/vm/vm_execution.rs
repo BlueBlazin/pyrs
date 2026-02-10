@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn run(&mut self) -> Result<Value, RuntimeError> {
+    pub(super) fn run(&mut self) -> Result<Value, RuntimeError> {
         loop {
             if let Some(stop_depth) = self.run_stop_depth {
                 if self.frames.len() <= stop_depth {
@@ -3376,11 +3378,11 @@ impl Vm {
         }
     }
 
-    fn raise_exception(&mut self, value: Value) -> Result<(), RuntimeError> {
+    pub(super) fn raise_exception(&mut self, value: Value) -> Result<(), RuntimeError> {
         self.raise_exception_with_cause(value, None)
     }
 
-    fn raise_exception_with_cause(
+    pub(super) fn raise_exception_with_cause(
         &mut self,
         value: Value,
         explicit_cause: Option<Value>,
@@ -3461,7 +3463,7 @@ impl Vm {
         }
     }
 
-    fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
+    pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
         let exception_type = classify_runtime_error(&err.message);
         let exception = ExceptionObject::new(exception_type.to_string(), Some(err.message.clone()));
         if is_os_error_family(exception_type) {
@@ -3490,7 +3492,7 @@ impl Vm {
         self.raise_exception(exception)
     }
 
-    fn normalize_exception_value(&self, value: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn normalize_exception_value(&self, value: Value) -> Result<Value, RuntimeError> {
         match value {
             Value::Exception(_) => Ok(value),
             Value::ExceptionType(name) => Ok(Value::Exception(ExceptionObject::new(name, None))),
@@ -3525,7 +3527,7 @@ impl Vm {
         }
     }
 
-    fn exception_matches(
+    pub(super) fn exception_matches(
         &self,
         exception: &Value,
         handler_type: &Value,
@@ -3576,7 +3578,7 @@ impl Vm {
         Ok(self.exception_inherits(exception_name, handler_name))
     }
 
-    fn exception_split_for_star(
+    pub(super) fn exception_split_for_star(
         &self,
         exception: &Value,
         handler_type: &Value,
@@ -3587,7 +3589,7 @@ impl Vm {
         self.exception_split_for_star_object(exception_obj, handler_type)
     }
 
-    fn exception_split_for_star_object(
+    pub(super) fn exception_split_for_star_object(
         &self,
         exception: &ExceptionObject,
         handler_type: &Value,
@@ -3626,7 +3628,7 @@ impl Vm {
         }
     }
 
-    fn clone_exception_group_with_members(
+    pub(super) fn clone_exception_group_with_members(
         &self,
         template: &ExceptionObject,
         members: Vec<ExceptionObject>,
@@ -3641,7 +3643,7 @@ impl Vm {
         clone
     }
 
-    fn exception_inherits(&self, exception_name: &str, handler_name: &str) -> bool {
+    pub(super) fn exception_inherits(&self, exception_name: &str, handler_name: &str) -> bool {
         if exception_name == handler_name {
             return true;
         }
@@ -3659,14 +3661,14 @@ impl Vm {
         false
     }
 
-    fn exception_parent_name(&self, name: &str) -> Option<String> {
+    pub(super) fn exception_parent_name(&self, name: &str) -> Option<String> {
         if let Some(parent) = self.exception_parents.get(name) {
             return Some(parent.clone());
         }
         builtin_exception_parent(name).map(ToOwned::to_owned)
     }
 
-    fn class_is_exception_class(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_is_exception_class(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -3677,7 +3679,7 @@ impl Vm {
             })
     }
 
-    fn exception_class_name_for_instance(&self, instance: &ObjRef) -> Option<String> {
+    pub(super) fn exception_class_name_for_instance(&self, instance: &ObjRef) -> Option<String> {
         let class = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return None,
@@ -3691,7 +3693,7 @@ impl Vm {
         }
     }
 
-    fn record_exception_parent_for_class(&mut self, class: &ObjRef) {
+    pub(super) fn record_exception_parent_for_class(&mut self, class: &ObjRef) {
         let (class_name, bases) = match &*class.kind() {
             Object::Class(class_data) => (class_data.name.clone(), class_data.bases.clone()),
             _ => return,
@@ -3714,7 +3716,7 @@ impl Vm {
         }
     }
 
-    fn exception_message_for_instance(&self, instance: &ObjRef) -> Option<String> {
+    pub(super) fn exception_message_for_instance(&self, instance: &ObjRef) -> Option<String> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -3733,7 +3735,7 @@ impl Vm {
         None
     }
 
-    fn instantiate_exception_type(
+    pub(super) fn instantiate_exception_type(
         &self,
         name: &str,
         args: &[Value],
@@ -3762,7 +3764,7 @@ impl Vm {
         )))
     }
 
-    fn exception_members_from_value(
+    pub(super) fn exception_members_from_value(
         &self,
         value: &Value,
     ) -> Result<Vec<ExceptionObject>, RuntimeError> {
@@ -3802,7 +3804,7 @@ impl Vm {
         Ok(members)
     }
 
-    fn frame_trace(frame: &Frame) -> TraceFrame {
+    pub(super) fn frame_trace(frame: &Frame) -> TraceFrame {
         let location = frame.code.locations.get(frame.last_ip);
         let line = location.map(|loc| loc.line).unwrap_or(0);
         let column = location.map(|loc| loc.column).unwrap_or(0);
@@ -3814,7 +3816,7 @@ impl Vm {
         }
     }
 
-    fn format_traceback(&self, frames: &[TraceFrame], exc: &Value) -> String {
+    pub(super) fn format_traceback(&self, frames: &[TraceFrame], exc: &Value) -> String {
         let mut output = String::from("Traceback (most recent call last):\n");
         for frame in frames.iter().rev() {
             output.push_str(&format!(
@@ -3844,14 +3846,14 @@ impl Vm {
         output
     }
 
-    fn format_exception_object(&self, exception: &ExceptionObject) -> String {
+    pub(super) fn format_exception_object(&self, exception: &ExceptionObject) -> String {
         match &exception.message {
             Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
             _ => exception.name.clone(),
         }
     }
 
-    fn class_value_from_module(
+    pub(super) fn class_value_from_module(
         &mut self,
         module: &ObjRef,
         mut bases: Vec<ObjRef>,
@@ -3928,7 +3930,7 @@ impl Vm {
         Ok(ClassBuildOutcome::Value(class_value))
     }
 
-    fn call_init_subclass_hook(
+    pub(super) fn call_init_subclass_hook(
         &mut self,
         class: &ObjRef,
         class_keywords: &HashMap<String, Value>,
@@ -3951,7 +3953,7 @@ impl Vm {
         }
     }
 
-    fn resolve_class_metaclass(
+    pub(super) fn resolve_class_metaclass(
         &self,
         bases: &[ObjRef],
         explicit_metaclass: Option<&Value>,
@@ -3972,7 +3974,7 @@ impl Vm {
         Ok(winner)
     }
 
-    fn merge_metaclass_candidates(
+    pub(super) fn merge_metaclass_candidates(
         &self,
         left: Option<ObjRef>,
         right: Option<ObjRef>,
@@ -3997,13 +3999,13 @@ impl Vm {
         }
     }
 
-    fn class_is_subclass_of(&self, class: &ObjRef, target: &ObjRef) -> bool {
+    pub(super) fn class_is_subclass_of(&self, class: &ObjRef, target: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| entry.id() == target.id())
     }
 
-    fn build_default_class_value(
+    pub(super) fn build_default_class_value(
         &mut self,
         name: String,
         attrs: HashMap<String, Value>,
@@ -4106,7 +4108,7 @@ impl Vm {
         class_value
     }
 
-    fn attach_owner_class_to_attrs(&mut self, class_ref: &ObjRef) {
+    pub(super) fn attach_owner_class_to_attrs(&mut self, class_ref: &ObjRef) {
         let Object::Class(class_data) = &mut *class_ref.kind_mut() else {
             return;
         };
@@ -4115,7 +4117,7 @@ impl Vm {
         }
     }
 
-    fn attach_owner_class_to_value(&mut self, value: &Value, owner: &ObjRef) {
+    pub(super) fn attach_owner_class_to_value(&mut self, value: &Value, owner: &ObjRef) {
         match value {
             Value::Function(func) => self.set_function_owner_class(func, owner),
             Value::Module(module) => {
@@ -4132,13 +4134,13 @@ impl Vm {
         }
     }
 
-    fn set_function_owner_class(&mut self, func: &ObjRef, owner: &ObjRef) {
+    pub(super) fn set_function_owner_class(&mut self, func: &ObjRef, owner: &ObjRef) {
         if let Object::Function(func_data) = &mut *func.kind_mut() {
             func_data.owner_class = Some(owner.clone());
         }
     }
 
-    fn class_mro_entries(&self, class: &ObjRef) -> Vec<ObjRef> {
+    pub(super) fn class_mro_entries(&self, class: &ObjRef) -> Vec<ObjRef> {
         match &*class.kind() {
             Object::Class(class_data) if !class_data.mro.is_empty() => class_data.mro.clone(),
             Object::Class(_) => vec![class.clone()],
@@ -4146,7 +4148,7 @@ impl Vm {
         }
     }
 
-    fn build_class_mro(
+    pub(super) fn build_class_mro(
         &self,
         class: &ObjRef,
         bases: &[ObjRef],
@@ -4198,7 +4200,7 @@ impl Vm {
         Ok(out)
     }
 
-    fn pop_value(&mut self) -> Result<Value, RuntimeError> {
+    pub(super) fn pop_value(&mut self) -> Result<Value, RuntimeError> {
         let (frame_name, ip, opcode_name) = if let Some(frame) = self.frames.last() {
             let ip = frame.ip.saturating_sub(1);
             let opcode_name = frame
@@ -4220,12 +4222,12 @@ impl Vm {
         })
     }
 
-    fn push_value(&mut self, value: Value) {
+    pub(super) fn push_value(&mut self, value: Value) {
         let frame = self.frames.last_mut().expect("frame exists");
         frame.stack.push(value);
     }
 
-    fn push_value_to_caller_frame(
+    pub(super) fn push_value_to_caller_frame(
         &mut self,
         caller_idx: usize,
         value: Value,
@@ -4241,7 +4243,7 @@ impl Vm {
         Err(RuntimeError::new("caller frame missing"))
     }
 
-    fn get_cell(&self, idx: usize) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn get_cell(&self, idx: usize) -> Result<ObjRef, RuntimeError> {
         let frame = self.frames.last().expect("frame exists");
         frame
             .cells
@@ -4250,7 +4252,7 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("cell index out of range"))
     }
 
-    fn load_deref(&self, idx: usize) -> Result<Value, RuntimeError> {
+    pub(super) fn load_deref(&self, idx: usize) -> Result<Value, RuntimeError> {
         let frame = self.frames.last().expect("frame exists");
         let cell = frame
             .cells
@@ -4268,7 +4270,7 @@ impl Vm {
         }
     }
 
-    fn store_deref(&mut self, idx: usize, value: Value) -> Result<(), RuntimeError> {
+    pub(super) fn store_deref(&mut self, idx: usize, value: Value) -> Result<(), RuntimeError> {
         let frame = self.frames.last_mut().expect("frame exists");
         let cell = frame
             .cells
@@ -4284,7 +4286,7 @@ impl Vm {
         }
     }
 
-    fn ensure_frame_module_locals_dict(&mut self, frame_index: usize) -> ObjRef {
+    pub(super) fn ensure_frame_module_locals_dict(&mut self, frame_index: usize) -> ObjRef {
         if let Some(existing) = self.frames[frame_index].module_locals_dict.clone() {
             return existing;
         }
@@ -4305,7 +4307,7 @@ impl Vm {
         dict
     }
 
-    fn sync_module_locals_dict_to_module(&mut self, module: &ObjRef, dict: &ObjRef) {
+    pub(super) fn sync_module_locals_dict_to_module(&mut self, module: &ObjRef, dict: &ObjRef) {
         let mut map = HashMap::new();
         if let Object::Dict(entries) = &*dict.kind() {
             for (key, value) in entries {
@@ -4319,7 +4321,7 @@ impl Vm {
         }
     }
 
-    fn module_namespace_lookup(&self, frame: &Frame, name: &str) -> Option<Value> {
+    pub(super) fn module_namespace_lookup(&self, frame: &Frame, name: &str) -> Option<Value> {
         if let Some(dict) = &frame.module_locals_dict {
             return dict_get_value(dict, &Value::Str(name.to_string()));
         }
@@ -4329,7 +4331,7 @@ impl Vm {
         None
     }
 
-    fn lookup_name(&self, name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn lookup_name(&self, name: &str) -> Result<Value, RuntimeError> {
         if let Some(frame) = self.frames.last() {
             if let Some(value) = frame.locals.get(name) {
                 return Ok(value.clone());
@@ -4356,7 +4358,7 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new(format!("name '{name}' is not defined")))
     }
 
-    fn store_name(&mut self, name: String, value: Value) {
+    pub(super) fn store_name(&mut self, name: String, value: Value) {
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
                 if let Some(dict) = frame.module_locals_dict.clone() {
@@ -4371,7 +4373,7 @@ impl Vm {
         }
     }
 
-    fn push_function_call(
+    pub(super) fn push_function_call(
         &mut self,
         func_data: &FunctionObject,
         args: Vec<Value>,
@@ -4417,7 +4419,7 @@ impl Vm {
         Ok(())
     }
 
-    fn receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
+    pub(super) fn receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
         match &*receiver.kind() {
             Object::Instance(_) => Ok(Value::Instance(receiver.clone())),
             Object::Class(_) => Ok(Value::Class(receiver.clone())),
@@ -4435,7 +4437,7 @@ impl Vm {
         }
     }
 
-    fn bound_method_reduce_receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
+    pub(super) fn bound_method_reduce_receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
         if let Object::Module(module_data) = &*receiver.kind() {
             if let Some(value) = module_data.globals.get("value") {
                 return Ok(value.clone());
@@ -4447,7 +4449,7 @@ impl Vm {
         self.receiver_value(receiver)
     }
 
-    fn native_method_pickle_name(&self, kind: NativeMethodKind) -> Option<&'static str> {
+    pub(super) fn native_method_pickle_name(&self, kind: NativeMethodKind) -> Option<&'static str> {
         match kind {
             NativeMethodKind::TupleCount => Some("count"),
             NativeMethodKind::StrCount => Some("count"),
@@ -4462,7 +4464,7 @@ impl Vm {
         }
     }
 
-    fn receiver_from_value(&self, value: &Value) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn receiver_from_value(&self, value: &Value) -> Result<ObjRef, RuntimeError> {
         match value {
             Value::Instance(obj)
             | Value::Class(obj)
@@ -4480,7 +4482,7 @@ impl Vm {
         }
     }
 
-    fn class_of_value(&self, value: &Value) -> Option<ObjRef> {
+    pub(super) fn class_of_value(&self, value: &Value) -> Option<ObjRef> {
         match value {
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => Some(instance_data.class.clone()),
@@ -4501,7 +4503,7 @@ impl Vm {
         }
     }
 
-    fn default_type_metaclass(&self) -> Option<ObjRef> {
+    pub(super) fn default_type_metaclass(&self) -> Option<ObjRef> {
         let Value::Class(object_class) = self.builtins.get("object")? else {
             return None;
         };
@@ -4511,17 +4513,17 @@ impl Vm {
         class_data.metaclass.clone()
     }
 
-    fn alloc_native_bound_method(&self, kind: NativeMethodKind, receiver: ObjRef) -> Value {
+    pub(super) fn alloc_native_bound_method(&self, kind: NativeMethodKind, receiver: ObjRef) -> Value {
         let native = self.heap.alloc_native_method(NativeMethodObject::new(kind));
         let bound = BoundMethod::new(native, receiver);
         self.heap.alloc_bound_method(bound)
     }
 
-    fn alloc_builtin_bound_method(&self, builtin: BuiltinFunction, receiver: ObjRef) -> Value {
+    pub(super) fn alloc_builtin_bound_method(&self, builtin: BuiltinFunction, receiver: ObjRef) -> Value {
         self.alloc_native_bound_method(NativeMethodKind::Builtin(builtin), receiver)
     }
 
-    fn alloc_builtin_unbound_method(
+    pub(super) fn alloc_builtin_unbound_method(
         &self,
         wrapper_name: &str,
         owner: Value,
@@ -4540,7 +4542,7 @@ impl Vm {
         self.alloc_native_bound_method(NativeMethodKind::Builtin(builtin), receiver)
     }
 
-    fn alloc_reduce_ex_bound_method(&self, value: Value) -> Value {
+    pub(super) fn alloc_reduce_ex_bound_method(&self, value: Value) -> Value {
         let wrapper = match self
             .heap
             .alloc_module(ModuleObject::new("__object_reduce_ex_bound__".to_string()))
@@ -4554,7 +4556,7 @@ impl Vm {
         self.alloc_native_bound_method(NativeMethodKind::ObjectReduceExBound, wrapper)
     }
 
-    fn load_dunder_class_attr(&self, value: &Value) -> Result<Value, RuntimeError> {
+    pub(super) fn load_dunder_class_attr(&self, value: &Value) -> Result<Value, RuntimeError> {
         if let Some(class) = self.class_of_value(value) {
             return Ok(Value::Class(class));
         }
@@ -4587,7 +4589,7 @@ impl Vm {
         BuiltinFunction::Type.call(&self.heap, vec![value.clone()])
     }
 
-    fn property_descriptor_parts(
+    pub(super) fn property_descriptor_parts(
         &self,
         descriptor: &ObjRef,
     ) -> Option<(Value, Value, Value, Value)> {
@@ -4623,7 +4625,7 @@ impl Vm {
         Some((fget, fset, fdel, doc))
     }
 
-    fn cached_property_descriptor_parts(
+    pub(super) fn cached_property_descriptor_parts(
         &self,
         descriptor: &ObjRef,
     ) -> Option<(Value, Option<String>, Value)> {
@@ -4653,7 +4655,7 @@ impl Vm {
         Some((func, attr_name, doc))
     }
 
-    fn build_property_descriptor(
+    pub(super) fn build_property_descriptor(
         &self,
         fget: Value,
         fset: Value,
@@ -4678,7 +4680,7 @@ impl Vm {
         self.heap.alloc_instance(instance)
     }
 
-    fn clone_property_descriptor_with(
+    pub(super) fn clone_property_descriptor_with(
         &self,
         descriptor: &ObjRef,
         fget: Option<Value>,
@@ -4701,7 +4703,7 @@ impl Vm {
         ))
     }
 
-    fn load_attr_property_instance(&self, instance: &ObjRef, attr_name: &str) -> Option<Value> {
+    pub(super) fn load_attr_property_instance(&self, instance: &ObjRef, attr_name: &str) -> Option<Value> {
         let Some((fget, fset, fdel, doc)) = self.property_descriptor_parts(instance) else {
             return None;
         };
@@ -4733,7 +4735,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_cached_property_instance(
+    pub(super) fn load_attr_cached_property_instance(
         &self,
         instance: &ObjRef,
         attr_name: &str,

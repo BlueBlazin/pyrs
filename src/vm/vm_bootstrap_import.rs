@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn install_stdlib_modules(&mut self) {
+    pub(super) fn install_stdlib_modules(&mut self) {
         let platform = match std::env::consts::OS {
             "macos" => "darwin",
             other => other,
@@ -3274,7 +3276,7 @@ impl Vm {
         );
     }
 
-    fn sync_sys_path_from_module_paths(&mut self) {
+    pub(super) fn sync_sys_path_from_module_paths(&mut self) {
         let sys_module = match self.modules.get("sys").cloned() {
             Some(module) => module,
             None => return,
@@ -3291,7 +3293,7 @@ impl Vm {
         }
     }
 
-    fn sync_module_paths_from_sys(&mut self) {
+    pub(super) fn sync_module_paths_from_sys(&mut self) {
         let sys_module = match self.modules.get("sys").cloned() {
             Some(module) => module,
             None => return,
@@ -3316,7 +3318,7 @@ impl Vm {
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }
 
-    fn refresh_sys_modules_dict(&mut self) {
+    pub(super) fn refresh_sys_modules_dict(&mut self) {
         let sys_module = match self.modules.get("sys").cloned() {
             Some(module) => module,
             None => return,
@@ -3364,7 +3366,7 @@ impl Vm {
         }
     }
 
-    fn unregister_module(&mut self, name: &str) {
+    pub(super) fn unregister_module(&mut self, name: &str) {
         self.modules.remove(name);
         if matches!(name, "pickle" | "_pickle" | "copyreg") {
             self.pickle_symbol_cache.clear();
@@ -3388,14 +3390,14 @@ impl Vm {
         }
     }
 
-    fn has_cpython_pure_module_on_module_path(&self, module_name: &str) -> bool {
+    pub(super) fn has_cpython_pure_module_on_module_path(&self, module_name: &str) -> bool {
         let rel = module_name.replace('.', "/");
         self.module_paths.iter().any(|root| {
             root.join(format!("{rel}.py")).is_file() || root.join(&rel).join("__init__.py").is_file()
         })
     }
 
-    fn has_local_shim_module(&self, module_name: &str) -> bool {
+    pub(super) fn has_local_shim_module(&self, module_name: &str) -> bool {
         if !LOCAL_SHIM_MODULES.contains(&module_name) {
             return false;
         }
@@ -3406,11 +3408,11 @@ impl Vm {
         shim_root.join(format!("{rel}.py")).is_file() || shim_root.join(rel).join("__init__.py").is_file()
     }
 
-    fn has_preferred_filesystem_module(&self, module_name: &str) -> bool {
+    pub(super) fn has_preferred_filesystem_module(&self, module_name: &str) -> bool {
         self.has_cpython_pure_module_on_module_path(module_name) || self.has_local_shim_module(module_name)
     }
 
-    fn maybe_prefer_cpython_pure_stdlib_modules(&mut self) {
+    pub(super) fn maybe_prefer_cpython_pure_stdlib_modules(&mut self) {
         if self.prefer_pure_json_when_available {
             for module_name in PURE_STDLIB_JSON_MODULES {
                 if self.has_preferred_filesystem_module(module_name)
@@ -3447,7 +3449,7 @@ impl Vm {
         }
     }
 
-    fn module_preference_requires_unload(&self, module_name: &str) -> bool {
+    pub(super) fn module_preference_requires_unload(&self, module_name: &str) -> bool {
         let Some(module) = self.modules.get(module_name) else {
             return false;
         };
@@ -3457,7 +3459,7 @@ impl Vm {
         Self::module_is_local_shim(module)
     }
 
-    fn local_shim_root() -> Option<PathBuf> {
+    pub(super) fn local_shim_root() -> Option<PathBuf> {
         let repo_shim_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shims");
         if repo_shim_root.is_dir() {
             return Some(repo_shim_root);
@@ -3470,7 +3472,7 @@ impl Vm {
         }
     }
 
-    fn module_origin_path(module: &ObjRef) -> Option<PathBuf> {
+    pub(super) fn module_origin_path(module: &ObjRef) -> Option<PathBuf> {
         let module_kind = module.kind();
         let Object::Module(module_data) = &*module_kind else {
             return None;
@@ -3481,7 +3483,7 @@ impl Vm {
         }
     }
 
-    fn module_is_local_shim(module: &ObjRef) -> bool {
+    pub(super) fn module_is_local_shim(module: &ObjRef) -> bool {
         let Some(shim_root) = Self::local_shim_root() else {
             return false;
         };
@@ -3491,12 +3493,12 @@ impl Vm {
         origin.starts_with(shim_root)
     }
 
-    fn register_module(&mut self, name: &str, module: ObjRef) {
+    pub(super) fn register_module(&mut self, name: &str, module: ObjRef) {
         self.modules.insert(name.to_string(), module);
         self.refresh_sys_modules_dict();
     }
 
-    fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
         if std::env::var_os("PYRS_TRACE_MODULE_LOAD").is_some() {
             eprintln!("[module-load] {name}");
         }
@@ -3547,7 +3549,7 @@ impl Vm {
         Ok(module)
     }
 
-    fn create_module_for_loader(
+    pub(super) fn create_module_for_loader(
         &mut self,
         name: &str,
         loader_name: &str,
@@ -3565,7 +3567,7 @@ impl Vm {
         }
     }
 
-    fn exec_module_for_loader(
+    pub(super) fn exec_module_for_loader(
         &mut self,
         module: &ObjRef,
         name: &str,
@@ -3621,7 +3623,7 @@ impl Vm {
         }
     }
 
-    fn find_module_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
+    pub(super) fn find_module_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
         self.sync_module_paths_from_sys();
         let meta_path = self.sys_list_values("meta_path").unwrap_or_default();
         for finder in &meta_path {
@@ -3632,7 +3634,7 @@ impl Vm {
         None
     }
 
-    fn find_module_source_with_meta_finder(
+    pub(super) fn find_module_source_with_meta_finder(
         &mut self,
         name: &str,
         finder: &Value,
@@ -3643,7 +3645,7 @@ impl Vm {
         None
     }
 
-    fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
+    pub(super) fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
         if name == "enum" {
             if let Some(source) = self.preferred_local_shim_source(name) {
                 return Some(source);
@@ -3668,7 +3670,7 @@ impl Vm {
         }
     }
 
-    fn preferred_local_shim_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
+    pub(super) fn preferred_local_shim_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
         if !LOCAL_SHIM_MODULES.contains(&name) {
             return None;
         }
@@ -3676,7 +3678,7 @@ impl Vm {
         self.find_module_source_in_single_root(name, &shim_root)
     }
 
-    fn package_search_paths(&self, package_name: &str) -> Option<Vec<PathBuf>> {
+    pub(super) fn package_search_paths(&self, package_name: &str) -> Option<Vec<PathBuf>> {
         let package = self.modules.get(package_name)?.clone();
         let package_kind = package.kind();
         let module_data = match &*package_kind {
@@ -3702,7 +3704,7 @@ impl Vm {
         if roots.is_empty() { None } else { Some(roots) }
     }
 
-    fn find_module_source_in_roots(
+    pub(super) fn find_module_source_in_roots(
         &mut self,
         module_name: &str,
         roots: &[PathBuf],
@@ -3743,7 +3745,7 @@ impl Vm {
         None
     }
 
-    fn path_importer_for_root(&mut self, root: &PathBuf) -> Option<Value> {
+    pub(super) fn path_importer_for_root(&mut self, root: &PathBuf) -> Option<Value> {
         let key = Value::Str(root.to_string_lossy().to_string());
         if let Some(cache_dict) = self.sys_dict_obj("path_importer_cache") {
             if let Some(cached) = dict_get_value(&cache_dict, &key) {
@@ -3766,7 +3768,7 @@ impl Vm {
         self.run_path_hooks_for_root(root)
     }
 
-    fn run_path_hooks_for_root(&mut self, root: &PathBuf) -> Option<Value> {
+    pub(super) fn run_path_hooks_for_root(&mut self, root: &PathBuf) -> Option<Value> {
         let hooks = self.sys_list_values("path_hooks").unwrap_or_default();
         for hook in hooks {
             if matches_finder_kind(&hook, DEFAULT_PATH_HOOK) {
@@ -3776,7 +3778,7 @@ impl Vm {
         None
     }
 
-    fn make_file_finder_importer(&self, root: &PathBuf) -> Value {
+    pub(super) fn make_file_finder_importer(&self, root: &PathBuf) -> Value {
         self.heap.alloc_dict(vec![
             (
                 Value::Str("kind".to_string()),
@@ -3789,7 +3791,7 @@ impl Vm {
         ])
     }
 
-    fn find_module_source_with_importer(
+    pub(super) fn find_module_source_with_importer(
         &self,
         importer: &Value,
         module_name: &str,
@@ -3813,7 +3815,7 @@ impl Vm {
         }
     }
 
-    fn find_module_source_in_single_root(
+    pub(super) fn find_module_source_in_single_root(
         &self,
         module_name: &str,
         root: &PathBuf,
@@ -3894,7 +3896,7 @@ impl Vm {
         None
     }
 
-    fn sys_list_values(&self, name: &str) -> Option<Vec<Value>> {
+    pub(super) fn sys_list_values(&self, name: &str) -> Option<Vec<Value>> {
         let sys_module = self.modules.get("sys")?.clone();
         let module_kind = sys_module.kind();
         let module_data = match &*module_kind {
@@ -3911,7 +3913,7 @@ impl Vm {
         }
     }
 
-    fn sys_dict_obj(&self, name: &str) -> Option<ObjRef> {
+    pub(super) fn sys_dict_obj(&self, name: &str) -> Option<ObjRef> {
         let sys_module = self.modules.get("sys")?.clone();
         let module_kind = sys_module.kind();
         let module_data = match &*module_kind {
@@ -3924,11 +3926,11 @@ impl Vm {
         }
     }
 
-    fn find_module_file(&mut self, name: &str) -> Option<PathBuf> {
+    pub(super) fn find_module_file(&mut self, name: &str) -> Option<PathBuf> {
         self.find_module_source(name).map(|info| info.path)
     }
 
-    fn load_submodule(&mut self, parent: &ObjRef, attr_name: &str) -> Option<ObjRef> {
+    pub(super) fn load_submodule(&mut self, parent: &ObjRef, attr_name: &str) -> Option<ObjRef> {
         let parent_name = match &*parent.kind() {
             Object::Module(module) => module.name.clone(),
             _ => return None,
@@ -3981,7 +3983,7 @@ impl Vm {
         None
     }
 
-    fn ensure_module(&mut self, name: &str) -> ObjRef {
+    pub(super) fn ensure_module(&mut self, name: &str) -> ObjRef {
         if let Some(module) = self.modules.get(name).cloned() {
             return module;
         }
@@ -3994,7 +3996,7 @@ impl Vm {
         module
     }
 
-    fn set_module_metadata(
+    pub(super) fn set_module_metadata(
         &mut self,
         module: &ObjRef,
         name: &str,
@@ -4085,7 +4087,7 @@ impl Vm {
         }
     }
 
-    fn build_module_spec_value(
+    pub(super) fn build_module_spec_value(
         &mut self,
         name: &str,
         origin: Option<&PathBuf>,
@@ -4154,7 +4156,7 @@ impl Vm {
         Value::Module(spec)
     }
 
-    fn set_module_spec_field(&self, spec: &Value, field: &str, value: Value) {
+    pub(super) fn set_module_spec_field(&self, spec: &Value, field: &str, value: Value) {
         match spec {
             Value::Module(spec_obj) => {
                 if let Object::Module(module_data) = &mut *spec_obj.kind_mut() {
@@ -4168,7 +4170,7 @@ impl Vm {
         }
     }
 
-    fn link_module_chain(&mut self, name: &str, module: ObjRef) {
+    pub(super) fn link_module_chain(&mut self, name: &str, module: ObjRef) {
         let parts: Vec<&str> = name.split('.').collect();
         if parts.len() <= 1 {
             return;
@@ -4194,7 +4196,7 @@ impl Vm {
         }
     }
 
-    fn import_module_object(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn import_module_object(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
         self.sync_module_paths_from_sys();
         let caller_depth = self.frames.len();
         let existing_modules: HashSet<String> = self.modules.keys().cloned().collect();
@@ -4292,7 +4294,7 @@ impl Vm {
         }
     }
 
-    fn prune_module_cache_for_removed_sys_modules(&mut self, modules_dict: &ObjRef) {
+    pub(super) fn prune_module_cache_for_removed_sys_modules(&mut self, modules_dict: &ObjRef) {
         let Object::Dict(entries) = &*modules_dict.kind() else {
             return;
         };
@@ -4329,7 +4331,7 @@ impl Vm {
         }
     }
 
-    fn cleanup_partial_modules(&mut self, existing_modules: &HashSet<String>) {
+    pub(super) fn cleanup_partial_modules(&mut self, existing_modules: &HashSet<String>) {
         let added: Vec<String> = self
             .modules
             .keys()
@@ -4359,7 +4361,7 @@ impl Vm {
         }
     }
 
-    fn module_is_uninitialized(module: &ObjRef) -> bool {
+    pub(super) fn module_is_uninitialized(module: &ObjRef) -> bool {
         let module_kind = module.kind();
         let Object::Module(module_data) = &*module_kind else {
             return false;
@@ -4381,7 +4383,7 @@ impl Vm {
         })
     }
 
-    fn module_loader_name(module: &ObjRef) -> Option<String> {
+    pub(super) fn module_loader_name(module: &ObjRef) -> Option<String> {
         let module_kind = module.kind();
         let Object::Module(module_data) = &*module_kind else {
             return None;
@@ -4392,7 +4394,7 @@ impl Vm {
         }
     }
 
-    fn should_prefer_filesystem_module(&mut self, name: &str, module: &ObjRef) -> bool {
+    pub(super) fn should_prefer_filesystem_module(&mut self, name: &str, module: &ObjRef) -> bool {
         let is_json_stack = matches!(
             name,
             "json" | "json.decoder" | "json.scanner" | "json.encoder" | "_json"
@@ -4426,7 +4428,7 @@ impl Vm {
         false
     }
 
-    fn module_for_plain_import(&mut self, name: &str, module: ObjRef) -> ObjRef {
+    pub(super) fn module_for_plain_import(&mut self, name: &str, module: ObjRef) -> ObjRef {
         if let Some((root, _)) = name.split_once('.') {
             self.link_module_chain(name, module);
             self.ensure_module(root)
@@ -4435,7 +4437,7 @@ impl Vm {
         }
     }
 
-    fn fromlist_requested(&self, fromlist: &Value) -> bool {
+    pub(super) fn fromlist_requested(&self, fromlist: &Value) -> bool {
         match fromlist {
             Value::None => false,
             Value::Tuple(obj) => match &*obj.kind() {
@@ -4450,7 +4452,7 @@ impl Vm {
         }
     }
 
-    fn import_package_context(&self) -> Option<String> {
+    pub(super) fn import_package_context(&self) -> Option<String> {
         let frame = self.frames.last()?;
         let module_ref = frame.module.kind();
         let module = match &*module_ref {
@@ -4472,7 +4474,7 @@ impl Vm {
         )
     }
 
-    fn resolve_import_name(&self, requested: &str, level: usize) -> Result<String, RuntimeError> {
+    pub(super) fn resolve_import_name(&self, requested: &str, level: usize) -> Result<String, RuntimeError> {
         if level == 0 {
             return Ok(requested.to_string());
         }
@@ -4489,7 +4491,7 @@ impl Vm {
         self.resolve_import_name_from_package(&package, requested, level)
     }
 
-    fn resolve_import_name_from_package(
+    pub(super) fn resolve_import_name_from_package(
         &self,
         package: &str,
         requested: &str,

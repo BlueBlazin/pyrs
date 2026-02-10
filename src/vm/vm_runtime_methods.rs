@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_warnings_filters_mutated(
+    pub(super) fn builtin_warnings_filters_mutated(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -10,7 +12,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_warnings_acquire_lock(
+    pub(super) fn builtin_warnings_acquire_lock(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -21,7 +23,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_warnings_release_lock(
+    pub(super) fn builtin_warnings_release_lock(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -32,7 +34,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn thread_info_dict(&mut self, name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn thread_info_dict(&mut self, name: &str) -> Result<Value, RuntimeError> {
         let ident = self.builtin_threading_get_ident(Vec::new(), HashMap::new())?;
         Ok(self.heap.alloc_dict(vec![
             (Value::Str("name".to_string()), Value::Str(name.to_string())),
@@ -41,7 +43,7 @@ impl Vm {
         ]))
     }
 
-    fn range_object_parts(&self, obj: &ObjRef) -> Option<(BigInt, BigInt, BigInt)> {
+    pub(super) fn range_object_parts(&self, obj: &ObjRef) -> Option<(BigInt, BigInt, BigInt)> {
         let kind = obj.kind();
         let Object::Iterator(state) = &*kind else {
             return None;
@@ -52,7 +54,7 @@ impl Vm {
         Some((start.clone(), stop.clone(), step.clone()))
     }
 
-    fn range_object_len_bigint(&self, start: &BigInt, stop: &BigInt, step: &BigInt) -> BigInt {
+    pub(super) fn range_object_len_bigint(&self, start: &BigInt, stop: &BigInt, step: &BigInt) -> BigInt {
         let one = BigInt::one();
         if step.is_negative() {
             if start.cmp_total(stop) != Ordering::Greater {
@@ -76,7 +78,7 @@ impl Vm {
         }
     }
 
-    fn range_object_index_value(
+    pub(super) fn range_object_index_value(
         &self,
         start: &BigInt,
         step: &BigInt,
@@ -86,7 +88,7 @@ impl Vm {
         value_from_bigint(start.add(&offset))
     }
 
-    fn getitem_value(&mut self, value: Value, index: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn getitem_value(&mut self, value: Value, index: Value) -> Result<Value, RuntimeError> {
         if let Value::Instance(instance) = &value {
             if let Some(values) = self.namedtuple_instance_values(instance) {
                 return self.getitem_value(self.heap.alloc_tuple(values), index);
@@ -406,7 +408,7 @@ impl Vm {
         }
     }
 
-    fn generic_alias_class(&self) -> Option<ObjRef> {
+    pub(super) fn generic_alias_class(&self) -> Option<ObjRef> {
         let module = self.modules.get("types")?;
         let Object::Module(module_data) = &*module.kind() else {
             return None;
@@ -417,7 +419,7 @@ impl Vm {
         }
     }
 
-    fn collect_iterable_values(&mut self, source: Value) -> Result<Vec<Value>, RuntimeError> {
+    pub(super) fn collect_iterable_values(&mut self, source: Value) -> Result<Vec<Value>, RuntimeError> {
         // Keep the original iterable alive while we consume it. This avoids
         // premature finalization for temporary objects with __del__.
         let _source_guard = source.clone();
@@ -466,7 +468,7 @@ impl Vm {
         }
     }
 
-    fn value_to_bytes_payload(&mut self, value: Value) -> Result<Vec<u8>, RuntimeError> {
+    pub(super) fn value_to_bytes_payload(&mut self, value: Value) -> Result<Vec<u8>, RuntimeError> {
         match value {
             Value::Iterator(iterator_ref) => {
                 let mut out = Vec::new();
@@ -535,7 +537,7 @@ impl Vm {
         }
     }
 
-    fn random_randbelow(&mut self, upper: i64) -> Result<i64, RuntimeError> {
+    pub(super) fn random_randbelow(&mut self, upper: i64) -> Result<i64, RuntimeError> {
         if upper <= 0 {
             return Err(RuntimeError::new("empty range for randrange()"));
         }
@@ -549,7 +551,7 @@ impl Vm {
         }
     }
 
-    fn install_builtins(&mut self) {
+    pub(super) fn install_builtins(&mut self) {
         self.builtins
             .insert("print".to_string(), Value::Builtin(BuiltinFunction::Print));
         self.builtins
@@ -1193,7 +1195,7 @@ impl Vm {
         );
     }
 
-    fn call_build_class(
+    pub(super) fn call_build_class(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1260,7 +1262,7 @@ impl Vm {
         Ok(None)
     }
 
-    fn alloc_synthetic_class(&mut self, name: &str) -> ObjRef {
+    pub(super) fn alloc_synthetic_class(&mut self, name: &str) -> ObjRef {
         match self
             .heap
             .alloc_class(ClassObject::new(name.to_string(), Vec::new()))
@@ -1270,7 +1272,7 @@ impl Vm {
         }
     }
 
-    fn class_from_base_value(&mut self, base: Value) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn class_from_base_value(&mut self, base: Value) -> Result<ObjRef, RuntimeError> {
         match base {
             Value::Class(class) => Ok(class),
             Value::ExceptionType(name) => Ok(self.alloc_synthetic_class(&name)),

@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_struct_calcsize(
+    pub(super) fn builtin_struct_calcsize(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -12,7 +14,7 @@ impl Vm {
         Ok(Value::Int(spec.size as i64))
     }
 
-    fn builtin_struct_pack(
+    pub(super) fn builtin_struct_pack(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -26,7 +28,7 @@ impl Vm {
         Ok(self.heap.alloc_bytes(packed))
     }
 
-    fn builtin_struct_unpack(
+    pub(super) fn builtin_struct_unpack(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -41,7 +43,7 @@ impl Vm {
         Ok(self.heap.alloc_tuple(values))
     }
 
-    fn builtin_struct_iter_unpack(
+    pub(super) fn builtin_struct_iter_unpack(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -80,7 +82,7 @@ impl Vm {
         ))
     }
 
-    fn builtin_struct_pack_into(
+    pub(super) fn builtin_struct_pack_into(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -120,7 +122,7 @@ impl Vm {
         }
     }
 
-    fn builtin_struct_unpack_from(
+    pub(super) fn builtin_struct_unpack_from(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -143,7 +145,7 @@ impl Vm {
         Ok(self.heap.alloc_tuple(values))
     }
 
-    fn struct_format_from_receiver(&self, receiver: &ObjRef) -> Result<String, RuntimeError> {
+    pub(super) fn struct_format_from_receiver(&self, receiver: &ObjRef) -> Result<String, RuntimeError> {
         let Object::Instance(instance_data) = &*receiver.kind() else {
             return Err(RuntimeError::new("Struct method expects struct instance"));
         };
@@ -153,7 +155,7 @@ impl Vm {
         }
     }
 
-    fn struct_format_from_value(
+    pub(super) fn struct_format_from_value(
         &self,
         value: Value,
         func_name: &str,
@@ -169,7 +171,7 @@ impl Vm {
         }
     }
 
-    fn forward_struct_method(
+    pub(super) fn forward_struct_method(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -190,7 +192,7 @@ impl Vm {
         self.call_builtin(target, forwarded, kwargs)
     }
 
-    fn builtin_struct_class_init(
+    pub(super) fn builtin_struct_class_init(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -220,7 +222,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_struct_class_pack(
+    pub(super) fn builtin_struct_class_pack(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -228,7 +230,7 @@ impl Vm {
         self.forward_struct_method(args, kwargs, BuiltinFunction::StructPack, "pack")
     }
 
-    fn builtin_struct_class_unpack(
+    pub(super) fn builtin_struct_class_unpack(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -236,7 +238,7 @@ impl Vm {
         self.forward_struct_method(args, kwargs, BuiltinFunction::StructUnpack, "unpack")
     }
 
-    fn builtin_struct_class_iter_unpack(
+    pub(super) fn builtin_struct_class_iter_unpack(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -249,7 +251,7 @@ impl Vm {
         )
     }
 
-    fn builtin_struct_class_pack_into(
+    pub(super) fn builtin_struct_class_pack_into(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -257,7 +259,7 @@ impl Vm {
         self.forward_struct_method(args, kwargs, BuiltinFunction::StructPackInto, "pack_into")
     }
 
-    fn builtin_struct_class_unpack_from(
+    pub(super) fn builtin_struct_class_unpack_from(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -270,7 +272,7 @@ impl Vm {
         )
     }
 
-    fn builtin_datetime_now(
+    pub(super) fn builtin_datetime_now(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -281,7 +283,7 @@ impl Vm {
         Ok(Value::Str(current_utc_iso()))
     }
 
-    fn builtin_datetime_today(
+    pub(super) fn builtin_datetime_today(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -297,7 +299,7 @@ impl Vm {
         Ok(Value::Str(format!("{year:04}-{month:02}-{day:02}")))
     }
 
-    fn builtin_date_init(
+    pub(super) fn builtin_date_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -364,7 +366,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_asyncio_run(
+    pub(super) fn builtin_asyncio_run(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -376,7 +378,7 @@ impl Vm {
         self.run_awaitable(awaitable)
     }
 
-    fn builtin_asyncio_sleep(
+    pub(super) fn builtin_asyncio_sleep(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -398,7 +400,7 @@ impl Vm {
         Ok(self.make_immediate_coroutine(result))
     }
 
-    fn builtin_asyncio_create_task(
+    pub(super) fn builtin_asyncio_create_task(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -411,7 +413,7 @@ impl Vm {
         self.awaitable_from_value(args.remove(0))
     }
 
-    fn builtin_asyncio_gather(
+    pub(super) fn builtin_asyncio_gather(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -428,7 +430,7 @@ impl Vm {
         Ok(self.make_immediate_coroutine(self.heap.alloc_list(results)))
     }
 
-    fn take_bound_instance_arg(
+    pub(super) fn take_bound_instance_arg(
         &self,
         args: &mut Vec<Value>,
         method_name: &str,
@@ -446,14 +448,14 @@ impl Vm {
         }
     }
 
-    fn instance_attr_get(instance: &ObjRef, name: &str) -> Option<Value> {
+    pub(super) fn instance_attr_get(instance: &ObjRef, name: &str) -> Option<Value> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
         instance_data.attrs.get(name).cloned()
     }
 
-    fn instance_attr_set(instance: &ObjRef, name: &str, value: Value) -> Result<(), RuntimeError> {
+    pub(super) fn instance_attr_set(instance: &ObjRef, name: &str, value: Value) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
             return Err(RuntimeError::new("expected instance object"));
         };
@@ -461,7 +463,7 @@ impl Vm {
         Ok(())
     }
 
-    fn builtin_threading_get_ident(
+    pub(super) fn builtin_threading_get_ident(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -474,7 +476,7 @@ impl Vm {
         Ok(Value::Int((hasher.finish() & i64::MAX as u64) as i64))
     }
 
-    fn builtin_thread_start_new_thread(
+    pub(super) fn builtin_thread_start_new_thread(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -538,7 +540,7 @@ impl Vm {
         }
     }
 
-    fn builtin_threading_current_thread(
+    pub(super) fn builtin_threading_current_thread(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -549,7 +551,7 @@ impl Vm {
         self.thread_info_dict("MainThread")
     }
 
-    fn builtin_threading_main_thread(
+    pub(super) fn builtin_threading_main_thread(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -560,7 +562,7 @@ impl Vm {
         self.thread_info_dict("MainThread")
     }
 
-    fn builtin_threading_active_count(
+    pub(super) fn builtin_threading_active_count(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -571,7 +573,7 @@ impl Vm {
         Ok(Value::Int(1))
     }
 
-    fn builtin_thread_class_init(
+    pub(super) fn builtin_thread_class_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -647,7 +649,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_class_start(
+    pub(super) fn builtin_thread_class_start(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -699,7 +701,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_class_join(
+    pub(super) fn builtin_thread_class_join(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -717,7 +719,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_class_is_alive(
+    pub(super) fn builtin_thread_class_is_alive(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -732,7 +734,7 @@ impl Vm {
         )))
     }
 
-    fn builtin_thread_event_init(
+    pub(super) fn builtin_thread_event_init(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -745,7 +747,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_event_clear(
+    pub(super) fn builtin_thread_event_clear(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -758,7 +760,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_event_is_set(
+    pub(super) fn builtin_thread_event_is_set(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -773,7 +775,7 @@ impl Vm {
         )))
     }
 
-    fn builtin_thread_event_set(
+    pub(super) fn builtin_thread_event_set(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -786,7 +788,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_event_wait(
+    pub(super) fn builtin_thread_event_wait(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -807,7 +809,7 @@ impl Vm {
         )))
     }
 
-    fn builtin_thread_condition_init(
+    pub(super) fn builtin_thread_condition_init(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -824,7 +826,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_condition_acquire(
+    pub(super) fn builtin_thread_condition_acquire(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -850,7 +852,7 @@ impl Vm {
         Ok(Value::Bool(true))
     }
 
-    fn builtin_thread_condition_notify(
+    pub(super) fn builtin_thread_condition_notify(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -870,7 +872,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_condition_notify_all(
+    pub(super) fn builtin_thread_condition_notify_all(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -884,7 +886,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_condition_release(
+    pub(super) fn builtin_thread_condition_release(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -899,7 +901,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_condition_wait(
+    pub(super) fn builtin_thread_condition_wait(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -920,7 +922,7 @@ impl Vm {
         Ok(Value::Bool(true))
     }
 
-    fn builtin_thread_semaphore_init(
+    pub(super) fn builtin_thread_semaphore_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -944,7 +946,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_semaphore_acquire(
+    pub(super) fn builtin_thread_semaphore_acquire(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -981,7 +983,7 @@ impl Vm {
         }
     }
 
-    fn builtin_thread_semaphore_release(
+    pub(super) fn builtin_thread_semaphore_release(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1016,7 +1018,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_bounded_semaphore_init(
+    pub(super) fn builtin_thread_bounded_semaphore_init(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1024,7 +1026,7 @@ impl Vm {
         self.builtin_thread_semaphore_init(args, kwargs)
     }
 
-    fn builtin_thread_barrier_init(
+    pub(super) fn builtin_thread_barrier_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1078,7 +1080,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_barrier_abort(
+    pub(super) fn builtin_thread_barrier_abort(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1091,7 +1093,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_barrier_reset(
+    pub(super) fn builtin_thread_barrier_reset(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1105,7 +1107,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_thread_barrier_wait(
+    pub(super) fn builtin_thread_barrier_wait(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1144,7 +1146,7 @@ impl Vm {
         Ok(Value::Int(next_waiting))
     }
 
-    fn builtin_signal_signal(
+    pub(super) fn builtin_signal_signal(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1161,7 +1163,7 @@ impl Vm {
         Ok(previous)
     }
 
-    fn builtin_signal_getsignal(
+    pub(super) fn builtin_signal_getsignal(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1177,7 +1179,7 @@ impl Vm {
             .unwrap_or(Value::Int(SIGNAL_DEFAULT)))
     }
 
-    fn builtin_signal_raise_signal(
+    pub(super) fn builtin_signal_raise_signal(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1217,7 +1219,7 @@ impl Vm {
         }
     }
 
-    fn socket_class_ref(&self) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn socket_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("_socket").cloned() else {
             return Err(RuntimeError::new("module '_socket' not found"));
         };
@@ -1230,7 +1232,7 @@ impl Vm {
         Ok(class_ref)
     }
 
-    fn alloc_socket_instance_with_fd(&self, fd: i64) -> Result<Value, RuntimeError> {
+    pub(super) fn alloc_socket_instance_with_fd(&self, fd: i64) -> Result<Value, RuntimeError> {
         let class_ref = self.socket_class_ref()?;
         let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
             Value::Instance(obj) => obj,
@@ -1247,7 +1249,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn builtin_socket_gethostname(
+    pub(super) fn builtin_socket_gethostname(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1262,7 +1264,7 @@ impl Vm {
         Ok(Value::Str(hostname))
     }
 
-    fn builtin_socket_gethostbyname(
+    pub(super) fn builtin_socket_gethostbyname(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1291,7 +1293,7 @@ impl Vm {
         Err(RuntimeError::new("name resolution failed"))
     }
 
-    fn builtin_socket_getaddrinfo(
+    pub(super) fn builtin_socket_getaddrinfo(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1380,7 +1382,7 @@ impl Vm {
         Ok(self.heap.alloc_list(entries))
     }
 
-    fn builtin_socket_fromfd(
+    pub(super) fn builtin_socket_fromfd(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1399,7 +1401,7 @@ impl Vm {
         self.alloc_socket_instance_with_fd(fd)
     }
 
-    fn builtin_socket_getdefaulttimeout(
+    pub(super) fn builtin_socket_getdefaulttimeout(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1415,7 +1417,7 @@ impl Vm {
         }
     }
 
-    fn builtin_socket_setdefaulttimeout(
+    pub(super) fn builtin_socket_setdefaulttimeout(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1438,7 +1440,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_socket_ntohs(
+    pub(super) fn builtin_socket_ntohs(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1451,7 +1453,7 @@ impl Vm {
         Ok(Value::Int(u16::from_be(value) as i64))
     }
 
-    fn builtin_socket_ntohl(
+    pub(super) fn builtin_socket_ntohl(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1464,7 +1466,7 @@ impl Vm {
         Ok(Value::Int(u32::from_be(value) as i64))
     }
 
-    fn builtin_socket_htons(
+    pub(super) fn builtin_socket_htons(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1477,7 +1479,7 @@ impl Vm {
         Ok(Value::Int(value.to_be() as i64))
     }
 
-    fn builtin_socket_htonl(
+    pub(super) fn builtin_socket_htonl(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1490,7 +1492,7 @@ impl Vm {
         Ok(Value::Int(value.to_be() as i64))
     }
 
-    fn builtin_socket_object_init(
+    pub(super) fn builtin_socket_object_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1562,7 +1564,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_socket_object_close(
+    pub(super) fn builtin_socket_object_close(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1576,7 +1578,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_socket_object_detach(
+    pub(super) fn builtin_socket_object_detach(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1594,7 +1596,7 @@ impl Vm {
         Ok(Value::Int(fd))
     }
 
-    fn builtin_socket_object_fileno(
+    pub(super) fn builtin_socket_object_fileno(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1609,7 +1611,7 @@ impl Vm {
         })
     }
 
-    fn uuid_class_ref(&self) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn uuid_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("uuid").cloned() else {
             return Err(RuntimeError::new("module 'uuid' not found"));
         };
@@ -1622,7 +1624,7 @@ impl Vm {
         }
     }
 
-    fn uuid_value_to_bytes(&self, value: Value) -> Result<[u8; 16], RuntimeError> {
+    pub(super) fn uuid_value_to_bytes(&self, value: Value) -> Result<[u8; 16], RuntimeError> {
         match value {
             Value::Instance(instance) => match Self::instance_attr_get(&instance, "__uuid_bytes__")
             {
@@ -1650,7 +1652,7 @@ impl Vm {
         }
     }
 
-    fn make_uuid_instance_from_bytes(&self, mut bytes: [u8; 16]) -> Result<Value, RuntimeError> {
+    pub(super) fn make_uuid_instance_from_bytes(&self, mut bytes: [u8; 16]) -> Result<Value, RuntimeError> {
         apply_uuid_variant(&mut bytes);
         let class_ref = self.uuid_class_ref()?;
         let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
@@ -1661,7 +1663,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn populate_uuid_instance(
+    pub(super) fn populate_uuid_instance(
         &self,
         instance: &ObjRef,
         bytes: [u8; 16],
@@ -1704,7 +1706,7 @@ impl Vm {
         Ok(())
     }
 
-    fn builtin_uuid_class_init(
+    pub(super) fn builtin_uuid_class_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1764,7 +1766,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_uuid_getnode(
+    pub(super) fn builtin_uuid_getnode(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1775,7 +1777,7 @@ impl Vm {
         Ok(Value::Int(uuid_node_from_hostname()))
     }
 
-    fn builtin_uuid1(
+    pub(super) fn builtin_uuid1(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1818,7 +1820,7 @@ impl Vm {
         self.make_uuid_instance_from_bytes(bytes)
     }
 
-    fn builtin_uuid3(
+    pub(super) fn builtin_uuid3(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1842,7 +1844,7 @@ impl Vm {
         self.make_uuid_instance_from_bytes(bytes)
     }
 
-    fn builtin_uuid4(
+    pub(super) fn builtin_uuid4(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1855,7 +1857,7 @@ impl Vm {
         self.make_uuid_instance_from_bytes(bytes)
     }
 
-    fn builtin_uuid5(
+    pub(super) fn builtin_uuid5(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1879,7 +1881,7 @@ impl Vm {
         self.make_uuid_instance_from_bytes(bytes)
     }
 
-    fn builtin_uuid6(
+    pub(super) fn builtin_uuid6(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1906,7 +1908,7 @@ impl Vm {
         self.make_uuid_instance_from_bytes(bytes)
     }
 
-    fn builtin_uuid7(
+    pub(super) fn builtin_uuid7(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1936,7 +1938,7 @@ impl Vm {
         self.make_uuid_instance_from_bytes(bytes)
     }
 
-    fn builtin_uuid8(
+    pub(super) fn builtin_uuid8(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1973,7 +1975,7 @@ impl Vm {
         self.make_uuid_instance_from_bytes(bytes)
     }
 
-    fn builtin_colorize_can_colorize(
+    pub(super) fn builtin_colorize_can_colorize(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1986,7 +1988,7 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
-    fn builtin_colorize_get_theme(
+    pub(super) fn builtin_colorize_get_theme(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2011,7 +2013,7 @@ impl Vm {
             .unwrap_or(Value::None))
     }
 
-    fn builtin_colorize_get_colors(
+    pub(super) fn builtin_colorize_get_colors(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2036,7 +2038,7 @@ impl Vm {
             .unwrap_or(Value::None))
     }
 
-    fn builtin_colorize_set_theme(
+    pub(super) fn builtin_colorize_set_theme(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2068,7 +2070,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_colorize_decolor(
+    pub(super) fn builtin_colorize_decolor(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2130,7 +2132,7 @@ impl Vm {
         Ok(Value::Str(output))
     }
 
-    fn builtin_warnings_warn(
+    pub(super) fn builtin_warnings_warn(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2160,7 +2162,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_warnings_warn_explicit(
+    pub(super) fn builtin_warnings_warn_explicit(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,

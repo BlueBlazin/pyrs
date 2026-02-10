@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_os_getcwd(
+    pub(super) fn builtin_os_getcwd(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -12,7 +14,7 @@ impl Vm {
         Ok(Value::Str(cwd.to_string_lossy().to_string()))
     }
 
-    fn builtin_os_getpid(
+    pub(super) fn builtin_os_getpid(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -23,7 +25,7 @@ impl Vm {
         Ok(Value::Int(std::process::id() as i64))
     }
 
-    fn builtin_os_getenv(
+    pub(super) fn builtin_os_getenv(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -92,7 +94,7 @@ impl Vm {
         }
     }
 
-    fn make_os_terminal_size(&self, columns: i64, lines: i64) -> Value {
+    pub(super) fn make_os_terminal_size(&self, columns: i64, lines: i64) -> Value {
         let module = match self
             .heap
             .alloc_module(ModuleObject::new("__os_terminal_size__".to_string()))
@@ -111,7 +113,7 @@ impl Vm {
         Value::Module(module)
     }
 
-    fn builtin_os_terminal_size(
+    pub(super) fn builtin_os_terminal_size(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -152,7 +154,7 @@ impl Vm {
         Ok(self.make_os_terminal_size(columns, lines))
     }
 
-    fn builtin_os_get_terminal_size(
+    pub(super) fn builtin_os_get_terminal_size(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -168,14 +170,14 @@ impl Vm {
         Ok(self.make_os_terminal_size(80, 24))
     }
 
-    fn alloc_open_fd(&mut self, file: fs::File) -> i64 {
+    pub(super) fn alloc_open_fd(&mut self, file: fs::File) -> i64 {
         let fd = self.next_fd;
         self.next_fd += 1;
         self.open_files.insert(fd, file);
         fd
     }
 
-    fn find_open_file_mut(&mut self, fd: i64) -> Option<&mut fs::File> {
+    pub(super) fn find_open_file_mut(&mut self, fd: i64) -> Option<&mut fs::File> {
         if self.open_files.contains_key(&fd) {
             return self.open_files.get_mut(&fd);
         }
@@ -191,7 +193,7 @@ impl Vm {
         None
     }
 
-    fn find_open_file(&self, fd: i64) -> Option<&fs::File> {
+    pub(super) fn find_open_file(&self, fd: i64) -> Option<&fs::File> {
         if let Some(file) = self.open_files.get(&fd) {
             return Some(file);
         }
@@ -207,7 +209,7 @@ impl Vm {
         None
     }
 
-    fn cloned_open_file_for_fd(&self, fd: i64) -> Result<fs::File, RuntimeError> {
+    pub(super) fn cloned_open_file_for_fd(&self, fd: i64) -> Result<fs::File, RuntimeError> {
         self.find_open_file(fd)
             .ok_or_else(|| RuntimeError::new("bad file descriptor"))?
             .try_clone()
@@ -215,7 +217,7 @@ impl Vm {
     }
 
     #[cfg(unix)]
-    fn stdio_from_vm_fd(&self, fd: i64, fallback: Stdio) -> Result<Stdio, RuntimeError> {
+    pub(super) fn stdio_from_vm_fd(&self, fd: i64, fallback: Stdio) -> Result<Stdio, RuntimeError> {
         if fd < 0 {
             return Ok(fallback);
         }
@@ -237,7 +239,7 @@ impl Vm {
     }
 
     #[cfg(unix)]
-    fn status_to_wait_status(status: std::process::ExitStatus) -> i64 {
+    pub(super) fn status_to_wait_status(status: std::process::ExitStatus) -> i64 {
         if let Some(code) = status.code() {
             return ((code & 0xff) << 8) as i64;
         }
@@ -247,7 +249,7 @@ impl Vm {
         0
     }
 
-    fn builtin_os_pipe(
+    pub(super) fn builtin_os_pipe(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -275,7 +277,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_open(
+    pub(super) fn builtin_os_open(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -345,7 +347,7 @@ impl Vm {
         Ok(Value::Int(fd))
     }
 
-    fn builtin_os_close(
+    pub(super) fn builtin_os_close(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -375,7 +377,7 @@ impl Vm {
         Err(RuntimeError::new("bad file descriptor"))
     }
 
-    fn builtin_os_read(
+    pub(super) fn builtin_os_read(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -404,7 +406,7 @@ impl Vm {
         Ok(self.heap.alloc_bytes(buffer))
     }
 
-    fn builtin_os_dup(
+    pub(super) fn builtin_os_dup(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -418,7 +420,7 @@ impl Vm {
         Ok(Value::Int(new_fd))
     }
 
-    fn builtin_os_kill(
+    pub(super) fn builtin_os_kill(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -440,7 +442,7 @@ impl Vm {
         Err(RuntimeError::new("No such process"))
     }
 
-    fn builtin_os_write(
+    pub(super) fn builtin_os_write(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -468,7 +470,7 @@ impl Vm {
         Ok(Value::Int(payload.len() as i64))
     }
 
-    fn builtin_os_isatty(
+    pub(super) fn builtin_os_isatty(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -486,7 +488,7 @@ impl Vm {
         Ok(Value::Bool(isatty))
     }
 
-    fn builtin_os_urandom(
+    pub(super) fn builtin_os_urandom(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -515,7 +517,7 @@ impl Vm {
         Ok(self.heap.alloc_bytes(out))
     }
 
-    fn builtin_os_stat(
+    pub(super) fn builtin_os_stat(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -558,7 +560,7 @@ impl Vm {
         self.build_stat_result(metadata, false)
     }
 
-    fn builtin_os_lstat(
+    pub(super) fn builtin_os_lstat(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -572,7 +574,7 @@ impl Vm {
         self.build_stat_result(metadata, true)
     }
 
-    fn builtin_os_mkdir(
+    pub(super) fn builtin_os_mkdir(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -611,7 +613,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_os_chmod(
+    pub(super) fn builtin_os_chmod(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -658,7 +660,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_os_rmdir(
+    pub(super) fn builtin_os_rmdir(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -671,7 +673,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_os_utime(
+    pub(super) fn builtin_os_utime(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -733,7 +735,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_os_scandir(
+    pub(super) fn builtin_os_scandir(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -841,7 +843,7 @@ impl Vm {
         Ok(Value::Instance(iterator))
     }
 
-    fn builtin_os_scandir_iter(
+    pub(super) fn builtin_os_scandir_iter(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -852,7 +854,7 @@ impl Vm {
         Ok(args[0].clone())
     }
 
-    fn builtin_os_scandir_next(
+    pub(super) fn builtin_os_scandir_next(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -888,7 +890,7 @@ impl Vm {
         Ok(values[index].clone())
     }
 
-    fn builtin_os_scandir_enter(
+    pub(super) fn builtin_os_scandir_enter(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -899,7 +901,7 @@ impl Vm {
         Ok(args[0].clone())
     }
 
-    fn builtin_os_scandir_exit(
+    pub(super) fn builtin_os_scandir_exit(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -914,7 +916,7 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
-    fn builtin_os_scandir_close(
+    pub(super) fn builtin_os_scandir_close(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -929,7 +931,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_os_direntry_is_dir(
+    pub(super) fn builtin_os_direntry_is_dir(
         &mut self,
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -964,7 +966,7 @@ impl Vm {
         Ok(Value::Bool(is_dir))
     }
 
-    fn builtin_os_direntry_is_file(
+    pub(super) fn builtin_os_direntry_is_file(
         &mut self,
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -999,7 +1001,7 @@ impl Vm {
         Ok(Value::Bool(is_file))
     }
 
-    fn builtin_os_direntry_is_symlink(
+    pub(super) fn builtin_os_direntry_is_symlink(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1020,7 +1022,7 @@ impl Vm {
         Ok(Value::Bool(is_symlink))
     }
 
-    fn builtin_os_walk(
+    pub(super) fn builtin_os_walk(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1163,7 +1165,7 @@ impl Vm {
         Ok(self.heap.alloc_list(rows))
     }
 
-    fn builtin_os_listdir(
+    pub(super) fn builtin_os_listdir(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1188,7 +1190,7 @@ impl Vm {
         Ok(self.heap.alloc_list(names))
     }
 
-    fn builtin_os_access(
+    pub(super) fn builtin_os_access(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1242,7 +1244,7 @@ impl Vm {
         Ok(Value::Bool(allowed))
     }
 
-    fn builtin_os_fspath(
+    pub(super) fn builtin_os_fspath(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1272,7 +1274,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_fsencode(
+    pub(super) fn builtin_os_fsencode(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1300,7 +1302,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_fsdecode(
+    pub(super) fn builtin_os_fsdecode(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1330,7 +1332,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_remove(
+    pub(super) fn builtin_os_remove(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1343,7 +1345,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_os_waitstatus_to_exitcode(
+    pub(super) fn builtin_os_waitstatus_to_exitcode(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1365,7 +1367,7 @@ impl Vm {
         Ok(Value::Int(code))
     }
 
-    fn builtin_os_waitpid(
+    pub(super) fn builtin_os_waitpid(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1424,7 +1426,7 @@ impl Vm {
         Ok(self.heap.alloc_tuple(vec![Value::Int(pid), Value::Int(0)]))
     }
 
-    fn builtin_posixsubprocess_fork_exec(
+    pub(super) fn builtin_posixsubprocess_fork_exec(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1496,7 +1498,7 @@ impl Vm {
         }
     }
 
-    fn subprocess_env_from_value(
+    pub(super) fn subprocess_env_from_value(
         &self,
         value: Value,
     ) -> Result<Vec<(String, String)>, RuntimeError> {
@@ -1516,7 +1518,7 @@ impl Vm {
         }
     }
 
-    fn subprocess_argv_from_value(&self, value: Value) -> Result<Vec<String>, RuntimeError> {
+    pub(super) fn subprocess_argv_from_value(&self, value: Value) -> Result<Vec<String>, RuntimeError> {
         match value {
             Value::Str(text) => Ok(vec![text]),
             Value::Bytes(obj) => match &*obj.kind() {
@@ -1527,7 +1529,7 @@ impl Vm {
         }
     }
 
-    fn rewrite_pyrs_subprocess_argv(&self, argv: Vec<String>) -> Result<Vec<String>, RuntimeError> {
+    pub(super) fn rewrite_pyrs_subprocess_argv(&self, argv: Vec<String>) -> Result<Vec<String>, RuntimeError> {
         if argv.is_empty() {
             return Err(RuntimeError::new("empty command"));
         }
@@ -1595,7 +1597,7 @@ impl Vm {
         Ok(rewritten)
     }
 
-    fn builtin_subprocess_popen_init(
+    pub(super) fn builtin_subprocess_popen_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1667,7 +1669,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_subprocess_popen_communicate(
+    pub(super) fn builtin_subprocess_popen_communicate(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1734,7 +1736,7 @@ impl Vm {
         Ok(self.heap.alloc_tuple(vec![stdout, stderr]))
     }
 
-    fn builtin_subprocess_popen_wait(
+    pub(super) fn builtin_subprocess_popen_wait(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1764,7 +1766,7 @@ impl Vm {
         Ok(Self::instance_attr_get(&instance, "returncode").unwrap_or(Value::None))
     }
 
-    fn builtin_subprocess_popen_kill(
+    pub(super) fn builtin_subprocess_popen_kill(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1783,7 +1785,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_subprocess_popen_poll(
+    pub(super) fn builtin_subprocess_popen_poll(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1814,7 +1816,7 @@ impl Vm {
         Ok(Self::instance_attr_get(&instance, "returncode").unwrap_or(Value::None))
     }
 
-    fn builtin_subprocess_popen_enter(
+    pub(super) fn builtin_subprocess_popen_enter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1826,7 +1828,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn builtin_subprocess_popen_exit(
+    pub(super) fn builtin_subprocess_popen_exit(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1838,7 +1840,7 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
-    fn builtin_subprocess_cleanup(
+    pub(super) fn builtin_subprocess_cleanup(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1849,7 +1851,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_subprocess_check_call(
+    pub(super) fn builtin_subprocess_check_call(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1903,7 +1905,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_wifstopped(
+    pub(super) fn builtin_os_wifstopped(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1912,7 +1914,7 @@ impl Vm {
         Ok(Value::Bool((status & 0xff) == 0x7f))
     }
 
-    fn builtin_os_wstopsig(
+    pub(super) fn builtin_os_wstopsig(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1921,7 +1923,7 @@ impl Vm {
         Ok(Value::Int((status >> 8) & 0xff))
     }
 
-    fn builtin_os_wifsignaled(
+    pub(super) fn builtin_os_wifsignaled(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1931,7 +1933,7 @@ impl Vm {
         Ok(Value::Bool(signal != 0 && signal != 0x7f))
     }
 
-    fn builtin_os_wtermsig(
+    pub(super) fn builtin_os_wtermsig(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1940,7 +1942,7 @@ impl Vm {
         Ok(Value::Int(status & 0x7f))
     }
 
-    fn builtin_os_wifexited(
+    pub(super) fn builtin_os_wifexited(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1949,7 +1951,7 @@ impl Vm {
         Ok(Value::Bool((status & 0x7f) == 0))
     }
 
-    fn builtin_os_wexitstatus(
+    pub(super) fn builtin_os_wexitstatus(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1958,7 +1960,7 @@ impl Vm {
         Ok(Value::Int((status >> 8) & 0xff))
     }
 
-    fn parse_wait_status_arg(
+    pub(super) fn parse_wait_status_arg(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1969,7 +1971,7 @@ impl Vm {
         value_to_int(args[0].clone())
     }
 
-    fn build_stat_result(
+    pub(super) fn build_stat_result(
         &self,
         metadata: fs::Metadata,
         use_symlink_mode: bool,
@@ -2085,7 +2087,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn builtin_os_path_exists(
+    pub(super) fn builtin_os_path_exists(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2125,7 +2127,7 @@ impl Vm {
         }
     }
 
-    fn path_arg_to_string_and_type(&mut self, value: Value) -> Result<(String, bool), RuntimeError> {
+    pub(super) fn path_arg_to_string_and_type(&mut self, value: Value) -> Result<(String, bool), RuntimeError> {
         let normalized = match value {
             Value::Str(_) | Value::Bytes(_) => value,
             other => self.builtin_os_fspath(vec![other], HashMap::new())?,
@@ -2140,12 +2142,12 @@ impl Vm {
         }
     }
 
-    fn path_arg_to_string(&mut self, value: Value) -> Result<String, RuntimeError> {
+    pub(super) fn path_arg_to_string(&mut self, value: Value) -> Result<String, RuntimeError> {
         let (path, _) = self.path_arg_to_string_and_type(value)?;
         Ok(path)
     }
 
-    fn builtin_os_path_join(
+    pub(super) fn builtin_os_path_join(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2177,7 +2179,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_normpath(
+    pub(super) fn builtin_os_path_normpath(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2238,7 +2240,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_normcase(
+    pub(super) fn builtin_os_path_normcase(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2259,7 +2261,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_splitroot_ex(
+    pub(super) fn builtin_os_path_splitroot_ex(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2283,7 +2285,7 @@ impl Vm {
             .alloc_tuple(vec![Value::Str(drive), Value::Str(root), Value::Str(tail)]))
     }
 
-    fn builtin_os_path_dirname(
+    pub(super) fn builtin_os_path_dirname(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2313,7 +2315,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_split(
+    pub(super) fn builtin_os_path_split(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2340,7 +2342,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_basename(
+    pub(super) fn builtin_os_path_basename(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2358,7 +2360,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_isabs(
+    pub(super) fn builtin_os_path_isabs(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2370,7 +2372,7 @@ impl Vm {
         Ok(Value::Bool(path.starts_with('/')))
     }
 
-    fn builtin_os_path_isdir(
+    pub(super) fn builtin_os_path_isdir(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2382,7 +2384,7 @@ impl Vm {
         Ok(Value::Bool(PathBuf::from(path).is_dir()))
     }
 
-    fn builtin_os_path_isfile(
+    pub(super) fn builtin_os_path_isfile(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2394,7 +2396,7 @@ impl Vm {
         Ok(Value::Bool(PathBuf::from(path).is_file()))
     }
 
-    fn builtin_os_path_islink(
+    pub(super) fn builtin_os_path_islink(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2410,7 +2412,7 @@ impl Vm {
         Ok(Value::Bool(metadata.file_type().is_symlink()))
     }
 
-    fn builtin_os_path_isjunction(
+    pub(super) fn builtin_os_path_isjunction(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2435,7 +2437,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_splitext(
+    pub(super) fn builtin_os_path_splitext(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2466,7 +2468,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_abspath(
+    pub(super) fn builtin_os_path_abspath(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2493,7 +2495,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_expanduser(
+    pub(super) fn builtin_os_path_expanduser(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2542,7 +2544,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_realpath(
+    pub(super) fn builtin_os_path_realpath(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2550,7 +2552,7 @@ impl Vm {
         self.builtin_os_path_abspath(args, kwargs)
     }
 
-    fn builtin_os_path_relpath(
+    pub(super) fn builtin_os_path_relpath(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2598,7 +2600,7 @@ impl Vm {
         }
     }
 
-    fn builtin_os_path_commonprefix(
+    pub(super) fn builtin_os_path_commonprefix(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2640,7 +2642,7 @@ impl Vm {
         Ok(Value::Str(prefix))
     }
 
-    fn builtin_pylong_int_to_decimal_string(
+    pub(super) fn builtin_pylong_int_to_decimal_string(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2654,7 +2656,7 @@ impl Vm {
         Ok(Value::Str(value.to_string()))
     }
 
-    fn builtin_pylong_int_divmod(
+    pub(super) fn builtin_pylong_int_divmod(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2673,7 +2675,7 @@ impl Vm {
         ]))
     }
 
-    fn builtin_pylong_int_from_string(
+    pub(super) fn builtin_pylong_int_from_string(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2688,7 +2690,7 @@ impl Vm {
         Ok(value_from_bigint(parse_decimal_bigint_literal(&text)?))
     }
 
-    fn builtin_pylong_compute_powers(
+    pub(super) fn builtin_pylong_compute_powers(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2767,7 +2769,7 @@ impl Vm {
         Ok(self.heap.alloc_dict(entries))
     }
 
-    fn builtin_pylong_dec_str_to_int_inner(
+    pub(super) fn builtin_pylong_dec_str_to_int_inner(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2794,7 +2796,7 @@ impl Vm {
         Ok(value_from_bigint(parse_decimal_bigint_literal(&text)?))
     }
 
-    fn builtin_string_formatter_parser(
+    pub(super) fn builtin_string_formatter_parser(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2833,7 +2835,7 @@ impl Vm {
         Ok(self.heap.alloc_list(rows))
     }
 
-    fn builtin_string_formatter_field_name_split(
+    pub(super) fn builtin_string_formatter_field_name_split(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2869,7 +2871,7 @@ impl Vm {
             .alloc_tuple(vec![first_value, self.heap.alloc_list(rest_values)]))
     }
 
-    fn builtin_codecs_encode(
+    pub(super) fn builtin_codecs_encode(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2920,7 +2922,7 @@ impl Vm {
         Ok(self.heap.alloc_bytes(encoded))
     }
 
-    fn builtin_codecs_decode(
+    pub(super) fn builtin_codecs_decode(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2968,7 +2970,7 @@ impl Vm {
         Ok(Value::Str(decoded))
     }
 
-    fn builtin_codecs_escape_decode(
+    pub(super) fn builtin_codecs_escape_decode(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -3009,7 +3011,7 @@ impl Vm {
         ]))
     }
 
-    fn builtin_codecs_lookup(
+    pub(super) fn builtin_codecs_lookup(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3065,7 +3067,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn builtin_codecs_register(
+    pub(super) fn builtin_codecs_register(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3079,7 +3081,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_unicodedata_normalize(
+    pub(super) fn builtin_unicodedata_normalize(
         &self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -3134,7 +3136,7 @@ impl Vm {
         }
     }
 
-    fn builtin_binascii_crc32(
+    pub(super) fn builtin_binascii_crc32(
         &self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -3183,7 +3185,7 @@ impl Vm {
         Ok(Value::Int((!crc) as i64))
     }
 
-    fn builtin_atexit_register(
+    pub(super) fn builtin_atexit_register(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3207,7 +3209,7 @@ impl Vm {
         Ok(callable)
     }
 
-    fn builtin_atexit_unregister(
+    pub(super) fn builtin_atexit_unregister(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3221,7 +3223,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_atexit_run_exitfuncs(
+    pub(super) fn builtin_atexit_run_exitfuncs(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3240,7 +3242,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_atexit_clear(
+    pub(super) fn builtin_atexit_clear(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3252,7 +3254,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_select_select(
+    pub(super) fn builtin_select_select(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,

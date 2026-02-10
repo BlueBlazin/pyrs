@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_import(
+    pub(super) fn builtin_import(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -88,7 +90,7 @@ impl Vm {
         Ok(Value::Module(result))
     }
 
-    fn builtin_import_module(
+    pub(super) fn builtin_import_module(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -162,7 +164,7 @@ impl Vm {
         Ok(Value::Module(module))
     }
 
-    fn run_pending_import_frames(&mut self, caller_depth: usize) -> Result<(), RuntimeError> {
+    pub(super) fn run_pending_import_frames(&mut self, caller_depth: usize) -> Result<(), RuntimeError> {
         if self.frames.len() <= caller_depth {
             return Ok(());
         }
@@ -174,7 +176,7 @@ impl Vm {
         Ok(())
     }
 
-    fn return_imported_module(
+    pub(super) fn return_imported_module(
         &mut self,
         module: ObjRef,
         caller_depth: usize,
@@ -189,7 +191,7 @@ impl Vm {
         Ok(module)
     }
 
-    fn sync_re_module_flag_aliases(&mut self, module: &ObjRef) {
+    pub(super) fn sync_re_module_flag_aliases(&mut self, module: &ObjRef) {
         let regex_flag_class = {
             let module_kind = module.kind();
             let Object::Module(module_data) = &*module_kind else {
@@ -251,7 +253,7 @@ impl Vm {
         }
     }
 
-    fn builtin_find_spec(
+    pub(super) fn builtin_find_spec(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -351,7 +353,7 @@ impl Vm {
         ))
     }
 
-    fn builtin_importlib_invalidate_caches(
+    pub(super) fn builtin_importlib_invalidate_caches(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -375,7 +377,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_importlib_spec_from_file_location(
+    pub(super) fn builtin_importlib_spec_from_file_location(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -432,7 +434,7 @@ impl Vm {
         Ok(spec)
     }
 
-    fn builtin_frozen_importlib_spec_from_loader(
+    pub(super) fn builtin_frozen_importlib_spec_from_loader(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -494,7 +496,7 @@ impl Vm {
         Ok(spec)
     }
 
-    fn builtin_frozen_importlib_verbose_message(
+    pub(super) fn builtin_frozen_importlib_verbose_message(
         &self,
         _args: Vec<Value>,
         _kwargs: HashMap<String, Value>,
@@ -502,7 +504,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_frozen_importlib_external_path_join(
+    pub(super) fn builtin_frozen_importlib_external_path_join(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -519,7 +521,7 @@ impl Vm {
         Ok(Value::Str(out.to_string_lossy().to_string()))
     }
 
-    fn builtin_frozen_importlib_external_path_split(
+    pub(super) fn builtin_frozen_importlib_external_path_split(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -541,7 +543,7 @@ impl Vm {
             .alloc_tuple(vec![Value::Str(parent), Value::Str(tail)]))
     }
 
-    fn builtin_frozen_importlib_external_path_stat(
+    pub(super) fn builtin_frozen_importlib_external_path_stat(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -555,7 +557,7 @@ impl Vm {
         self.build_stat_result(metadata, false)
     }
 
-    fn builtin_frozen_importlib_external_unpack_uint16(
+    pub(super) fn builtin_frozen_importlib_external_unpack_uint16(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -563,7 +565,7 @@ impl Vm {
         self.builtin_frozen_importlib_external_unpack_uint(args, kwargs, 2)
     }
 
-    fn builtin_frozen_importlib_external_unpack_uint32(
+    pub(super) fn builtin_frozen_importlib_external_unpack_uint32(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -571,7 +573,7 @@ impl Vm {
         self.builtin_frozen_importlib_external_unpack_uint(args, kwargs, 4)
     }
 
-    fn builtin_frozen_importlib_external_unpack_uint64(
+    pub(super) fn builtin_frozen_importlib_external_unpack_uint64(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -579,7 +581,7 @@ impl Vm {
         self.builtin_frozen_importlib_external_unpack_uint(args, kwargs, 8)
     }
 
-    fn builtin_frozen_importlib_external_unpack_uint(
+    pub(super) fn builtin_frozen_importlib_external_unpack_uint(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -610,7 +612,7 @@ impl Vm {
         Ok(Value::Int(value as i64))
     }
 
-    fn builtin_opcode_stack_effect(
+    pub(super) fn builtin_opcode_stack_effect(
         &self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -636,7 +638,7 @@ impl Vm {
         Ok(Value::Int(i64::from(info.stack_effect)))
     }
 
-    fn builtin_opcode_has_arg(
+    pub(super) fn builtin_opcode_has_arg(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -644,7 +646,7 @@ impl Vm {
         self.builtin_opcode_has_flag(args, kwargs, "ARG", "has_arg")
     }
 
-    fn builtin_opcode_has_const(
+    pub(super) fn builtin_opcode_has_const(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -652,7 +654,7 @@ impl Vm {
         self.builtin_opcode_has_flag(args, kwargs, "CONST", "has_const")
     }
 
-    fn builtin_opcode_has_name(
+    pub(super) fn builtin_opcode_has_name(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -660,7 +662,7 @@ impl Vm {
         self.builtin_opcode_has_flag(args, kwargs, "NAME", "has_name")
     }
 
-    fn builtin_opcode_has_jump(
+    pub(super) fn builtin_opcode_has_jump(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -668,7 +670,7 @@ impl Vm {
         self.builtin_opcode_has_flag(args, kwargs, "JUMP", "has_jump")
     }
 
-    fn builtin_opcode_has_free(
+    pub(super) fn builtin_opcode_has_free(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -676,7 +678,7 @@ impl Vm {
         self.builtin_opcode_has_flag(args, kwargs, "FREE", "has_free")
     }
 
-    fn builtin_opcode_has_local(
+    pub(super) fn builtin_opcode_has_local(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -684,7 +686,7 @@ impl Vm {
         self.builtin_opcode_has_flag(args, kwargs, "LOCAL", "has_local")
     }
 
-    fn builtin_opcode_has_exc(
+    pub(super) fn builtin_opcode_has_exc(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -692,7 +694,7 @@ impl Vm {
         self.builtin_opcode_has_flag(args, kwargs, "ESCAPES", "has_exc")
     }
 
-    fn builtin_opcode_get_executor(
+    pub(super) fn builtin_opcode_get_executor(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -706,7 +708,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_opcode_has_flag(
+    pub(super) fn builtin_opcode_has_flag(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -724,13 +726,13 @@ impl Vm {
         Ok(Value::Bool(value))
     }
 
-    fn opcode_metadata(&self) -> &OpcodeMetadata {
+    pub(super) fn opcode_metadata(&self) -> &OpcodeMetadata {
         OPCODE_METADATA.get_or_init(|| {
             OpcodeMetadata::load_default().unwrap_or_else(|_| OpcodeMetadata::empty())
         })
     }
 
-    fn opcode_info_by_number(&self, opcode: i64) -> Option<&crate::bytecode::metadata::OpcodeInfo> {
+    pub(super) fn opcode_info_by_number(&self, opcode: i64) -> Option<&crate::bytecode::metadata::OpcodeInfo> {
         if opcode < 0 || opcode > i64::from(u16::MAX) {
             return None;
         }
@@ -741,7 +743,7 @@ impl Vm {
             .find(|info| info.code == code)
     }
 
-    fn builtin_importlib_source_from_cache(
+    pub(super) fn builtin_importlib_source_from_cache(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -759,7 +761,7 @@ impl Vm {
         Ok(Value::Str(source))
     }
 
-    fn builtin_importlib_cache_from_source(
+    pub(super) fn builtin_importlib_cache_from_source(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,

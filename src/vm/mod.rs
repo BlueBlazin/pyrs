@@ -1,8 +1,20 @@
 //! Bytecode virtual machine (minimal subset).
 
 mod containers;
+mod builtins_collections;
+mod builtins_core;
+mod builtins_import;
+mod builtins_io;
+mod builtins_numeric_time;
+mod builtins_os;
+mod builtins_system_misc;
 mod ops;
 mod stdlib;
+mod vm_bootstrap_import;
+mod vm_builtin_metadata;
+mod vm_execution;
+mod vm_native_dispatch;
+mod vm_runtime_methods;
 
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
@@ -1870,19 +1882,6 @@ impl Vm {
         }
     }
 }
-
-include!("vm_bootstrap_import.rs");
-include!("vm_execution.rs");
-include!("vm_builtin_metadata.rs");
-include!("vm_native_dispatch.rs");
-include!("builtins_core.rs");
-include!("builtins_import.rs");
-include!("builtins_numeric_time.rs");
-include!("builtins_os.rs");
-include!("builtins_collections.rs");
-include!("builtins_io.rs");
-include!("builtins_system_misc.rs");
-include!("vm_runtime_methods.rs");
 
 fn frame_cell_value(frame: &Frame, name: &str) -> Option<Value> {
     let cellvar_len = frame.code.cellvars.len();

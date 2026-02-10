@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_io_open(
+    pub(super) fn builtin_io_open(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -391,7 +393,7 @@ impl Vm {
         Ok(text_instance)
     }
 
-    fn ensure_known_text_encoding(&mut self, encoding: &str) -> Result<(), RuntimeError> {
+    pub(super) fn ensure_known_text_encoding(&mut self, encoding: &str) -> Result<(), RuntimeError> {
         match self.call_builtin(
             BuiltinFunction::CodecsLookup,
             vec![Value::Str(encoding.to_string())],
@@ -405,7 +407,7 @@ impl Vm {
         }
     }
 
-    fn io_open_path_from_value(&mut self, value: Value) -> Result<String, RuntimeError> {
+    pub(super) fn io_open_path_from_value(&mut self, value: Value) -> Result<String, RuntimeError> {
         match value {
             Value::Str(_) | Value::Bytes(_) => value_to_path(&value),
             other => {
@@ -428,7 +430,7 @@ impl Vm {
         }
     }
 
-    fn builtin_io_read_text(
+    pub(super) fn builtin_io_read_text(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -442,7 +444,7 @@ impl Vm {
         Ok(Value::Str(text))
     }
 
-    fn builtin_io_write_text(
+    pub(super) fn builtin_io_write_text(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -460,7 +462,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_io_text_encoding(
+    pub(super) fn builtin_io_text_encoding(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -503,7 +505,7 @@ impl Vm {
         }
     }
 
-    fn builtin_io_textiowrapper_init(
+    pub(super) fn builtin_io_textiowrapper_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -653,7 +655,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn io_class_ref(&self, class_name: &str) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn io_class_ref(&self, class_name: &str) -> Result<ObjRef, RuntimeError> {
         let module = self
             .modules
             .get("_io")
@@ -671,7 +673,7 @@ impl Vm {
         }
     }
 
-    fn install_io_file_methods(class_data: &mut ClassObject) {
+    pub(super) fn install_io_file_methods(class_data: &mut ClassObject) {
         class_data.attrs.insert(
             "read".to_string(),
             Value::Builtin(BuiltinFunction::IoFileRead),
@@ -750,7 +752,7 @@ impl Vm {
         );
     }
 
-    fn alloc_io_file_instance(
+    pub(super) fn alloc_io_file_instance(
         &self,
         class_name: &str,
         fd: i64,
@@ -843,11 +845,11 @@ impl Vm {
         Ok(instance_value)
     }
 
-    fn io_file_fd_from_instance(&self, instance: &ObjRef) -> Result<i64, RuntimeError> {
+    pub(super) fn io_file_fd_from_instance(&self, instance: &ObjRef) -> Result<i64, RuntimeError> {
         self.io_file_fd_from_instance_inner(instance, 0)
     }
 
-    fn io_file_fd_from_instance_inner(
+    pub(super) fn io_file_fd_from_instance_inner(
         &self,
         instance: &ObjRef,
         depth: usize,
@@ -877,28 +879,28 @@ impl Vm {
         }
     }
 
-    fn io_file_is_binary(instance: &ObjRef) -> bool {
+    pub(super) fn io_file_is_binary(instance: &ObjRef) -> bool {
         matches!(
             Self::instance_attr_get(instance, "_binary"),
             Some(Value::Bool(true))
         )
     }
 
-    fn io_file_mode(instance: &ObjRef) -> Option<String> {
+    pub(super) fn io_file_mode(instance: &ObjRef) -> Option<String> {
         match Self::instance_attr_get(instance, "_mode") {
             Some(Value::Str(mode)) => Some(mode),
             _ => None,
         }
     }
 
-    fn io_file_newline(instance: &ObjRef) -> Option<String> {
+    pub(super) fn io_file_newline(instance: &ObjRef) -> Option<String> {
         match Self::instance_attr_get(instance, "_newline") {
             Some(Value::Str(newline)) => Some(newline),
             _ => None,
         }
     }
 
-    fn io_file_text_buffer_bytesio(instance: &ObjRef) -> Option<ObjRef> {
+    pub(super) fn io_file_text_buffer_bytesio(instance: &ObjRef) -> Option<ObjRef> {
         if Self::io_file_is_binary(instance) {
             return None;
         }
@@ -917,7 +919,7 @@ impl Vm {
         None
     }
 
-    fn io_normalize_universal_newlines(text: &str) -> String {
+    pub(super) fn io_normalize_universal_newlines(text: &str) -> String {
         let mut out = String::with_capacity(text.len());
         let mut chars = text.chars().peekable();
         while let Some(ch) = chars.next() {
@@ -933,7 +935,7 @@ impl Vm {
         out
     }
 
-    fn io_translate_write_newlines(mut text: String, newline: Option<&str>) -> String {
+    pub(super) fn io_translate_write_newlines(mut text: String, newline: Option<&str>) -> String {
         match newline {
             Some("") | Some("\n") => text,
             Some("\r") => text.replace('\n', "\r"),
@@ -948,7 +950,7 @@ impl Vm {
         }
     }
 
-    fn io_file_read_bytes(
+    pub(super) fn io_file_read_bytes(
         &mut self,
         fd: i64,
         size: Option<usize>,
@@ -975,7 +977,7 @@ impl Vm {
         Ok(out)
     }
 
-    fn io_file_close_instance(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
+    pub(super) fn io_file_close_instance(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
         if matches!(
             Self::instance_attr_get(instance, "_closed"),
             Some(Value::Bool(true))
@@ -1012,7 +1014,7 @@ impl Vm {
         Ok(())
     }
 
-    fn builtin_io_file_read(
+    pub(super) fn builtin_io_file_read(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1061,7 +1063,7 @@ impl Vm {
         }
     }
 
-    fn builtin_io_file_readline(
+    pub(super) fn builtin_io_file_readline(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1197,7 +1199,7 @@ impl Vm {
         }
     }
 
-    fn builtin_io_file_readlines(
+    pub(super) fn builtin_io_file_readlines(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1237,7 +1239,7 @@ impl Vm {
         Ok(self.heap.alloc_list(lines))
     }
 
-    fn builtin_io_file_write(
+    pub(super) fn builtin_io_file_write(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1282,7 +1284,7 @@ impl Vm {
         Ok(Value::Int(payload.len() as i64))
     }
 
-    fn builtin_io_file_writelines(
+    pub(super) fn builtin_io_file_writelines(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1301,7 +1303,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_io_file_truncate(
+    pub(super) fn builtin_io_file_truncate(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1337,7 +1339,7 @@ impl Vm {
         Ok(Value::Int(target_size))
     }
 
-    fn builtin_io_file_seek(
+    pub(super) fn builtin_io_file_seek(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1384,7 +1386,7 @@ impl Vm {
         Ok(Value::Int(position as i64))
     }
 
-    fn builtin_io_file_tell(
+    pub(super) fn builtin_io_file_tell(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1407,7 +1409,7 @@ impl Vm {
         Ok(Value::Int(position as i64))
     }
 
-    fn builtin_io_file_close(
+    pub(super) fn builtin_io_file_close(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1426,7 +1428,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_io_file_flush(
+    pub(super) fn builtin_io_file_flush(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1448,7 +1450,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_io_file_iter(
+    pub(super) fn builtin_io_file_iter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1460,7 +1462,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn builtin_io_file_next(
+    pub(super) fn builtin_io_file_next(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1486,7 +1488,7 @@ impl Vm {
         }
     }
 
-    fn builtin_io_file_enter(
+    pub(super) fn builtin_io_file_enter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1504,7 +1506,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn builtin_io_file_exit(
+    pub(super) fn builtin_io_file_exit(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1517,7 +1519,7 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
-    fn builtin_io_file_fileno(
+    pub(super) fn builtin_io_file_fileno(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1537,7 +1539,7 @@ impl Vm {
         Ok(Value::Int(fd))
     }
 
-    fn builtin_io_file_detach(
+    pub(super) fn builtin_io_file_detach(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1558,7 +1560,7 @@ impl Vm {
         Err(RuntimeError::new("detach"))
     }
 
-    fn builtin_io_file_readable(
+    pub(super) fn builtin_io_file_readable(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1574,7 +1576,7 @@ impl Vm {
         Ok(Value::Bool(mode.starts_with('r') || mode.contains('+')))
     }
 
-    fn builtin_io_file_writable(
+    pub(super) fn builtin_io_file_writable(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1595,7 +1597,7 @@ impl Vm {
         ))
     }
 
-    fn builtin_io_file_seekable(
+    pub(super) fn builtin_io_file_seekable(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1611,7 +1613,7 @@ impl Vm {
         Ok(Value::Bool(true))
     }
 
-    fn builtin_iobase_iter(
+    pub(super) fn builtin_iobase_iter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1622,7 +1624,7 @@ impl Vm {
         Ok(args.remove(0))
     }
 
-    fn builtin_iobase_next(
+    pub(super) fn builtin_iobase_next(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1655,7 +1657,7 @@ impl Vm {
         }
     }
 
-    fn stringio_buffer_from_instance(
+    pub(super) fn stringio_buffer_from_instance(
         &self,
         instance: &ObjRef,
     ) -> Result<(Vec<char>, usize), RuntimeError> {
@@ -1673,7 +1675,7 @@ impl Vm {
         Ok((text, pos))
     }
 
-    fn stringio_store_buffer(
+    pub(super) fn stringio_store_buffer(
         &mut self,
         instance: &ObjRef,
         text: Vec<char>,
@@ -1691,7 +1693,7 @@ impl Vm {
         Ok(())
     }
 
-    fn stringio_next_line_end(buffer: &[char], pos: usize, limit: Option<usize>) -> usize {
+    pub(super) fn stringio_next_line_end(buffer: &[char], pos: usize, limit: Option<usize>) -> usize {
         let mut end = pos;
         while end < buffer.len() {
             let ch = buffer[end];
@@ -1717,7 +1719,7 @@ impl Vm {
         end
     }
 
-    fn builtin_stringio_init(
+    pub(super) fn builtin_stringio_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1740,7 +1742,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_stringio_write(
+    pub(super) fn builtin_stringio_write(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1770,7 +1772,7 @@ impl Vm {
         Ok(Value::Int(new_pos as i64 - pos as i64))
     }
 
-    fn builtin_stringio_read(
+    pub(super) fn builtin_stringio_read(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1791,7 +1793,7 @@ impl Vm {
         Ok(Value::Str(out))
     }
 
-    fn builtin_stringio_readline(
+    pub(super) fn builtin_stringio_readline(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1812,7 +1814,7 @@ impl Vm {
         Ok(Value::Str(out))
     }
 
-    fn builtin_stringio_getvalue(
+    pub(super) fn builtin_stringio_getvalue(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1825,7 +1827,7 @@ impl Vm {
         Ok(Value::Str(buffer.iter().collect()))
     }
 
-    fn builtin_stringio_seek(
+    pub(super) fn builtin_stringio_seek(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1856,7 +1858,7 @@ impl Vm {
         Ok(Value::Int(new_pos as i64))
     }
 
-    fn builtin_stringio_tell(
+    pub(super) fn builtin_stringio_tell(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1869,7 +1871,7 @@ impl Vm {
         Ok(Value::Int(pos as i64))
     }
 
-    fn builtin_stringio_iter(
+    pub(super) fn builtin_stringio_iter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1880,7 +1882,7 @@ impl Vm {
         Ok(args.remove(0))
     }
 
-    fn builtin_stringio_next(
+    pub(super) fn builtin_stringio_next(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1899,7 +1901,7 @@ impl Vm {
         Ok(Value::Str(out))
     }
 
-    fn builtin_stringio_enter(
+    pub(super) fn builtin_stringio_enter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1910,7 +1912,7 @@ impl Vm {
         Ok(args.remove(0))
     }
 
-    fn builtin_stringio_exit(
+    pub(super) fn builtin_stringio_exit(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1924,7 +1926,7 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
-    fn bytesio_state_from_instance(
+    pub(super) fn bytesio_state_from_instance(
         &mut self,
         instance: &ObjRef,
     ) -> Result<(ObjRef, usize, bool), RuntimeError> {
@@ -1975,7 +1977,7 @@ impl Vm {
         Ok((value_obj, pos, closed))
     }
 
-    fn bytesio_store_state(
+    pub(super) fn bytesio_store_state(
         &mut self,
         instance: &ObjRef,
         value_obj: ObjRef,
@@ -2016,7 +2018,7 @@ impl Vm {
         Ok(())
     }
 
-    fn bytesio_ensure_open(&self, instance: &ObjRef) -> Result<(), RuntimeError> {
+    pub(super) fn bytesio_ensure_open(&self, instance: &ObjRef) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return Err(RuntimeError::new("BytesIO receiver must be instance"));
         };
@@ -2027,7 +2029,7 @@ impl Vm {
         }
     }
 
-    fn builtin_bytesio_init(
+    pub(super) fn builtin_bytesio_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2052,7 +2054,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_bytesio_write(
+    pub(super) fn builtin_bytesio_write(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2083,7 +2085,7 @@ impl Vm {
         Ok(Value::Int(written as i64))
     }
 
-    fn builtin_bytesio_writelines(
+    pub(super) fn builtin_bytesio_writelines(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2103,7 +2105,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_bytesio_truncate(
+    pub(super) fn builtin_bytesio_truncate(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2137,7 +2139,7 @@ impl Vm {
         Ok(Value::Int(target_size))
     }
 
-    fn builtin_bytesio_read(
+    pub(super) fn builtin_bytesio_read(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2167,7 +2169,7 @@ impl Vm {
         Ok(self.heap.alloc_bytes(out))
     }
 
-    fn builtin_bytesio_readline(
+    pub(super) fn builtin_bytesio_readline(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2210,7 +2212,7 @@ impl Vm {
         Ok(self.heap.alloc_bytes(out))
     }
 
-    fn builtin_bytesio_readinto(
+    pub(super) fn builtin_bytesio_readinto(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2270,7 +2272,7 @@ impl Vm {
         Ok(Value::Int(copied as i64))
     }
 
-    fn builtin_bytesio_getvalue(
+    pub(super) fn builtin_bytesio_getvalue(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2287,7 +2289,7 @@ impl Vm {
         Ok(self.heap.alloc_bytes(buffer.to_vec()))
     }
 
-    fn builtin_bytesio_getbuffer(
+    pub(super) fn builtin_bytesio_getbuffer(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2301,7 +2303,7 @@ impl Vm {
         Ok(self.heap.alloc_memoryview(value_obj))
     }
 
-    fn builtin_bytesio_seek(
+    pub(super) fn builtin_bytesio_seek(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2338,7 +2340,7 @@ impl Vm {
         Ok(Value::Int(new_pos as i64))
     }
 
-    fn builtin_bytesio_tell(
+    pub(super) fn builtin_bytesio_tell(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2352,7 +2354,7 @@ impl Vm {
         Ok(Value::Int(pos as i64))
     }
 
-    fn builtin_bytesio_iter(
+    pub(super) fn builtin_bytesio_iter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2363,7 +2365,7 @@ impl Vm {
         Ok(args.remove(0))
     }
 
-    fn builtin_bytesio_next(
+    pub(super) fn builtin_bytesio_next(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2385,7 +2387,7 @@ impl Vm {
         Ok(line)
     }
 
-    fn builtin_bytesio_enter(
+    pub(super) fn builtin_bytesio_enter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2396,7 +2398,7 @@ impl Vm {
         Ok(args.remove(0))
     }
 
-    fn builtin_bytesio_exit(
+    pub(super) fn builtin_bytesio_exit(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2412,7 +2414,7 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
-    fn builtin_bytesio_close(
+    pub(super) fn builtin_bytesio_close(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2426,7 +2428,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn parse_struct_format(&self, format: &str) -> Result<StructFormatSpec, RuntimeError> {
+    pub(super) fn parse_struct_format(&self, format: &str) -> Result<StructFormatSpec, RuntimeError> {
         let mut chars = format.chars().peekable();
         let mut endian = StructEndian::Little;
         if let Some(prefix) = chars.peek().copied() {
@@ -2523,7 +2525,7 @@ impl Vm {
         })
     }
 
-    fn struct_pack_format_values(
+    pub(super) fn struct_pack_format_values(
         &mut self,
         spec: &StructFormatSpec,
         values: &[Value],
@@ -2698,7 +2700,7 @@ impl Vm {
         Ok(result)
     }
 
-    fn struct_unpack_format_bytes(
+    pub(super) fn struct_unpack_format_bytes(
         &mut self,
         spec: &StructFormatSpec,
         bytes: &[u8],
@@ -2917,7 +2919,7 @@ impl Vm {
         Ok(values)
     }
 
-    fn struct_normalize_offset(
+    pub(super) fn struct_normalize_offset(
         &self,
         offset: i64,
         buffer_len: usize,

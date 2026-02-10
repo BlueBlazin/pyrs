@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_print(
+    pub(super) fn builtin_print(
         &mut self,
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -65,7 +67,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_repr(
+    pub(super) fn builtin_repr(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -209,7 +211,7 @@ impl Vm {
         rendered
     }
 
-    fn builtin_ascii(
+    pub(super) fn builtin_ascii(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -236,7 +238,7 @@ impl Vm {
         Ok(Value::Str(out))
     }
 
-    fn builtin_locals(
+    pub(super) fn builtin_locals(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -281,7 +283,7 @@ impl Vm {
         Ok(self.heap.alloc_dict(entries))
     }
 
-    fn builtin_globals(
+    pub(super) fn builtin_globals(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -314,7 +316,7 @@ impl Vm {
         }
     }
 
-    fn exec_namespace_map_from_dict(
+    pub(super) fn exec_namespace_map_from_dict(
         &self,
         dict: &ObjRef,
         what: &str,
@@ -333,7 +335,7 @@ impl Vm {
         Ok(map)
     }
 
-    fn exec_namespace_map_from_module(
+    pub(super) fn exec_namespace_map_from_module(
         &self,
         module: &ObjRef,
     ) -> Result<HashMap<String, Value>, RuntimeError> {
@@ -343,7 +345,7 @@ impl Vm {
         Ok(module_data.globals.clone())
     }
 
-    fn alloc_exec_namespace_module(&self, name: &str, map: HashMap<String, Value>) -> ObjRef {
+    pub(super) fn alloc_exec_namespace_module(&self, name: &str, map: HashMap<String, Value>) -> ObjRef {
         let module = match self.heap.alloc_module(ModuleObject::new(name)) {
             Value::Module(obj) => obj,
             _ => unreachable!(),
@@ -354,7 +356,7 @@ impl Vm {
         module
     }
 
-    fn sync_exec_namespace_to_dict(
+    pub(super) fn sync_exec_namespace_to_dict(
         &self,
         dict: &ObjRef,
         module: &ObjRef,
@@ -370,7 +372,7 @@ impl Vm {
         Ok(())
     }
 
-    fn exec_closure_cells(
+    pub(super) fn exec_closure_cells(
         &self,
         code: &Rc<CodeObject>,
         closure: Option<Value>,
@@ -423,7 +425,7 @@ impl Vm {
         Ok(cells)
     }
 
-    fn builtin_exec(
+    pub(super) fn builtin_exec(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -608,7 +610,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_len(
+    pub(super) fn builtin_len(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -675,7 +677,7 @@ impl Vm {
         }
     }
 
-    fn normalize_len_result(&self, result: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn normalize_len_result(&self, result: Value) -> Result<Value, RuntimeError> {
         match result {
             Value::Bool(flag) => Ok(Value::Int(if flag { 1 } else { 0 })),
             Value::Int(number) => {
@@ -698,7 +700,7 @@ impl Vm {
         }
     }
 
-    fn builtin_collections_namedtuple_make(
+    pub(super) fn builtin_collections_namedtuple_make(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -737,7 +739,7 @@ impl Vm {
         }
     }
 
-    fn builtin_dir(
+    pub(super) fn builtin_dir(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -803,7 +805,7 @@ impl Vm {
             .alloc_list(names.into_iter().map(Value::Str).collect::<Vec<_>>()))
     }
 
-    fn builtin_sys_getframe(
+    pub(super) fn builtin_sys_getframe(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -829,7 +831,7 @@ impl Vm {
         Ok(self.build_frame_proxy_value(frame_index))
     }
 
-    fn build_frame_proxy_value(&self, frame_index: usize) -> Value {
+    pub(super) fn build_frame_proxy_value(&self, frame_index: usize) -> Value {
         let frame = &self.frames[frame_index];
         let locals_dict = if frame.is_module {
             if let Object::Module(module_data) = &*frame.module.kind() {
@@ -897,7 +899,7 @@ impl Vm {
         Value::Module(frame_obj)
     }
 
-    fn builtin_sys_exception(
+    pub(super) fn builtin_sys_exception(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -913,7 +915,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_sys_exc_info(
+    pub(super) fn builtin_sys_exc_info(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -936,7 +938,7 @@ impl Vm {
             .alloc_tuple(vec![Value::None, Value::None, Value::None]))
     }
 
-    fn builtin_sys_exit(
+    pub(super) fn builtin_sys_exit(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -954,7 +956,7 @@ impl Vm {
         }
     }
 
-    fn builtin_sys_getfilesystemencoding(
+    pub(super) fn builtin_sys_getfilesystemencoding(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -967,7 +969,7 @@ impl Vm {
         Ok(Value::Str("utf-8".to_string()))
     }
 
-    fn builtin_sys_getfilesystemencodeerrors(
+    pub(super) fn builtin_sys_getfilesystemencodeerrors(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -980,7 +982,7 @@ impl Vm {
         Ok(Value::Str("surrogateescape".to_string()))
     }
 
-    fn builtin_sys_stream_write(
+    pub(super) fn builtin_sys_stream_write(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -998,7 +1000,7 @@ impl Vm {
         Ok(Value::Int(text.chars().count() as i64))
     }
 
-    fn builtin_sys_stream_buffer_write(
+    pub(super) fn builtin_sys_stream_buffer_write(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1021,7 +1023,7 @@ impl Vm {
         Ok(Value::Int(payload.len() as i64))
     }
 
-    fn builtin_sys_stream_flush(
+    pub(super) fn builtin_sys_stream_flush(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1032,7 +1034,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_sys_stdin_write(
+    pub(super) fn builtin_sys_stdin_write(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1043,7 +1045,7 @@ impl Vm {
         Err(RuntimeError::new("stdin is read-only"))
     }
 
-    fn builtin_sys_stream_isatty(
+    pub(super) fn builtin_sys_stream_isatty(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1054,7 +1056,7 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
-    fn builtin_float_fromhex(
+    pub(super) fn builtin_float_fromhex(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1070,7 +1072,7 @@ impl Vm {
         Ok(Value::Float(parsed))
     }
 
-    fn builtin_float_hex(
+    pub(super) fn builtin_float_hex(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1082,7 +1084,7 @@ impl Vm {
         Ok(Value::Str(format_float_hex(value)))
     }
 
-    fn builtin_str_maketrans(
+    pub(super) fn builtin_str_maketrans(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1162,7 +1164,7 @@ impl Vm {
         Ok(mapping)
     }
 
-    fn builtin_int(
+    pub(super) fn builtin_int(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1220,7 +1222,7 @@ impl Vm {
         call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)
     }
 
-    fn builtin_float(
+    pub(super) fn builtin_float(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1257,7 +1259,7 @@ impl Vm {
         call_builtin_with_kwargs(&self.heap, BuiltinFunction::Float, args, kwargs)
     }
 
-    fn builtin_complex(
+    pub(super) fn builtin_complex(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1294,7 +1296,7 @@ impl Vm {
         call_builtin_with_kwargs(&self.heap, BuiltinFunction::Complex, args, kwargs)
     }
 
-    fn builtin_str(
+    pub(super) fn builtin_str(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1412,7 +1414,7 @@ impl Vm {
         }
     }
 
-    fn builtin_bytes_maketrans(
+    pub(super) fn builtin_bytes_maketrans(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1434,7 +1436,7 @@ impl Vm {
         Ok(self.heap.alloc_bytes(table))
     }
 
-    fn builtin_int_from_bytes(
+    pub(super) fn builtin_int_from_bytes(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1507,7 +1509,7 @@ impl Vm {
         Ok(value_from_bigint(value))
     }
 
-    fn builtin_compile(
+    pub(super) fn builtin_compile(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1641,7 +1643,7 @@ impl Vm {
         Ok(Value::Code(Rc::new(code)))
     }
 
-    fn builtin_platform_libc_ver(
+    pub(super) fn builtin_platform_libc_ver(
         &self,
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1724,7 +1726,7 @@ impl Vm {
             .alloc_tuple(vec![Value::Str(detected_lib), Value::Str(default_version)]))
     }
 
-    fn builtin_platform_win32_is_iot(
+    pub(super) fn builtin_platform_win32_is_iot(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1737,7 +1739,7 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
-    fn builtin_callable(
+    pub(super) fn builtin_callable(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1749,7 +1751,7 @@ impl Vm {
         Ok(Value::Bool(self.is_callable_value(&value)))
     }
 
-    fn types_module_class(&self, name: &str) -> Option<ObjRef> {
+    pub(super) fn types_module_class(&self, name: &str) -> Option<ObjRef> {
         let module = self.modules.get("types")?;
         let Object::Module(module_data) = &*module.kind() else {
             return None;
@@ -1760,7 +1762,7 @@ impl Vm {
         }
     }
 
-    fn builtin_is_type_object(&self, builtin: BuiltinFunction) -> bool {
+    pub(super) fn builtin_is_type_object(&self, builtin: BuiltinFunction) -> bool {
         matches!(
             builtin,
             BuiltinFunction::Type
@@ -1792,7 +1794,7 @@ impl Vm {
         )
     }
 
-    fn builtin_type(
+    pub(super) fn builtin_type(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1909,7 +1911,7 @@ impl Vm {
         BuiltinFunction::Type.call(&self.heap, args)
     }
 
-    fn builtin_type_annotations_get(
+    pub(super) fn builtin_type_annotations_get(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1954,7 +1956,7 @@ impl Vm {
         Ok(Value::Dict(annotations))
     }
 
-    fn builtin_dataclasses_field(
+    pub(super) fn builtin_dataclasses_field(
         &self,
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -1997,7 +1999,7 @@ impl Vm {
         ]))
     }
 
-    fn builtin_dataclasses_is_dataclass(
+    pub(super) fn builtin_dataclasses_is_dataclass(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2032,7 +2034,7 @@ impl Vm {
         }
     }
 
-    fn dataclass_fields_value(&self, target: &Value) -> Option<Value> {
+    pub(super) fn dataclass_fields_value(&self, target: &Value) -> Option<Value> {
         match target {
             Value::Class(class) => {
                 let Object::Class(class_data) = &*class.kind() else {
@@ -2053,7 +2055,7 @@ impl Vm {
         }
     }
 
-    fn dataclass_field_names(&self, target: &Value) -> Result<Vec<String>, RuntimeError> {
+    pub(super) fn dataclass_field_names(&self, target: &Value) -> Result<Vec<String>, RuntimeError> {
         let Some(fields) = self.dataclass_fields_value(target) else {
             return Err(RuntimeError::new("target is not a dataclass"));
         };
@@ -2077,7 +2079,7 @@ impl Vm {
         }
     }
 
-    fn builtin_dataclasses_fields(
+    pub(super) fn builtin_dataclasses_fields(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2105,7 +2107,7 @@ impl Vm {
         }
     }
 
-    fn builtin_dataclasses_asdict(
+    pub(super) fn builtin_dataclasses_asdict(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2135,7 +2137,7 @@ impl Vm {
         Ok(self.heap.alloc_dict(entries))
     }
 
-    fn builtin_dataclasses_astuple(
+    pub(super) fn builtin_dataclasses_astuple(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2166,7 +2168,7 @@ impl Vm {
         Ok(self.heap.alloc_tuple(values))
     }
 
-    fn builtin_dataclasses_replace(
+    pub(super) fn builtin_dataclasses_replace(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2201,7 +2203,7 @@ impl Vm {
         Ok(Value::Instance(new_instance))
     }
 
-    fn builtin_dataclasses_make_dataclass(
+    pub(super) fn builtin_dataclasses_make_dataclass(
         &mut self,
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2306,7 +2308,7 @@ impl Vm {
         Ok(class_value)
     }
 
-    fn builtin_isinstance(
+    pub(super) fn builtin_isinstance(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2319,7 +2321,7 @@ impl Vm {
         Ok(Value::Bool(self.value_is_instance_of(&value, &classinfo)?))
     }
 
-    fn builtin_issubclass(
+    pub(super) fn builtin_issubclass(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2334,7 +2336,7 @@ impl Vm {
         ))
     }
 
-    fn builtin_property(
+    pub(super) fn builtin_property(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2354,7 +2356,7 @@ impl Vm {
         Ok(self.build_property_descriptor(fget, fset, fdel, doc))
     }
 
-    fn builtin_object_new(
+    pub(super) fn builtin_object_new(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2527,7 +2529,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn builtin_object_init(
+    pub(super) fn builtin_object_init(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2558,7 +2560,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn class_has_permissive_object_init_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_permissive_object_init_base(&self, class: &ObjRef) -> bool {
         let allowed = [
             "int",
             "list",
@@ -2587,7 +2589,7 @@ impl Vm {
         false
     }
 
-    fn builtin_object_getattribute(
+    pub(super) fn builtin_object_getattribute(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2616,7 +2618,7 @@ impl Vm {
         }
     }
 
-    fn builtin_object_setattr(
+    pub(super) fn builtin_object_setattr(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2650,7 +2652,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_object_delattr(
+    pub(super) fn builtin_object_delattr(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2683,7 +2685,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_list(
+    pub(super) fn builtin_list(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2699,7 +2701,7 @@ impl Vm {
         Ok(self.heap.alloc_list(values))
     }
 
-    fn builtin_tuple(
+    pub(super) fn builtin_tuple(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2752,7 +2754,7 @@ impl Vm {
         Ok(self.heap.alloc_tuple(values))
     }
 
-    fn builtin_dict(
+    pub(super) fn builtin_dict(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2891,7 +2893,7 @@ impl Vm {
         Ok(Value::Dict(dict_obj))
     }
 
-    fn builtin_dict_fromkeys(
+    pub(super) fn builtin_dict_fromkeys(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2911,7 +2913,7 @@ impl Vm {
         Ok(Value::Dict(dict_obj))
     }
 
-    fn builtin_set(
+    pub(super) fn builtin_set(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2960,7 +2962,7 @@ impl Vm {
         Ok(self.heap.alloc_set(dedup_hashable_values(values)?))
     }
 
-    fn builtin_frozenset(
+    pub(super) fn builtin_frozenset(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3011,7 +3013,7 @@ impl Vm {
         Ok(self.heap.alloc_frozenset(dedup_hashable_values(values)?))
     }
 
-    fn builtin_min(
+    pub(super) fn builtin_min(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3019,7 +3021,7 @@ impl Vm {
         self.builtin_min_max(args, kwargs, Ordering::Less, "min")
     }
 
-    fn builtin_max(
+    pub(super) fn builtin_max(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3027,7 +3029,7 @@ impl Vm {
         self.builtin_min_max(args, kwargs, Ordering::Greater, "max")
     }
 
-    fn builtin_sum(
+    pub(super) fn builtin_sum(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -3059,7 +3061,7 @@ impl Vm {
         Ok(total)
     }
 
-    fn builtin_round(
+    pub(super) fn builtin_round(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -3105,7 +3107,7 @@ impl Vm {
         }
     }
 
-    fn parse_int_format_spec(
+    pub(super) fn parse_int_format_spec(
         &self,
         spec: &str,
     ) -> Result<(bool, bool, usize, char), RuntimeError> {
@@ -3143,7 +3145,7 @@ impl Vm {
         Ok((alternate, zero_pad, width, ty))
     }
 
-    fn format_bigint_with_spec(
+    pub(super) fn format_bigint_with_spec(
         &self,
         value: &BigInt,
         spec: &str,
@@ -3197,7 +3199,7 @@ impl Vm {
         }
     }
 
-    fn builtin_format(
+    pub(super) fn builtin_format(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -3281,7 +3283,7 @@ impl Vm {
         Ok(Value::Str(out))
     }
 
-    fn round_integral_with_ndigits(
+    pub(super) fn round_integral_with_ndigits(
         &self,
         value: BigInt,
         ndigits: i64,
@@ -3312,7 +3314,7 @@ impl Vm {
         Ok(value_from_bigint(rounded))
     }
 
-    fn round_float_to_int(&self, value: f64) -> Result<Value, RuntimeError> {
+    pub(super) fn round_float_to_int(&self, value: f64) -> Result<Value, RuntimeError> {
         if value.is_nan() {
             return Err(RuntimeError::new("cannot convert float NaN to integer"));
         }
@@ -3325,7 +3327,7 @@ impl Vm {
         Ok(value_from_bigint(bigint))
     }
 
-    fn call_round_dunder(
+    pub(super) fn call_round_dunder(
         &mut self,
         number: Value,
         ndigits_value: Option<Value>,
@@ -3345,7 +3347,7 @@ impl Vm {
         }
     }
 
-    fn bigint_is_odd(&self, value: &BigInt) -> Result<bool, RuntimeError> {
+    pub(super) fn bigint_is_odd(&self, value: &BigInt) -> Result<bool, RuntimeError> {
         let divisor = BigInt::from_i64(2);
         let (_quotient, remainder) = value
             .div_mod_floor(&divisor)
@@ -3353,7 +3355,7 @@ impl Vm {
         Ok(!remainder.is_zero())
     }
 
-    fn builtin_min_max(
+    pub(super) fn builtin_min_max(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -3426,7 +3428,7 @@ impl Vm {
         Ok(best_value)
     }
 
-    fn builtin_sorted(
+    pub(super) fn builtin_sorted(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -3450,7 +3452,7 @@ impl Vm {
         Ok(self.heap.alloc_list(values))
     }
 
-    fn sort_values_with_optional_key(
+    pub(super) fn sort_values_with_optional_key(
         &mut self,
         values: &mut Vec<Value>,
         key_func: &Value,
@@ -3526,11 +3528,11 @@ impl Vm {
         Ok(())
     }
 
-    fn compare_sort_keys(&mut self, left: Value, right: Value) -> Result<Ordering, RuntimeError> {
+    pub(super) fn compare_sort_keys(&mut self, left: Value, right: Value) -> Result<Ordering, RuntimeError> {
         self.compare_sort_keys_ref(&left, &right)
     }
 
-    fn compare_sort_keys_ref(
+    pub(super) fn compare_sort_keys_ref(
         &mut self,
         left: &Value,
         right: &Value,
@@ -3541,7 +3543,7 @@ impl Vm {
         self.compare_order_with_fallback_ref(left, right)
     }
 
-    fn compare_order_with_fallback(
+    pub(super) fn compare_order_with_fallback(
         &mut self,
         left: Value,
         right: Value,
@@ -3549,7 +3551,7 @@ impl Vm {
         self.compare_order_with_fallback_ref(&left, &right)
     }
 
-    fn compare_order_with_fallback_ref(
+    pub(super) fn compare_order_with_fallback_ref(
         &mut self,
         left: &Value,
         right: &Value,
@@ -3566,7 +3568,7 @@ impl Vm {
         }
     }
 
-    fn compare_sequence_order_for_values(
+    pub(super) fn compare_sequence_order_for_values(
         &mut self,
         left: &Value,
         right: &Value,
@@ -3582,7 +3584,7 @@ impl Vm {
         }
     }
 
-    fn compare_sequence_objects_order(
+    pub(super) fn compare_sequence_objects_order(
         &mut self,
         left_obj: &ObjRef,
         right_obj: &ObjRef,
@@ -3627,7 +3629,7 @@ impl Vm {
         Ok(left_len.cmp(&right_len))
     }
 
-    fn compare_order_via_richcmp(
+    pub(super) fn compare_order_via_richcmp(
         &mut self,
         left: Value,
         right: Value,
@@ -3670,7 +3672,7 @@ impl Vm {
         Ok(None)
     }
 
-    fn call_compare_method_bool(
+    pub(super) fn call_compare_method_bool(
         &mut self,
         receiver: Value,
         method: &str,
@@ -3704,7 +3706,7 @@ impl Vm {
         Ok(Some(is_truthy(&result)))
     }
 
-    fn compare_lt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_lt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
         match compare_lt(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "unsupported operand type for comparison" => Ok(
@@ -3714,7 +3716,7 @@ impl Vm {
         }
     }
 
-    fn call_binary_special_method(
+    pub(super) fn call_binary_special_method(
         &mut self,
         receiver: &Value,
         method_name: &str,
@@ -3730,7 +3732,7 @@ impl Vm {
         }
     }
 
-    fn binary_div_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn binary_div_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
         match div_values(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)
@@ -3753,7 +3755,7 @@ impl Vm {
         }
     }
 
-    fn compare_eq_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_eq_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
         if let Some(result) = self.compare_eq_via_int_backing(&left, &right) {
             return Ok(Value::Bool(result));
         }
@@ -3795,7 +3797,7 @@ impl Vm {
         Ok(Value::Bool(left == right))
     }
 
-    fn compare_ne_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_ne_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
         if let Some(result) = self.compare_eq_via_float_backing(&left, &right) {
             return Ok(Value::Bool(!result));
         }
@@ -3838,7 +3840,7 @@ impl Vm {
         Ok(Value::Bool(!eq))
     }
 
-    fn compare_eq_via_int_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+    pub(super) fn compare_eq_via_int_backing(&self, left: &Value, right: &Value) -> Option<bool> {
         fn int_like(value: &Value) -> Option<BigInt> {
             match value {
                 Value::Bool(flag) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
@@ -3863,7 +3865,7 @@ impl Vm {
         Some(left_int == right_int)
     }
 
-    fn compare_eq_via_float_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+    pub(super) fn compare_eq_via_float_backing(&self, left: &Value, right: &Value) -> Option<bool> {
         let float_like = |value: &Value| -> Option<f64> {
             match value {
                 Value::Float(number) => Some(*number),
@@ -3878,7 +3880,7 @@ impl Vm {
         Some(left_float == right_float)
     }
 
-    fn compare_eq_via_complex_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+    pub(super) fn compare_eq_via_complex_backing(&self, left: &Value, right: &Value) -> Option<bool> {
         let complex_like = |value: &Value| -> Option<(f64, f64)> {
             match value {
                 Value::Complex { real, imag } => Some((*real, *imag)),
@@ -3891,7 +3893,7 @@ impl Vm {
         Some(left_real.to_bits() == right_real.to_bits() && left_imag.to_bits() == right_imag.to_bits())
     }
 
-    fn compare_eq_via_str_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+    pub(super) fn compare_eq_via_str_backing(&self, left: &Value, right: &Value) -> Option<bool> {
         let str_like = |value: &Value| -> Option<String> {
             match value {
                 Value::Str(text) => Some(text.clone()),
@@ -3904,7 +3906,7 @@ impl Vm {
         Some(left_text == right_text)
     }
 
-    fn compare_eq_via_dict_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+    pub(super) fn compare_eq_via_dict_backing(&self, left: &Value, right: &Value) -> Option<bool> {
         let dict_like = |value: &Value| -> Option<ObjRef> {
             match value {
                 Value::Dict(dict) => Some(dict.clone()),
@@ -3917,7 +3919,7 @@ impl Vm {
         Some(Value::Dict(left_dict) == Value::Dict(right_dict))
     }
 
-    fn compare_eq_via_set_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+    pub(super) fn compare_eq_via_set_backing(&self, left: &Value, right: &Value) -> Option<bool> {
         let set_like = |value: &Value| -> Option<Value> {
             match value {
                 Value::Set(set) => Some(Value::Set(set.clone())),
@@ -3937,7 +3939,7 @@ impl Vm {
         Some(left_set == right_set)
     }
 
-    fn compare_eq_via_tuple_backing(
+    pub(super) fn compare_eq_via_tuple_backing(
         &mut self,
         left: &Value,
         right: &Value,
@@ -3989,7 +3991,7 @@ impl Vm {
         result
     }
 
-    fn compare_eq_via_list_backing(
+    pub(super) fn compare_eq_via_list_backing(
         &mut self,
         left: &Value,
         right: &Value,
@@ -4041,7 +4043,7 @@ impl Vm {
         result
     }
 
-    fn compare_le_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_le_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
         match compare_le(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "unsupported operand type for comparison" => Ok(
@@ -4051,7 +4053,7 @@ impl Vm {
         }
     }
 
-    fn compare_gt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_gt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
         match compare_gt(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "unsupported operand type for comparison" => Ok(
@@ -4061,7 +4063,7 @@ impl Vm {
         }
     }
 
-    fn compare_ge_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_ge_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
         match compare_ge(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "unsupported operand type for comparison" => Ok(
@@ -4071,7 +4073,7 @@ impl Vm {
         }
     }
 
-    fn compare_cmp_to_key_wrappers(
+    pub(super) fn compare_cmp_to_key_wrappers(
         &mut self,
         left: &Value,
         right: &Value,
@@ -4092,7 +4094,7 @@ impl Vm {
         Ok(Some(ordering_from_cmp_value(result)?))
     }
 
-    fn cmp_to_key_wrapper_parts(&self, value: &Value) -> Option<(Value, Value)> {
+    pub(super) fn cmp_to_key_wrapper_parts(&self, value: &Value) -> Option<(Value, Value)> {
         let Value::Module(module) = value else {
             return None;
         };
@@ -4106,7 +4108,7 @@ impl Vm {
         }
     }
 
-    fn builtin_all(
+    pub(super) fn builtin_all(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4114,7 +4116,7 @@ impl Vm {
         self.builtin_all_any(args, kwargs, true)
     }
 
-    fn builtin_any(
+    pub(super) fn builtin_any(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4122,7 +4124,7 @@ impl Vm {
         self.builtin_all_any(args, kwargs, false)
     }
 
-    fn builtin_all_any(
+    pub(super) fn builtin_all_any(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4177,7 +4179,7 @@ impl Vm {
         Ok(Value::Bool(result))
     }
 
-    fn builtin_reversed(
+    pub(super) fn builtin_reversed(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4191,7 +4193,7 @@ impl Vm {
         Ok(self.heap.alloc_list(values))
     }
 
-    fn builtin_zip(
+    pub(super) fn builtin_zip(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4218,7 +4220,7 @@ impl Vm {
         Ok(self.heap.alloc_list(rows))
     }
 
-    fn is_callable_value(&self, value: &Value) -> bool {
+    pub(super) fn is_callable_value(&self, value: &Value) -> bool {
         match value {
             Value::Function(_)
             | Value::Builtin(_)
@@ -4235,7 +4237,7 @@ impl Vm {
         }
     }
 
-    fn value_is_instance_of(&self, value: &Value, classinfo: &Value) -> Result<bool, RuntimeError> {
+    pub(super) fn value_is_instance_of(&self, value: &Value, classinfo: &Value) -> Result<bool, RuntimeError> {
         match classinfo {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(items) => {
@@ -4316,7 +4318,7 @@ impl Vm {
         }
     }
 
-    fn value_has_fspath_protocol(&self, value: &Value) -> bool {
+    pub(super) fn value_has_fspath_protocol(&self, value: &Value) -> bool {
         match value {
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
@@ -4330,7 +4332,7 @@ impl Vm {
         }
     }
 
-    fn class_value_is_subclass_of(
+    pub(super) fn class_value_is_subclass_of(
         &self,
         candidate: &Value,
         classinfo: &Value,
@@ -4436,7 +4438,7 @@ impl Vm {
         }
     }
 
-    fn matches_builtin_type_marker(&self, value: &Value, builtin: BuiltinFunction) -> bool {
+    pub(super) fn matches_builtin_type_marker(&self, value: &Value, builtin: BuiltinFunction) -> bool {
         match builtin {
             BuiltinFunction::Type => {
                 matches!(
@@ -4492,7 +4494,7 @@ impl Vm {
         }
     }
 
-    fn builtin_iter(
+    pub(super) fn builtin_iter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4506,7 +4508,7 @@ impl Vm {
             .map_err(|_| RuntimeError::new("object is not iterable"))
     }
 
-    fn builtin_next(
+    pub(super) fn builtin_next(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4576,7 +4578,7 @@ impl Vm {
         }
     }
 
-    fn builtin_enumerate(
+    pub(super) fn builtin_enumerate(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -4615,7 +4617,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_weakref_ref(
+    pub(super) fn builtin_weakref_ref(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4672,7 +4674,7 @@ impl Vm {
         Ok(self.alloc_builtin_bound_method(BuiltinFunction::WeakRefRef, wrapper))
     }
 
-    fn builtin_weakref_finalize(
+    pub(super) fn builtin_weakref_finalize(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4725,7 +4727,7 @@ impl Vm {
         Ok(Value::Module(finalizer))
     }
 
-    fn builtin_weakref_finalize_detach(
+    pub(super) fn builtin_weakref_finalize_detach(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4782,7 +4784,7 @@ impl Vm {
             .alloc_tuple(vec![obj, func, call_args, call_kwargs]))
     }
 
-    fn builtin_map(
+    pub(super) fn builtin_map(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4813,7 +4815,7 @@ impl Vm {
         }))
     }
 
-    fn builtin_filter(
+    pub(super) fn builtin_filter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4854,7 +4856,7 @@ impl Vm {
         Ok(self.heap.alloc_list(filtered))
     }
 
-    fn builtin_aiter(
+    pub(super) fn builtin_aiter(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4880,7 +4882,7 @@ impl Vm {
         }
     }
 
-    fn builtin_anext(
+    pub(super) fn builtin_anext(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -4938,7 +4940,7 @@ impl Vm {
         }
     }
 
-    fn builtin_getattr(
+    pub(super) fn builtin_getattr(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -5205,7 +5207,7 @@ impl Vm {
         }
     }
 
-    fn builtin_setattr(
+    pub(super) fn builtin_setattr(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -5260,7 +5262,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_delattr(
+    pub(super) fn builtin_delattr(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -5322,7 +5324,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_hasattr(
+    pub(super) fn builtin_hasattr(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -5337,7 +5339,7 @@ impl Vm {
         }
     }
 
-    fn builtin_super(
+    pub(super) fn builtin_super(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,

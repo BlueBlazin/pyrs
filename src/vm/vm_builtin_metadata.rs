@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
+    pub(super) fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
         match builtin {
             BuiltinFunction::Type => "type",
             BuiltinFunction::Ascii => "ascii",
@@ -32,7 +34,7 @@ impl Vm {
         }
     }
 
-    fn builtin_runtime_name(&self, builtin: BuiltinFunction) -> String {
+    pub(super) fn builtin_runtime_name(&self, builtin: BuiltinFunction) -> String {
         for (name, value) in &self.builtins {
             if matches!(value, Value::Builtin(candidate) if *candidate == builtin) {
                 return name.clone();
@@ -41,7 +43,7 @@ impl Vm {
         self.builtin_type_name(builtin).to_string()
     }
 
-    fn builtin_attribute_name(&self, builtin: BuiltinFunction) -> String {
+    pub(super) fn builtin_attribute_name(&self, builtin: BuiltinFunction) -> String {
         match builtin {
             BuiltinFunction::DictFromKeys => "fromkeys".to_string(),
             BuiltinFunction::BytesMakeTrans | BuiltinFunction::StrMakeTrans => {
@@ -67,7 +69,7 @@ impl Vm {
         }
     }
 
-    fn builtin_attribute_qualname(&self, builtin: BuiltinFunction) -> String {
+    pub(super) fn builtin_attribute_qualname(&self, builtin: BuiltinFunction) -> String {
         match builtin {
             BuiltinFunction::DictFromKeys => "dict.fromkeys".to_string(),
             BuiltinFunction::BytesMakeTrans => "bytearray.maketrans".to_string(),
@@ -94,7 +96,7 @@ impl Vm {
         }
     }
 
-    fn builtin_type_dict_entries(&self, builtin: BuiltinFunction) -> Vec<(Value, Value)> {
+    pub(super) fn builtin_type_dict_entries(&self, builtin: BuiltinFunction) -> Vec<(Value, Value)> {
         let mut entries = Vec::new();
         if builtin == BuiltinFunction::Dict {
             entries.push((
@@ -127,7 +129,7 @@ impl Vm {
         entries
     }
 
-    fn load_attr_builtin(
+    pub(super) fn load_attr_builtin(
         &self,
         builtin: BuiltinFunction,
         attr_name: &str,
@@ -380,7 +382,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_class_builtin_base_method(
+    pub(super) fn load_attr_class_builtin_base_method(
         &self,
         class: &ObjRef,
         attr_name: &str,
@@ -418,7 +420,7 @@ impl Vm {
         None
     }
 
-    fn load_attr_list_method(&self, list: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn load_attr_list_method(&self, list: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
         if attr_name == "__len__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, list));
         }
@@ -442,7 +444,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, list))
     }
 
-    fn load_attr_tuple_method(
+    pub(super) fn load_attr_tuple_method(
         &self,
         tuple: ObjRef,
         attr_name: &str,
@@ -462,7 +464,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, tuple))
     }
 
-    fn load_attr_int_method(&self, value: Value, attr_name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn load_attr_int_method(&self, value: Value, attr_name: &str) -> Result<Value, RuntimeError> {
         if attr_name == "__new__" {
             return Ok(Value::Builtin(BuiltinFunction::ObjectNew));
         }
@@ -489,7 +491,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
 
-    fn load_attr_str_method(&self, text: String, attr_name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn load_attr_str_method(&self, text: String, attr_name: &str) -> Result<Value, RuntimeError> {
         let kind = match attr_name {
             "startswith" => NativeMethodKind::StrStartsWith,
             "endswith" => NativeMethodKind::StrEndsWith,
@@ -546,7 +548,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
 
-    fn load_attr_bytes_method(&self, receiver_value: Value, attr_name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn load_attr_bytes_method(&self, receiver_value: Value, attr_name: &str) -> Result<Value, RuntimeError> {
         let kind = match attr_name {
             "decode" => NativeMethodKind::BytesDecode,
             "startswith" => NativeMethodKind::BytesStartsWith,
@@ -581,7 +583,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
 
-    fn load_attr_iterator(
+    pub(super) fn load_attr_iterator(
         &self,
         iterator: ObjRef,
         attr_name: &str,
@@ -629,7 +631,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_memoryview(
+    pub(super) fn load_attr_memoryview(
         &self,
         view: ObjRef,
         attr_name: &str,
@@ -675,7 +677,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_set_method(&self, set: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn load_attr_set_method(&self, set: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
         let (type_name, is_frozenset) = match &*set.kind() {
             Object::Set(_) => ("set", false),
             Object::FrozenSet(_) => ("frozenset", true),
@@ -711,7 +713,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_dict_method(&self, dict: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn load_attr_dict_method(&self, dict: ObjRef, attr_name: &str) -> Result<Value, RuntimeError> {
         if attr_name == "__contains__" {
             return Ok(self.alloc_builtin_bound_method(
                 BuiltinFunction::OperatorContains,
@@ -742,7 +744,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, dict))
     }
 
-    fn dict_lookup_str_key(&self, dict: &ObjRef, key: &str) -> Result<Option<Value>, RuntimeError> {
+    pub(super) fn dict_lookup_str_key(&self, dict: &ObjRef, key: &str) -> Result<Option<Value>, RuntimeError> {
         let string_key = Value::Str(key.to_string());
         if !matches!(&*dict.kind(), Object::Dict(_)) {
             return Err(RuntimeError::new("function attribute dict is invalid"));
@@ -750,7 +752,7 @@ impl Vm {
         Ok(dict_get_value(dict, &string_key))
     }
 
-    fn dict_set_str_key(
+    pub(super) fn dict_set_str_key(
         &self,
         dict: &ObjRef,
         key: String,
@@ -763,14 +765,14 @@ impl Vm {
         Ok(())
     }
 
-    fn dict_remove_str_key(&self, dict: &ObjRef, key: &str) -> Result<bool, RuntimeError> {
+    pub(super) fn dict_remove_str_key(&self, dict: &ObjRef, key: &str) -> Result<bool, RuntimeError> {
         if !matches!(&*dict.kind(), Object::Dict(_)) {
             return Err(RuntimeError::new("function attribute dict is invalid"));
         }
         Ok(dict_remove_value(dict, &Value::Str(key.to_string())).is_some())
     }
 
-    fn ensure_function_annotations(&mut self, func: &ObjRef) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn ensure_function_annotations(&mut self, func: &ObjRef) -> Result<ObjRef, RuntimeError> {
         let mut func_ref = func.kind_mut();
         let Object::Function(func_data) = &mut *func_ref else {
             return Err(RuntimeError::new("attribute access unsupported type"));
@@ -787,7 +789,7 @@ impl Vm {
         Ok(obj)
     }
 
-    fn ensure_function_dict(&mut self, func: &ObjRef) -> Result<ObjRef, RuntimeError> {
+    pub(super) fn ensure_function_dict(&mut self, func: &ObjRef) -> Result<ObjRef, RuntimeError> {
         let mut func_ref = func.kind_mut();
         let Object::Function(func_data) = &mut *func_ref else {
             return Err(RuntimeError::new("attribute access unsupported type"));
@@ -804,7 +806,7 @@ impl Vm {
         Ok(obj)
     }
 
-    fn function_module_name(&self, module: &ObjRef) -> String {
+    pub(super) fn function_module_name(&self, module: &ObjRef) -> String {
         match &*module.kind() {
             Object::Module(module_data) => module_data
                 .globals
@@ -818,7 +820,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_function(
+    pub(super) fn load_attr_function(
         &mut self,
         func: &ObjRef,
         attr_name: &str,
@@ -970,7 +972,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_bound_method(
+    pub(super) fn load_attr_bound_method(
         &mut self,
         method: &ObjRef,
         attr_name: &str,
@@ -1041,7 +1043,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_exception_type(
+    pub(super) fn load_attr_exception_type(
         &self,
         exception_name: &str,
         attr_name: &str,
@@ -1069,7 +1071,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_code(
+    pub(super) fn load_attr_code(
         &self,
         code: &Rc<CodeObject>,
         attr_name: &str,
@@ -1150,7 +1152,7 @@ impl Vm {
         }
     }
 
-    fn store_attr_function(
+    pub(super) fn store_attr_function(
         &mut self,
         func: &ObjRef,
         attr_name: String,
@@ -1188,7 +1190,7 @@ impl Vm {
         }
     }
 
-    fn store_attr_exception(
+    pub(super) fn store_attr_exception(
         &mut self,
         exception: &mut ExceptionObject,
         attr_name: &str,
@@ -1239,7 +1241,7 @@ impl Vm {
         }
     }
 
-    fn delete_attr_exception(
+    pub(super) fn delete_attr_exception(
         &mut self,
         exception: &ExceptionObject,
         attr_name: &str,
@@ -1264,7 +1266,7 @@ impl Vm {
         }
     }
 
-    fn delete_attr_function(&mut self, func: &ObjRef, attr_name: &str) -> Result<(), RuntimeError> {
+    pub(super) fn delete_attr_function(&mut self, func: &ObjRef, attr_name: &str) -> Result<(), RuntimeError> {
         match attr_name {
             "__annotations__" => {
                 let mut func_ref = func.kind_mut();
@@ -1308,7 +1310,7 @@ impl Vm {
         }
     }
 
-    fn bind_descriptor_method(
+    pub(super) fn bind_descriptor_method(
         &mut self,
         method: Value,
         receiver: &Value,
@@ -1329,7 +1331,7 @@ impl Vm {
         }
     }
 
-    fn lookup_bound_special_method(
+    pub(super) fn lookup_bound_special_method(
         &mut self,
         receiver: &Value,
         method_name: &str,
@@ -1343,7 +1345,7 @@ impl Vm {
         self.bind_descriptor_method(method, receiver)
     }
 
-    fn descriptor_hooks(
+    pub(super) fn descriptor_hooks(
         &mut self,
         descriptor: &Value,
     ) -> Result<(Option<Value>, Option<Value>, Option<Value>), RuntimeError> {
@@ -1398,7 +1400,7 @@ impl Vm {
         Ok((get, set, delete))
     }
 
-    fn unwrap_staticmethod_attr(&self, value: &Value) -> Option<Value> {
+    pub(super) fn unwrap_staticmethod_attr(&self, value: &Value) -> Option<Value> {
         let Value::Module(module) = value else {
             return None;
         };
@@ -1411,7 +1413,7 @@ impl Vm {
         module_data.globals.get("__func__").cloned()
     }
 
-    fn unwrap_classmethod_attr(&self, value: &Value) -> Option<Value> {
+    pub(super) fn unwrap_classmethod_attr(&self, value: &Value) -> Option<Value> {
         let Value::Module(module) = value else {
             return None;
         };
@@ -1424,7 +1426,7 @@ impl Vm {
         module_data.globals.get("__func__").cloned()
     }
 
-    fn bind_classmethod_attr(&self, owner_class: &ObjRef, value: &Value) -> Option<Value> {
+    pub(super) fn bind_classmethod_attr(&self, owner_class: &ObjRef, value: &Value) -> Option<Value> {
         let unwrapped = self.unwrap_classmethod_attr(value)?;
         match unwrapped {
             Value::Function(func) => Some(
@@ -1438,7 +1440,7 @@ impl Vm {
         }
     }
 
-    fn resolve_metaclass_call_target(
+    pub(super) fn resolve_metaclass_call_target(
         &mut self,
         class: &ObjRef,
     ) -> Result<Option<Value>, RuntimeError> {
@@ -1478,7 +1480,7 @@ impl Vm {
         Ok(Some(attr))
     }
 
-    fn caller_exception_handled(&self, caller_depth: usize, caller_ip: usize) -> bool {
+    pub(super) fn caller_exception_handled(&self, caller_depth: usize, caller_ip: usize) -> bool {
         if self.frames.len() < caller_depth {
             return true;
         }
@@ -1488,7 +1490,7 @@ impl Vm {
             .unwrap_or(false)
     }
 
-    fn finalize_builtin_opcode_call(
+    pub(super) fn finalize_builtin_opcode_call(
         &mut self,
         caller_depth: usize,
         caller_ip: usize,
@@ -1512,7 +1514,7 @@ impl Vm {
         }
     }
 
-    fn finalize_native_opcode_call(
+    pub(super) fn finalize_native_opcode_call(
         &mut self,
         caller_depth: usize,
         caller_ip: usize,
@@ -1540,7 +1542,7 @@ impl Vm {
         }
     }
 
-    fn call_internal(
+    pub(super) fn call_internal(
         &mut self,
         callable: Value,
         args: Vec<Value>,
@@ -1944,7 +1946,7 @@ impl Vm {
         Ok(InternalCallOutcome::Value(value))
     }
 
-    fn call_internal_preserving_caller(
+    pub(super) fn call_internal_preserving_caller(
         &mut self,
         callable: Value,
         args: Vec<Value>,
@@ -2003,7 +2005,7 @@ impl Vm {
         }
     }
 
-    fn restore_internal_call_caller_state(
+    pub(super) fn restore_internal_call_caller_state(
         &mut self,
         caller_depth: usize,
         caller_ip: usize,
@@ -2025,7 +2027,7 @@ impl Vm {
         }
     }
 
-    fn load_attr_class(
+    pub(super) fn load_attr_class(
         &mut self,
         class: &ObjRef,
         attr_name: &str,
@@ -2145,7 +2147,7 @@ impl Vm {
         Ok(AttrAccessOutcome::Value(attr))
     }
 
-    fn class_has_builtin_list_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_list_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2154,7 +2156,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_tuple_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_tuple_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2163,7 +2165,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_str_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_str_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2172,7 +2174,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_bytes_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_bytes_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2181,7 +2183,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_bytearray_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_bytearray_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2190,7 +2192,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_int_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_int_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2199,7 +2201,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_float_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_float_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2208,7 +2210,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_complex_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_complex_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2217,7 +2219,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_dict_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_dict_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2226,7 +2228,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_set_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_set_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2235,7 +2237,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_frozenset_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_frozenset_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2244,7 +2246,7 @@ impl Vm {
             })
     }
 
-    fn class_has_builtin_type_base(&self, class: &ObjRef) -> bool {
+    pub(super) fn class_has_builtin_type_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
             .any(|entry| match &*entry.kind() {
@@ -2253,7 +2255,7 @@ impl Vm {
             })
     }
 
-    fn instantiate_type_derived_class(
+    pub(super) fn instantiate_type_derived_class(
         &mut self,
         metaclass: ObjRef,
         args: Vec<Value>,
@@ -2321,7 +2323,7 @@ impl Vm {
         }
     }
 
-    fn alloc_instance_for_class(&mut self, class: &ObjRef) -> ObjRef {
+    pub(super) fn alloc_instance_for_class(&mut self, class: &ObjRef) -> ObjRef {
         let instance = match self.heap.alloc_instance(InstanceObject::new(class.clone())) {
             Value::Instance(obj) => obj,
             _ => unreachable!(),
@@ -2415,7 +2417,7 @@ impl Vm {
         instance
     }
 
-    fn instance_backing_list(&self, instance: &ObjRef) -> Option<ObjRef> {
+    pub(super) fn instance_backing_list(&self, instance: &ObjRef) -> Option<ObjRef> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2425,7 +2427,7 @@ impl Vm {
         }
     }
 
-    fn instance_backing_tuple(&self, instance: &ObjRef) -> Option<ObjRef> {
+    pub(super) fn instance_backing_tuple(&self, instance: &ObjRef) -> Option<ObjRef> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2435,7 +2437,7 @@ impl Vm {
         }
     }
 
-    fn instance_backing_str(&self, instance: &ObjRef) -> Option<String> {
+    pub(super) fn instance_backing_str(&self, instance: &ObjRef) -> Option<String> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2445,7 +2447,7 @@ impl Vm {
         }
     }
 
-    fn instance_backing_int(&self, instance: &ObjRef) -> Option<Value> {
+    pub(super) fn instance_backing_int(&self, instance: &ObjRef) -> Option<Value> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2457,7 +2459,7 @@ impl Vm {
         }
     }
 
-    fn instance_backing_float(&self, instance: &ObjRef) -> Option<f64> {
+    pub(super) fn instance_backing_float(&self, instance: &ObjRef) -> Option<f64> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2467,7 +2469,7 @@ impl Vm {
         }
     }
 
-    fn instance_backing_complex(&self, instance: &ObjRef) -> Option<(f64, f64)> {
+    pub(super) fn instance_backing_complex(&self, instance: &ObjRef) -> Option<(f64, f64)> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2477,7 +2479,7 @@ impl Vm {
         }
     }
 
-    fn instance_backing_dict(&self, instance: &ObjRef) -> Option<ObjRef> {
+    pub(super) fn instance_backing_dict(&self, instance: &ObjRef) -> Option<ObjRef> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2487,7 +2489,7 @@ impl Vm {
         }
     }
 
-    fn instance_backing_set(&self, instance: &ObjRef) -> Option<ObjRef> {
+    pub(super) fn instance_backing_set(&self, instance: &ObjRef) -> Option<ObjRef> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2497,7 +2499,7 @@ impl Vm {
         }
     }
 
-    fn instance_backing_frozenset(&self, instance: &ObjRef) -> Option<ObjRef> {
+    pub(super) fn instance_backing_frozenset(&self, instance: &ObjRef) -> Option<ObjRef> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
@@ -2507,7 +2509,7 @@ impl Vm {
         }
     }
 
-    fn instance_dict_entries(instance_data: &InstanceObject) -> Vec<(Value, Value)> {
+    pub(super) fn instance_dict_entries(instance_data: &InstanceObject) -> Vec<(Value, Value)> {
         instance_data
             .attrs
             .iter()
@@ -2528,7 +2530,7 @@ impl Vm {
             .collect()
     }
 
-    fn load_attr_instance(
+    pub(super) fn load_attr_instance(
         &mut self,
         instance: &ObjRef,
         attr_name: &str,
@@ -2592,7 +2594,7 @@ impl Vm {
         self.load_attr_instance_default(instance, attr_name, true)
     }
 
-    fn load_attr_instance_default(
+    pub(super) fn load_attr_instance_default(
         &mut self,
         instance: &ObjRef,
         attr_name: &str,
@@ -2807,7 +2809,7 @@ impl Vm {
         )))
     }
 
-    fn load_attr_super(
+    pub(super) fn load_attr_super(
         &mut self,
         super_ref: &ObjRef,
         attr_name: &str,
@@ -2891,7 +2893,7 @@ impl Vm {
         )))
     }
 
-    fn load_attr_module(
+    pub(super) fn load_attr_module(
         &mut self,
         module: &ObjRef,
         attr_name: &str,
@@ -3038,7 +3040,7 @@ impl Vm {
         )))
     }
 
-    fn store_attr_instance(
+    pub(super) fn store_attr_instance(
         &mut self,
         instance: &ObjRef,
         attr_name: &str,
@@ -3064,7 +3066,7 @@ impl Vm {
         self.store_attr_instance_direct(instance, attr_name, value)
     }
 
-    fn store_attr_instance_direct(
+    pub(super) fn store_attr_instance_direct(
         &mut self,
         instance: &ObjRef,
         attr_name: &str,
@@ -3137,7 +3139,7 @@ impl Vm {
         Ok(AttrMutationOutcome::Done)
     }
 
-    fn delete_attr_instance(
+    pub(super) fn delete_attr_instance(
         &mut self,
         instance: &ObjRef,
         attr_name: &str,
@@ -3162,7 +3164,7 @@ impl Vm {
         self.delete_attr_instance_direct(instance, attr_name)
     }
 
-    fn delete_attr_instance_direct(
+    pub(super) fn delete_attr_instance_direct(
         &mut self,
         instance: &ObjRef,
         attr_name: &str,

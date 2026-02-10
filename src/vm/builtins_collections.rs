@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_operator_add(
+    pub(super) fn builtin_operator_add(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -9,7 +11,7 @@ impl Vm {
         })
     }
 
-    fn builtin_operator_sub(
+    pub(super) fn builtin_operator_sub(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -19,7 +21,7 @@ impl Vm {
         })
     }
 
-    fn builtin_operator_mul(
+    pub(super) fn builtin_operator_mul(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -29,7 +31,7 @@ impl Vm {
         })
     }
 
-    fn builtin_operator_mod(
+    pub(super) fn builtin_operator_mod(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -37,7 +39,7 @@ impl Vm {
         binary_operator(args, kwargs, mod_values)
     }
 
-    fn builtin_operator_truediv(
+    pub(super) fn builtin_operator_truediv(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -45,7 +47,7 @@ impl Vm {
         binary_operator(args, kwargs, div_values)
     }
 
-    fn builtin_operator_floordiv(
+    pub(super) fn builtin_operator_floordiv(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -53,7 +55,7 @@ impl Vm {
         binary_operator(args, kwargs, floor_div_values)
     }
 
-    fn builtin_operator_index(
+    pub(super) fn builtin_operator_index(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -64,7 +66,7 @@ impl Vm {
         Ok(Value::Int(value_to_int(args[0].clone())?))
     }
 
-    fn builtin_operator_eq(
+    pub(super) fn builtin_operator_eq(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -75,7 +77,7 @@ impl Vm {
         Ok(Value::Bool(args[0] == args[1]))
     }
 
-    fn builtin_operator_ne(
+    pub(super) fn builtin_operator_ne(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -86,7 +88,7 @@ impl Vm {
         Ok(Value::Bool(args[0] != args[1]))
     }
 
-    fn builtin_operator_lt(
+    pub(super) fn builtin_operator_lt(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -94,7 +96,7 @@ impl Vm {
         binary_operator(args, kwargs, compare_lt)
     }
 
-    fn builtin_operator_le(
+    pub(super) fn builtin_operator_le(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -102,7 +104,7 @@ impl Vm {
         binary_operator(args, kwargs, compare_le)
     }
 
-    fn builtin_operator_gt(
+    pub(super) fn builtin_operator_gt(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -110,7 +112,7 @@ impl Vm {
         binary_operator(args, kwargs, compare_gt)
     }
 
-    fn builtin_operator_ge(
+    pub(super) fn builtin_operator_ge(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -118,7 +120,7 @@ impl Vm {
         binary_operator(args, kwargs, compare_ge)
     }
 
-    fn builtin_operator_contains(
+    pub(super) fn builtin_operator_contains(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -129,7 +131,7 @@ impl Vm {
         Ok(Value::Bool(compare_in(&args[1], &args[0])?))
     }
 
-    fn builtin_operator_getitem(
+    pub(super) fn builtin_operator_getitem(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -140,7 +142,7 @@ impl Vm {
         self.getitem_value(args[0].clone(), args[1].clone())
     }
 
-    fn builtin_operator_itemgetter(
+    pub(super) fn builtin_operator_itemgetter(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -165,7 +167,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(NativeMethodKind::OperatorItemGetterCall, receiver))
     }
 
-    fn builtin_operator_attrgetter(
+    pub(super) fn builtin_operator_attrgetter(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -197,7 +199,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(NativeMethodKind::OperatorAttrGetterCall, receiver))
     }
 
-    fn builtin_operator_methodcaller(
+    pub(super) fn builtin_operator_methodcaller(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -236,7 +238,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(NativeMethodKind::OperatorMethodCallerCall, receiver))
     }
 
-    fn builtin_itertools_accumulate(
+    pub(super) fn builtin_itertools_accumulate(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -306,7 +308,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_combinations(
+    pub(super) fn builtin_itertools_combinations(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -350,7 +352,7 @@ impl Vm {
         ))
     }
 
-    fn builtin_itertools_combinations_with_replacement(
+    pub(super) fn builtin_itertools_combinations_with_replacement(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -396,7 +398,7 @@ impl Vm {
         ))
     }
 
-    fn builtin_itertools_compress(
+    pub(super) fn builtin_itertools_compress(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -415,7 +417,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_dropwhile(
+    pub(super) fn builtin_itertools_dropwhile(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -451,7 +453,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_filterfalse(
+    pub(super) fn builtin_itertools_filterfalse(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -482,7 +484,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_groupby(
+    pub(super) fn builtin_itertools_groupby(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -556,7 +558,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_islice(
+    pub(super) fn builtin_itertools_islice(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -613,7 +615,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_pairwise(
+    pub(super) fn builtin_itertools_pairwise(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -637,7 +639,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_starmap(
+    pub(super) fn builtin_itertools_starmap(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -661,7 +663,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_takewhile(
+    pub(super) fn builtin_itertools_takewhile(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -690,7 +692,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_tee(
+    pub(super) fn builtin_itertools_tee(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -715,7 +717,7 @@ impl Vm {
         Ok(self.heap.alloc_tuple(out))
     }
 
-    fn builtin_itertools_zip_longest(
+    pub(super) fn builtin_itertools_zip_longest(
         &mut self,
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -749,7 +751,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_chain(
+    pub(super) fn builtin_itertools_chain(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -766,7 +768,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_count(
+    pub(super) fn builtin_itertools_count(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -809,7 +811,7 @@ impl Vm {
         }))
     }
 
-    fn builtin_itertools_cycle(
+    pub(super) fn builtin_itertools_cycle(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -821,7 +823,7 @@ impl Vm {
         Ok(self.heap.alloc_list(values))
     }
 
-    fn builtin_itertools_repeat(
+    pub(super) fn builtin_itertools_repeat(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -840,7 +842,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_batched(
+    pub(super) fn builtin_itertools_batched(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -881,7 +883,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_permutations(
+    pub(super) fn builtin_itertools_permutations(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -937,7 +939,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_itertools_product(
+    pub(super) fn builtin_itertools_product(
         &mut self,
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -992,7 +994,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_functools_reduce(
+    pub(super) fn builtin_functools_reduce(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1026,7 +1028,7 @@ impl Vm {
         Ok(accumulator)
     }
 
-    fn builtin_functools_singledispatch(
+    pub(super) fn builtin_functools_singledispatch(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1048,7 +1050,7 @@ impl Vm {
         Ok(target)
     }
 
-    fn builtin_functools_singledispatch_register(
+    pub(super) fn builtin_functools_singledispatch_register(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1062,7 +1064,7 @@ impl Vm {
         Ok(args[1].clone())
     }
 
-    fn builtin_enum_convert(
+    pub(super) fn builtin_enum_convert(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1204,7 +1206,7 @@ impl Vm {
         Ok(class_value)
     }
 
-    fn builtin_functools_wraps(
+    pub(super) fn builtin_functools_wraps(
         &mut self,
         mut args: Vec<Value>,
         _kwargs: HashMap<String, Value>,
@@ -1226,7 +1228,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(NativeMethodKind::FunctoolsWrapsDecorator, receiver))
     }
 
-    fn maybe_get_attribute(
+    pub(super) fn maybe_get_attribute(
         &mut self,
         target: Value,
         name: &str,
@@ -1238,7 +1240,7 @@ impl Vm {
         }
     }
 
-    fn apply_functools_wraps_metadata(
+    pub(super) fn apply_functools_wraps_metadata(
         &mut self,
         wrapper: &Value,
         wrapped: &Value,
@@ -1306,7 +1308,7 @@ impl Vm {
         Ok(())
     }
 
-    fn builtin_functools_partial(
+    pub(super) fn builtin_functools_partial(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1347,7 +1349,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(NativeMethodKind::FunctoolsPartialCall, receiver))
     }
 
-    fn builtin_functools_cmp_to_key(
+    pub(super) fn builtin_functools_cmp_to_key(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1372,7 +1374,7 @@ impl Vm {
         Ok(self.alloc_native_bound_method(NativeMethodKind::FunctoolsCmpToKeyCall, receiver))
     }
 
-    fn builtin_functools_cached_property(
+    pub(super) fn builtin_functools_cached_property(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1411,7 +1413,7 @@ impl Vm {
         Ok(self.heap.alloc_instance(instance))
     }
 
-    fn builtin_collections_counter(
+    pub(super) fn builtin_collections_counter(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1433,7 +1435,7 @@ impl Vm {
         Ok(self.heap.alloc_dict(entries))
     }
 
-    fn builtin_collections_deque(
+    pub(super) fn builtin_collections_deque(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1449,7 +1451,7 @@ impl Vm {
         }
     }
 
-    fn builtin_collections_chainmap_init(
+    pub(super) fn builtin_collections_chainmap_init(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1483,7 +1485,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_collections_chainmap_new_child(
+    pub(super) fn builtin_collections_chainmap_new_child(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1549,7 +1551,7 @@ impl Vm {
         }
     }
 
-    fn builtin_collections_chainmap_repr(
+    pub(super) fn builtin_collections_chainmap_repr(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1588,7 +1590,7 @@ impl Vm {
         Ok(Value::Str(format!("{class_name}({rendered})")))
     }
 
-    fn builtin_collections_chainmap_items(
+    pub(super) fn builtin_collections_chainmap_items(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1640,7 +1642,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_collections_chainmap_get(
+    pub(super) fn builtin_collections_chainmap_get(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1685,7 +1687,7 @@ impl Vm {
         Ok(default)
     }
 
-    fn builtin_collections_chainmap_getitem(
+    pub(super) fn builtin_collections_chainmap_getitem(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1732,7 +1734,7 @@ impl Vm {
         Err(RuntimeError::new("key not found"))
     }
 
-    fn builtin_collections_chainmap_setitem(
+    pub(super) fn builtin_collections_chainmap_setitem(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1775,7 +1777,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_collections_chainmap_delitem(
+    pub(super) fn builtin_collections_chainmap_delitem(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1817,7 +1819,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_collections_defaultdict(
+    pub(super) fn builtin_collections_defaultdict(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1877,7 +1879,7 @@ impl Vm {
         Ok(Value::Dict(dict))
     }
 
-    fn builtin_collections_count_elements(
+    pub(super) fn builtin_collections_count_elements(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1899,7 +1901,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn inspect_module_for_value(&self, value: &Value) -> Option<Value> {
+    pub(super) fn inspect_module_for_value(&self, value: &Value) -> Option<Value> {
         match value {
             Value::Module(module) => Some(Value::Module(module.clone())),
             Value::Function(function) => match &*function.kind() {
@@ -1946,7 +1948,7 @@ impl Vm {
         }
     }
 
-    fn inspect_file_for_value(&self, value: &Value) -> Option<String> {
+    pub(super) fn inspect_file_for_value(&self, value: &Value) -> Option<String> {
         match value {
             Value::Module(module) => match &*module.kind() {
                 Object::Module(module_data) => match module_data.globals.get("__file__") {
@@ -1977,7 +1979,7 @@ impl Vm {
         }
     }
 
-    fn builtin_inspect_getmodule(
+    pub(super) fn builtin_inspect_getmodule(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -1991,7 +1993,7 @@ impl Vm {
         Ok(self.inspect_module_for_value(&value).unwrap_or(Value::None))
     }
 
-    fn builtin_inspect_getfile(
+    pub(super) fn builtin_inspect_getfile(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2008,7 +2010,7 @@ impl Vm {
         Ok(Value::Str(path))
     }
 
-    fn builtin_inspect_getsourcefile(
+    pub(super) fn builtin_inspect_getsourcefile(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2030,7 +2032,7 @@ impl Vm {
         }
     }
 
-    fn builtin_inspect_signature(
+    pub(super) fn builtin_inspect_signature(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2226,7 +2228,7 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
-    fn builtin_inspect_isfunction(
+    pub(super) fn builtin_inspect_isfunction(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2236,7 +2238,7 @@ impl Vm {
         })
     }
 
-    fn builtin_inspect_ismethod(
+    pub(super) fn builtin_inspect_ismethod(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2244,7 +2246,7 @@ impl Vm {
         unary_predicate(args, kwargs, |value| matches!(value, Value::BoundMethod(_)))
     }
 
-    fn builtin_inspect_isroutine(
+    pub(super) fn builtin_inspect_isroutine(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2257,7 +2259,7 @@ impl Vm {
         })
     }
 
-    fn builtin_inspect_ismethoddescriptor(
+    pub(super) fn builtin_inspect_ismethoddescriptor(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2265,7 +2267,7 @@ impl Vm {
         unary_predicate(args, kwargs, |value| matches!(value, Value::Builtin(_)))
     }
 
-    fn builtin_inspect_ismethodwrapper(
+    pub(super) fn builtin_inspect_ismethodwrapper(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2273,7 +2275,7 @@ impl Vm {
         unary_predicate(args, kwargs, |_value| false)
     }
 
-    fn builtin_inspect_istraceback(
+    pub(super) fn builtin_inspect_istraceback(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2281,7 +2283,7 @@ impl Vm {
         unary_predicate(args, kwargs, |_value| false)
     }
 
-    fn builtin_inspect_isframe(
+    pub(super) fn builtin_inspect_isframe(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2289,7 +2291,7 @@ impl Vm {
         unary_predicate(args, kwargs, |_value| false)
     }
 
-    fn builtin_inspect_iscode(
+    pub(super) fn builtin_inspect_iscode(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2297,7 +2299,7 @@ impl Vm {
         unary_predicate(args, kwargs, |value| matches!(value, Value::Code(_)))
     }
 
-    fn builtin_inspect_unwrap(
+    pub(super) fn builtin_inspect_unwrap(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -2315,7 +2317,7 @@ impl Vm {
         Ok(args.remove(0))
     }
 
-    fn builtin_inspect_isclass(
+    pub(super) fn builtin_inspect_isclass(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2323,7 +2325,7 @@ impl Vm {
         unary_predicate(args, kwargs, |value| matches!(value, Value::Class(_)))
     }
 
-    fn builtin_inspect_ismodule(
+    pub(super) fn builtin_inspect_ismodule(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2331,7 +2333,7 @@ impl Vm {
         unary_predicate(args, kwargs, |value| matches!(value, Value::Module(_)))
     }
 
-    fn builtin_inspect_isgenerator(
+    pub(super) fn builtin_inspect_isgenerator(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2346,7 +2348,7 @@ impl Vm {
         })
     }
 
-    fn builtin_inspect_iscoroutine(
+    pub(super) fn builtin_inspect_iscoroutine(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2361,7 +2363,7 @@ impl Vm {
         })
     }
 
-    fn builtin_inspect_isawaitable(
+    pub(super) fn builtin_inspect_isawaitable(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2372,7 +2374,7 @@ impl Vm {
         Ok(Value::Bool(self.is_awaitable_value(&args[0])))
     }
 
-    fn builtin_inspect_isasyncgen(
+    pub(super) fn builtin_inspect_isasyncgen(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2387,7 +2389,7 @@ impl Vm {
         })
     }
 
-    fn builtin_inspect_static_getmro(
+    pub(super) fn builtin_inspect_static_getmro(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2422,7 +2424,7 @@ impl Vm {
         Ok(self.heap.alloc_tuple(values))
     }
 
-    fn builtin_inspect_get_dunder_dict_of_class(
+    pub(super) fn builtin_inspect_get_dunder_dict_of_class(
         &self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2461,7 +2463,7 @@ impl Vm {
         }
     }
 
-    fn builtin_types_moduletype(
+    pub(super) fn builtin_types_moduletype(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2476,7 +2478,7 @@ impl Vm {
         Ok(self.alloc_module(name))
     }
 
-    fn builtin_types_methodtype(
+    pub(super) fn builtin_types_methodtype(
         &self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -2500,7 +2502,7 @@ impl Vm {
         }
     }
 
-    fn builtin_types_new_class(
+    pub(super) fn builtin_types_new_class(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,

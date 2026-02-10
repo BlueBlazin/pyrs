@@ -13,7 +13,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/mod.rs`
   - VM type/state definitions (`Vm`, `Frame`, core structs/enums/constants)
   - global/shared helper functions used across VM domains
-  - include points for domain-specific `impl Vm` sections
+  - module declarations and shared orchestration wiring
   - should not absorb large domain logic blocks
 
 ### Execution and dispatch

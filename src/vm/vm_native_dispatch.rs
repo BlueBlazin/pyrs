@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn call_native_method(
+    pub(super) fn call_native_method(
         &mut self,
         kind: NativeMethodKind,
         receiver: ObjRef,
@@ -2970,7 +2972,7 @@ impl Vm {
         }
     }
 
-    fn make_immediate_coroutine(&mut self, value: Value) -> Value {
+    pub(super) fn make_immediate_coroutine(&mut self, value: Value) -> Value {
         let mut code = CodeObject::new("<awaitable>", "<builtin>");
         let const_idx = code.add_const(value);
         code.instructions
@@ -2996,7 +2998,7 @@ impl Vm {
         Value::Generator(generator)
     }
 
-    fn awaitable_from_value(&mut self, value: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn awaitable_from_value(&mut self, value: Value) -> Result<Value, RuntimeError> {
         match value {
             Value::Generator(generator) => {
                 let (is_coroutine, is_async_generator) = match &*generator.kind() {
@@ -3039,7 +3041,7 @@ impl Vm {
         }
     }
 
-    fn run_awaitable(&mut self, awaitable: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn run_awaitable(&mut self, awaitable: Value) -> Result<Value, RuntimeError> {
         match self.awaitable_from_value(awaitable)? {
             Value::Generator(generator) => loop {
                 match self.resume_generator(&generator, None, None, GeneratorResumeKind::Next)? {
@@ -3059,7 +3061,7 @@ impl Vm {
         }
     }
 
-    fn is_awaitable_value(&self, value: &Value) -> bool {
+    pub(super) fn is_awaitable_value(&self, value: &Value) -> bool {
         match value {
             Value::Generator(generator) => match &*generator.kind() {
                 Object::Generator(state) => state.is_coroutine,
@@ -3073,7 +3075,7 @@ impl Vm {
         }
     }
 
-    fn ensure_sync_iterator_target(&self, value: &Value) -> Result<(), RuntimeError> {
+    pub(super) fn ensure_sync_iterator_target(&self, value: &Value) -> Result<(), RuntimeError> {
         if let Value::Generator(generator) = value {
             if let Object::Generator(state) = &*generator.kind() {
                 if state.is_coroutine || state.is_async_generator {
@@ -3084,14 +3086,14 @@ impl Vm {
         Ok(())
     }
 
-    fn generator_for_iter_next(
+    pub(super) fn generator_for_iter_next(
         &mut self,
         generator: &ObjRef,
     ) -> Result<GeneratorResumeOutcome, RuntimeError> {
         self.resume_generator(generator, None, None, GeneratorResumeKind::Next)
     }
 
-    fn sequence_iterator_via_getitem(&mut self, target: Value) -> Result<Option<Value>, RuntimeError> {
+    pub(super) fn sequence_iterator_via_getitem(&mut self, target: Value) -> Result<Option<Value>, RuntimeError> {
         let Some(getitem) = self.lookup_bound_special_method(&target, "__getitem__")? else {
             return Ok(None);
         };
@@ -3101,7 +3103,7 @@ impl Vm {
         })))
     }
 
-    fn to_iterator_value(&mut self, source: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn to_iterator_value(&mut self, source: Value) -> Result<Value, RuntimeError> {
         match source {
             Value::Iterator(obj) => match &*obj.kind() {
                 Object::Iterator(state) => match &state.kind {
@@ -3316,7 +3318,7 @@ impl Vm {
         }
     }
 
-    fn class_namedtuple_fields(&self, class: &ObjRef) -> Option<Vec<String>> {
+    pub(super) fn class_namedtuple_fields(&self, class: &ObjRef) -> Option<Vec<String>> {
         let value = class_attr_lookup(class, "__pyrs_namedtuple_fields__")?;
         match value {
             Value::Tuple(obj) => match &*obj.kind() {
@@ -3343,7 +3345,7 @@ impl Vm {
         }
     }
 
-    fn namedtuple_instance_values(&self, instance: &ObjRef) -> Option<Vec<Value>> {
+    pub(super) fn namedtuple_instance_values(&self, instance: &ObjRef) -> Option<Vec<Value>> {
         let instance_ref = instance.kind();
         let Object::Instance(instance_data) = &*instance_ref else {
             return None;
@@ -3355,7 +3357,7 @@ impl Vm {
             .collect()
     }
 
-    fn class_disallow_instantiation_message(&self, class: &ObjRef) -> Option<String> {
+    pub(super) fn class_disallow_instantiation_message(&self, class: &ObjRef) -> Option<String> {
         let class_kind = class.kind();
         let Object::Class(class_data) = &*class_kind else {
             return None;
@@ -3376,7 +3378,7 @@ impl Vm {
         Some(format!("cannot create '{}' instances", qualified_name))
     }
 
-    fn class_fallback_iterator(&self, class: &ObjRef) -> Option<Value> {
+    pub(super) fn class_fallback_iterator(&self, class: &ObjRef) -> Option<Value> {
         let member_values = {
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {
@@ -3445,7 +3447,7 @@ impl Vm {
         }))
     }
 
-    fn next_from_iterator_value(
+    pub(super) fn next_from_iterator_value(
         &mut self,
         iterator: &Value,
     ) -> Result<GeneratorResumeOutcome, RuntimeError> {
@@ -3542,7 +3544,7 @@ impl Vm {
         }
     }
 
-    fn delegate_yield_from(
+    pub(super) fn delegate_yield_from(
         &mut self,
         iterator: &Value,
         sent: Value,
@@ -3608,7 +3610,7 @@ impl Vm {
         self.next_from_iterator_value(iterator)
     }
 
-    fn iterator_type_name(&self, iterator: &Value) -> &'static str {
+    pub(super) fn iterator_type_name(&self, iterator: &Value) -> &'static str {
         match iterator {
             Value::Iterator(obj) => match &*obj.kind() {
                 Object::Iterator(state) => match state.kind {
@@ -3633,7 +3635,7 @@ impl Vm {
         }
     }
 
-    fn iterator_next_value(&mut self, iterator_ref: &ObjRef) -> Result<Option<Value>, RuntimeError> {
+    pub(super) fn iterator_next_value(&mut self, iterator_ref: &ObjRef) -> Result<Option<Value>, RuntimeError> {
         enum PendingIteratorStep {
             MapEvaluate {
                 func: Value,
@@ -3902,7 +3904,7 @@ impl Vm {
         }
     }
 
-    fn resume_generator(
+    pub(super) fn resume_generator(
         &mut self,
         generator: &ObjRef,
         sent: Option<Value>,
@@ -3982,7 +3984,7 @@ impl Vm {
         }
     }
 
-    fn finish_generator_resume(&mut self, owner: ObjRef, value: Value) {
+    pub(super) fn finish_generator_resume(&mut self, owner: ObjRef, value: Value) {
         self.generator_states.remove(&owner.id());
         self.generator_returns.insert(owner.id(), value.clone());
         let _ = self.set_generator_running(&owner, false);
@@ -3993,7 +3995,7 @@ impl Vm {
         }
     }
 
-    fn set_generator_started(&self, generator: &ObjRef, started: bool) -> Result<(), RuntimeError> {
+    pub(super) fn set_generator_started(&self, generator: &ObjRef, started: bool) -> Result<(), RuntimeError> {
         match &mut *generator.kind_mut() {
             Object::Generator(state) => {
                 state.started = started;
@@ -4003,7 +4005,7 @@ impl Vm {
         }
     }
 
-    fn set_generator_running(&self, generator: &ObjRef, running: bool) -> Result<(), RuntimeError> {
+    pub(super) fn set_generator_running(&self, generator: &ObjRef, running: bool) -> Result<(), RuntimeError> {
         match &mut *generator.kind_mut() {
             Object::Generator(state) => {
                 state.running = running;
@@ -4013,7 +4015,7 @@ impl Vm {
         }
     }
 
-    fn set_generator_closed(&self, generator: &ObjRef, closed: bool) -> Result<(), RuntimeError> {
+    pub(super) fn set_generator_closed(&self, generator: &ObjRef, closed: bool) -> Result<(), RuntimeError> {
         match &mut *generator.kind_mut() {
             Object::Generator(state) => {
                 state.closed = closed;
@@ -4026,7 +4028,7 @@ impl Vm {
         }
     }
 
-    fn active_exception_is(&self, name: &str) -> bool {
+    pub(super) fn active_exception_is(&self, name: &str) -> bool {
         self.frames
             .last()
             .and_then(|frame| frame.active_exception.as_ref())
@@ -4038,20 +4040,20 @@ impl Vm {
             .unwrap_or(false)
     }
 
-    fn clear_active_exception(&mut self) {
+    pub(super) fn clear_active_exception(&mut self) {
         if let Some(frame) = self.frames.last_mut() {
             frame.active_exception = None;
         }
     }
 
-    fn propagate_pending_generator_exception(&mut self) -> Result<(), RuntimeError> {
+    pub(super) fn propagate_pending_generator_exception(&mut self) -> Result<(), RuntimeError> {
         if let Some(exc) = self.pending_generator_exception.take() {
             self.raise_exception(exc)?;
         }
         Ok(())
     }
 
-    fn call_builtin(
+    pub(super) fn call_builtin(
         &mut self,
         builtin: BuiltinFunction,
         args: Vec<Value>,

@@ -1,5 +1,7 @@
+use super::*;
+
 impl Vm {
-    fn builtin_random_seed(
+    pub(super) fn builtin_random_seed(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -25,7 +27,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_random_random(
+    pub(super) fn builtin_random_random(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -37,7 +39,7 @@ impl Vm {
         Ok(Value::Float(self.random.random_f64()))
     }
 
-    fn builtin_random_randrange(
+    pub(super) fn builtin_random_randrange(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -105,7 +107,7 @@ impl Vm {
         Ok(Value::Int(result))
     }
 
-    fn builtin_random_randint(
+    pub(super) fn builtin_random_randint(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -163,7 +165,7 @@ impl Vm {
         Ok(Value::Int(result))
     }
 
-    fn builtin_random_getrandbits(
+    pub(super) fn builtin_random_getrandbits(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -222,7 +224,7 @@ impl Vm {
         Ok(Value::Int(produced as i64))
     }
 
-    fn builtin_random_choice(
+    pub(super) fn builtin_random_choice(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -264,7 +266,7 @@ impl Vm {
         }
     }
 
-    fn builtin_random_choices(
+    pub(super) fn builtin_random_choices(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -368,7 +370,7 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
-    fn builtin_random_shuffle(
+    pub(super) fn builtin_random_shuffle(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -398,7 +400,7 @@ impl Vm {
         }
     }
 
-    fn strip_random_self_arg(&self, args: &mut Vec<Value>) {
+    pub(super) fn strip_random_self_arg(&self, args: &mut Vec<Value>) {
         let remove_self = matches!(
             args.first(),
             Some(Value::Instance(instance))
@@ -417,7 +419,7 @@ impl Vm {
         }
     }
 
-    fn builtin_decimal_getcontext(
+    pub(super) fn builtin_decimal_getcontext(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -440,7 +442,7 @@ impl Vm {
             .unwrap_or(Value::None))
     }
 
-    fn builtin_decimal_setcontext(
+    pub(super) fn builtin_decimal_setcontext(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -463,7 +465,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn builtin_decimal_localcontext(
+    pub(super) fn builtin_decimal_localcontext(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -488,7 +490,7 @@ impl Vm {
         Ok(context)
     }
 
-    fn builtin_math_sqrt(
+    pub(super) fn builtin_math_sqrt(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -503,7 +505,7 @@ impl Vm {
         Ok(Value::Float(value.sqrt()))
     }
 
-    fn builtin_math_copysign(
+    pub(super) fn builtin_math_copysign(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -516,7 +518,7 @@ impl Vm {
         Ok(Value::Float(magnitude.copysign(sign)))
     }
 
-    fn builtin_math_floor(
+    pub(super) fn builtin_math_floor(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -531,7 +533,7 @@ impl Vm {
         Ok(Value::Int(value as i64))
     }
 
-    fn builtin_math_ceil(
+    pub(super) fn builtin_math_ceil(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -546,7 +548,7 @@ impl Vm {
         Ok(Value::Int(value as i64))
     }
 
-    fn builtin_math_isfinite(
+    pub(super) fn builtin_math_isfinite(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -557,7 +559,7 @@ impl Vm {
         Ok(Value::Bool(value_to_f64(args[0].clone())?.is_finite()))
     }
 
-    fn builtin_math_isinf(
+    pub(super) fn builtin_math_isinf(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -568,7 +570,7 @@ impl Vm {
         Ok(Value::Bool(value_to_f64(args[0].clone())?.is_infinite()))
     }
 
-    fn builtin_math_isnan(
+    pub(super) fn builtin_math_isnan(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -579,7 +581,7 @@ impl Vm {
         Ok(Value::Bool(value_to_f64(args[0].clone())?.is_nan()))
     }
 
-    fn builtin_math_ldexp(
+    pub(super) fn builtin_math_ldexp(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -592,7 +594,7 @@ impl Vm {
         Ok(Value::Float(x * (2.0f64).powf(i as f64)))
     }
 
-    fn builtin_math_hypot(
+    pub(super) fn builtin_math_hypot(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -632,7 +634,7 @@ impl Vm {
         Ok(Value::Float(max * sum.sqrt()))
     }
 
-    fn builtin_math_fabs(
+    pub(super) fn builtin_math_fabs(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -643,7 +645,7 @@ impl Vm {
         Ok(Value::Float(value_to_f64(args[0].clone())?.abs()))
     }
 
-    fn builtin_math_exp(
+    pub(super) fn builtin_math_exp(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -654,7 +656,7 @@ impl Vm {
         Ok(Value::Float(value_to_f64(args[0].clone())?.exp()))
     }
 
-    fn builtin_math_erfc(
+    pub(super) fn builtin_math_erfc(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -665,7 +667,7 @@ impl Vm {
         Ok(Value::Float(erfc_approx(value_to_f64(args[0].clone())?)))
     }
 
-    fn builtin_math_log(
+    pub(super) fn builtin_math_log(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -687,7 +689,7 @@ impl Vm {
         Ok(Value::Float(x.ln() / base.ln()))
     }
 
-    fn builtin_math_fsum(
+    pub(super) fn builtin_math_fsum(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -707,7 +709,7 @@ impl Vm {
         Ok(Value::Float(sum))
     }
 
-    fn builtin_math_sumprod(
+    pub(super) fn builtin_math_sumprod(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -736,7 +738,7 @@ impl Vm {
         Ok(Value::Float(sum))
     }
 
-    fn builtin_math_cos(
+    pub(super) fn builtin_math_cos(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -747,7 +749,7 @@ impl Vm {
         Ok(Value::Float(value_to_f64(args[0].clone())?.cos()))
     }
 
-    fn builtin_math_sin(
+    pub(super) fn builtin_math_sin(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -758,7 +760,7 @@ impl Vm {
         Ok(Value::Float(value_to_f64(args[0].clone())?.sin()))
     }
 
-    fn builtin_math_tan(
+    pub(super) fn builtin_math_tan(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -769,7 +771,7 @@ impl Vm {
         Ok(Value::Float(value_to_f64(args[0].clone())?.tan()))
     }
 
-    fn builtin_math_cosh(
+    pub(super) fn builtin_math_cosh(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -780,7 +782,7 @@ impl Vm {
         Ok(Value::Float(value_to_f64(args[0].clone())?.cosh()))
     }
 
-    fn builtin_math_asin(
+    pub(super) fn builtin_math_asin(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -795,7 +797,7 @@ impl Vm {
         Ok(Value::Float(x.asin()))
     }
 
-    fn builtin_math_atan(
+    pub(super) fn builtin_math_atan(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -806,7 +808,7 @@ impl Vm {
         Ok(Value::Float(value_to_f64(args[0].clone())?.atan()))
     }
 
-    fn builtin_math_acos(
+    pub(super) fn builtin_math_acos(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -821,7 +823,7 @@ impl Vm {
         Ok(Value::Float(x.acos()))
     }
 
-    fn builtin_math_isclose(
+    pub(super) fn builtin_math_isclose(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -862,7 +864,7 @@ impl Vm {
         Ok(Value::Bool(diff <= tol))
     }
 
-    fn builtin_time_time(
+    pub(super) fn builtin_time_time(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -876,7 +878,7 @@ impl Vm {
         Ok(Value::Float(now.as_secs_f64()))
     }
 
-    fn builtin_time_time_ns(
+    pub(super) fn builtin_time_time_ns(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -895,7 +897,7 @@ impl Vm {
         Ok(Value::Int(nanos))
     }
 
-    fn builtin_time_localtime(
+    pub(super) fn builtin_time_localtime(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -903,7 +905,7 @@ impl Vm {
         self.builtin_time_time_tuple(args, kwargs)
     }
 
-    fn builtin_time_gmtime(
+    pub(super) fn builtin_time_gmtime(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -911,7 +913,7 @@ impl Vm {
         self.builtin_time_time_tuple(args, kwargs)
     }
 
-    fn builtin_time_time_tuple(
+    pub(super) fn builtin_time_time_tuple(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
@@ -959,7 +961,7 @@ impl Vm {
         ]))
     }
 
-    fn builtin_time_strftime(
+    pub(super) fn builtin_time_strftime(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -981,7 +983,7 @@ impl Vm {
         Ok(Value::Str(format_strftime(&format, parts)))
     }
 
-    fn builtin_time_monotonic(
+    pub(super) fn builtin_time_monotonic(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
@@ -993,7 +995,7 @@ impl Vm {
         Ok(Value::Float(start.elapsed().as_secs_f64()))
     }
 
-    fn builtin_time_sleep(
+    pub(super) fn builtin_time_sleep(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
