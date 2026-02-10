@@ -6510,6 +6510,37 @@ ok = (payload == 'payload' and closed_ok)
 }
 
 #[test]
+fn io_open_missing_path_is_catchable_as_os_error_family() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let missing = std::env::temp_dir().join(format!("pyrs_io_missing_{unique}.txt"));
+    let _ = std::fs::remove_file(&missing);
+
+    let source = format!(
+        r#"import io
+path = '{path}'
+caught_specific = False
+caught_generic = False
+try:
+    io.open(path, 'r')
+except FileNotFoundError:
+    caught_specific = True
+except OSError:
+    caught_generic = True
+ok = caught_specific and not caught_generic
+"#,
+        path = missing.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn io_open_binary_uses_buffered_classes_with_raw_link() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

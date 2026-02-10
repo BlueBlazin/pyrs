@@ -40447,6 +40447,23 @@ fn classify_runtime_error(message: &str) -> &'static str {
             return "NotADirectoryError";
         }
     }
+    if message.contains("open() failed:") {
+        if message.contains("File exists") || message.contains("os error 17") {
+            return "FileExistsError";
+        }
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Is a directory") || message.contains("os error 21") {
+            return "IsADirectoryError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
     if message.contains("mkdir failed:") {
         if message.contains("File exists") || message.contains("os error 17") {
             return "FileExistsError";
@@ -40496,6 +40513,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
     }
     if message.contains("bad file descriptor")
         || message.contains("open failed:")
+        || message.contains("open() failed:")
         || message.contains("mkdir failed:")
         || message.contains("chmod failed:")
         || message.contains("access failed:")
