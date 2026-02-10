@@ -108,8 +108,10 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
     let mut vm = Vm::new();
     configure_vm_for_execution(&mut vm, path, import_site)?;
     if path.ends_with(".pyc") {
-        vm.execute_pyc_file(path)
-            .map_err(|err| format!("runtime error: {}", err.message))?;
+        let exec_result = vm.execute_pyc_file(path);
+        let shutdown_result = vm.run_shutdown_hooks();
+        exec_result.map_err(|err| format!("runtime error: {}", err.message))?;
+        shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
         return Ok(());
     }
 
@@ -128,8 +130,10 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
     let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
 
-    vm.execute(&code)
-        .map_err(|err| format!("runtime error: {}", err.message))?;
+    let exec_result = vm.execute(&code);
+    let shutdown_result = vm.run_shutdown_hooks();
+    exec_result.map_err(|err| format!("runtime error: {}", err.message))?;
+    shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
 
     Ok(())
 }
@@ -150,8 +154,10 @@ fn run_command(source: &str, import_site: bool) -> Result<(), String> {
     let code = compiler::compile_module_with_filename(&module, "<string>")
         .map_err(|err| format!("compile error: {}", err.message))?;
 
-    vm.execute(&code)
-        .map_err(|err| format!("runtime error: {}", err.message))?;
+    let exec_result = vm.execute(&code);
+    let shutdown_result = vm.run_shutdown_hooks();
+    exec_result.map_err(|err| format!("runtime error: {}", err.message))?;
+    shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
 
     Ok(())
 }

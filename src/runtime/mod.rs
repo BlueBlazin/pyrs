@@ -2033,6 +2033,14 @@ pub enum BuiltinFunction {
     OsRmdir,
     OsUTime,
     OsScandir,
+    OsScandirIter,
+    OsScandirNext,
+    OsScandirEnter,
+    OsScandirExit,
+    OsScandirClose,
+    OsDirEntryIsDir,
+    OsDirEntryIsFile,
+    OsDirEntryIsSymlink,
     OsWalk,
     OsWIfStopped,
     OsWStopSig,
@@ -4464,6 +4472,14 @@ impl BuiltinFunction {
             | BuiltinFunction::OsRmdir
             | BuiltinFunction::OsUTime
             | BuiltinFunction::OsScandir
+            | BuiltinFunction::OsScandirIter
+            | BuiltinFunction::OsScandirNext
+            | BuiltinFunction::OsScandirEnter
+            | BuiltinFunction::OsScandirExit
+            | BuiltinFunction::OsScandirClose
+            | BuiltinFunction::OsDirEntryIsDir
+            | BuiltinFunction::OsDirEntryIsFile
+            | BuiltinFunction::OsDirEntryIsSymlink
             | BuiltinFunction::OsWalk
             | BuiltinFunction::OsWIfStopped
             | BuiltinFunction::OsWStopSig

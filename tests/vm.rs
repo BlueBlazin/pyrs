@@ -6786,7 +6786,7 @@ st = os.stat(path)\n\
 lst = os.lstat(path)\n\
 pst = posix.stat(path)\n\
 items = os.scandir(root)\n\
-name_ok = any(item[0] == 'sample.txt' for item in items)\n\
+name_ok = any(item.name == 'sample.txt' for item in items)\n\
 wait_ok = os.WIFEXITED(5 << 8) and os.WEXITSTATUS(5 << 8) == 5 and not os.WIFSIGNALED(5 << 8)\n\
 ok = (not is_tty) and written_ok and st.st_size == 5 and lst.st_size == 5 and pst.st_size == 5 and name_ok and wait_ok\n",
         path = file.to_string_lossy().replace('\\', "\\\\"),

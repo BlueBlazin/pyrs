@@ -19,7 +19,7 @@ use std::os::unix::net::UnixStream;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -43,6 +43,7 @@ use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
     GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
     NativeMethodKind, NativeMethodObject, ObjRef, Object, RuntimeError, SuperObject, Value,
+    Obj,
     format_repr, format_value,
 };
 
@@ -368,6 +369,7 @@ pub struct Vm {
     exception_parents: HashMap<String, String>,
     finalized_del_objects: HashSet<u64>,
     pending_del_instances: HashMap<u64, ObjRef>,
+    weakref_finalizers: HashMap<u64, (Weak<Obj>, Vec<ObjRef>)>,
     atexit_handlers: Vec<AtexitHandler>,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
@@ -425,6 +427,7 @@ impl Vm {
             exception_parents: HashMap::new(),
             finalized_del_objects: HashSet::new(),
             pending_del_instances: HashMap::new(),
+            weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
@@ -453,6 +456,31 @@ impl Vm {
             return module.globals.get(name).cloned();
         }
         None
+    }
+
+    pub fn run_shutdown_hooks(&mut self) -> Result<(), RuntimeError> {
+        let pushed_shutdown_frame = if self.frames.is_empty() {
+            let shutdown_code = Rc::new(CodeObject::new("<shutdown>", "<shutdown>"));
+            let shutdown_frame = Frame::new(
+                shutdown_code,
+                self.main_module.clone(),
+                true,
+                false,
+                Vec::new(),
+                None,
+            );
+            self.frames.push(shutdown_frame);
+            true
+        } else {
+            false
+        };
+        let shutdown_result = self.builtin_atexit_run_exitfuncs(Vec::new(), HashMap::new());
+        self.run_weakref_atexit_finalizers();
+        if pushed_shutdown_frame {
+            let _ = self.frames.pop();
+        }
+        self.run_pending_del_finalizers();
+        shutdown_result.map(|_| ())
     }
 
     pub fn add_module_path(&mut self, path: impl Into<PathBuf>) {
@@ -623,6 +651,159 @@ impl Vm {
             );
             if let Some(frame) = self.frames.last_mut() {
                 frame.active_exception = None;
+            }
+        }
+        self.run_pending_weakref_finalizers();
+    }
+
+    fn register_weakref_finalizer(&mut self, target: &ObjRef, finalizer: ObjRef) {
+        let target_id = target.id();
+        self.weakref_finalizers
+            .entry(target_id)
+            .and_modify(|(_, finalizers)| finalizers.push(finalizer.clone()))
+            .or_insert_with(|| (target.downgrade(), vec![finalizer]));
+    }
+
+    fn unregister_weakref_finalizer(&mut self, target_id: u64, finalizer_id: u64) {
+        if let Some((_, finalizers)) = self.weakref_finalizers.get_mut(&target_id) {
+            finalizers.retain(|entry| entry.id() != finalizer_id);
+            if finalizers.is_empty() {
+                self.weakref_finalizers.remove(&target_id);
+            }
+        }
+    }
+
+    fn run_pending_weakref_finalizers(&mut self) {
+        let ready_target_ids: Vec<u64> = self
+            .weakref_finalizers
+            .iter()
+            .filter_map(|(target_id, (target, _))| {
+                if target.upgrade().is_none() {
+                    Some(*target_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for target_id in ready_target_ids {
+            let Some((_, finalizers)) = self.weakref_finalizers.remove(&target_id) else {
+                continue;
+            };
+            for finalizer in finalizers {
+                let (callable, call_args, call_kwargs, alive) = match &mut *finalizer.kind_mut() {
+                    Object::Module(module_data) => {
+                        let alive =
+                            matches!(module_data.globals.get("alive"), Some(Value::Bool(true)));
+                        if !alive {
+                            (Value::None, Vec::new(), HashMap::new(), false)
+                        } else {
+                            module_data
+                                .globals
+                                .insert("alive".to_string(), Value::Bool(false));
+                            let callable = module_data
+                                .globals
+                                .get("_func")
+                                .cloned()
+                                .unwrap_or(Value::None);
+                            let call_args = match module_data.globals.get("_args").cloned() {
+                                Some(Value::Tuple(obj)) => match &*obj.kind() {
+                                    Object::Tuple(values) => values.clone(),
+                                    _ => Vec::new(),
+                                },
+                                _ => Vec::new(),
+                            };
+                            let call_kwargs = match module_data.globals.get("_kwargs").cloned() {
+                                Some(Value::Dict(obj)) => match &*obj.kind() {
+                                    Object::Dict(entries) => entries
+                                        .iter()
+                                        .filter_map(|(key, value)| match key {
+                                            Value::Str(name) => Some((name.clone(), value.clone())),
+                                            _ => None,
+                                        })
+                                        .collect(),
+                                    _ => HashMap::new(),
+                                },
+                                _ => HashMap::new(),
+                            };
+                            (callable, call_args, call_kwargs, true)
+                        }
+                    }
+                    _ => (Value::None, Vec::new(), HashMap::new(), false),
+                };
+                if !alive || matches!(callable, Value::None) {
+                    continue;
+                }
+                let _ = self.call_internal_preserving_caller(callable, call_args, call_kwargs);
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.active_exception = None;
+                }
+            }
+        }
+    }
+
+    fn run_weakref_atexit_finalizers(&mut self) {
+        let target_ids: Vec<u64> = self.weakref_finalizers.keys().copied().collect();
+        for target_id in target_ids {
+            let Some((_, finalizers)) = self.weakref_finalizers.remove(&target_id) else {
+                continue;
+            };
+            for finalizer in finalizers {
+                let (callable, call_args, call_kwargs, alive, run_on_atexit) =
+                    match &mut *finalizer.kind_mut() {
+                        Object::Module(module_data) => {
+                            let alive =
+                                matches!(module_data.globals.get("alive"), Some(Value::Bool(true)));
+                            let run_on_atexit = matches!(
+                                module_data.globals.get("atexit"),
+                                Some(Value::Bool(true))
+                            );
+                            if !alive || !run_on_atexit {
+                                (Value::None, Vec::new(), HashMap::new(), false, false)
+                            } else {
+                                module_data
+                                    .globals
+                                    .insert("alive".to_string(), Value::Bool(false));
+                                let callable = module_data
+                                    .globals
+                                    .get("_func")
+                                    .cloned()
+                                    .unwrap_or(Value::None);
+                                let call_args = match module_data.globals.get("_args").cloned() {
+                                    Some(Value::Tuple(obj)) => match &*obj.kind() {
+                                        Object::Tuple(values) => values.clone(),
+                                        _ => Vec::new(),
+                                    },
+                                    _ => Vec::new(),
+                                };
+                                let call_kwargs =
+                                    match module_data.globals.get("_kwargs").cloned() {
+                                        Some(Value::Dict(obj)) => match &*obj.kind() {
+                                            Object::Dict(entries) => entries
+                                                .iter()
+                                                .filter_map(|(key, value)| match key {
+                                                    Value::Str(name) => {
+                                                        Some((name.clone(), value.clone()))
+                                                    }
+                                                    _ => None,
+                                                })
+                                                .collect(),
+                                            _ => HashMap::new(),
+                                        },
+                                        _ => HashMap::new(),
+                                    };
+                                (callable, call_args, call_kwargs, true, true)
+                            }
+                        }
+                        _ => (Value::None, Vec::new(), HashMap::new(), false, false),
+                    };
+                if !alive || !run_on_atexit || matches!(callable, Value::None) {
+                    continue;
+                }
+                let _ = self.call_internal_preserving_caller(callable, call_args, call_kwargs);
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.active_exception = None;
+                }
             }
         }
     }
@@ -9509,13 +9690,13 @@ impl Vm {
                     Err(err) => return Err(err),
                 },
             }
-            // Avoid running __del__ callbacks while transient operands/active exceptions
-            // are live in the current frame. We still allow finalizers in nested frame
-            // stacks so refcount-style cleanup can occur during normal stdlib execution.
+            // Keep __del__ suppressed only while an active exception is being processed.
+            // Refcount-style cleanup in CPython can happen while ordinary operands are live,
+            // and several stdlib paths (tempfile/shutil) rely on that eagerness.
             let safe_for_pending_finalizers = self
                 .frames
                 .last()
-                .map(|frame| frame.stack.is_empty() && frame.active_exception.is_none())
+                .map(|frame| frame.active_exception.is_none())
                 .unwrap_or(false);
             if safe_for_pending_finalizers {
                 self.run_pending_del_finalizers();
@@ -17912,6 +18093,16 @@ impl Vm {
             BuiltinFunction::OsRmdir => self.builtin_os_rmdir(args, kwargs),
             BuiltinFunction::OsUTime => self.builtin_os_utime(args, kwargs),
             BuiltinFunction::OsScandir => self.builtin_os_scandir(args, kwargs),
+            BuiltinFunction::OsScandirIter => self.builtin_os_scandir_iter(args, kwargs),
+            BuiltinFunction::OsScandirNext => self.builtin_os_scandir_next(args, kwargs),
+            BuiltinFunction::OsScandirEnter => self.builtin_os_scandir_enter(args, kwargs),
+            BuiltinFunction::OsScandirExit => self.builtin_os_scandir_exit(args, kwargs),
+            BuiltinFunction::OsScandirClose => self.builtin_os_scandir_close(args, kwargs),
+            BuiltinFunction::OsDirEntryIsDir => self.builtin_os_direntry_is_dir(args, kwargs),
+            BuiltinFunction::OsDirEntryIsFile => self.builtin_os_direntry_is_file(args, kwargs),
+            BuiltinFunction::OsDirEntryIsSymlink => {
+                self.builtin_os_direntry_is_symlink(args, kwargs)
+            }
             BuiltinFunction::OsWalk => self.builtin_os_walk(args, kwargs),
             BuiltinFunction::OsWIfStopped => self.builtin_os_wifstopped(args, kwargs),
             BuiltinFunction::OsWStopSig => self.builtin_os_wstopsig(args, kwargs),
@@ -19215,35 +19406,15 @@ impl Vm {
                 self.heap.alloc_dict(Vec::new())
             }
         } else {
-            let mut map = frame.locals.clone();
-            for (idx, name) in frame.code.cellvars.iter().enumerate() {
-                if !map.contains_key(name) {
-                    if let Some(cell) = frame.cells.get(idx) {
-                        if let Object::Cell(cell_data) = &*cell.kind() {
-                            map.insert(
-                                name.clone(),
-                                cell_data.value.clone().unwrap_or(Value::None),
-                            );
-                        }
-                    }
-                }
-            }
-            let cell_offset = frame.code.cellvars.len();
-            for (idx, name) in frame.code.freevars.iter().enumerate() {
-                if !map.contains_key(name) {
-                    if let Some(cell) = frame.cells.get(cell_offset + idx) {
-                        if let Object::Cell(cell_data) = &*cell.kind() {
-                            map.insert(
-                                name.clone(),
-                                cell_data.value.clone().unwrap_or(Value::None),
-                            );
-                        }
-                    }
-                }
-            }
-            let mut entries = Vec::with_capacity(map.len());
-            for (name, value) in map {
-                entries.push((Value::Str(name), value));
+            // Keep f_locals lightweight and avoid retaining stale strong refs.
+            // We expose the local names but not copied local values.
+            let mut names = HashSet::new();
+            names.extend(frame.locals.keys().cloned());
+            names.extend(frame.code.cellvars.iter().cloned());
+            names.extend(frame.code.freevars.iter().cloned());
+            let mut entries = Vec::with_capacity(names.len());
+            for name in names {
+                entries.push((Value::Str(name), Value::None));
             }
             self.heap.alloc_dict(entries)
         };
@@ -23076,6 +23247,9 @@ impl Vm {
         }
         let object = args.remove(0);
         let callback = args.remove(0);
+        let target = weakref_target_object(&object)
+            .ok_or_else(|| RuntimeError::new("cannot create weak reference to object"))?;
+        let target_id = target.id();
         let callback_args = self.heap.alloc_tuple(args);
         let callback_kwargs = self.heap.alloc_dict(
             kwargs
@@ -23098,7 +23272,9 @@ impl Vm {
                 .insert("__pyrs_weakref_finalize__".to_string(), Value::Bool(true));
             module_data.globals.insert("alive".to_string(), Value::Bool(true));
             module_data.globals.insert("atexit".to_string(), Value::Bool(true));
-            module_data.globals.insert("_obj".to_string(), object);
+            module_data
+                .globals
+                .insert("target_id".to_string(), Value::Int(target_id as i64));
             module_data.globals.insert("_func".to_string(), callback);
             module_data
                 .globals
@@ -23108,6 +23284,7 @@ impl Vm {
                 .insert("_kwargs".to_string(), callback_kwargs);
             module_data.globals.insert("detach".to_string(), detach);
         }
+        self.register_weakref_finalizer(&target, finalizer.clone());
         Ok(Value::Module(finalizer))
     }
 
@@ -23128,14 +23305,15 @@ impl Vm {
         let mut call_args = Value::None;
         let mut call_kwargs = Value::None;
         let mut alive = false;
+        let mut target_id = None;
         if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
             alive = matches!(module_data.globals.get("alive"), Some(Value::Bool(true)));
             if alive {
                 module_data.globals.insert("alive".to_string(), Value::Bool(false));
-                obj = module_data
-                    .globals
-                    .insert("_obj".to_string(), Value::None)
-                    .unwrap_or(Value::None);
+                target_id = match module_data.globals.get("target_id") {
+                    Some(Value::Int(value)) if *value >= 0 => Some(*value as u64),
+                    _ => None,
+                };
                 func = module_data
                     .globals
                     .get("_func")
@@ -23151,6 +23329,12 @@ impl Vm {
                     .get("_kwargs")
                     .cloned()
                     .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()));
+            }
+        }
+        if let Some(id) = target_id {
+            self.unregister_weakref_finalizer(id, finalizer.id());
+            if let Some(target) = self.heap.find_object_by_id(id).and_then(value_from_object_ref) {
+                obj = target;
             }
         }
         if !alive || matches!(obj, Value::None) {
@@ -26258,23 +26442,278 @@ impl Vm {
         } else {
             self.path_arg_to_string(args[0].clone())?
         };
+        let direntry_class = match self
+            .heap
+            .alloc_class(ClassObject::new("DirEntry".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *direntry_class.kind_mut() {
+            class_data.attrs.insert(
+                "is_dir".to_string(),
+                Value::Builtin(BuiltinFunction::OsDirEntryIsDir),
+            );
+            class_data.attrs.insert(
+                "is_file".to_string(),
+                Value::Builtin(BuiltinFunction::OsDirEntryIsFile),
+            );
+            class_data.attrs.insert(
+                "is_symlink".to_string(),
+                Value::Builtin(BuiltinFunction::OsDirEntryIsSymlink),
+            );
+        }
+        let scandir_class = match self
+            .heap
+            .alloc_class(ClassObject::new("ScandirIterator".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *scandir_class.kind_mut() {
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirIter),
+            );
+            class_data.attrs.insert(
+                "__next__".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirNext),
+            );
+            class_data.attrs.insert(
+                "__enter__".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirEnter),
+            );
+            class_data.attrs.insert(
+                "__exit__".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirExit),
+            );
+            class_data
+                .attrs
+                .insert("close".to_string(), Value::Builtin(BuiltinFunction::OsScandirClose));
+        }
+
         let mut rows = Vec::new();
-        let entries = fs::read_dir(&path)
-            .map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+        let entries =
+            fs::read_dir(&path).map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
         for entry in entries {
             let entry = entry.map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
-            let name = entry.file_name().to_string_lossy().to_string();
             let file_type = entry
                 .file_type()
                 .map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
-            rows.push(self.heap.alloc_tuple(vec![
-                Value::Str(name),
-                Value::Bool(file_type.is_dir()),
-                Value::Bool(file_type.is_file()),
-                Value::Bool(file_type.is_symlink()),
-            ]));
+            let name = entry.file_name().to_string_lossy().to_string();
+            let full_path = entry.path().to_string_lossy().to_string();
+            let direntry = self.alloc_instance_for_class(&direntry_class);
+            if let Object::Instance(instance_data) = &mut *direntry.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert("name".to_string(), Value::Str(name.clone()));
+                instance_data
+                    .attrs
+                    .insert("path".to_string(), Value::Str(full_path));
+                instance_data
+                    .attrs
+                    .insert("_is_dir".to_string(), Value::Bool(file_type.is_dir()));
+                instance_data
+                    .attrs
+                    .insert("_is_file".to_string(), Value::Bool(file_type.is_file()));
+                instance_data
+                    .attrs
+                    .insert("_is_symlink".to_string(), Value::Bool(file_type.is_symlink()));
+            }
+            rows.push(Value::Instance(direntry));
         }
-        Ok(self.heap.alloc_list(rows))
+
+        let entries_list = self.heap.alloc_list(rows);
+        let iterator = self.alloc_instance_for_class(&scandir_class);
+        if let Object::Instance(instance_data) = &mut *iterator.kind_mut() {
+            instance_data
+                .attrs
+                .insert("_entries".to_string(), entries_list);
+            instance_data.attrs.insert("_index".to_string(), Value::Int(0));
+            instance_data
+                .attrs
+                .insert("_closed".to_string(), Value::Bool(false));
+        }
+        Ok(Value::Instance(iterator))
+    }
+
+    fn builtin_os_scandir_iter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__iter__() expects no arguments"));
+        }
+        Ok(args[0].clone())
+    }
+
+    fn builtin_os_scandir_next(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__next__() expects no arguments"));
+        }
+        let Value::Instance(instance) = &args[0] else {
+            return Err(RuntimeError::new("__next__() expects scandir iterator"));
+        };
+        let is_closed = matches!(
+            Self::instance_attr_get(instance, "_closed"),
+            Some(Value::Bool(true))
+        );
+        if is_closed {
+            return Err(RuntimeError::new("StopIteration"));
+        }
+        let index = match Self::instance_attr_get(instance, "_index") {
+            Some(Value::Int(value)) if value >= 0 => value as usize,
+            _ => 0,
+        };
+        let entries = match Self::instance_attr_get(instance, "_entries") {
+            Some(Value::List(entries_obj)) => entries_obj,
+            _ => return Err(RuntimeError::new("__next__() expects scandir iterator")),
+        };
+        let Object::List(values) = &*entries.kind() else {
+            return Err(RuntimeError::new("__next__() expects scandir iterator"));
+        };
+        if index >= values.len() {
+            return Err(RuntimeError::new("StopIteration"));
+        }
+        Self::instance_attr_set(instance, "_index", Value::Int((index + 1) as i64))?;
+        Ok(values[index].clone())
+    }
+
+    fn builtin_os_scandir_enter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__enter__() expects no arguments"));
+        }
+        Ok(args[0].clone())
+    }
+
+    fn builtin_os_scandir_exit(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 4 {
+            return Err(RuntimeError::new("__exit__() expects three arguments"));
+        }
+        let Value::Instance(instance) = &args[0] else {
+            return Err(RuntimeError::new("__exit__() expects scandir iterator"));
+        };
+        Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
+        Ok(Value::Bool(false))
+    }
+
+    fn builtin_os_scandir_close(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("close() expects no arguments"));
+        }
+        let Value::Instance(instance) = &args[0] else {
+            return Err(RuntimeError::new("close() expects scandir iterator"));
+        };
+        Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_os_direntry_is_dir(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("is_dir() expects at most one argument"));
+        }
+        let follow_symlinks = if args.len() == 2 {
+            is_truthy(&args[1])
+        } else if let Some(value) = kwargs.remove("follow_symlinks") {
+            is_truthy(&value)
+        } else {
+            true
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("is_dir() got an unexpected keyword argument"));
+        }
+        let Value::Instance(instance) = &args[0] else {
+            return Err(RuntimeError::new("is_dir() expects DirEntry"));
+        };
+        let path = match Self::instance_attr_get(instance, "path") {
+            Some(Value::Str(path)) => path,
+            _ => return Ok(Value::Bool(false)),
+        };
+        let is_dir = if follow_symlinks {
+            fs::metadata(path).map(|meta| meta.is_dir()).unwrap_or(false)
+        } else {
+            fs::symlink_metadata(path)
+                .map(|meta| meta.file_type().is_dir())
+                .unwrap_or(false)
+        };
+        Ok(Value::Bool(is_dir))
+    }
+
+    fn builtin_os_direntry_is_file(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("is_file() expects at most one argument"));
+        }
+        let follow_symlinks = if args.len() == 2 {
+            is_truthy(&args[1])
+        } else if let Some(value) = kwargs.remove("follow_symlinks") {
+            is_truthy(&value)
+        } else {
+            true
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("is_file() got an unexpected keyword argument"));
+        }
+        let Value::Instance(instance) = &args[0] else {
+            return Err(RuntimeError::new("is_file() expects DirEntry"));
+        };
+        let path = match Self::instance_attr_get(instance, "path") {
+            Some(Value::Str(path)) => path,
+            _ => return Ok(Value::Bool(false)),
+        };
+        let is_file = if follow_symlinks {
+            fs::metadata(path).map(|meta| meta.is_file()).unwrap_or(false)
+        } else {
+            fs::symlink_metadata(path)
+                .map(|meta| meta.file_type().is_file())
+                .unwrap_or(false)
+        };
+        Ok(Value::Bool(is_file))
+    }
+
+    fn builtin_os_direntry_is_symlink(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("is_symlink() expects no arguments"));
+        }
+        let Value::Instance(instance) = &args[0] else {
+            return Err(RuntimeError::new("is_symlink() expects DirEntry"));
+        };
+        let path = match Self::instance_attr_get(instance, "path") {
+            Some(Value::Str(path)) => path,
+            _ => return Ok(Value::Bool(false)),
+        };
+        let is_symlink = fs::symlink_metadata(path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        Ok(Value::Bool(is_symlink))
     }
 
     fn builtin_os_walk(
@@ -37546,6 +37985,30 @@ fn weakref_target_id(target: &Value) -> Option<u64> {
         | Value::BoundMethod(obj)
         | Value::Function(obj)
         | Value::Cell(obj) => Some(obj.id()),
+        _ => None,
+    }
+}
+
+fn weakref_target_object(target: &Value) -> Option<ObjRef> {
+    match target {
+        Value::List(obj)
+        | Value::Tuple(obj)
+        | Value::Dict(obj)
+        | Value::DictKeys(obj)
+        | Value::Set(obj)
+        | Value::FrozenSet(obj)
+        | Value::Bytes(obj)
+        | Value::ByteArray(obj)
+        | Value::MemoryView(obj)
+        | Value::Iterator(obj)
+        | Value::Generator(obj)
+        | Value::Module(obj)
+        | Value::Class(obj)
+        | Value::Instance(obj)
+        | Value::Super(obj)
+        | Value::BoundMethod(obj)
+        | Value::Function(obj)
+        | Value::Cell(obj) => Some(obj.clone()),
         _ => None,
     }
 }
