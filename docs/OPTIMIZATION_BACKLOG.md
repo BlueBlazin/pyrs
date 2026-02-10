@@ -21,7 +21,7 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`1.11s` user-time (`~1.13s` wall, warm) for the `fib(29)x5` gate
+  - ~`1.00s` user-time (`~1.01-1.02s` wall, warm) for the `fib(29)x5` gate
   - ~`0.24s` user-time for `print(fib(29))` single-run reference
 
 ## CPython Reference Map
@@ -108,4 +108,5 @@ Last updated: 2026-02-11
 - Latest dispatch/call-path checkpoint:
   - release-path `LoadFast + CompareLtConst + JumpIfFalse` fusion now bypasses intermediate stack bool work for int/bool locals,
   - `LOAD_GLOBAL` fused one-arg call path now caches small-int RHS constants and routes through a direct subtract helper before fallback,
-  - this wave reduced `fib(29)x5` from about `1.34s` user-time to about `1.11s` user-time, but frame push/recycle and eval-loop dispatch still dominate profiles.
+  - borrowed simple-frame acquisition + strict simple-frame `ReturnValue` fast-return path landed for clean one-arg no-cells frames,
+  - this wave reduced `fib(29)x5` from about `1.34s` user-time to about `1.00s` user-time, but frame push/recycle and eval-loop dispatch still dominate profiles.

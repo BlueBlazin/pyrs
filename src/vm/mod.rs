@@ -475,13 +475,26 @@ impl Frame {
         self.fast_locals.fill(None);
     }
 
-    fn prepare_simple_one_arg_no_cells(
+    fn prepare_simple_one_arg_no_cells_ref(
         &mut self,
-        code: Rc<CodeObject>,
-        module: ObjRef,
-        owner_class: Option<ObjRef>,
+        code: &Rc<CodeObject>,
+        module: &ObjRef,
+        owner_class: Option<&ObjRef>,
     ) {
-        let same_code = Rc::ptr_eq(&self.code, &code);
+        let same_code = Rc::ptr_eq(&self.code, code);
+        if same_code
+            && self.module.id() == module.id()
+            && self.owner_class.is_none()
+            && owner_class.is_none()
+            && self.fast_locals.len() == 1
+            && code.plain_positional_arg0_slot == Some(0)
+        {
+            self.ip = 0;
+            self.last_ip = 0;
+            self.function_globals_version = module_globals_version(module);
+            self.simple_one_arg_no_cells = true;
+            return;
+        }
         let instruction_len = code.instructions.len();
         debug_assert!(self.locals.is_empty());
         debug_assert!(self.cells.is_empty());
@@ -500,13 +513,22 @@ impl Frame {
         debug_assert!(self.generator_resume_kind.is_none());
         debug_assert!(self.yield_from_iter.is_none());
         debug_assert!(self.active_exception.is_none());
-        self.code = code;
+        self.code = code.clone();
         self.ip = 0;
         self.last_ip = 0;
-        self.module = module.clone();
-        self.function_globals_version = module_globals_version(&module);
-        self.function_globals = module;
-        self.owner_class = owner_class;
+        if self.module.id() != module.id() {
+            self.module = module.clone();
+            self.function_globals = module.clone();
+        }
+        self.function_globals_version = module_globals_version(module);
+        let owner_changed = match (&self.owner_class, owner_class) {
+            (Some(existing), Some(new_owner)) => existing.id() != new_owner.id(),
+            (None, None) => false,
+            _ => true,
+        };
+        if owner_changed {
+            self.owner_class = owner_class.cloned();
+        }
         self.simple_one_arg_no_cells = true;
 
         if !same_code {
@@ -735,23 +757,23 @@ impl Vm {
         self.frame_pool.push(frame);
     }
 
-    fn acquire_simple_frame_no_cells(
+    fn acquire_simple_frame_no_cells_ref(
         &mut self,
-        code: Rc<CodeObject>,
-        module: ObjRef,
-        owner_class: Option<ObjRef>,
+        code: &Rc<CodeObject>,
+        module: &ObjRef,
+        owner_class: Option<&ObjRef>,
     ) -> Box<Frame> {
         if let Some(mut frame) = self.simple_frame_pool.pop() {
-            frame.prepare_simple_one_arg_no_cells(code, module, owner_class);
+            frame.prepare_simple_one_arg_no_cells_ref(code, module, owner_class);
             frame
         } else {
             let mut frame = Box::new(Frame::new(
-                code,
-                module,
+                code.clone(),
+                module.clone(),
                 false,
                 false,
                 Vec::new(),
-                owner_class,
+                owner_class.cloned(),
             ));
             frame.simple_one_arg_no_cells = true;
             frame
@@ -760,6 +782,40 @@ impl Vm {
 
     fn recycle_simple_frame(&mut self, mut frame: Box<Frame>) {
         if self.simple_frame_pool.len() >= 256 {
+            return;
+        }
+        let single_arg_direct_slot =
+            frame.code.fast_local_count == 1 && frame.code.plain_positional_arg0_slot == Some(0);
+        if single_arg_direct_slot
+            && frame.locals.is_empty()
+            && frame.cells.is_empty()
+            && frame.blocks.is_empty()
+            && frame.class_bases.is_empty()
+            && frame.class_keywords.is_empty()
+            && frame.stack.is_empty()
+            && frame.module_locals_dict.is_none()
+            && frame.globals_fallback.is_none()
+            && frame.locals_fallback.is_none()
+            && frame.return_instance.is_none()
+            && frame.class_metaclass.is_none()
+            && frame.generator_owner.is_none()
+            && frame.generator_resume_value.is_none()
+            && frame.generator_pending_throw.is_none()
+            && frame.generator_resume_kind.is_none()
+            && frame.yield_from_iter.is_none()
+            && frame.active_exception.is_none()
+            && !frame.discard_result
+            && !frame.return_class
+            && !frame.expect_none_return
+            && !frame.generator_awaiting_resume_value
+            && !frame.is_module
+            && !frame.return_module
+        {
+            if let Some(slot) = frame.fast_locals.get_mut(0) {
+                *slot = None;
+            }
+            frame.simple_one_arg_no_cells = true;
+            self.simple_frame_pool.push(frame);
             return;
         }
         if !frame.locals.is_empty() {
@@ -832,8 +888,6 @@ impl Vm {
             frame.return_module = false;
         }
         frame.simple_one_arg_no_cells = true;
-        let single_arg_direct_slot =
-            frame.code.fast_local_count == 1 && frame.code.plain_positional_arg0_slot == Some(0);
         if !single_arg_direct_slot {
             frame.fast_locals.fill(None);
         }

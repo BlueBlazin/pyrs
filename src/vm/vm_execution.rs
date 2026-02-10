@@ -442,9 +442,35 @@ impl Vm {
                                                 let arg = if let Some(right_int) =
                                                     fused_const_small_int
                                                 {
-                                                    self.fused_fast_local_sub_small_int_arg(
-                                                        local_idx, right_int,
-                                                    )?
+                                                    let left_small = {
+                                                        let frame =
+                                                            self.frames.last().expect("frame exists");
+                                                        frame
+                                                            .fast_locals
+                                                            .get(local_idx)
+                                                            .and_then(Option::as_ref)
+                                                            .and_then(|value| match value {
+                                                                Value::Int(integer) => Some(*integer),
+                                                                Value::Bool(flag) => {
+                                                                    Some(if *flag { 1 } else { 0 })
+                                                                }
+                                                                _ => None,
+                                                            })
+                                                    };
+                                                    if let Some(left_int) = left_small {
+                                                        match left_int.checked_sub(right_int) {
+                                                            Some(diff) => Value::Int(diff),
+                                                            None => sub_values(
+                                                                Value::Int(left_int),
+                                                                Value::Int(right_int),
+                                                                &self.heap,
+                                                            )?,
+                                                        }
+                                                    } else {
+                                                        self.fused_fast_local_sub_small_int_arg(
+                                                            local_idx, right_int,
+                                                        )?
+                                                    }
                                                 } else {
                                                     self.fused_fast_local_sub_const_arg(
                                                         local_idx, const_idx,
@@ -455,10 +481,10 @@ impl Vm {
                                                         self.frames.last_mut().expect("frame exists");
                                                     caller.ip += 3;
                                                 }
-                                                self.push_simple_positional_function_frame_one_arg_no_cells(
-                                                    code.clone(),
-                                                    module.clone(),
-                                                    owner_class.clone(),
+                                                self.push_simple_positional_function_frame_one_arg_no_cells_ref(
+                                                    code,
+                                                    module,
+                                                    owner_class.as_ref(),
                                                     arg,
                                                 )?;
                                                 fused_from_cached_direct = true;
@@ -574,7 +600,34 @@ impl Vm {
                             if !push_null {
                                 if let Some((local_idx, const_idx)) = fused_candidate {
                                     let arg = if let Some(right_int) = fused_const_small_int {
-                                        self.fused_fast_local_sub_small_int_arg(local_idx, right_int)?
+                                        let left_small = {
+                                            let frame = self.frames.last().expect("frame exists");
+                                            frame
+                                                .fast_locals
+                                                .get(local_idx)
+                                                .and_then(Option::as_ref)
+                                                .and_then(|value| match value {
+                                                    Value::Int(integer) => Some(*integer),
+                                                    Value::Bool(flag) => {
+                                                        Some(if *flag { 1 } else { 0 })
+                                                    }
+                                                    _ => None,
+                                                })
+                                        };
+                                        if let Some(left_int) = left_small {
+                                            match left_int.checked_sub(right_int) {
+                                                Some(diff) => Value::Int(diff),
+                                                None => sub_values(
+                                                    Value::Int(left_int),
+                                                    Value::Int(right_int),
+                                                    &self.heap,
+                                                )?,
+                                            }
+                                        } else {
+                                            self.fused_fast_local_sub_small_int_arg(
+                                                local_idx, right_int,
+                                            )?
+                                        }
                                     } else {
                                         self.fused_fast_local_sub_const_arg(local_idx, const_idx)?
                                     };
@@ -587,10 +640,10 @@ impl Vm {
                                             if let Some((code, module, owner_class)) =
                                                 fused_direct_cached.as_ref()
                                             {
-                                                self.push_simple_positional_function_frame_one_arg_no_cells(
-                                                    code.clone(),
-                                                    module.clone(),
-                                                    owner_class.clone(),
+                                                self.push_simple_positional_function_frame_one_arg_no_cells_ref(
+                                                    code,
+                                                    module,
+                                                    owner_class.as_ref(),
                                                     arg,
                                                 )?;
                                             } else {
@@ -3894,6 +3947,31 @@ impl Vm {
                         return Ok(Some(value));
                     }
                     Opcode::ReturnValue => {
+                        let simple_fast_return = {
+                            if self.frames.len() <= 1 {
+                                false
+                            } else {
+                                let frame = self.frames.last().expect("frame exists");
+                                frame.simple_one_arg_no_cells
+                                    && !frame.is_module
+                                    && !frame.discard_result
+                                    && frame.generator_owner.is_none()
+                                    && !frame.return_class
+                                    && frame.return_instance.is_none()
+                                    && !frame.return_module
+                                    && frame.module_locals_dict.is_none()
+                                    && !frame.expect_none_return
+                                    && frame.active_exception.is_none()
+                            }
+                        };
+                        if simple_fast_return {
+                            let value = self.pop_value().unwrap_or(Value::None);
+                            let frame = self.frames.pop().expect("frame exists");
+                            let caller = self.frames.last_mut().expect("caller frame exists");
+                            caller.stack.push(value);
+                            self.recycle_simple_frame(frame);
+                            return Ok(None);
+                        }
                         let value = self.pop_value().unwrap_or(Value::None);
                         let mut frame = self.frames.pop().expect("frame exists");
                         if let Some(module_dict) = frame.module_locals_dict.take() {
@@ -5644,21 +5722,27 @@ impl Vm {
         self.push_simple_positional_function_frame_one_arg(code, module, owner_class, closure, arg0)
     }
 
-    fn push_simple_positional_function_frame_one_arg_no_cells(
+    #[inline]
+    fn push_simple_positional_function_frame_one_arg_no_cells_ref(
         &mut self,
-        code: Rc<CodeObject>,
-        module: ObjRef,
-        owner_class: Option<ObjRef>,
+        code: &Rc<CodeObject>,
+        module: &ObjRef,
+        owner_class: Option<&ObjRef>,
         arg0: Value,
     ) -> Result<(), RuntimeError> {
         let slot_idx = code.plain_positional_arg0_slot;
-        let mut frame = self.acquire_simple_frame_no_cells(code, module, owner_class);
+        let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
         if let Some(active_exception) = self
             .frames
             .last()
             .and_then(|caller| caller.active_exception.as_ref())
         {
             frame.active_exception = Some(active_exception.clone());
+        }
+        if slot_idx == Some(0) && frame.fast_locals.len() == 1 {
+            frame.fast_locals[0] = Some(arg0);
+            self.frames.push(frame);
+            return Ok(());
         }
         if let Some(slot_idx) = slot_idx {
             if slot_idx < frame.fast_locals.len() {
@@ -5683,6 +5767,21 @@ impl Vm {
         }
         self.frames.push(frame);
         Ok(())
+    }
+
+    fn push_simple_positional_function_frame_one_arg_no_cells(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+        arg0: Value,
+    ) -> Result<(), RuntimeError> {
+        self.push_simple_positional_function_frame_one_arg_no_cells_ref(
+            &code,
+            &module,
+            owner_class.as_ref(),
+            arg0,
+        )
     }
 
     fn push_function_call_two_args_from_obj(
