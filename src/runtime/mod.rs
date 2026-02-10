@@ -241,6 +241,7 @@ pub enum NativeMethodKind {
     SetDiscard,
     SetUpdate,
     SetUnion,
+    SetIntersection,
     SetIsSuperset,
     SetIsSubset,
     SetIsDisjoint,
@@ -5821,6 +5822,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
                     NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
                     NativeMethodKind::SetUnion => "<bound method set.union>".to_string(),
+                    NativeMethodKind::SetIntersection => {
+                        "<bound method set.intersection>".to_string()
+                    }
                     NativeMethodKind::SetIsSuperset => "<bound method set.issuperset>".to_string(),
                     NativeMethodKind::SetIsSubset => "<bound method set.issubset>".to_string(),
                     NativeMethodKind::SetIsDisjoint => "<bound method set.isdisjoint>".to_string(),

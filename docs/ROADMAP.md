@@ -380,6 +380,7 @@ Progress:
 - `_pickle` dispatch-table parity follow-up landed: class-level and instance-level `dispatch_table` are now resolved through full attribute lookup and mirrored onto pure fallback picklers, closing strict `CChainDispatchTableTests` failure in allowlisted runs.
 - `int`-subclass comparison parity follow-up landed: runtime equality now compares int-backed instance payloads as numeric values (`myint(4) == myint(4)`), unblocking strict pickle `test_misc` copy-equality failures and adding dedicated VM regression coverage for int-subclass equality + pickle roundtrip equality.
 - Import opcode parity follow-up landed: `ImportFromCpython` now resolves module attributes through module attribute machinery (`load_attr_module`), so module-level `__getattr__` fallback participates in `from ... import ...` resolution as expected.
+- Core stdlib-unlock parity fixes landed using CPython behavior as reference: `type(name, bases, dict)` now goes through VM class-construction logic (correct `__bases__`/MRO behavior), `getattr(obj, name, default)` now swallows `AttributeError` paths from `__getattr__`/generator attribute probes, and `set`/`frozenset` now expose `intersection(...)`; these close the previous `unittest.mock.mock_open()` + `test_tempfile` method-lookup blockers in strict stdlib probes.
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:

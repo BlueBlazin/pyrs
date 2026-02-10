@@ -103,6 +103,7 @@ const COMPLEX_BACKING_STORAGE_ATTR: &str = "__pyrs_complex_storage__";
 const DICT_BACKING_STORAGE_ATTR: &str = "__pyrs_dict_storage__";
 const SET_BACKING_STORAGE_ATTR: &str = "__pyrs_set_storage__";
 const FROZENSET_BACKING_STORAGE_ATTR: &str = "__pyrs_frozenset_storage__";
+const INSTANCE_DICT_STORAGE_ATTR: &str = "__pyrs_instance_dict_storage__";
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 static SUBMODULE_TRACE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -10493,7 +10494,33 @@ impl Vm {
         if let Some(class) = self.class_of_value(value) {
             return Ok(Value::Class(class));
         }
-        self.builtin_type(vec![value.clone()], HashMap::new())
+        if let Value::Function(_) = value {
+            if let Some(class) = self.types_module_class("FunctionType") {
+                return Ok(Value::Class(class));
+            }
+        }
+        if let Value::Builtin(builtin) = value {
+            if self.builtin_is_type_object(*builtin) {
+                return Ok(Value::Builtin(BuiltinFunction::Type));
+            }
+            if let Some(class) = self.types_module_class("BuiltinFunctionType") {
+                return Ok(Value::Class(class));
+            }
+        }
+        if matches!(value, Value::BoundMethod(_)) {
+            return Ok(Value::Builtin(BuiltinFunction::TypesMethodType));
+        }
+        if let Value::Code(_) = value {
+            if let Some(class) = self.types_module_class("CodeType") {
+                return Ok(Value::Class(class));
+            }
+        }
+        if let Value::None = value {
+            if let Some(class) = self.types_module_class("NoneType") {
+                return Ok(Value::Class(class));
+            }
+        }
+        BuiltinFunction::Type.call(&self.heap, vec![value.clone()])
     }
 
     fn property_descriptor_parts(
@@ -11332,6 +11359,9 @@ impl Vm {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsDisjoint, set))
             }
             "union" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetUnion, set)),
+            "intersection" => Ok(
+                self.alloc_native_bound_method(NativeMethodKind::SetIntersection, set),
+            ),
             "add" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetAdd, set))
             }
@@ -13148,7 +13178,8 @@ impl Vm {
                 | COMPLEX_BACKING_STORAGE_ATTR
                 | DICT_BACKING_STORAGE_ATTR
                 | SET_BACKING_STORAGE_ATTR
-                | FROZENSET_BACKING_STORAGE_ATTR => None,
+                | FROZENSET_BACKING_STORAGE_ATTR
+                | INSTANCE_DICT_STORAGE_ATTR => None,
                 _ => Some((Value::Str(name.clone()), value.clone())),
             })
             .collect()
@@ -13251,10 +13282,17 @@ impl Vm {
                     class_name
                 )));
             }
-            if let Object::Instance(instance_data) = &*instance.kind() {
-                return Ok(AttrAccessOutcome::Value(
-                    self.heap.alloc_dict(Self::instance_dict_entries(instance_data)),
-                ));
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                if let Some(Value::Dict(dict_obj)) =
+                    instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+                {
+                    return Ok(AttrAccessOutcome::Value(Value::Dict(dict_obj.clone())));
+                }
+                let dict_value = self.heap.alloc_dict(Self::instance_dict_entries(instance_data));
+                instance_data
+                    .attrs
+                    .insert(INSTANCE_DICT_STORAGE_ATTR.to_string(), dict_value.clone());
+                return Ok(AttrAccessOutcome::Value(dict_value));
             }
             return Err(RuntimeError::new("attribute access unsupported type"));
         }
@@ -13294,6 +13332,12 @@ impl Vm {
         if let Object::Instance(instance_data) = &*instance.kind() {
             if let Some(attr) = instance_data.attrs.get(attr_name).cloned() {
                 return Ok(AttrAccessOutcome::Value(attr));
+            }
+            if let Some(Value::Dict(dict_obj)) = instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+            {
+                if let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string())) {
+                    return Ok(AttrAccessOutcome::Value(attr));
+                }
             }
         }
 
@@ -13672,6 +13716,15 @@ impl Vm {
                 || class_inherits_dynamic_instance_dict(&class_ref);
             if has_dynamic_dict {
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    if let Some(Value::Dict(dict_obj)) =
+                        instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+                    {
+                        dict_set_value(
+                            dict_obj,
+                            Value::Str(attr_name.to_string()),
+                            value.clone(),
+                        );
+                    }
                     instance_data.attrs.insert(attr_name.to_string(), value);
                 }
                 return Ok(AttrMutationOutcome::Done);
@@ -13687,6 +13740,10 @@ impl Vm {
         }
 
         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            if let Some(Value::Dict(dict_obj)) = instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+            {
+                dict_set_value(dict_obj, Value::Str(attr_name.to_string()), value.clone());
+            }
             instance_data.attrs.insert(attr_name.to_string(), value);
         }
         Ok(AttrMutationOutcome::Done)
@@ -13753,7 +13810,19 @@ impl Vm {
 
         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
             if instance_data.attrs.remove(attr_name).is_some() {
+                if let Some(Value::Dict(dict_obj)) =
+                    instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+                {
+                    dict_remove_value(dict_obj, &Value::Str(attr_name.to_string()));
+                }
                 return Ok(AttrMutationOutcome::Done);
+            }
+            if let Some(Value::Dict(dict_obj)) =
+                instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+            {
+                if dict_remove_value(dict_obj, &Value::Str(attr_name.to_string())).is_some() {
+                    return Ok(AttrMutationOutcome::Done);
+                }
             }
         }
 
@@ -16036,6 +16105,23 @@ impl Vm {
                             out.push(item);
                         }
                     }
+                }
+                if matches!(&*receiver.kind(), Object::FrozenSet(_)) {
+                    Ok(NativeCallResult::Value(self.heap.alloc_frozenset(out)))
+                } else {
+                    Ok(NativeCallResult::Value(self.heap.alloc_set(out)))
+                }
+            }
+            NativeMethodKind::SetIntersection => {
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("intersection() receiver must be set")),
+                };
+                let mut out = receiver_values.to_vec();
+                for iterable in args {
+                    let other =
+                        dedup_hashable_values(self.collect_iterable_values(iterable)?)?;
+                    out.retain(|item| other.contains(item));
                 }
                 if matches!(&*receiver.kind(), Object::FrozenSet(_)) {
                     Ok(NativeCallResult::Value(self.heap.alloc_frozenset(out)))
@@ -19809,6 +19895,7 @@ impl Vm {
         matches!(
             builtin,
             BuiltinFunction::Type
+                | BuiltinFunction::TypesMethodType
                 | BuiltinFunction::Bool
                 | BuiltinFunction::Int
                 | BuiltinFunction::Float
@@ -19837,7 +19924,7 @@ impl Vm {
     }
 
     fn builtin_type(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -19867,6 +19954,7 @@ impl Vm {
                     })
                 }
                 Value::Function(_) => self.types_module_class("FunctionType").map(Value::Class),
+                Value::BoundMethod(_) => Some(Value::Builtin(BuiltinFunction::TypesMethodType)),
                 Value::Builtin(builtin) => {
                     if self.builtin_is_type_object(*builtin) {
                         Some(Value::Builtin(BuiltinFunction::Type))
@@ -19889,7 +19977,65 @@ impl Vm {
             return BuiltinFunction::Type.call(&self.heap, args);
         }
         if args.len() == 3 {
-            return BuiltinFunction::Type.call(&self.heap, args);
+            let mut class_keywords = kwargs;
+            let explicit_metaclass = class_keywords
+                .remove("metaclass")
+                .filter(|value| !matches!(value, Value::None));
+            let class_name = match &args[0] {
+                Value::Str(name) => name.clone(),
+                _ => return Err(RuntimeError::new("type() first argument must be string")),
+            };
+            let base_values = match &args[1] {
+                Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                    Object::Tuple(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                },
+                Value::List(list_obj) => match &*list_obj.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                },
+                _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+            };
+            let mut base_classes = Vec::with_capacity(base_values.len());
+            for base in base_values {
+                base_classes.push(self.class_from_base_value(base)?);
+            }
+            let namespace = match &args[2] {
+                Value::Dict(dict_obj) => match &*dict_obj.kind() {
+                    Object::Dict(entries) => {
+                        let mut attrs = HashMap::new();
+                        for (key, value) in entries {
+                            let Value::Str(name) = key else {
+                                return Err(RuntimeError::new(
+                                    "type() dict keys must be strings",
+                                ));
+                            };
+                            attrs.insert(name.clone(), value.clone());
+                        }
+                        attrs
+                    }
+                    _ => return Err(RuntimeError::new("type() third argument must be dict")),
+                },
+                _ => return Err(RuntimeError::new("type() third argument must be dict")),
+            };
+            let class_module = match self.heap.alloc_module(ModuleObject::new(class_name)) {
+                Value::Module(module) => module,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *class_module.kind_mut() {
+                module_data.globals = namespace;
+            }
+            return match self.class_value_from_module(
+                &class_module,
+                base_classes,
+                explicit_metaclass,
+                class_keywords,
+            )? {
+                ClassBuildOutcome::Value(value) => Ok(value),
+                ClassBuildOutcome::ExceptionHandled => Err(
+                    self.runtime_error_from_active_exception("metaclass call failed"),
+                ),
+            };
         }
         BuiltinFunction::Type.call(&self.heap, args)
     }
@@ -22234,6 +22380,7 @@ impl Vm {
             BuiltinFunction::MemoryView => matches!(value, Value::MemoryView(_)),
             BuiltinFunction::Complex => matches!(value, Value::Complex { .. }),
             BuiltinFunction::TypesModuleType => matches!(value, Value::Module(_)),
+            BuiltinFunction::TypesMethodType => matches!(value, Value::BoundMethod(_)),
             BuiltinFunction::Range => matches!(
                 value,
                 Value::Iterator(obj)
@@ -22415,8 +22562,9 @@ impl Vm {
         }
 
         let target = args.remove(0);
-        let target_id = weakref_target_id(&target)
-            .ok_or_else(|| RuntimeError::new("cannot create weak reference to object"))?;
+        let Some(target_id) = weakref_target_id(&target) else {
+            return Ok(target);
+        };
         let callback = args.into_iter().next().unwrap_or(Value::None);
 
         let wrapper = match self
@@ -22781,52 +22929,53 @@ impl Vm {
             }
             Value::Code(code) => self.load_attr_code(&code, &name),
             Value::Generator(generator) => {
-                let kind = match &*generator.kind() {
-                    Object::Generator(state) if state.is_async_generator => match name.as_str() {
-                        "__aiter__" => NativeMethodKind::GeneratorIter,
-                        "__anext__" => NativeMethodKind::GeneratorANext,
-                        "asend" => NativeMethodKind::GeneratorANext,
-                        "athrow" => NativeMethodKind::GeneratorThrow,
-                        "aclose" => NativeMethodKind::GeneratorClose,
-                        "throw" => NativeMethodKind::GeneratorThrow,
-                        "close" => NativeMethodKind::GeneratorClose,
-                        _ => {
-                            return Err(RuntimeError::new(format!(
-                                "async_generator has no attribute '{}'",
-                                name
-                            )));
-                        }
-                    },
-                    Object::Generator(state) if state.is_coroutine => match name.as_str() {
-                        "__await__" => NativeMethodKind::GeneratorAwait,
-                        "send" => NativeMethodKind::GeneratorSend,
-                        "throw" => NativeMethodKind::GeneratorThrow,
-                        "close" => NativeMethodKind::GeneratorClose,
-                        _ => {
-                            return Err(RuntimeError::new(format!(
-                                "coroutine has no attribute '{}'",
-                                name
-                            )));
-                        }
-                    },
-                    Object::Generator(_) => match name.as_str() {
-                        "__iter__" => NativeMethodKind::GeneratorIter,
-                        "__next__" => NativeMethodKind::GeneratorNext,
-                        "send" => NativeMethodKind::GeneratorSend,
-                        "throw" => NativeMethodKind::GeneratorThrow,
-                        "close" => NativeMethodKind::GeneratorClose,
-                        _ => {
-                            return Err(RuntimeError::new(format!(
-                                "generator has no attribute '{}'",
-                                name
-                            )));
-                        }
-                    },
+                let (kind, type_name) = match &*generator.kind() {
+                    Object::Generator(state) if state.is_async_generator => (
+                        match name.as_str() {
+                            "__aiter__" => Some(NativeMethodKind::GeneratorIter),
+                            "__anext__" => Some(NativeMethodKind::GeneratorANext),
+                            "asend" => Some(NativeMethodKind::GeneratorANext),
+                            "athrow" => Some(NativeMethodKind::GeneratorThrow),
+                            "aclose" => Some(NativeMethodKind::GeneratorClose),
+                            "throw" => Some(NativeMethodKind::GeneratorThrow),
+                            "close" => Some(NativeMethodKind::GeneratorClose),
+                            _ => None,
+                        },
+                        "async_generator",
+                    ),
+                    Object::Generator(state) if state.is_coroutine => (
+                        match name.as_str() {
+                            "__await__" => Some(NativeMethodKind::GeneratorAwait),
+                            "send" => Some(NativeMethodKind::GeneratorSend),
+                            "throw" => Some(NativeMethodKind::GeneratorThrow),
+                            "close" => Some(NativeMethodKind::GeneratorClose),
+                            _ => None,
+                        },
+                        "coroutine",
+                    ),
+                    Object::Generator(_) => (
+                        match name.as_str() {
+                            "__iter__" => Some(NativeMethodKind::GeneratorIter),
+                            "__next__" => Some(NativeMethodKind::GeneratorNext),
+                            "send" => Some(NativeMethodKind::GeneratorSend),
+                            "throw" => Some(NativeMethodKind::GeneratorThrow),
+                            "close" => Some(NativeMethodKind::GeneratorClose),
+                            _ => None,
+                        },
+                        "generator",
+                    ),
                     _ => return Err(RuntimeError::new("attribute access unsupported type")),
                 };
-                let native = self.heap.alloc_native_method(NativeMethodObject::new(kind));
-                let bound = BoundMethod::new(native, generator);
-                Ok(self.heap.alloc_bound_method(bound))
+                if let Some(kind) = kind {
+                    let native = self.heap.alloc_native_method(NativeMethodObject::new(kind));
+                    let bound = BoundMethod::new(native, generator);
+                    Ok(self.heap.alloc_bound_method(bound))
+                } else {
+                    Err(RuntimeError::new(format!(
+                        "{type_name} has no attribute '{}'",
+                        name
+                    )))
+                }
             }
             Value::Complex { real, imag } => match name.as_str() {
                 "__reduce_ex__" | "__reduce__" => {
@@ -40394,7 +40543,9 @@ fn class_name_for_instance(instance: &ObjRef) -> Option<String> {
 }
 
 fn is_missing_attribute_error(err: &RuntimeError) -> bool {
-    err.message.contains("has no attribute") || err.message == "attribute access unsupported type"
+    err.message.contains("has no attribute")
+        || err.message.contains("AttributeError:")
+        || err.message == "attribute access unsupported type"
 }
 
 fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {

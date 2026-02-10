@@ -1664,6 +1664,18 @@ ok = (len(a) == 4 and 4 in a and len(b) == 3 and 3 in b)\n";
 }
 
 #[test]
+fn executes_set_and_frozenset_intersection_method() {
+    let source = "a = {1, 2, 3}.intersection({2, 3, 4}, [3, 4])\n\
+b = frozenset({1, 2, 3}).intersection({2, 3})\n\
+ok = (a == {3} and b == frozenset({2, 3}))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_dict_equality_independent_of_insertion_order() {
     let source = "a = {'left': 1, 'right': 2}\nb = {'right': 2, 'left': 1}\nok = (a == b) and not (a != b)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3718,6 +3730,16 @@ fn executes_type_three_arg_class_creation() {
 }
 
 #[test]
+fn executes_type_three_arg_class_creation_with_non_object_base() {
+    let source = "class A:\n    pass\nN = type('N', (A,), {})\nok = (N.__bases__ == (A,) and isinstance(object.__new__(N), A))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_attribute_builtins() {
     let source = "class A:\n    def f(self):\n        return 10\n\nclass B(A):\n    def f(self):\n        return super(B, self).f() + 1\n\nb = B()\ng = getattr(b, 'f')\nout = g()\nsetattr(b, 'x', 7)\nhx = hasattr(b, 'x')\ndelattr(b, 'x')\nhy = hasattr(b, 'x')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -3728,6 +3750,26 @@ fn executes_attribute_builtins() {
     assert_eq!(vm.get_global("out"), Some(Value::Int(11)));
     assert_eq!(vm.get_global("hx"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("hy"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn getattr_default_swallows_attribute_error_from_getattr() {
+    let source = "class X:\n    def __getattr__(self, name):\n        raise AttributeError(name)\nx = X()\nok = (getattr(x, 'missing', None) is None and (not hasattr(x, 'missing')))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn getattr_default_handles_generator_missing_call_attr() {
+    let source = "def gen():\n    yield 1\ng = gen()\nok = (getattr(g, '__call__', None) is None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -6181,6 +6223,16 @@ fn exposes_functools_total_ordering_decorator() {
 #[test]
 fn exposes_object_new_lookuperror_and_open_builtin() {
     let source = "obj = object.__new__(object)\nstate = object.__getstate__(obj)\nerr = False\ntry:\n    raise LookupError\nexcept LookupError:\n    err = True\nself_ok = int.__new__.__self__ is int\nopen_ok = callable(open)\nok = (state is None) and err and self_ok and open_ok\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn instance_dict_mutation_reflects_in_attribute_lookup() {
+    let source = "class C:\n    pass\nc = C()\nd = c.__dict__\nd['x'] = 7\nc.y = 9\nok = (c.x == 7 and d['y'] == 9 and c.__dict__ is d)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
