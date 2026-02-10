@@ -1924,8 +1924,10 @@ pub enum BuiltinFunction {
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
     SysStdoutWrite,
+    SysStdoutBufferWrite,
     SysStdoutFlush,
     SysStderrWrite,
+    SysStderrBufferWrite,
     SysStderrFlush,
     SysStdinWrite,
     SysStdinFlush,
@@ -4369,8 +4371,10 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
             | BuiltinFunction::SysStdoutWrite
+            | BuiltinFunction::SysStdoutBufferWrite
             | BuiltinFunction::SysStdoutFlush
             | BuiltinFunction::SysStderrWrite
+            | BuiltinFunction::SysStderrBufferWrite
             | BuiltinFunction::SysStderrFlush
             | BuiltinFunction::SysStdinWrite
             | BuiltinFunction::SysStdinFlush

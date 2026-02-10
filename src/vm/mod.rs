@@ -973,6 +973,28 @@ impl Vm {
                     stream_data
                         .globals
                         .insert("encoding".to_string(), Value::Str("utf-8".to_string()));
+                    let buffer_write_builtin = match write_builtin {
+                        BuiltinFunction::SysStdoutWrite => BuiltinFunction::SysStdoutBufferWrite,
+                        BuiltinFunction::SysStderrWrite => BuiltinFunction::SysStderrBufferWrite,
+                        _ => write_builtin,
+                    };
+                    let buffer = match heap
+                        .alloc_module(ModuleObject::new(format!("{name}.buffer")))
+                    {
+                        Value::Module(obj) => obj,
+                        _ => unreachable!(),
+                    };
+                    if let Object::Module(buffer_data) = &mut *buffer.kind_mut() {
+                        buffer_data
+                            .globals
+                            .insert("write".to_string(), Value::Builtin(buffer_write_builtin));
+                        buffer_data
+                            .globals
+                            .insert("flush".to_string(), Value::Builtin(flush_builtin));
+                    }
+                    stream_data
+                        .globals
+                        .insert("buffer".to_string(), Value::Module(buffer));
                 }
                 stream
             };
@@ -7102,7 +7124,8 @@ impl Vm {
                     Opcode::BinaryDiv => {
                         let right = self.pop_value()?;
                         let left = self.pop_value()?;
-                        self.push_value(div_values(left, right)?);
+                        let value = self.binary_div_runtime(left, right)?;
+                        self.push_value(value);
                     }
                     Opcode::BinaryPow => {
                         let right = self.pop_value()?;
@@ -9587,10 +9610,30 @@ impl Vm {
 
     fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
         let exception_type = classify_runtime_error(&err.message);
-        let exception = Value::Exception(ExceptionObject::new(
-            exception_type.to_string(),
-            Some(err.message),
-        ));
+        let exception = ExceptionObject::new(exception_type.to_string(), Some(err.message.clone()));
+        if is_os_error_family(exception_type) {
+            if let Some(errno) = extract_os_error_errno(&err.message) {
+                exception
+                    .attrs
+                    .borrow_mut()
+                    .insert("errno".to_string(), Value::Int(errno));
+            }
+            if let Some(strerror) = extract_os_error_strerror(&err.message) {
+                exception
+                    .attrs
+                    .borrow_mut()
+                    .insert("strerror".to_string(), Value::Str(strerror));
+            }
+        }
+        if matches!(exception_type, "ImportError" | "ModuleNotFoundError") {
+            if let Some(name) = extract_import_error_name(&err.message) {
+                exception
+                    .attrs
+                    .borrow_mut()
+                    .insert("name".to_string(), Value::Str(name));
+            }
+        }
+        let exception = Value::Exception(exception);
         self.raise_exception(exception)
     }
 
@@ -17685,8 +17728,14 @@ impl Vm {
                 self.builtin_sys_getfilesystemencodeerrors(args, kwargs)
             }
             BuiltinFunction::SysStdoutWrite => self.builtin_sys_stream_write(args, kwargs, false),
+            BuiltinFunction::SysStdoutBufferWrite => {
+                self.builtin_sys_stream_buffer_write(args, kwargs, false)
+            }
             BuiltinFunction::SysStdoutFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStderrWrite => self.builtin_sys_stream_write(args, kwargs, true),
+            BuiltinFunction::SysStderrBufferWrite => {
+                self.builtin_sys_stream_buffer_write(args, kwargs, true)
+            }
             BuiltinFunction::SysStderrFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStdinWrite => self.builtin_sys_stdin_write(args, kwargs),
             BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
@@ -19342,6 +19391,29 @@ impl Vm {
         Ok(Value::Int(text.chars().count() as i64))
     }
 
+    fn builtin_sys_stream_buffer_write(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        stderr: bool,
+    ) -> Result<Value, RuntimeError> {
+        use std::io::Write;
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("write() expects one argument"));
+        }
+        let payload = bytes_like_from_value(args[0].clone())?;
+        if stderr {
+            std::io::stderr()
+                .write_all(&payload)
+                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        } else {
+            std::io::stdout()
+                .write_all(&payload)
+                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        }
+        Ok(Value::Int(payload.len() as i64))
+    }
+
     fn builtin_sys_stream_flush(
         &self,
         args: Vec<Value>,
@@ -19616,7 +19688,7 @@ impl Vm {
     }
 
     fn builtin_str(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -19671,6 +19743,52 @@ impl Vm {
 
         let object = object.unwrap_or_else(|| Value::Str(String::new()));
         if encoding.is_none() && errors.is_none() {
+            if !matches!(object, Value::Str(_)) {
+                let str_method = self.builtin_getattr(
+                    vec![object.clone(), Value::Str("__str__".to_string())],
+                    HashMap::new(),
+                );
+                match str_method {
+                    Ok(str_method) => {
+                        let is_recursive_builtin_str = match &str_method {
+                            Value::BoundMethod(bound) => match &*bound.kind() {
+                                Object::BoundMethod(bound_data) => {
+                                    match &*bound_data.function.kind() {
+                                        Object::NativeMethod(native) => matches!(
+                                            native.kind,
+                                            NativeMethodKind::Builtin(BuiltinFunction::Str)
+                                        ),
+                                        _ => false,
+                                    }
+                                }
+                                _ => false,
+                            },
+                            Value::Builtin(BuiltinFunction::Str) => true,
+                            _ => false,
+                        };
+                        if !is_recursive_builtin_str {
+                            match self.call_internal(str_method, Vec::new(), HashMap::new())? {
+                                InternalCallOutcome::Value(Value::Str(text)) => {
+                                    return Ok(Value::Str(text));
+                                }
+                                InternalCallOutcome::Value(_) => {
+                                    return Err(RuntimeError::new("__str__ returned non-string"));
+                                }
+                                InternalCallOutcome::CallerExceptionHandled => {
+                                    return Err(
+                                        self.runtime_error_from_active_exception("str() failed")
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        if !runtime_error_matches_exception(&err.message, "AttributeError") {
+                            return Err(err);
+                        }
+                    }
+                }
+            }
             return Ok(Value::Str(format_value(&object)));
         }
 
@@ -21989,6 +22107,45 @@ impl Vm {
         }
     }
 
+    fn call_binary_special_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        arg: Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some(callable) = self.lookup_bound_special_method(receiver, method_name)? else {
+            return Ok(None);
+        };
+        match self.call_internal(callable, vec![arg], HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(Some(value)),
+            InternalCallOutcome::CallerExceptionHandled => Err(self
+                .runtime_error_from_active_exception("binary operator special method raised")),
+        }
+    }
+
+    fn binary_div_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        match div_values(left.clone(), right.clone()) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for /") =>
+            {
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__truediv__", right.clone())?
+                {
+                    return Ok(value);
+                }
+                if let Some(value) =
+                    self.call_binary_special_method(&right, "__rtruediv__", left)?
+                {
+                    return Ok(value);
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     fn compare_eq_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
         if let Some(result) = self.compare_eq_via_int_backing(&left, &right) {
             return Ok(Value::Bool(result));
@@ -24116,7 +24273,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("_path_stat() expects one path argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let path = self.path_arg_to_string(args[0].clone())?;
         let metadata =
             fs::metadata(path).map_err(|err| RuntimeError::new(format!("stat failed: {err}")))?;
         self.build_stat_result(metadata, false)
@@ -25640,7 +25797,7 @@ impl Vm {
                 "open() expects path, flags, and optional mode",
             ));
         }
-        let path = value_to_path(&args[0])?;
+        let path = self.path_arg_to_string(args[0].clone())?;
         let flags = value_to_int(args.remove(1))?;
         let mode = if args.len() == 2 {
             value_to_int(args.remove(1))?
@@ -25905,7 +26062,7 @@ impl Vm {
                 }
             }
             _ => {
-                let path = value_to_path(&args[0])?;
+                let path = self.path_arg_to_string(args[0].clone())?;
                 fs::metadata(path)
                     .map_err(|err| RuntimeError::new(format!("stat failed: {err}")))?
             }
@@ -25921,7 +26078,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("lstat() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let path = self.path_arg_to_string(args[0].clone())?;
         let metadata = fs::symlink_metadata(path)
             .map_err(|err| RuntimeError::new(format!("lstat failed: {err}")))?;
         self.build_stat_result(metadata, true)
@@ -25937,7 +26094,7 @@ impl Vm {
                 "mkdir() expects path and optional mode",
             ));
         }
-        let path = value_to_path(&args.remove(0))?;
+        let path = self.path_arg_to_string(args.remove(0))?;
         let mode = if !args.is_empty() {
             value_to_int(args.remove(0))?
         } else if let Some(value) = kwargs.remove("mode") {
@@ -25976,7 +26133,7 @@ impl Vm {
                 "chmod() expects path, mode, and optional dir_fd/follow_symlinks",
             ));
         }
-        let path = value_to_path(&args.remove(0))?;
+        let path = self.path_arg_to_string(args.remove(0))?;
         let mode = value_to_int(args.remove(0))?;
         if let Some(dir_fd) = kwargs.remove("dir_fd") {
             if !matches!(dir_fd, Value::None) {
@@ -26021,7 +26178,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("rmdir() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let path = self.path_arg_to_string(args[0].clone())?;
         fs::remove_dir(path).map_err(|err| RuntimeError::new(format!("rmdir failed: {err}")))?;
         Ok(Value::None)
     }
@@ -26036,7 +26193,7 @@ impl Vm {
                 "utime() expects path and optional times tuple",
             ));
         }
-        let path = value_to_path(&args.remove(0))?;
+        let path = self.path_arg_to_string(args.remove(0))?;
         let mut times = args.pop();
         if let Some(value) = kwargs.remove("times") {
             if times.is_some() {
@@ -26099,7 +26256,7 @@ impl Vm {
         let path = if args.is_empty() {
             ".".to_string()
         } else {
-            value_to_path(&args[0])?
+            self.path_arg_to_string(args[0].clone())?
         };
         let mut rows = Vec::new();
         let entries = fs::read_dir(&path)
@@ -26128,7 +26285,7 @@ impl Vm {
         if args.len() != 1 {
             return Err(RuntimeError::new("walk() expects one positional argument"));
         }
-        let root_str = value_to_path(&args.remove(0))?;
+        let root_str = self.path_arg_to_string(args.remove(0))?;
         let topdown = kwargs
             .remove("topdown")
             .map(|value| is_truthy(&value))
@@ -26274,7 +26431,7 @@ impl Vm {
         let path = if args.is_empty() {
             ".".to_string()
         } else {
-            value_to_path(&args[0])?
+            self.path_arg_to_string(args[0].clone())?
         };
         let mut names = Vec::new();
         let entries = fs::read_dir(&path)
@@ -26438,7 +26595,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("remove() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let path = self.path_arg_to_string(args[0].clone())?;
         fs::remove_file(&path).map_err(|err| RuntimeError::new(format!("remove failed: {err}")))?;
         Ok(Value::None)
     }
@@ -26559,7 +26716,7 @@ impl Vm {
                 .unwrap_or_else(|| argv[0].clone());
             let cwd = match &args[4] {
                 Value::None => None,
-                value => Some(value_to_path(value)?),
+                value => Some(self.path_arg_to_string(value.clone())?),
             };
             let env = match &args[5] {
                 Value::None => None,
@@ -26716,7 +26873,7 @@ impl Vm {
 
         let cwd = match kwargs.remove("cwd") {
             Some(Value::None) | None => None,
-            Some(value) => Some(value_to_path(&value)?),
+            Some(value) => Some(self.path_arg_to_string(value)?),
         };
         let env = match kwargs.remove("env") {
             Some(value) => Some(self.subprocess_env_from_value(value)?),
@@ -26971,7 +27128,7 @@ impl Vm {
         }
         let cwd = match kwargs.remove("cwd") {
             Some(Value::None) | None => None,
-            Some(value) => Some(value_to_path(&value)?),
+            Some(value) => Some(self.path_arg_to_string(value)?),
         };
         let env = match kwargs.remove("env") {
             Some(value) => Some(self.subprocess_env_from_value(value)?),
@@ -27193,8 +27350,36 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("path_exists() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
-        Ok(Value::Bool(PathBuf::from(path).exists()))
+        match &args[0] {
+            Value::Int(fd) => {
+                if *fd < 0 {
+                    return Ok(Value::Bool(false));
+                }
+                if self.find_open_file(*fd).is_some() {
+                    return Ok(Value::Bool(true));
+                }
+                let fd_path = format!("/proc/self/fd/{fd}");
+                let fallback_fd_path = format!("/dev/fd/{fd}");
+                Ok(Value::Bool(
+                    fs::metadata(&fd_path).is_ok() || fs::metadata(&fallback_fd_path).is_ok(),
+                ))
+            }
+            Value::Bool(flag) => {
+                let fd = if *flag { 1 } else { 0 };
+                if self.find_open_file(fd).is_some() {
+                    return Ok(Value::Bool(true));
+                }
+                let fd_path = format!("/proc/self/fd/{fd}");
+                let fallback_fd_path = format!("/dev/fd/{fd}");
+                Ok(Value::Bool(
+                    fs::metadata(&fd_path).is_ok() || fs::metadata(&fallback_fd_path).is_ok(),
+                ))
+            }
+            _ => {
+                let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
+                Ok(Value::Bool(PathBuf::from(path).exists()))
+            }
+        }
     }
 
     fn path_arg_to_string_and_type(&mut self, value: Value) -> Result<(String, bool), RuntimeError> {
@@ -27210,6 +27395,11 @@ impl Vm {
             },
             _ => Err(RuntimeError::new("path must be string or bytes")),
         }
+    }
+
+    fn path_arg_to_string(&mut self, value: Value) -> Result<String, RuntimeError> {
+        let (path, _) = self.path_arg_to_string_and_type(value)?;
+        Ok(path)
     }
 
     fn builtin_os_path_join(
@@ -27252,8 +27442,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("_path_normpath() expects one argument"));
         }
-        let return_bytes = matches!(args[0], Value::Bytes(_));
-        let path = value_to_path(&args[0])?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         if path.is_empty() {
             return if return_bytes {
                 Ok(self.heap.alloc_bytes(b".".to_vec()))
@@ -27314,8 +27503,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("normcase() expects one argument"));
         }
-        let return_bytes = matches!(args[0], Value::Bytes(_));
-        let path = value_to_path(&args[0])?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         let out = if cfg!(windows) {
             path.replace('/', "\\").to_ascii_lowercase()
         } else {
@@ -27338,7 +27526,7 @@ impl Vm {
                 "_path_splitroot_ex() expects one argument",
             ));
         }
-        let path = value_to_path(&args[0])?;
+        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
         let bytes = path.as_bytes();
         let (drive, root, tail) = if bytes.first().copied() != Some(b'/') {
             ("".to_string(), "".to_string(), path)
@@ -27360,8 +27548,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("dirname() expects one argument"));
         }
-        let return_bytes = matches!(args[0], Value::Bytes(_));
-        let path = value_to_path(&args[0])?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         if path.is_empty() {
             return if return_bytes {
                 Ok(self.heap.alloc_bytes(Vec::new()))
@@ -27391,8 +27578,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("split() expects one argument"));
         }
-        let return_bytes = matches!(args[0], Value::Bytes(_));
-        let path = value_to_path(&args[0])?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         let idx = path.rfind('/').map(|value| value + 1).unwrap_or(0);
         let mut head = path[..idx].to_string();
         let tail = path[idx..].to_string();
@@ -27419,8 +27605,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("basename() expects one argument"));
         }
-        let return_bytes = matches!(args[0], Value::Bytes(_));
-        let path = value_to_path(&args[0])?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         let idx = path.rfind('/').map(|value| value + 1).unwrap_or(0);
         let tail = path[idx..].to_string();
         if return_bytes {
@@ -27438,7 +27623,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("isabs() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
         Ok(Value::Bool(path.starts_with('/')))
     }
 
@@ -27450,7 +27635,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("isdir() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
         Ok(Value::Bool(PathBuf::from(path).is_dir()))
     }
 
@@ -27462,7 +27647,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("isfile() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
         Ok(Value::Bool(PathBuf::from(path).is_file()))
     }
 
@@ -27474,7 +27659,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("islink() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(_) => return Ok(Value::Bool(false)),
@@ -27492,7 +27677,7 @@ impl Vm {
         }
         #[cfg(windows)]
         {
-            let path = value_to_path(&args[0])?;
+            let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
             let metadata = match fs::symlink_metadata(path) {
                 Ok(metadata) => metadata,
                 Err(_) => return Ok(Value::Bool(false)),
@@ -27515,8 +27700,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("splitext() expects one argument"));
         }
-        let return_bytes = matches!(args[0], Value::Bytes(_));
-        let path = value_to_path(&args[0])?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         let slash = path.rfind('/').map(|idx| idx + 1).unwrap_or(0);
         let dot = path[slash..]
             .rfind('.')
@@ -27574,8 +27758,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("expanduser() expects one argument"));
         }
-        let return_bytes = matches!(args[0], Value::Bytes(_));
-        let path = value_to_path(&args[0])?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         if !path.starts_with('~') {
             return if return_bytes {
                 Ok(self.heap.alloc_bytes(path.into_bytes()))
@@ -27633,9 +27816,9 @@ impl Vm {
             return Err(RuntimeError::new("relpath() expects path and optional start"));
         }
 
-        let path = value_to_path(&args.remove(0))?;
+        let path = self.path_arg_to_string(args.remove(0))?;
         let start = if let Some(value) = args.pop() {
-            value_to_path(&value)?
+            self.path_arg_to_string(value)?
         } else {
             ".".to_string()
         };
@@ -30998,7 +31181,7 @@ impl Vm {
             ));
         }
 
-        let mode = match mode_arg.unwrap_or(Value::Str("r".to_string())) {
+        let mut mode = match mode_arg.unwrap_or(Value::Str("r".to_string())) {
             Value::Str(value) => value,
             _ => return Err(RuntimeError::new("open() mode must be str")),
         };
@@ -31076,6 +31259,13 @@ impl Vm {
         } else {
             'a'
         };
+        if binary_mode && updating {
+            mode = match mode_kind {
+                'a' => "ab+".to_string(),
+                'x' => "xb+".to_string(),
+                _ => "rb+".to_string(),
+            };
+        }
 
         let mut buffering = value_to_int(buffering_arg.unwrap_or(Value::Int(-1)))?;
         if buffering < -1 {
@@ -31329,7 +31519,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("read_text() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
+        let path = self.path_arg_to_string(args[0].clone())?;
         let text = fs::read_to_string(path)
             .map_err(|err| RuntimeError::new(format!("read_text failed: {err}")))?;
         Ok(Value::Str(text))
@@ -31343,7 +31533,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("write_text() expects path and text"));
         }
-        let path = value_to_path(&args[0])?;
+        let path = self.path_arg_to_string(args[0].clone())?;
         let text = match &args[1] {
             Value::Str(text) => text.clone(),
             other => format_value(other),
@@ -41424,6 +41614,66 @@ fn runtime_error_line_matches_exception(line: &str, exception: &str) -> bool {
         Some(rest) => rest.starts_with(':'),
         None => false,
     }
+}
+
+#[inline]
+fn is_os_error_family(name: &str) -> bool {
+    matches!(
+        name,
+        "OSError"
+            | "FileNotFoundError"
+            | "FileExistsError"
+            | "PermissionError"
+            | "NotADirectoryError"
+            | "IsADirectoryError"
+    )
+}
+
+fn extract_os_error_errno(message: &str) -> Option<i64> {
+    let marker = "os error ";
+    let idx = message.rfind(marker)?;
+    let tail = &message[idx + marker.len()..];
+    let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i64>().ok()
+}
+
+fn extract_os_error_strerror(message: &str) -> Option<String> {
+    let line = message
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or(message)
+        .trim();
+    if let Some((_, tail)) = line.split_once(": ") {
+        return Some(tail.to_string());
+    }
+    Some(line.to_string())
+}
+
+fn extract_import_error_name(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    if let Some(start) = trimmed.find("No module named '") {
+        let rest = &trimmed[start + "No module named '".len()..];
+        if let Some(end) = rest.find('\'') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    if let Some(start) = trimmed.find("module '") {
+        let rest = &trimmed[start + "module '".len()..];
+        if let Some(end) = rest.find('\'') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    if let Some(start) = trimmed.find("cannot import name '") {
+        let rest = &trimmed[start + "cannot import name '".len()..];
+        if let Some(end) = rest.find('\'') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
 }
 
 #[inline]
