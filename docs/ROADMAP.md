@@ -39,7 +39,7 @@ Milestone 13 functional closure is temporarily paused while performance is broug
 Primary gate:
 - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
 - Target: `< 0.10s` (user-time reference target)
-- Current measured baseline after recent fixes: ~`0.82s` user-time
+- Current measured baseline after recent fixes: ~`0.60s` user-time
 
 This sprint is implementation-driven from CPython internals:
 - Eval loop and opcode specialization patterns: `Python/ceval.c`, `Python/generated_cases.c.h`
@@ -92,7 +92,7 @@ Milestone 13 is complete only when all are true:
 - Robustness/performance proof:
   - malformed-input differential tests
   - benchmark deltas and hotspot profiling for blockers
-  - landed optimization baseline: CPython-style fast-locals design (`f_localsplus`-like slot-backed locals with lazy dict sync), object-backed function-call dispatch (no full `FunctionObject` clone in opcode call paths), and release build tuning (`lto = "thin"`, `codegen-units = 1`)
+  - landed optimization baseline: CPython-style fast-locals design (`f_localsplus`-like slot-backed locals with lazy dict sync), object-backed function-call dispatch (no full `FunctionObject` clone in opcode call paths), per-site `LOAD_GLOBAL` inline caching with epoch invalidation, and release build tuning (`lto = "thin"`, `codegen-units = 1`)
 
 ## Milestone 14 (Performance and Architecture)
 Deliverables:

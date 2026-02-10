@@ -20,7 +20,7 @@ These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
 Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
 - Target: `< 0.10s` user-time
-- Current baseline (latest run): about `0.82s` user-time (`~1.2-1.3s` wall with startup)
+- Current baseline (latest run): about `0.60s` user-time (`~0.62s` wall with startup)
 
 ## Ground Rules
 
@@ -56,12 +56,14 @@ Primary benchmark gate:
 6. Added `LOAD_GLOBAL` cache path keyed by `(code, name index)` with invalidation on global mutation paths.
 7. Added hot-opcode fast paths for `LoadFast`, `LoadFast2`, `BinaryAdd`, `BinarySub`, `CompareLt`, and `CallFunction(argc=1)` stack pop.
 8. Reduced per-opcode finalizer polling overhead by gating on pending-finalizer state.
+9. Replaced global hash-map `LOAD_GLOBAL` cache lookups with per-site frame inline cache slots guarded by VM cache epoch invalidation.
+10. Removed eager one-arg call-site cache cloning on hot path and retained cache only as guarded call metadata.
 
 ## Current Hotspots (Post-Change)
 
 1. Function-call setup overhead (`push_function_call_one_arg_from_obj`) remains dominant.
 2. Generic opcode dispatch overhead in the eval loop (`run::_closure`) remains dominant.
-3. Frame construction/reset overhead (`acquire_frame`) still visible in recursion-heavy code.
+3. Frame construction/reset overhead (`acquire_frame`) is improved but still visible in recursion-heavy code.
 4. Stack movement/copy work (`_platform_memmove`) remains significant in tight recursive loops.
 5. Attribute/method lookup and interning gaps remain for broader workloads (`OPT-022`, `OPT-023`).
 

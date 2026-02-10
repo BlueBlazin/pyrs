@@ -21,7 +21,7 @@ Last updated: 2026-02-10
 - Target:
   - `< 0.10s` user-time
 - Current:
-  - ~`0.82s` user-time (after latest foundational pass)
+  - ~`0.60s` user-time (after per-site `LOAD_GLOBAL` inline cache + one-arg cache-path cleanup)
 
 ## CPython Reference Map
 
@@ -82,4 +82,8 @@ Last updated: 2026-02-10
 
 ## Current Notes
 
-- `OPT-009` has prototype coverage but is not finalized: an initial frame-pool implementation was functionally correct but did not improve the recursive benchmark enough to keep as-is. Further work should follow CPython `frame.c` patterns more closely and be validated with flamegraph deltas.
+- Latest landed checkpoint:
+  - per-site frame `LOAD_GLOBAL` inline cache slots with VM epoch invalidation (replacing hot global hash-map cache lookup),
+  - one-arg call-site cache hot-path clone removal,
+  - regression tests for global cache invalidation on `StoreGlobal` and module-attribute mutation.
+- `OPT-009` remains in progress: boxed-frame pool and reuse path are active, but profiling still shows frame setup/reset as a visible hotspot in recursive call workloads.
