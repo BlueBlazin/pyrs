@@ -83,6 +83,7 @@ const NAMESPACE_LOADER: &str = "pyrs.NamespaceLoader";
 const BUILTIN_MODULE_LOADER: &str = "pyrs.BuiltinLoader";
 const PURE_STDLIB_JSON_MODULES: &[&str] = &["json", "json.decoder", "json.scanner"];
 const PURE_STDLIB_PICKLE_MODULES: &[&str] = &["pickle", "pickletools", "copyreg"];
+const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const MT_N: usize = 624;
 const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;
@@ -3781,6 +3782,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoFileWrite),
                             );
                             class_data.attrs.insert(
+                                "writelines".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileWriteLines),
+                            );
+                            class_data.attrs.insert(
+                                "truncate".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileTruncate),
+                            );
+                            class_data.attrs.insert(
                                 "seek".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileSeek),
                             );
@@ -3917,6 +3926,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::BytesIOWrite),
                             );
                             class_data.attrs.insert(
+                                "writelines".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOWriteLines),
+                            );
+                            class_data.attrs.insert(
+                                "truncate".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOTruncate),
+                            );
+                            class_data.attrs.insert(
                                 "read".to_string(),
                                 Value::Builtin(BuiltinFunction::BytesIORead),
                             );
@@ -3990,11 +4007,24 @@ impl Vm {
                     self.heap
                         .alloc_class(ClassObject::new("BufferedRWPair".to_string(), Vec::new())),
                 ),
-                (
-                    "IOBase",
-                    self.heap
-                        .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new())),
-                ),
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            class_data.attrs.insert(
+                                "__iter__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBaseIter),
+                            );
+                            class_data.attrs.insert(
+                                "__next__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBaseNext),
+                            );
+                        }
+                    }
+                    ("IOBase", class)
+                },
                 (
                     "RawIOBase",
                     self.heap
@@ -4092,6 +4122,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoFileWrite),
                             );
                             class_data.attrs.insert(
+                                "writelines".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileWriteLines),
+                            );
+                            class_data.attrs.insert(
+                                "truncate".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileTruncate),
+                            );
+                            class_data.attrs.insert(
                                 "seek".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileSeek),
                             );
@@ -4185,6 +4223,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::BytesIOWrite),
                             );
                             class_data.attrs.insert(
+                                "writelines".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOWriteLines),
+                            );
+                            class_data.attrs.insert(
+                                "truncate".to_string(),
+                                Value::Builtin(BuiltinFunction::BytesIOTruncate),
+                            );
+                            class_data.attrs.insert(
                                 "read".to_string(),
                                 Value::Builtin(BuiltinFunction::BytesIORead),
                             );
@@ -4263,11 +4309,24 @@ impl Vm {
                     self.heap
                         .alloc_class(ClassObject::new("StringIO".to_string(), Vec::new())),
                 ),
-                (
-                    "IOBase",
-                    self.heap
-                        .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new())),
-                ),
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            class_data.attrs.insert(
+                                "__iter__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBaseIter),
+                            );
+                            class_data.attrs.insert(
+                                "__next__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBaseNext),
+                            );
+                        }
+                    }
+                    ("IOBase", class)
+                },
                 (
                     "RawIOBase",
                     self.heap
@@ -4965,6 +5024,13 @@ impl Vm {
                 {
                     self.unregister_module(module_name);
                 }
+            }
+        }
+        for module_name in PURE_STDLIB_PATHLIB_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
             }
         }
     }
@@ -15099,7 +15165,8 @@ impl Vm {
 
                     let rendered = if let Some(conv) = conversion {
                         match conv.as_str() {
-                            "" | "s" | "r" | "a" => format_value(&value),
+                            "" | "s" => format_value(&value),
+                            "r" | "a" => format_repr(&value),
                             _ => {
                                 return Err(RuntimeError::new(
                                     "unsupported format conversion specifier",
@@ -17604,6 +17671,7 @@ impl Vm {
             BuiltinFunction::Max => self.builtin_max(args, kwargs),
             BuiltinFunction::Sum => self.builtin_sum(args, kwargs),
             BuiltinFunction::Round => self.builtin_round(args, kwargs),
+            BuiltinFunction::Format => self.builtin_format(args, kwargs),
             BuiltinFunction::Sorted => self.builtin_sorted(args, kwargs),
             BuiltinFunction::All => self.builtin_all(args, kwargs),
             BuiltinFunction::Any => self.builtin_any(args, kwargs),
@@ -18030,6 +18098,8 @@ impl Vm {
             BuiltinFunction::IoFileReadLine => self.builtin_io_file_readline(args, kwargs),
             BuiltinFunction::IoFileReadLines => self.builtin_io_file_readlines(args, kwargs),
             BuiltinFunction::IoFileWrite => self.builtin_io_file_write(args, kwargs),
+            BuiltinFunction::IoFileWriteLines => self.builtin_io_file_writelines(args, kwargs),
+            BuiltinFunction::IoFileTruncate => self.builtin_io_file_truncate(args, kwargs),
             BuiltinFunction::IoFileSeek => self.builtin_io_file_seek(args, kwargs),
             BuiltinFunction::IoFileTell => self.builtin_io_file_tell(args, kwargs),
             BuiltinFunction::IoFileClose => self.builtin_io_file_close(args, kwargs),
@@ -18042,6 +18112,8 @@ impl Vm {
             BuiltinFunction::IoFileReadable => self.builtin_io_file_readable(args, kwargs),
             BuiltinFunction::IoFileWritable => self.builtin_io_file_writable(args, kwargs),
             BuiltinFunction::IoFileSeekable => self.builtin_io_file_seekable(args, kwargs),
+            BuiltinFunction::IoBaseIter => self.builtin_iobase_iter(args, kwargs),
+            BuiltinFunction::IoBaseNext => self.builtin_iobase_next(args, kwargs),
             BuiltinFunction::StringIOInit => self.builtin_stringio_init(args, kwargs),
             BuiltinFunction::StringIOWrite => self.builtin_stringio_write(args, kwargs),
             BuiltinFunction::StringIORead => self.builtin_stringio_read(args, kwargs),
@@ -18055,6 +18127,8 @@ impl Vm {
             BuiltinFunction::StringIOExit => self.builtin_stringio_exit(args, kwargs),
             BuiltinFunction::BytesIOInit => self.builtin_bytesio_init(args, kwargs),
             BuiltinFunction::BytesIOWrite => self.builtin_bytesio_write(args, kwargs),
+            BuiltinFunction::BytesIOWriteLines => self.builtin_bytesio_writelines(args, kwargs),
+            BuiltinFunction::BytesIOTruncate => self.builtin_bytesio_truncate(args, kwargs),
             BuiltinFunction::BytesIORead => self.builtin_bytesio_read(args, kwargs),
             BuiltinFunction::BytesIOReadLine => self.builtin_bytesio_readline(args, kwargs),
             BuiltinFunction::BytesIOReadInto => self.builtin_bytesio_readinto(args, kwargs),
@@ -21241,6 +21315,182 @@ impl Vm {
             }
             other => self.call_round_dunder(other, ndigits_value),
         }
+    }
+
+    fn parse_int_format_spec(
+        &self,
+        spec: &str,
+    ) -> Result<(bool, bool, usize, char), RuntimeError> {
+        if spec.is_empty() {
+            return Ok((false, false, 0, 'd'));
+        }
+        let mut chars = spec.chars().peekable();
+        let mut alternate = false;
+        while matches!(chars.peek(), Some('#')) {
+            alternate = true;
+            chars.next();
+        }
+        let mut zero_pad = false;
+        if matches!(chars.peek(), Some('0')) {
+            zero_pad = true;
+            chars.next();
+        }
+        let mut width = 0usize;
+        while let Some(ch) = chars.peek().copied() {
+            if ch.is_ascii_digit() {
+                width = width
+                    .saturating_mul(10)
+                    .saturating_add((ch as u8 - b'0') as usize);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        let ty = chars.next().unwrap_or('d');
+        if chars.next().is_some() || !matches!(ty, 'd' | 'o' | 'x' | 'X' | 'b') {
+            return Err(RuntimeError::new(format!(
+                "unsupported format string passed to int.__format__: '{spec}'"
+            )));
+        }
+        Ok((alternate, zero_pad, width, ty))
+    }
+
+    fn format_bigint_with_spec(
+        &self,
+        value: &BigInt,
+        spec: &str,
+    ) -> Result<String, RuntimeError> {
+        let (alternate, zero_pad, width, ty) = self.parse_int_format_spec(spec)?;
+        let is_negative = value.is_negative();
+        let abs_value = value.abs();
+        let mut digits = match ty {
+            'd' => abs_value.to_string(),
+            'o' => abs_value
+                .to_str_radix(8)
+                .ok_or_else(|| RuntimeError::new("failed to format integer"))?,
+            'x' | 'X' => abs_value
+                .to_str_radix(16)
+                .ok_or_else(|| RuntimeError::new("failed to format integer"))?,
+            'b' => abs_value
+                .to_str_radix(2)
+                .ok_or_else(|| RuntimeError::new("failed to format integer"))?,
+            _ => unreachable!(),
+        };
+        if ty == 'X' {
+            digits = digits.to_ascii_uppercase();
+        }
+        let sign = if is_negative { "-" } else { "" };
+        let prefix = if alternate {
+            match ty {
+                'o' => "0o",
+                'x' => "0x",
+                'X' => "0X",
+                'b' => "0b",
+                _ => "",
+            }
+        } else {
+            ""
+        };
+        let base_len = sign.len() + prefix.len() + digits.len();
+        if width <= base_len {
+            return Ok(format!("{sign}{prefix}{digits}"));
+        }
+        let pad_len = width - base_len;
+        if zero_pad {
+            Ok(format!(
+                "{sign}{prefix}{}{digits}",
+                "0".repeat(pad_len)
+            ))
+        } else {
+            Ok(format!(
+                "{}{sign}{prefix}{digits}",
+                " ".repeat(pad_len)
+            ))
+        }
+    }
+
+    fn builtin_format(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("format() expects 1-2 arguments"));
+        }
+        let value = args.remove(0);
+        let spec = if args.is_empty() {
+            String::new()
+        } else {
+            match args.remove(0) {
+                Value::Str(text) => text,
+                _ => return Err(RuntimeError::new("format() argument 2 must be str")),
+            }
+        };
+
+        let out = match &value {
+            Value::Int(number) => self.format_bigint_with_spec(&BigInt::from_i64(*number), &spec)?,
+            Value::Bool(flag) => {
+                let int_value = if *flag { 1 } else { 0 };
+                self.format_bigint_with_spec(&BigInt::from_i64(int_value), &spec)?
+            }
+            Value::BigInt(number) => self.format_bigint_with_spec(number, &spec)?,
+            Value::Str(text) => {
+                if spec.is_empty() {
+                    text.clone()
+                } else {
+                    return Err(RuntimeError::new(format!(
+                        "unsupported format string passed to str.__format__: '{spec}'"
+                    )));
+                }
+            }
+            Value::Float(number) => {
+                if spec.is_empty() {
+                    format!("{number}")
+                } else {
+                    return Err(RuntimeError::new(format!(
+                        "unsupported format string passed to float.__format__: '{spec}'"
+                    )));
+                }
+            }
+            Value::Instance(_)
+            | Value::Class(_)
+            | Value::Module(_)
+            | Value::Function(_)
+            | Value::BoundMethod(_)
+            | Value::Generator(_)
+            | Value::Iterator(_) => {
+                let Some(method) = self.lookup_bound_special_method(&value, "__format__")? else {
+                    return Err(RuntimeError::new(
+                        "type doesn't define __format__ method",
+                    ));
+                };
+                let formatted = match self.call_internal(method, vec![Value::Str(spec)], HashMap::new())?
+                {
+                    InternalCallOutcome::Value(result) => result,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception("format() failed"));
+                    }
+                };
+                match formatted {
+                    Value::Str(text) => text,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "__format__ must return str, not non-str value",
+                        ));
+                    }
+                }
+            }
+            _ => {
+                if spec.is_empty() {
+                    format_value(&value)
+                } else {
+                    return Err(RuntimeError::new(format!(
+                        "unsupported format string passed to object.__format__: '{spec}'"
+                    )));
+                }
+            }
+        };
+        Ok(Value::Str(out))
     }
 
     fn round_integral_with_ndigits(
@@ -31115,6 +31365,14 @@ impl Vm {
             Value::Builtin(BuiltinFunction::IoFileWrite),
         );
         class_data.attrs.insert(
+            "writelines".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileWriteLines),
+        );
+        class_data.attrs.insert(
+            "truncate".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileTruncate),
+        );
+        class_data.attrs.insert(
             "seek".to_string(),
             Value::Builtin(BuiltinFunction::IoFileSeek),
         );
@@ -31190,6 +31448,9 @@ impl Vm {
         instance_data
             .attrs
             .insert("_mode".to_string(), Value::Str(mode.to_string()));
+        instance_data
+            .attrs
+            .insert("mode".to_string(), Value::Str(mode.to_string()));
         instance_data
             .attrs
             .insert("_binary".to_string(), Value::Bool(binary));
@@ -31597,6 +31858,54 @@ impl Vm {
         Ok(Value::Int(payload.len() as i64))
     }
 
+    fn builtin_io_file_writelines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("writelines() expects one iterable argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "writelines")?;
+        let values = self.collect_iterable_values(args.remove(0))?;
+        for value in values {
+            let _ = self.builtin_io_file_write(
+                vec![Value::Instance(instance.clone()), value],
+                HashMap::new(),
+            )?;
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_io_file_truncate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("truncate() expects optional size"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "truncate")?;
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let target_size = if args.is_empty() {
+            file.stream_position()
+                .map_err(|err| RuntimeError::new(format!("truncate failed: {err}")))?
+                as i64
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        if target_size < 0 {
+            return Err(RuntimeError::new("truncate() size must be non-negative"));
+        }
+        file.set_len(target_size as u64)
+            .map_err(|err| RuntimeError::new(format!("truncate failed: {err}")))?;
+        Ok(Value::Int(target_size))
+    }
+
     fn builtin_io_file_seek(
         &mut self,
         mut args: Vec<Value>,
@@ -31817,6 +32126,50 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "seekable")?;
         let _ = self.io_file_fd_from_instance(&instance)?;
         Ok(Value::Bool(true))
+    }
+
+    fn builtin_iobase_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__iter__() expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_iobase_next(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__next__() expects no arguments"));
+        }
+        let receiver = args.remove(0);
+        let readline = self.builtin_getattr(
+            vec![receiver.clone(), Value::Str("readline".to_string())],
+            HashMap::new(),
+        )?;
+        let line = match self.call_internal(readline, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(
+                    "__next__() iteration failed",
+                ));
+            }
+        };
+        let is_empty = match &line {
+            Value::Str(text) => text.is_empty(),
+            Value::Bytes(obj) => matches!(&*obj.kind(), Object::Bytes(values) if values.is_empty()),
+            _ => false,
+        };
+        if is_empty {
+            Err(RuntimeError::new("StopIteration"))
+        } else {
+            Ok(line)
+        }
     }
 
     fn stringio_buffer_from_instance(
@@ -32170,6 +32523,13 @@ impl Vm {
                 .attrs
                 .insert("_closed".to_string(), Value::Bool(closed));
         }
+        if let Some(slot) = instance_data.attrs.get_mut("closed") {
+            *slot = Value::Bool(closed);
+        } else {
+            instance_data
+                .attrs
+                .insert("closed".to_string(), Value::Bool(closed));
+        }
         Ok(())
     }
 
@@ -32238,6 +32598,60 @@ impl Vm {
         };
         self.bytesio_store_state(&receiver, value_obj, pos, closed)?;
         Ok(Value::Int(written as i64))
+    }
+
+    fn builtin_bytesio_writelines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("BytesIO.writelines expects one iterable argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let values = self.collect_iterable_values(args.remove(0))?;
+        for value in values {
+            let _ = self.builtin_bytesio_write(
+                vec![Value::Instance(receiver.clone()), value],
+                HashMap::new(),
+            )?;
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_bytesio_truncate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("BytesIO.truncate expects optional size"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let target_size = if args.is_empty() {
+            pos as i64
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        if target_size < 0 {
+            return Err(RuntimeError::new("negative size value"));
+        }
+        {
+            let Object::ByteArray(buffer) = &mut *value_obj.kind_mut() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            let size = target_size as usize;
+            if size < buffer.len() {
+                buffer.truncate(size);
+            } else if size > buffer.len() {
+                buffer.resize(size, 0);
+            }
+        }
+        self.bytesio_store_state(&receiver, value_obj, pos, closed)?;
+        Ok(Value::Int(target_size))
     }
 
     fn builtin_bytesio_read(
@@ -35800,6 +36214,8 @@ impl Vm {
             .insert("pow".to_string(), Value::Builtin(BuiltinFunction::Pow));
         self.builtins
             .insert("round".to_string(), Value::Builtin(BuiltinFunction::Round));
+        self.builtins
+            .insert("format".to_string(), Value::Builtin(BuiltinFunction::Format));
         self.builtins
             .insert("list".to_string(), Value::Builtin(BuiltinFunction::List));
         self.builtins

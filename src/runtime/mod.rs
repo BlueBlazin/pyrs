@@ -1860,6 +1860,7 @@ pub enum BuiltinFunction {
     Filter,
     Pow,
     Round,
+    Format,
     List,
     ListAppendDescriptor,
     Tuple,
@@ -2268,6 +2269,8 @@ pub enum BuiltinFunction {
     IoFileReadLine,
     IoFileReadLines,
     IoFileWrite,
+    IoFileWriteLines,
+    IoFileTruncate,
     IoFileSeek,
     IoFileTell,
     IoFileClose,
@@ -2280,6 +2283,8 @@ pub enum BuiltinFunction {
     IoFileReadable,
     IoFileWritable,
     IoFileSeekable,
+    IoBaseIter,
+    IoBaseNext,
     StringIOInit,
     StringIOWrite,
     StringIORead,
@@ -2293,6 +2298,8 @@ pub enum BuiltinFunction {
     StringIOExit,
     BytesIOInit,
     BytesIOWrite,
+    BytesIOWriteLines,
+    BytesIOTruncate,
     BytesIORead,
     BytesIOReadLine,
     BytesIOReadInto,
@@ -2451,6 +2458,24 @@ impl BuiltinFunction {
                 Ok(Value::Str(format_repr(&args[0])))
             }
             BuiltinFunction::NoOp => Ok(Value::None),
+            BuiltinFunction::Format => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("format() expects 1-2 arguments"));
+                }
+                let value = args[0].clone();
+                if args.len() == 2 {
+                    match &args[1] {
+                        Value::Str(spec) if spec.is_empty() => {}
+                        Value::Str(_) => {
+                            return Err(RuntimeError::new(
+                                "format() with non-empty spec is not available in runtime-only call path",
+                            ))
+                        }
+                        _ => return Err(RuntimeError::new("format() argument 2 must be str")),
+                    }
+                }
+                Ok(Value::Str(format_value(&value)))
+            }
             BuiltinFunction::StringIOInit
             | BuiltinFunction::StringIOWrite
             | BuiltinFunction::StringIORead
@@ -2476,6 +2501,12 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOEnter
             | BuiltinFunction::BytesIOExit
             | BuiltinFunction::BytesIOClose
+            | BuiltinFunction::IoFileWriteLines
+            | BuiltinFunction::IoFileTruncate
+            | BuiltinFunction::IoBaseIter
+            | BuiltinFunction::IoBaseNext
+            | BuiltinFunction::BytesIOWriteLines
+            | BuiltinFunction::BytesIOTruncate
             | BuiltinFunction::RePatternFindAll
             | BuiltinFunction::RePatternFindIter
             | BuiltinFunction::CollectionsChainMapInit
