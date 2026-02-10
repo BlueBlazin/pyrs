@@ -154,6 +154,7 @@ pub struct CodeObject {
     pub kwonly_params: Vec<String>,
     pub name_to_index: HashMap<String, usize>,
     pub cellvar_to_index: HashMap<String, usize>,
+    pub fast_local_count: usize,
     pub positional_param_slot_indexes: Vec<Option<usize>>,
     pub positional_param_cell_indexes: Vec<Option<usize>>,
     pub is_generator: bool,
@@ -179,6 +180,7 @@ impl CodeObject {
             kwonly_params: Vec::new(),
             name_to_index: HashMap::new(),
             cellvar_to_index: HashMap::new(),
+            fast_local_count: 0,
             positional_param_slot_indexes: Vec::new(),
             positional_param_cell_indexes: Vec::new(),
             is_generator: false,
@@ -223,6 +225,40 @@ impl CodeObject {
             self.positional_param_cell_indexes
                 .push(self.cellvar_to_index.get(name).copied());
         }
+
+        let mut fast_local_count = 0usize;
+        for instr in &self.instructions {
+            match instr.opcode {
+                Opcode::LoadFast | Opcode::StoreFast | Opcode::LoadFastAndClear => {
+                    if let Some(idx) = instr.arg {
+                        let idx = idx as usize + 1;
+                        if idx > fast_local_count {
+                            fast_local_count = idx;
+                        }
+                    }
+                }
+                Opcode::LoadFast2 | Opcode::StoreFastLoadFast | Opcode::StoreFastStoreFast => {
+                    if let Some(arg) = instr.arg {
+                        let first = ((arg >> 16) as usize) + 1;
+                        let second = ((arg & 0xFFFF) as usize) + 1;
+                        if first > fast_local_count {
+                            fast_local_count = first;
+                        }
+                        if second > fast_local_count {
+                            fast_local_count = second;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for idx in self.positional_param_slot_indexes.iter().flatten().copied() {
+            let next = idx + 1;
+            if next > fast_local_count {
+                fast_local_count = next;
+            }
+        }
+        self.fast_local_count = fast_local_count;
     }
 
     pub fn disassemble(&self) -> String {

@@ -323,12 +323,12 @@ impl Frame {
         cells: Vec<ObjRef>,
         owner_class: Option<ObjRef>,
     ) -> Self {
-        let fast_locals_len = code.names.len();
+        let fast_locals_len = code.fast_local_count;
         Self {
             code,
             ip: 0,
             last_ip: 0,
-            stack: Vec::new(),
+            stack: Vec::with_capacity(8),
             locals: HashMap::new(),
             fast_locals: vec![None; fast_locals_len],
             module_locals_dict: None,
@@ -346,7 +346,7 @@ impl Frame {
             class_bases: Vec::new(),
             class_metaclass: None,
             class_keywords: HashMap::new(),
-            blocks: Vec::new(),
+            blocks: Vec::with_capacity(2),
             active_exception: None,
             expect_none_return: false,
             generator_owner: None,
@@ -357,10 +357,61 @@ impl Frame {
             yield_from_iter: None,
         }
     }
+
+    fn reset_for_call(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        is_module: bool,
+        return_module: bool,
+        cells: Vec<ObjRef>,
+        owner_class: Option<ObjRef>,
+    ) {
+        let fast_locals_len = code.fast_local_count;
+        self.code = code;
+        self.ip = 0;
+        self.last_ip = 0;
+        self.stack.clear();
+        self.locals.clear();
+        if self.fast_locals.len() < fast_locals_len {
+            self.fast_locals.resize_with(fast_locals_len, || None);
+        } else {
+            self.fast_locals.truncate(fast_locals_len);
+        }
+        for slot in &mut self.fast_locals {
+            *slot = None;
+        }
+        self.module_locals_dict = None;
+        self.cells = cells;
+        self.module = module.clone();
+        self.function_globals = module;
+        self.globals_fallback = None;
+        self.locals_fallback = None;
+        self.owner_class = owner_class;
+        self.is_module = is_module;
+        self.return_module = return_module;
+        self.discard_result = false;
+        self.return_instance = None;
+        self.return_class = false;
+        self.class_bases.clear();
+        self.class_metaclass = None;
+        self.class_keywords.clear();
+        self.blocks.clear();
+        self.active_exception = None;
+        self.expect_none_return = false;
+        self.generator_owner = None;
+        self.generator_awaiting_resume_value = false;
+        self.generator_resume_value = None;
+        self.generator_pending_throw = None;
+        self.generator_resume_kind = None;
+        self.yield_from_iter = None;
+    }
+
 }
 
 pub struct Vm {
     frames: Vec<Frame>,
+    frame_pool: Vec<Frame>,
     builtins: HashMap<String, Value>,
     modules: HashMap<String, ObjRef>,
     main_module: ObjRef,
@@ -395,6 +446,7 @@ pub struct Vm {
     prefer_pure_re_when_available: bool,
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
+    global_load_cache: HashMap<(usize, usize), Value>,
 }
 
 impl Drop for Vm {
@@ -419,7 +471,8 @@ impl Vm {
         let module_paths = vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
 
         let mut vm = Self {
-            frames: Vec::new(),
+            frames: Vec::with_capacity(128),
+            frame_pool: Vec::with_capacity(128),
             builtins: HashMap::new(),
             modules,
             main_module,
@@ -454,6 +507,7 @@ impl Vm {
             prefer_pure_re_when_available: true,
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
+            global_load_cache: HashMap::new(),
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -469,7 +523,33 @@ impl Vm {
     pub fn set_global(&mut self, name: impl Into<String>, value: Value) {
         if let Object::Module(module) = &mut *self.main_module.kind_mut() {
             module.globals.insert(name.into(), value);
+            self.global_load_cache.clear();
         }
+    }
+
+    fn acquire_frame(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        is_module: bool,
+        return_module: bool,
+        cells: Vec<ObjRef>,
+        owner_class: Option<ObjRef>,
+    ) -> Frame {
+        if let Some(mut frame) = self.frame_pool.pop() {
+            frame.reset_for_call(code, module, is_module, return_module, cells, owner_class);
+            frame
+        } else {
+            Frame::new(code, module, is_module, return_module, cells, owner_class)
+        }
+    }
+
+    fn recycle_frame(&mut self, frame: Frame) {
+        // Keep the pool bounded to avoid retaining unbounded frame memory.
+        if self.frame_pool.len() >= 256 {
+            return;
+        }
+        self.frame_pool.push(frame);
     }
 
     pub fn get_global(&self, name: &str) -> Option<Value> {

@@ -54,16 +54,33 @@ impl Vm {
             };
 
             if should_return {
-                let frame = self.frames.pop().expect("frame exists");
-                if let Some(module_dict) = frame.module_locals_dict.clone() {
+                let mut frame = self.frames.pop().expect("frame exists");
+                if let Some(module_dict) = frame.module_locals_dict.take() {
                     self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
                 }
                 if frame.is_module {
                     self.sync_re_module_flag_aliases(&frame.module);
                 }
-                if let Some(owner) = frame.generator_owner {
+                let can_recycle = !frame.is_module
+                    && frame.generator_owner.is_none()
+                    && !frame.return_class
+                    && frame.return_instance.is_none()
+                    && !frame.return_module;
+                if let Some(owner) = frame.generator_owner.take() {
                     self.finish_generator_resume(owner, Value::None);
                     continue;
+                }
+                if can_recycle {
+                    let discard = frame.discard_result;
+                    if let Some(caller) = self.frames.last_mut() {
+                        if !discard {
+                            caller.stack.push(Value::None);
+                        }
+                        self.recycle_frame(frame);
+                        continue;
+                    }
+                    self.recycle_frame(frame);
+                    return Ok(Value::None);
                 }
                 let value = if frame.return_class {
                     match self.class_value_from_module(
@@ -194,41 +211,52 @@ impl Vm {
                             as usize;
                         let push_null = raw & 1 == 1;
                         let idx = raw >> 1;
-                        let value = {
+                        let cache_key = {
                             let frame = self.frames.last().expect("frame exists");
-                            let name = frame
-                                .code
-                                .names
-                                .get(idx)
-                                .ok_or_else(|| RuntimeError::new("name index out of range"))?;
-                            let value = if let Object::Module(module_data) = &*frame.function_globals.kind() {
-                                if let Some(value) = module_data.globals.get(name) {
-                                    Some(value.clone())
+                            (Rc::as_ptr(&frame.code) as usize, idx)
+                        };
+                        let value = if let Some(value) = self.global_load_cache.get(&cache_key).cloned() {
+                            value
+                        } else {
+                            let value = {
+                                let frame = self.frames.last().expect("frame exists");
+                                let name = frame
+                                    .code
+                                    .names
+                                    .get(idx)
+                                    .ok_or_else(|| RuntimeError::new("name index out of range"))?;
+                                let value = if let Object::Module(module_data) = &*frame.function_globals.kind()
+                                {
+                                    if let Some(value) = module_data.globals.get(name) {
+                                        Some(value.clone())
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
-                                }
-                            } else {
-                                None
-                            };
-                            let value = value.or_else(|| {
-                                if let Some(fallback) = &frame.locals_fallback {
-                                    if let Some(value) = fallback.get(name) {
-                                        return Some(value.clone());
+                                };
+                                let value = value.or_else(|| {
+                                    if let Some(fallback) = &frame.locals_fallback {
+                                        if let Some(value) = fallback.get(name) {
+                                            return Some(value.clone());
+                                        }
                                     }
-                                }
-                                if let Some(fallback) = &frame.globals_fallback {
-                                    if let Object::Module(module_data) = &*fallback.kind() {
-                                        return module_data.globals.get(name).cloned();
+                                    if let Some(fallback) = &frame.globals_fallback {
+                                        if let Object::Module(module_data) = &*fallback.kind() {
+                                            return module_data.globals.get(name).cloned();
+                                        }
                                     }
-                                }
-                                None
-                            });
+                                    None
+                                });
+                                value
+                                    .or_else(|| self.builtins.get(name).cloned())
+                                    .ok_or_else(|| {
+                                        RuntimeError::new(format!("name '{name}' is not defined"))
+                                    })
+                            }?;
+                            self.global_load_cache.insert(cache_key, value.clone());
                             value
-                                .or_else(|| self.builtins.get(name).cloned())
-                                .ok_or_else(|| {
-                                    RuntimeError::new(format!("name '{name}' is not defined"))
-                                })
-                        }?;
+                        };
                         if push_null {
                             self.push_value(Value::None);
                         }
@@ -850,6 +878,7 @@ impl Vm {
                                 &mut *frame.function_globals.kind_mut()
                             {
                                 module_data.globals.insert(name, value);
+                                self.global_load_cache.clear();
                             }
                         }
                     }
@@ -1779,7 +1808,8 @@ impl Vm {
                             .unwrap_or_else(|| (self.main_module.clone(), None));
                         let class_closure = self.capture_closure_cells_for_code(&code)?;
                         let cells = self.build_cells(&code, class_closure);
-                        let mut frame = Frame::new(code, class_module, true, false, cells, None);
+                        let mut frame =
+                            self.acquire_frame(code, class_module, true, false, cells, None);
                         frame.function_globals = outer_globals.clone();
                         frame.globals_fallback = Some(outer_globals);
                         frame.locals_fallback = outer_locals;
@@ -3090,16 +3120,33 @@ impl Vm {
                                     RuntimeError::new("constant index out of range")
                                 })?
                             };
-                        let frame = self.frames.pop().expect("frame exists");
-                        if let Some(module_dict) = frame.module_locals_dict.clone() {
+                        let mut frame = self.frames.pop().expect("frame exists");
+                        if let Some(module_dict) = frame.module_locals_dict.take() {
                             self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
                         }
                         if frame.expect_none_return && value != Value::None {
                             return Err(RuntimeError::new("__init__() should return None"));
                         }
-                        if let Some(owner) = frame.generator_owner {
+                        let can_recycle = !frame.is_module
+                            && frame.generator_owner.is_none()
+                            && !frame.return_class
+                            && frame.return_instance.is_none()
+                            && !frame.return_module;
+                        if let Some(owner) = frame.generator_owner.take() {
                             self.finish_generator_resume(owner, value);
                             return Ok(None);
+                        }
+                        if can_recycle {
+                            let discard = frame.discard_result;
+                            if let Some(caller) = self.frames.last_mut() {
+                                if !discard {
+                                    caller.stack.push(value);
+                                }
+                                self.recycle_frame(frame);
+                                return Ok(None);
+                            }
+                            self.recycle_frame(frame);
+                            return Ok(Some(value));
                         }
                         let value = if frame.return_class {
                             match self.class_value_from_module(
@@ -3128,16 +3175,33 @@ impl Vm {
                     }
                     Opcode::ReturnValue => {
                         let value = self.pop_value().unwrap_or(Value::None);
-                        let frame = self.frames.pop().expect("frame exists");
-                        if let Some(module_dict) = frame.module_locals_dict.clone() {
+                        let mut frame = self.frames.pop().expect("frame exists");
+                        if let Some(module_dict) = frame.module_locals_dict.take() {
                             self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
                         }
                         if frame.expect_none_return && value != Value::None {
                             return Err(RuntimeError::new("__init__() should return None"));
                         }
-                        if let Some(owner) = frame.generator_owner {
+                        let can_recycle = !frame.is_module
+                            && frame.generator_owner.is_none()
+                            && !frame.return_class
+                            && frame.return_instance.is_none()
+                            && !frame.return_module;
+                        if let Some(owner) = frame.generator_owner.take() {
                             self.finish_generator_resume(owner, value);
                             return Ok(None);
+                        }
+                        if can_recycle {
+                            let discard = frame.discard_result;
+                            if let Some(caller) = self.frames.last_mut() {
+                                if !discard {
+                                    caller.stack.push(value);
+                                }
+                                self.recycle_frame(frame);
+                                return Ok(None);
+                            }
+                            self.recycle_frame(frame);
+                            return Ok(Some(value));
                         }
                         let value = if frame.return_class {
                             match self.class_value_from_module(
@@ -3184,7 +3248,9 @@ impl Vm {
                 .last()
                 .map(|frame| frame.active_exception.is_none())
                 .unwrap_or(false);
-            if safe_for_pending_finalizers {
+            if safe_for_pending_finalizers
+                && (!self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty())
+            {
                 self.run_pending_del_finalizers();
             }
         }
@@ -4403,7 +4469,7 @@ impl Vm {
             .frames
             .last()
             .and_then(|frame| frame.active_exception.clone());
-        let mut frame = Frame::new(
+        let mut frame = self.acquire_frame(
             code.clone(),
             module.clone(),
             false,
@@ -4520,7 +4586,7 @@ impl Vm {
             .frames
             .last()
             .and_then(|frame| frame.active_exception.clone());
-        let mut frame = Frame::new(
+        let mut frame = self.acquire_frame(
             code.clone(),
             module.clone(),
             false,
@@ -4600,7 +4666,7 @@ impl Vm {
             .frames
             .last()
             .and_then(|frame| frame.active_exception.clone());
-        let mut frame = Frame::new(
+        let mut frame = self.acquire_frame(
             code.clone(),
             module.clone(),
             false,
