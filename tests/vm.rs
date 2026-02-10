@@ -1652,6 +1652,18 @@ f_ok = frozenset({1, 2}).issuperset({2}) and frozenset({1, 2}).issubset({1, 2, 3
 }
 
 #[test]
+fn executes_set_and_frozenset_union_method() {
+    let source = "a = {1, 2}.union({2, 3}, [4])\n\
+b = frozenset({1, 2}).union({2, 3})\n\
+ok = (len(a) == 4 and 4 in a and len(b) == 3 and 3 in b)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_dict_equality_independent_of_insertion_order() {
     let source = "a = {'left': 1, 'right': 2}\nb = {'right': 2, 'left': 1}\nok = (a == b) and not (a != b)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -4798,6 +4810,20 @@ fn pkgutil_and_importlib_resources_shims_support_basic_resource_reads() {
 }
 
 #[test]
+fn pkgutil_resolve_name_accepts_module_only_target() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "import pkgutil\nimport tempfile\nresolved = pkgutil.resolve_name('tempfile')\nok = (resolved is tempfile)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_len_on_list() {
     let source = "x = len([1, 2, 3])";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -6155,6 +6181,16 @@ fn exposes_functools_total_ordering_decorator() {
 #[test]
 fn exposes_object_new_lookuperror_and_open_builtin() {
     let source = "obj = object.__new__(object)\nstate = object.__getstate__(obj)\nerr = False\ntry:\n    raise LookupError\nexcept LookupError:\n    err = True\nself_ok = int.__new__.__self__ is int\nopen_ok = callable(open)\nok = (state is None) and err and self_ok and open_ok\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn object_new_via_super_accepts_explicit_target_class() {
+    let source = "class A:\n    pass\nclass B(A):\n    pass\nobj = super(A, B).__new__(B)\nok = isinstance(obj, B)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -8822,4 +8858,54 @@ ok = (x == [1, 2, 3] and y == [(0, 1), (1, 2), (2, 3)])
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn mktemp_style_temp_object_finalizer_runs_before_rmdir() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_mktemp_style_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let source = format!(
+        r#"import os
+import tempfile
+
+class Mktemped:
+    _unlink = os.unlink
+    _flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+
+    def __init__(self, directory):
+        self.name = tempfile.mktemp(dir=directory)
+        fd = os.open(self.name, self._flags, 0o600)
+        os.close(fd)
+
+    def __del__(self):
+        self._unlink(self.name)
+
+def run(directory):
+    Mktemped(directory)
+    try:
+        os.rmdir(directory)
+        return True
+    except OSError:
+        return False
+
+ok = run('{dir}')
+"#,
+        dir = temp_dir.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_dir_all(temp_dir);
 }

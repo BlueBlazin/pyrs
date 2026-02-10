@@ -240,6 +240,7 @@ pub enum NativeMethodKind {
     SetAdd,
     SetDiscard,
     SetUpdate,
+    SetUnion,
     SetIsSuperset,
     SetIsSubset,
     SetIsDisjoint,
@@ -249,6 +250,7 @@ pub enum NativeMethodKind {
     RePatternSub,
     ReMatchGroup,
     ReMatchGroups,
+    ReMatchGroupDict,
     ReMatchStart,
     ReMatchEnd,
     ReMatchSpan,
@@ -1236,6 +1238,20 @@ impl Heap {
             .iter()
             .filter(|weak| weak.strong_count() > 0)
             .count()
+    }
+
+    pub fn find_object_by_id(&self, id: u64) -> Option<ObjRef> {
+        let mut registry = self.registry.borrow_mut();
+        registry.retain(|weak| weak.strong_count() > 0);
+        for weak in registry.iter() {
+            if let Some(obj) = weak.upgrade() {
+                let obj_ref = ObjRef::from_rc(obj);
+                if obj_ref.id() == id {
+                    return Some(obj_ref);
+                }
+            }
+        }
+        None
     }
 
     fn reachable_object_ids(&self, roots: &[Value]) -> HashMap<u64, bool> {
@@ -5804,6 +5820,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
                     NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
+                    NativeMethodKind::SetUnion => "<bound method set.union>".to_string(),
                     NativeMethodKind::SetIsSuperset => "<bound method set.issuperset>".to_string(),
                     NativeMethodKind::SetIsSubset => "<bound method set.issubset>".to_string(),
                     NativeMethodKind::SetIsDisjoint => "<bound method set.isdisjoint>".to_string(),
@@ -5817,6 +5834,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::RePatternSub => "<bound method Pattern.sub>".to_string(),
                     NativeMethodKind::ReMatchGroup => "<bound method Match.group>".to_string(),
                     NativeMethodKind::ReMatchGroups => "<bound method Match.groups>".to_string(),
+                    NativeMethodKind::ReMatchGroupDict => {
+                        "<bound method Match.groupdict>".to_string()
+                    }
                     NativeMethodKind::ReMatchStart => "<bound method Match.start>".to_string(),
                     NativeMethodKind::ReMatchEnd => "<bound method Match.end>".to_string(),
                     NativeMethodKind::ReMatchSpan => "<bound method Match.span>".to_string(),

@@ -256,6 +256,8 @@ enum RePatternValue {
 
 const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
+const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
+    r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
 const LOCAL_SHIM_MODULES: &[&str] = &[
     "enum",
     "pkgutil",
@@ -9366,14 +9368,14 @@ impl Vm {
                     Err(err) => return Err(err),
                 },
             }
-            // Avoid running __del__ callbacks while transient call-stack operands are live.
-            // This prevents finalizer-side Python calls from perturbing expression evaluation.
-            let safe_for_pending_finalizers = self.frames.len() == 1
-                && self
-                    .frames
-                    .last()
-                    .map(|frame| frame.stack.is_empty() && frame.active_exception.is_none())
-                    .unwrap_or(false);
+            // Avoid running __del__ callbacks while transient operands/active exceptions
+            // are live in the current frame. We still allow finalizers in nested frame
+            // stacks so refcount-style cleanup can occur during normal stdlib execution.
+            let safe_for_pending_finalizers = self
+                .frames
+                .last()
+                .map(|frame| frame.stack.is_empty() && frame.active_exception.is_none())
+                .unwrap_or(false);
             if safe_for_pending_finalizers {
                 self.run_pending_del_finalizers();
             }
@@ -11329,6 +11331,7 @@ impl Vm {
             "isdisjoint" => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetIsDisjoint, set))
             }
+            "union" => Ok(self.alloc_native_bound_method(NativeMethodKind::SetUnion, set)),
             "add" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetAdd, set))
             }
@@ -11636,6 +11639,7 @@ impl Vm {
             BoundFunctionKind::Unsupported => None,
         };
         match attr_name {
+            "__call__" => Ok(Value::BoundMethod(method.clone())),
             "__reduce_ex__" | "__reduce__" => {
                 let wrapper = match self
                     .heap
@@ -13558,6 +13562,7 @@ impl Vm {
             let kind = match attr_name {
                 "group" => Some(NativeMethodKind::ReMatchGroup),
                 "groups" => Some(NativeMethodKind::ReMatchGroups),
+                "groupdict" => Some(NativeMethodKind::ReMatchGroupDict),
                 "start" => Some(NativeMethodKind::ReMatchStart),
                 "end" => Some(NativeMethodKind::ReMatchEnd),
                 "span" => Some(NativeMethodKind::ReMatchSpan),
@@ -15796,6 +15801,9 @@ impl Vm {
             NativeMethodKind::ReMatchGroups => Ok(NativeCallResult::Value(
                 self.native_re_match_groups(&receiver, args)?,
             )),
+            NativeMethodKind::ReMatchGroupDict => Ok(NativeCallResult::Value(
+                self.native_re_match_groupdict(&receiver, args)?,
+            )),
             NativeMethodKind::ReMatchStart => Ok(NativeCallResult::Value(
                 self.native_re_match_start(&receiver, args)?,
             )),
@@ -16014,6 +16022,26 @@ impl Vm {
                     values.insert(item);
                 }
                 Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::SetUnion => {
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("union() receiver must be set")),
+                };
+                let mut out = receiver_values.to_vec();
+                for iterable in args {
+                    for item in self.collect_iterable_values(iterable)? {
+                        ensure_hashable(&item)?;
+                        if !out.iter().any(|existing| existing == &item) {
+                            out.push(item);
+                        }
+                    }
+                }
+                if matches!(&*receiver.kind(), Object::FrozenSet(_)) {
+                    Ok(NativeCallResult::Value(self.heap.alloc_frozenset(out)))
+                } else {
+                    Ok(NativeCallResult::Value(self.heap.alloc_set(out)))
+                }
             }
             NativeMethodKind::SetIsSuperset => {
                 if args.len() != 1 {
@@ -17487,6 +17515,9 @@ impl Vm {
             BuiltinFunction::All => self.builtin_all(args, kwargs),
             BuiltinFunction::Any => self.builtin_any(args, kwargs),
             BuiltinFunction::Enumerate => self.builtin_enumerate(args, kwargs),
+            BuiltinFunction::WeakRefRef | BuiltinFunction::WeakRefProxy => {
+                self.builtin_weakref_ref(args, kwargs)
+            }
             BuiltinFunction::WeakRefFinalize => self.builtin_weakref_finalize(args, kwargs),
             BuiltinFunction::WeakRefFinalizeDetach => {
                 self.builtin_weakref_finalize_detach(args, kwargs)
@@ -20319,7 +20350,7 @@ impl Vm {
             ));
         }
         let class_value = args.remove(0);
-        let class_ref = match class_value {
+        let mut class_ref = match class_value {
             Value::Class(class) => class,
             _ => {
                 return Err(RuntimeError::new(
@@ -20327,6 +20358,12 @@ impl Vm {
                 ));
             }
         };
+        // `super(...).__new__(cls)` can arrive here as a bound built-in call shape
+        // where the explicit `cls` argument is still present in `args`.
+        if let Some(Value::Class(explicit_class)) = args.first() {
+            class_ref = explicit_class.clone();
+            args.remove(0);
+        }
         if let Some(message) = self.class_disallow_instantiation_message(&class_ref) {
             return Err(RuntimeError::new(message));
         }
@@ -22344,6 +22381,62 @@ impl Vm {
             );
         }
         Ok(self.heap.alloc_list(out))
+    }
+
+    fn builtin_weakref_ref(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "weakref helper expects object and optional callback",
+            ));
+        }
+
+        if args.len() == 1 {
+            if let Value::Module(wrapper) = &args[0] {
+                if let Object::Module(module_data) = &*wrapper.kind() {
+                    if matches!(
+                        module_data.globals.get("__pyrs_weakref_ref__"),
+                        Some(Value::Bool(true))
+                    ) {
+                        let target_id = match module_data.globals.get("target_id") {
+                            Some(Value::Int(value)) if *value >= 0 => *value as u64,
+                            _ => return Ok(Value::None),
+                        };
+                        let Some(obj) = self.heap.find_object_by_id(target_id) else {
+                            return Ok(Value::None);
+                        };
+                        return Ok(value_from_object_ref(obj).unwrap_or(Value::None));
+                    }
+                }
+            }
+        }
+
+        let target = args.remove(0);
+        let target_id = weakref_target_id(&target)
+            .ok_or_else(|| RuntimeError::new("cannot create weak reference to object"))?;
+        let callback = args.into_iter().next().unwrap_or(Value::None);
+
+        let wrapper = match self
+            .heap
+            .alloc_module(ModuleObject::new("__weakref_ref__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+            module_data
+                .globals
+                .insert("__pyrs_weakref_ref__".to_string(), Value::Bool(true));
+            module_data
+                .globals
+                .insert("target_id".to_string(), Value::Int(target_id as i64));
+            module_data.globals.insert("callback".to_string(), callback);
+        }
+
+        Ok(self.alloc_builtin_bound_method(BuiltinFunction::WeakRefRef, wrapper))
     }
 
     fn builtin_weakref_finalize(
@@ -36295,6 +36388,54 @@ fn frame_cell_value(frame: &Frame, name: &str) -> Option<Value> {
     None
 }
 
+fn weakref_target_id(target: &Value) -> Option<u64> {
+    match target {
+        Value::List(obj)
+        | Value::Tuple(obj)
+        | Value::Dict(obj)
+        | Value::DictKeys(obj)
+        | Value::Set(obj)
+        | Value::FrozenSet(obj)
+        | Value::Bytes(obj)
+        | Value::ByteArray(obj)
+        | Value::MemoryView(obj)
+        | Value::Iterator(obj)
+        | Value::Generator(obj)
+        | Value::Module(obj)
+        | Value::Class(obj)
+        | Value::Instance(obj)
+        | Value::Super(obj)
+        | Value::BoundMethod(obj)
+        | Value::Function(obj)
+        | Value::Cell(obj) => Some(obj.id()),
+        _ => None,
+    }
+}
+
+fn value_from_object_ref(obj: ObjRef) -> Option<Value> {
+    match &*obj.kind() {
+        Object::List(_) => Some(Value::List(obj.clone())),
+        Object::Tuple(_) => Some(Value::Tuple(obj.clone())),
+        Object::Dict(_) => Some(Value::Dict(obj.clone())),
+        Object::DictKeysView(_) => Some(Value::DictKeys(obj.clone())),
+        Object::Set(_) => Some(Value::Set(obj.clone())),
+        Object::FrozenSet(_) => Some(Value::FrozenSet(obj.clone())),
+        Object::Bytes(_) => Some(Value::Bytes(obj.clone())),
+        Object::ByteArray(_) => Some(Value::ByteArray(obj.clone())),
+        Object::MemoryView(_) => Some(Value::MemoryView(obj.clone())),
+        Object::Iterator(_) => Some(Value::Iterator(obj.clone())),
+        Object::Generator(_) => Some(Value::Generator(obj.clone())),
+        Object::Module(_) => Some(Value::Module(obj.clone())),
+        Object::Class(_) => Some(Value::Class(obj.clone())),
+        Object::Instance(_) => Some(Value::Instance(obj.clone())),
+        Object::Super(_) => Some(Value::Super(obj.clone())),
+        Object::BoundMethod(_) => Some(Value::BoundMethod(obj.clone())),
+        Object::Function(_) => Some(Value::Function(obj.clone())),
+        Object::Cell(_) => Some(Value::Cell(obj.clone())),
+        Object::NativeMethod(_) => None,
+    }
+}
+
 fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
     match value {
         Value::Int(value) => Ok(value),
@@ -38106,6 +38247,104 @@ fn csv_sniffer_doublequote_quote(pattern: &str) -> Option<char> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PkgutilDottedWords {
+    span: (usize, usize),
+    first_word: (usize, usize),
+    last_dotted_segment: Option<(usize, usize)>,
+    last_word: Option<(usize, usize)>,
+}
+
+fn pkgutil_word_char(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+fn parse_pkgutil_word(text: &str, mut index: usize) -> Option<(usize, usize)> {
+    if index >= text.len() {
+        return None;
+    }
+    let start = index;
+    let first = text[index..].chars().next()?;
+    if first.is_ascii_digit() || !pkgutil_word_char(first) {
+        return None;
+    }
+    index += first.len_utf8();
+    while index < text.len() {
+        let ch = text[index..].chars().next()?;
+        if !pkgutil_word_char(ch) {
+            break;
+        }
+        index += ch.len_utf8();
+    }
+    Some((start, index))
+}
+
+fn parse_pkgutil_dotted_words(text: &str, start: usize) -> Option<PkgutilDottedWords> {
+    let (first_start, first_end) = parse_pkgutil_word(text, start)?;
+    let mut cursor = first_end;
+    let mut last_dotted_segment = None;
+    let mut last_word = None;
+    while cursor < text.len() && text[cursor..].starts_with('.') {
+        let dot_start = cursor;
+        cursor += 1;
+        let (word_start, word_end) = parse_pkgutil_word(text, cursor)?;
+        cursor = word_end;
+        last_dotted_segment = Some((dot_start, cursor));
+        last_word = Some((word_start, word_end));
+    }
+    Some(PkgutilDottedWords {
+        span: (start, cursor),
+        first_word: (first_start, first_end),
+        last_dotted_segment,
+        last_word,
+    })
+}
+
+fn pkgutil_resolve_name_match_detail(text: &str) -> Option<ReMatchDetail> {
+    let pkg = parse_pkgutil_dotted_words(text, 0)?;
+    let mut cursor = pkg.span.1;
+    let mut cln_span = None;
+    let mut obj = None;
+    if cursor < text.len() {
+        if !text[cursor..].starts_with(':') {
+            return None;
+        }
+        let colon_start = cursor;
+        cursor += 1;
+        if cursor < text.len() {
+            let parsed_obj = parse_pkgutil_dotted_words(text, cursor)?;
+            cursor = parsed_obj.span.1;
+            cln_span = Some((colon_start, cursor));
+            obj = Some(parsed_obj);
+        } else {
+            cln_span = Some((colon_start, cursor));
+        }
+    }
+    if cursor != text.len() {
+        return None;
+    }
+
+    // Captures follow CPython's group numbering for pkgutil._NAME_PATTERN.
+    let mut captures = vec![None; 9];
+    captures[0] = Some(pkg.span);
+    captures[1] = Some(pkg.first_word);
+    captures[2] = pkg.last_dotted_segment;
+    captures[3] = pkg.last_word;
+    captures[4] = cln_span;
+    if let Some(obj) = obj {
+        captures[5] = Some(obj.span);
+        captures[6] = Some(obj.first_word);
+        captures[7] = obj.last_dotted_segment;
+        captures[8] = obj.last_word;
+    }
+
+    Some(ReMatchDetail {
+        start: 0,
+        end: text.len(),
+        captures,
+    })
+}
+
 fn re_match_details(
     pattern: &RePatternValue,
     text: &Value,
@@ -38122,7 +38361,9 @@ fn re_match_details(
                 }
                 _ => return Err(RuntimeError::new("string must be string")),
             };
-            let found = if matches!(mode, ReMode::Search) {
+            let found = if pattern_text == PKGUTIL_RESOLVE_NAME_PATTERN {
+                pkgutil_resolve_name_match_detail(text)
+            } else if matches!(mode, ReMode::Search) {
                 if let Some(quote) = csv_sniffer_doublequote_quote(pattern_text) {
                     let needle = format!("{quote}{quote}");
                     text.find(&needle)

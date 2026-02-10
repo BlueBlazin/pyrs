@@ -7,24 +7,36 @@ const CSV_SNIFFER_PATTERN_2: &str =
 const CSV_SNIFFER_PATTERN_3: &str =
     r#"(?P<delim>[^\w\n"\'])(?P<space> ?)(?P<quote>["\']).*?(?P=quote)(?:$|\n)"#;
 const CSV_SNIFFER_PATTERN_4: &str = r#"(?:^|\n)(?P<quote>["\']).*?(?P=quote)(?:$|\n)"#;
+const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
+    r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
 const RE_MATCH_MODULE_NAME: &str = "__re_match__";
 
 impl Vm {
     fn re_match_groupindex_from_pattern_arg(&self, pattern_arg: &Value) -> Value {
-        let Value::Module(module) = pattern_arg else {
-            return self.heap.alloc_dict(Vec::new());
-        };
-        let Object::Module(module_data) = &*module.kind() else {
-            return self.heap.alloc_dict(Vec::new());
-        };
-        if module_data.name != "__re_pattern__" {
-            return self.heap.alloc_dict(Vec::new());
+        match pattern_arg {
+            Value::Module(module) => {
+                let Object::Module(module_data) = &*module.kind() else {
+                    return self.heap.alloc_dict(Vec::new());
+                };
+                if module_data.name != "__re_pattern__" {
+                    return self.heap.alloc_dict(Vec::new());
+                }
+                module_data
+                    .globals
+                    .get("groupindex")
+                    .cloned()
+                    .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()))
+            }
+            Value::Str(pattern) => {
+                let entries = csv_sniffer_groupindex_entries(pattern)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(name, idx)| (Value::Str(name.to_string()), Value::Int(idx)))
+                    .collect();
+                self.heap.alloc_dict(entries)
+            }
+            _ => self.heap.alloc_dict(Vec::new()),
         }
-        module_data
-            .globals
-            .get("groupindex")
-            .cloned()
-            .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()))
     }
 
     fn alloc_re_match_value(
@@ -253,6 +265,43 @@ impl Vm {
             .map(|value| if value == Value::None { default.clone() } else { value })
             .collect::<Vec<_>>();
         Ok(self.heap.alloc_tuple(values))
+    }
+
+    pub(in crate::vm) fn native_re_match_groupdict(
+        &mut self,
+        receiver: &ObjRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("groupdict() expects at most one argument"));
+        }
+        let (_source, _start, _end, groups, _spans, groupindex) = self.re_match_snapshot(receiver)?;
+        let default = args.into_iter().next().unwrap_or(Value::None);
+        let Some(mapping) = groupindex else {
+            return Ok(self.heap.alloc_dict(Vec::new()));
+        };
+        let Object::Dict(entries) = &*mapping.kind() else {
+            return Ok(self.heap.alloc_dict(Vec::new()));
+        };
+        let mut out = Vec::new();
+        for (key, raw_index) in entries.iter() {
+            let Value::Str(name) = key else {
+                continue;
+            };
+            let index = value_to_int(raw_index.clone())?;
+            let value = if index <= 0 || (index as usize) > groups.len() {
+                default.clone()
+            } else {
+                let matched = groups[index as usize - 1].clone();
+                if matched == Value::None {
+                    default.clone()
+                } else {
+                    matched
+                }
+            };
+            out.push((Value::Str(name.clone()), value));
+        }
+        Ok(self.heap.alloc_dict(out))
     }
 
     pub(in crate::vm) fn native_re_match_start(
@@ -787,6 +836,7 @@ fn csv_sniffer_groupindex_entries(pattern: &str) -> Option<Vec<(&'static str, i6
         CSV_SNIFFER_PATTERN_2 => Some(vec![("quote", 1), ("delim", 2), ("space", 3)]),
         CSV_SNIFFER_PATTERN_3 => Some(vec![("delim", 1), ("space", 2), ("quote", 3)]),
         CSV_SNIFFER_PATTERN_4 => Some(vec![("quote", 1)]),
+        PKGUTIL_RESOLVE_NAME_PATTERN => Some(vec![("pkg", 1), ("cln", 5), ("obj", 6)]),
         _ => None,
     }
 }
@@ -1034,5 +1084,69 @@ mod tests {
             },
             other => panic!("expected tuple value, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pkgutil_name_pattern_matches_module_only_name() {
+        let mut vm = Vm::new();
+        let matched = vm
+            .builtin_re_match_mode(
+                vec![
+                    Value::Str(PKGUTIL_RESOLVE_NAME_PATTERN.to_string()),
+                    Value::Str("tempfile".to_string()),
+                ],
+                HashMap::new(),
+                ReMode::Match,
+            )
+            .expect("match should succeed");
+        let match_obj = match matched {
+            Value::Module(obj) => obj,
+            other => panic!("expected match object module, got {other:?}"),
+        };
+        let groupdict = vm
+            .native_re_match_groupdict(&match_obj, vec![])
+            .expect("groupdict() should work");
+        let Value::Dict(dict_obj) = groupdict else {
+            panic!("groupdict() must return dict");
+        };
+        let Object::Dict(entries) = &*dict_obj.kind() else {
+            panic!("groupdict() must return dict object");
+        };
+        let entries = entries.to_vec();
+        assert!(entries.contains(&(Value::Str("pkg".to_string()), Value::Str("tempfile".to_string()))));
+        assert!(entries.contains(&(Value::Str("cln".to_string()), Value::None)));
+        assert!(entries.contains(&(Value::Str("obj".to_string()), Value::None)));
+    }
+
+    #[test]
+    fn pkgutil_name_pattern_matches_colon_object_form() {
+        let mut vm = Vm::new();
+        let matched = vm
+            .builtin_re_match_mode(
+                vec![
+                    Value::Str(PKGUTIL_RESOLVE_NAME_PATTERN.to_string()),
+                    Value::Str("pkg.mod:attr.child".to_string()),
+                ],
+                HashMap::new(),
+                ReMode::Match,
+            )
+            .expect("match should succeed");
+        let match_obj = match matched {
+            Value::Module(obj) => obj,
+            other => panic!("expected match object module, got {other:?}"),
+        };
+        let groupdict = vm
+            .native_re_match_groupdict(&match_obj, vec![])
+            .expect("groupdict() should work");
+        let Value::Dict(dict_obj) = groupdict else {
+            panic!("groupdict() must return dict");
+        };
+        let Object::Dict(entries) = &*dict_obj.kind() else {
+            panic!("groupdict() must return dict object");
+        };
+        let entries = entries.to_vec();
+        assert!(entries.contains(&(Value::Str("pkg".to_string()), Value::Str("pkg.mod".to_string()))));
+        assert!(entries.contains(&(Value::Str("cln".to_string()), Value::Str(":attr.child".to_string()))));
+        assert!(entries.contains(&(Value::Str("obj".to_string()), Value::Str("attr.child".to_string()))));
     }
 }
