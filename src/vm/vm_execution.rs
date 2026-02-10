@@ -4976,6 +4976,33 @@ impl Vm {
         local_idx: usize,
         const_idx: usize,
     ) -> Result<Value, RuntimeError> {
+        #[inline]
+        fn small_int_like(value: &Value) -> Option<i64> {
+            match value {
+                Value::Int(integer) => Some(*integer),
+                Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
+                _ => None,
+            }
+        }
+
+        {
+            let frame = self.frames.last().expect("frame exists");
+            if const_idx >= frame.code.constants.len() {
+                return Err(RuntimeError::new("constant index out of range"));
+            }
+            if let Some(left_ref) = frame.fast_locals.get(local_idx).and_then(Option::as_ref) {
+                if let (Some(left_int), Some(right_int)) = (
+                    small_int_like(left_ref),
+                    small_int_like(&frame.code.constants[const_idx]),
+                ) {
+                    return match left_int.checked_sub(right_int) {
+                        Some(diff) => Ok(Value::Int(diff)),
+                        None => sub_values(Value::Int(left_int), Value::Int(right_int), &self.heap),
+                    };
+                }
+            }
+        }
+
         let left_fast = {
             let frame = self.frames.last().expect("frame exists");
             if local_idx < frame.fast_locals.len() {
@@ -4989,20 +5016,23 @@ impl Vm {
         } else {
             self.load_fast_local(local_idx)?
         };
-        let frame = self.frames.last().expect("frame exists");
-        if const_idx >= frame.code.constants.len() {
-            return Err(RuntimeError::new("constant index out of range"));
-        }
-        match &frame.code.constants[const_idx] {
+        let right = {
+            let frame = self.frames.last().expect("frame exists");
+            if const_idx >= frame.code.constants.len() {
+                return Err(RuntimeError::new("constant index out of range"));
+            }
+            frame.code.constants[const_idx].clone()
+        };
+        match right {
             Value::Int(right) => match left {
-                Value::Int(left_int) => match left_int.checked_sub(*right) {
+                Value::Int(left_int) => match left_int.checked_sub(right) {
                     Some(diff) => Ok(Value::Int(diff)),
-                    None => sub_values(Value::Int(left_int), Value::Int(*right), &self.heap),
+                    None => sub_values(Value::Int(left_int), Value::Int(right), &self.heap),
                 },
-                other => sub_values(other, Value::Int(*right), &self.heap),
+                other => sub_values(other, Value::Int(right), &self.heap),
             },
             Value::Bool(flag) => {
-                let right = if *flag { 1 } else { 0 };
+                let right = if flag { 1 } else { 0 };
                 match left {
                     Value::Int(left_int) => match left_int.checked_sub(right) {
                         Some(diff) => Ok(Value::Int(diff)),
@@ -5011,7 +5041,7 @@ impl Vm {
                     other => sub_values(other, Value::Int(right), &self.heap),
                 }
             }
-            right => sub_values(left, right.clone(), &self.heap),
+            right => sub_values(left, right, &self.heap),
         }
     }
 

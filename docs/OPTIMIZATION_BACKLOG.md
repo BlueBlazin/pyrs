@@ -100,3 +100,7 @@ Last updated: 2026-02-10
 - Latest dict-path checkpoint:
   - fixed `Vm::getitem_value` for `Value::Dict` to route through `DictObject` backend lookup APIs (`find_with_hash`) instead of linear `entries.iter().find(...)` scans with generic `==`,
   - dict microbench regression is resolved: `200k` insert+getitem loop now runs around `0.33s` user-time (previously observed in multi-second to extreme outlier ranges when subscripting bypassed backend probing).
+- Latest call-path checkpoint:
+  - simple-frame pool preparation now avoids duplicate full scrub on acquire (frames are scrubbed on recycle and minimally prepared on acquire),
+  - fused `LOAD_FAST - CONST` one-arg call path now uses by-reference int/bool arithmetic fast path before generic `Value` cloning fallback,
+  - recursive benchmark is currently stable around `0.28s` user-time for `fib(29)` across repeated runs.

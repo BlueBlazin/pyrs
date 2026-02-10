@@ -67,6 +67,8 @@ Primary benchmark gate:
 17. Added bool fast path in `JumpIfTrue/JumpIfFalse` to skip generic truthiness conversion for common compare-result branches.
 18. Added release-path fused branch evaluation for `CompareLt/CompareLtConst` followed by `JumpIfFalse` (no intermediate stack bool).
 19. Added release-path fused recursive-call sequence for `LoadGlobal + LoadFast + BinarySubConst + CallFunction1`.
+20. Removed duplicate simple-frame scrub work by scrubbing on recycle and doing minimal state prep on acquire for one-arg no-cells pooled frames.
+21. Added by-reference int/bool fast path in fused `LOAD_FAST - CONST` call preparation to avoid hot-path `Value` clone churn before fallback.
 
 ## Current Hotspots (Post-Change)
 

@@ -466,7 +466,7 @@ impl Frame {
         self.fast_locals.fill(None);
     }
 
-    fn reset_for_reuse_simple_one_arg_no_cells(
+    fn prepare_simple_one_arg_no_cells(
         &mut self,
         code: Rc<CodeObject>,
         module: ObjRef,
@@ -474,31 +474,23 @@ impl Frame {
     ) {
         let same_code = Rc::ptr_eq(&self.code, &code);
         let instruction_len = code.instructions.len();
-        if !self.locals.is_empty() {
-            self.locals.clear();
-        }
-        if !self.cells.is_empty() {
-            self.cells.clear();
-        }
-        if !self.blocks.is_empty() {
-            self.blocks.clear();
-        }
-        if !self.class_bases.is_empty() {
-            self.class_bases.clear();
-        }
-        if !self.class_keywords.is_empty() {
-            self.class_keywords.clear();
-        }
-        self.module_locals_dict = None;
-        self.globals_fallback = None;
-        self.locals_fallback = None;
-        self.return_instance = None;
-        self.class_metaclass = None;
-        self.generator_owner = None;
-        self.generator_resume_value = None;
-        self.generator_pending_throw = None;
-        self.generator_resume_kind = None;
-        self.yield_from_iter = None;
+        debug_assert!(self.locals.is_empty());
+        debug_assert!(self.cells.is_empty());
+        debug_assert!(self.blocks.is_empty());
+        debug_assert!(self.class_bases.is_empty());
+        debug_assert!(self.class_keywords.is_empty());
+        debug_assert!(self.stack.is_empty());
+        debug_assert!(self.module_locals_dict.is_none());
+        debug_assert!(self.globals_fallback.is_none());
+        debug_assert!(self.locals_fallback.is_none());
+        debug_assert!(self.return_instance.is_none());
+        debug_assert!(self.class_metaclass.is_none());
+        debug_assert!(self.generator_owner.is_none());
+        debug_assert!(self.generator_resume_value.is_none());
+        debug_assert!(self.generator_pending_throw.is_none());
+        debug_assert!(self.generator_resume_kind.is_none());
+        debug_assert!(self.yield_from_iter.is_none());
+        debug_assert!(self.active_exception.is_none());
         self.code = code;
         self.ip = 0;
         self.last_ip = 0;
@@ -513,7 +505,6 @@ impl Frame {
         self.expect_none_return = false;
         self.generator_awaiting_resume_value = false;
         self.simple_one_arg_no_cells = true;
-        self.active_exception = None;
 
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
@@ -527,9 +518,6 @@ impl Frame {
             }
         }
         self.fast_locals.fill(None);
-        if !self.stack.is_empty() {
-            self.stack.clear();
-        }
     }
 
 }
@@ -748,7 +736,7 @@ impl Vm {
         owner_class: Option<ObjRef>,
     ) -> Box<Frame> {
         if let Some(mut frame) = self.simple_frame_pool.pop() {
-            frame.reset_for_reuse_simple_one_arg_no_cells(code, module, owner_class);
+            frame.prepare_simple_one_arg_no_cells(code, module, owner_class);
             frame
         } else {
             let mut frame = Box::new(Frame::new(
@@ -798,6 +786,13 @@ impl Vm {
         frame.yield_from_iter = None;
         frame.active_exception = None;
         frame.discard_result = false;
+        frame.return_class = false;
+        frame.expect_none_return = false;
+        frame.generator_awaiting_resume_value = false;
+        frame.is_module = false;
+        frame.return_module = false;
+        frame.simple_one_arg_no_cells = true;
+        frame.fast_locals.fill(None);
         self.simple_frame_pool.push(frame);
     }
 
