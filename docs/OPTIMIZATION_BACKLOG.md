@@ -1,0 +1,69 @@
+# Optimization Backlog and Status
+
+## Purpose
+
+This is the permanent, canonical optimization checklist for `pyrs`.
+Every optimization item must be tracked here with explicit status.
+
+Last updated: 2026-02-10
+
+## Status Legend
+
+- `[x]` done
+- `[~]` in progress
+- `[ ]` planned
+- `[!]` blocked (requires prerequisite decision/work)
+
+## Primary Performance Gate
+
+- Command:
+  - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
+- Target:
+  - `< 0.10s` user-time
+- Current:
+  - ~`1.00s` user-time (after latest foundational pass)
+
+## CPython Reference Map
+
+- Eval/dispatch specialization:
+  - `/Users/$USER/Downloads/Python-3.14.3/Python/ceval.c`
+  - `/Users/$USER/Downloads/Python-3.14.3/Python/generated_cases.c.h`
+- Frame model and lifecycle:
+  - `/Users/$USER/Downloads/Python-3.14.3/Include/internal/pycore_frame.h`
+  - `/Users/$USER/Downloads/Python-3.14.3/Python/frame.c`
+- Call/vectorcall:
+  - `/Users/$USER/Downloads/Python-3.14.3/Objects/call.c`
+  - `/Users/$USER/Downloads/Python-3.14.3/Include/cpython/abstract.h`
+- Integer model:
+  - `/Users/$USER/Downloads/Python-3.14.3/Objects/longobject.c`
+
+## Backlog
+
+| ID | Priority | Area | Optimization Item | CPython Reference | Status |
+|---|---|---|---|---|---|
+| `OPT-001` | P0 | locals/frame | Slot-backed fast locals as authoritative store (`f_localsplus` direction) | `pycore_frame.h`, `frame.c` | `[x]` |
+| `OPT-002` | P0 | calls | Remove full `FunctionObject` clone in opcode call path | `call.c` | `[x]` |
+| `OPT-003` | P0 | int ops | i64 fast path before bigint allocation for `+ - * // %` and order compare | `longobject.c` | `[x]` |
+| `OPT-004` | P0 | vm hot path | Remove eager formatting/allocation from `pop_value()` success path | `ceval.c` error/slow-path style | `[x]` |
+| `OPT-005` | P0 | calls | Simple positional function-call fast path | `call.c` | `[x]` |
+| `OPT-006` | P0 | calls | Single-arg `CALL_FUNCTION` specialization path | `call.c` | `[x]` |
+| `OPT-007` | P0 | binding | Precompute positional param slot/cell indexes on `CodeObject` | `pycore_frame.h` locals indexing | `[x]` |
+| `OPT-008` | P0 | frames | Lightweight function-frame type/path (remove class/module baggage from pure function calls) | `pycore_frame.h`, `ceval.c` | `[~]` |
+| `OPT-009` | P0 | frames | Frame freelist/pool for non-generator frames | `frame.c` freelist patterns | `[ ]` |
+| `OPT-010` | P0 | calls | Fast arity call paths (`argc=2`, `argc=3`) without temporary vec/hashmap churn | `call.c` vectorcall fast arities | `[ ]` |
+| `OPT-011` | P0 | dispatch | Add adaptive specialized opcodes for hot integer compare/add/sub paths | `generated_cases.c.h` | `[ ]` |
+| `OPT-012` | P0 | lookup | `LOAD_GLOBAL` cached lookup with invalidation on globals/builtins mutation | `ceval.c` inline cache strategy | `[ ]` |
+| `OPT-013` | P0 | lookup | Reduce local/global hash churn for repeated name access in hot loops | `ceval.c`, name cache patterns | `[~]` |
+| `OPT-014` | P1 | dispatch | Reduce per-opcode branch/indirection overhead in main eval loop | `ceval.c` dispatch structure | `[ ]` |
+| `OPT-015` | P1 | containers | Dict/set hot-path operations benchmark and algorithmic closure | `dictobject.c`, `setobject.c` | `[~]` |
+| `OPT-016` | P1 | startup | Reduce startup/import overhead in non-stdlib benchmark mode where safe | CPython startup path | `[ ]` |
+| `OPT-017` | P1 | allocation | Audit and eliminate avoidable `clone`/temporary allocations in hot VM paths | N/A (local audit) | `[~]` |
+| `OPT-018` | P1 | toolchain | Evaluate local `target-cpu=native` measurement profile | N/A (toolchain) | `[ ]` |
+| `OPT-019` | P2 | toolchain | Evaluate PGO/BOLT branch for release artifacts | CPython PGO precedent | `[ ]` |
+| `OPT-020` | P0 | validation | Keep benchmark + flamegraph regression gate for each optimization wave | N/A | `[~]` |
+
+## Rules For This Backlog
+
+1. Every optimization commit must update relevant item status here.
+2. New optimization ideas must be added as new `OPT-*` rows before implementation.
+3. Do not mark sprint complete until all P0 items required for target gate are `[x]`.

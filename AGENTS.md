@@ -72,6 +72,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - Compatibility matrix: `docs/COMPATIBILITY.md`
 - Coverage gate workflow: `scripts/run_coverage_gate.sh`
 - Optimization execution plan: `docs/OPTIMIZATION_PLAN.md`
+- Optimization backlog and status ledger: `docs/OPTIMIZATION_BACKLOG.md`
 
 ## Reference Artifacts
 - Milestone 12 closure report: `docs/MILESTONE_12_BACKLOG.md`
@@ -87,3 +88,4 @@ Milestone 13 completion is blocked on P0 closure of:
   - Target: `< 0.10s` user-time
   - Current baseline: ~`1.00s` user-time
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
+- Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.

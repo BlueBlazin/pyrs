@@ -21,6 +21,7 @@ Required benchmark gate for this sprint:
 - Current baseline after latest foundational optimizations: ~`1.00s` user-time
 
 Implementation strategy is tracked in `docs/OPTIMIZATION_PLAN.md` and is explicitly CPython-referenced.
+Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 
 ## P0 Release Blockers
 
@@ -90,3 +91,4 @@ Milestone 13 stdlib closure proceeds in this order:
 - Pure-stdlib migration policy: `docs/STDLIB_MIGRATION_PLAN.md`
 - Engineering gates: `docs/ENGINEERING_GATES.md`
 - Audit backlog: `docs/ALGO_AUDIT_BACKLOG.md`
+- Optimization backlog and status: `docs/OPTIMIZATION_BACKLOG.md`

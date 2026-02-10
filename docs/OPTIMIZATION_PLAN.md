@@ -4,6 +4,7 @@
 
 This document is the active execution plan for the performance sprint.
 During this sprint, performance work takes precedence over Milestone 13 functional closure.
+The permanent optimization status ledger is `docs/OPTIMIZATION_BACKLOG.md`.
 
 Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
@@ -18,6 +19,7 @@ Primary benchmark gate:
    - benchmark deltas
    - profiler evidence (`cargo flamegraph`)
 3. Every optimization wave should map explicitly to CPython internals.
+4. Item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint.
 
 ## CPython Source References
 

@@ -48,6 +48,7 @@ This sprint is implementation-driven from CPython internals:
 - Integer fast paths and small-int behavior: `Objects/longobject.c`
 
 Detailed execution plan: `docs/OPTIMIZATION_PLAN.md`
+Canonical optimization status tracker: `docs/OPTIMIZATION_BACKLOG.md`
 
 ## Active Milestone: 13 (Paused During Perf Sprint)
 
@@ -119,3 +120,4 @@ Deliverables:
 - `docs/STDLIB_MIGRATION_PLAN.md`: pure-stdlib migration policy.
 - `docs/ENGINEERING_GATES.md`: mandatory quality gates.
 - `docs/ALGO_AUDIT_BACKLOG.md`: algorithmic/semantic audit tasks.
+- `docs/OPTIMIZATION_BACKLOG.md`: permanent optimization checklist and status ledger.
