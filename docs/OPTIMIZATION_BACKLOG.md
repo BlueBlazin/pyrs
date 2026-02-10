@@ -21,7 +21,7 @@ Last updated: 2026-02-10
 - Target:
   - `< 0.10s` user-time
 - Current:
-  - ~`0.88s` user-time (after latest foundational pass)
+  - ~`0.84s` user-time (after latest foundational pass)
 
 ## CPython Reference Map
 
