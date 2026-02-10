@@ -1,68 +1,56 @@
-# Stub and Partial Implementation Accounting (P0)
+# Stub and Partial Implementation Ledger
 
-This document is the P0 ledger for incomplete runtime/stdlib behavior.
-Nothing is allowed to stay "half-implemented" without a tracked owner and closure milestone.
+This file is the canonical ledger for incomplete runtime/stdlib behavior.
+No partially implemented surface is allowed to remain untracked.
 
 ## Enforcement
-- `NoOp` builtin symbol inventory is tracked in `/Users/$USER/pyrs/docs/NOOP_BUILTIN_INVENTORY.txt`.
-- CI test gate: `/Users/$USER/pyrs/tests/noop_inventory.rs`.
-- Inventory generator: `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`.
-- Inventory traversal is recursive across module/class/instance/container object graphs.
-- Native stdlib VM handlers are being isolated under `src/vm/stdlib/` (`json`, `re`, `_csv`/`csv`, and pickle-object-protocol helpers extracted) to keep parity audits against CPython implementations targeted and reviewable.
-- Core helper coverage now includes module-local unit tests in `src/vm/containers.rs`, `src/vm/ops.rs`, `src/runtime/mod.rs`, `src/vm/stdlib/json.rs`, `src/vm/stdlib/re.rs`, and `src/vm/stdlib/csv.rs` so semantic regressions are caught before full harness runs.
-- Policy: prefer official CPython pure-Python stdlib modules wherever feasible; native VM handlers should remain minimal and every retained native path must stay explicitly tracked in this ledger.
-- Module-by-module ownership and migration direction is tracked in `docs/STDLIB_MIGRATION_PLAN.md`.
-- Engineering-process gates for semantic/algorithmic issues are tracked in `docs/ENGINEERING_GATES.md` and `docs/ALGO_AUDIT_BACKLOG.md`.
+- `NoOp` inventory snapshot: `docs/NOOP_BUILTIN_INVENTORY.txt`
+- Inventory gate test: `tests/noop_inventory.rs`
+- Refresh command:
+  - `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`
+- Engineering gates:
+  - `docs/ENGINEERING_GATES.md`
+  - `docs/ALGO_AUDIT_BACKLOG.md`
 
-## P0 Critical Paths (Release Blocking)
-- `json`, `_csv`/`csv`, and `pickle`/`pickletools`/`copyreg` are strict P0 release blockers.
-- Milestone 13 is not complete while any of those rows remain partial.
-- Closure proof requirements:
-1. CPython suites for `test_json`, `test_csv`, `test_pickle`, `test_pickletools`, and `test_copyreg` in harness/CI scope.
-   Active strict unittest lane (`tests/cpython_suite_strict_stdlib.txt`) currently covers `test_json`, `test_csv`, `test_copyreg`, and `test_genericalias`, with an empty strict allowlist (`tests/cpython_allowlist_strict.txt`).
-   Deferred pickle strict lane is tracked explicitly in `tests/cpython_suite_deferred_pickle.txt` while native-core `_io`/`_pickle` closure work proceeds.
-   Strict lane entries execute in isolated subprocesses with timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent runaway hangs from masking parity failures; helper timeout behavior is regression-tested in `tests/cpython_harness.rs`.
-2. Differential and malformed-input regression coverage for parser/decoder safety behavior (including explicit malformed-contract differential probes for `json`, `_csv`, and pickle object-protocol paths).
-3. Baseline throughput/allocation benchmark reporting against representative payload sizes.
+## Milestone 13 P0 Blockers
 
-## Non-NoOp Partial Implementations
-These are implemented paths that are intentionally incomplete versus CPython and must be closed before release-complete parity.
-
-| Area | Current partial scope | Exit criteria | Planned closure |
+| Surface | Current state | Closure criteria | Milestone |
 |---|---|---|---|
-| `re` | Rust shim for core match/search/fullmatch/escape paths with baseline `Match` object methods (`group`, `groups`, `start`, `end`, `span`) for stdlib call paths. `_sre` core accelerator surface is now present (`compile`, `template`, `ascii_iscased`, `ascii_tolower`, `unicode_iscased`, `unicode_tolower`, core constants). Module-frame `globals()`/`locals()` now return live namespace dicts, which closes `Lib/re/_constants.py` `globals().update(...)` failures; pure `Lib/re/*` import still has long-tail parity gaps and is not default | Full CPython `re` behavioral parity on harness + focused regression corpus, then pure `Lib/re/*` default | Milestone 13 |
-| `json` | Native parser/serializer fallback still exists, but VM now defaults to CPython pure `Lib/json/*` when stdlib paths are discoverable; native path is retained only for stdlib-less fallback runs. Native `_json` accelerator helpers now include `scanstring`/`make_scanner` plus `encode_basestring`/`encode_basestring_ascii`/`make_encoder` compatibility symbols used by CPython `json.encoder`. Full encoder/decoder semantics and hook behaviors remain incomplete in fallback paths | Full CPython `json` semantics for encoder options/edge cases and error text contracts, plus differential/fuzz safety and baseline perf reporting; retire native high-level fallback | Milestone 13 (P0 release blocker) |
-| `math` | Core numeric and transcendental helpers implemented (`sqrt`/`copysign`/`floor`/`ceil`/`isfinite`/`isinf`/`isnan`/`ldexp`/`hypot`/`fabs`/`exp`/`erfc`/`log`/`fsum`/`sumprod`/trig + `isclose`); full CPython edge/text parity and any remaining APIs still pending | All CPython `math` public API implemented with parity tests | Milestone 13 |
-| `itertools` | Previously stubbed helpers now execute non-`NoOp` paths (`accumulate`, `combinations*`, `compress`, `dropwhile`, `filterfalse`, `groupby`, `islice`, `pairwise`, `starmap`, `takewhile`, `tee`, `zip_longest`), but iterator/laziness and edge semantics are still partial | Full CPython iterator protocol/laziness and behavior parity with CPython tests | Milestone 13 |
-| `operator` / `functools` | Core callable adapters now execute non-`NoOp` paths (`operator.itemgetter`/`attrgetter`/`methodcaller`, `functools.cmp_to_key` with `sorted`/`min`/`max` key ordering support); `functools.partial` unwraps staticmethod/classmethod wrappers for class-body compatibility, `functools.wraps` propagates wrapper metadata (`__dict__`/`__wrapped__`) including bound-method inputs, and `functools.cached_property` now executes descriptor-backed cache semantics for stdlib paths (including `ipaddress`); long-tail API/edge semantics still pending | Full module API and behavior parity with CPython tests | Milestone 13 |
-| `importlib` / `importlib.util` / `_frozen_importlib*` / packaging helpers | Core helper surface now includes non-`NoOp` `invalidate_caches`, baseline `spec_from_file_location`, `_frozen_importlib.spec_from_loader`/`_verbose_message`, and `_frozen_importlib_external` `_path_*` + `_unpack_uint*`; sourceless `.pyc` import fallback is implemented; fallback shims provide baseline `pkgutil.get_data` + `importlib.resources` read/open workflows when stdlib modules are unavailable. Full CPython spec/loader/resource behavior remains partial | Full importlib/pkgutil/resources helper parity required by stdlib and packaging workflows | Milestone 13 |
-| Runtime stack-depth sensitivity | Deep stdlib import paths (`ipaddress` parity probe) currently require larger thread stacks in Rust test harness contexts; runtime behavior is validated, but stack-depth safety for constrained embedding/thread defaults is not yet closed | Eliminate small-stack overflow sensitivity (parser/runtime recursion-depth hardening and coverage proving imports succeed under constrained thread stacks) | Milestone 13/14 |
-| `site` startup/init behavior | CLI startup now performs baseline `site` import when stdlib paths are discoverable and supports `-S`/`--no-site`; strict failure is only enforced when `PYRS_CPYTHON_LIB` is explicitly configured. Full CPython startup/site initialization semantics remain partial | Full CPython startup/site semantics (path initialization, user site, `.pth` processing, env flags) | Milestone 13 |
-| `_opcode` | Metadata helper surface now executes non-`NoOp` logic (`stack_effect`, `has_arg`, `has_const`, `has_name`, `has_jump`, `has_free`, `has_local`, `has_exc`, `get_executor`) based on opcode metadata, but full CPython edge semantics and executor integration are still partial | Full `_opcode` behavior parity with CPython runtime semantics | Milestone 13 |
-| `platform` / `binascii` / `atexit` / `collections` | Previously stubbed helper paths now execute non-`NoOp` logic (`platform.win32_is_iot`, baseline `platform.libc_ver`, `binascii.crc32`, `atexit.register`/`unregister`/`_run_exitfuncs`/`_clear`, `collections._count_elements`), but full module behavioral parity remains partial | Full API/semantic parity across these modules for CPython suites and common package workflows | Milestone 13 |
-| `_csv` / `csv` | `_csv` module now covers dialect registry merge/override semantics (`register_dialect(..., dialect, **kwargs)`), `field_size_limit`, `Dialect` validation hook, reader `skipinitialspace`/`quotechar=None`/`escapechar`/`strict`, quoting-mode conversion paths (`QUOTE_NONE`/`QUOTE_NONNUMERIC`/`QUOTE_STRINGS`/`QUOTE_NOTNULL`), EOF-escape handling, writer `quotechar=None`/`escapechar`/`quoting` (`QUOTE_MINIMAL`/`QUOTE_ALL`/`QUOTE_NONE`) paths, and strict `test_csv` `BadWriter.write` `OSError` propagation under unittest runner. Full parser/writer edge semantics and exact error-text parity remain partial. | Full CPython `_csv` parser/writer semantics and error-text parity, plus malformed-input hardening and baseline perf reporting | Milestone 13 (P0 release blocker) |
-| `struct` / `zipfile` constructor paths | Core `_struct` module helpers exist (`pack`/`unpack`/`calcsize` etc.); prior curated import-suite `zipfile` constructor blockers are closed, but full `Struct` API/edge semantics remain partial for broader stdlib and package call sites | Full CPython `struct.Struct` construction and method semantics across stdlib/package workloads | Milestone 13 |
-| `decimal` / `_pylong` | `decimal.getcontext`/`setcontext`/`localcontext` now execute baseline non-`NoOp` context paths; `_pylong` conversion/division helpers (`int_to_decimal_string`, `int_divmod`, `int_from_string`, `compute_powers`, `_dec_str_to_int_inner`) now execute baseline non-`NoOp` paths, but full decimal arithmetic and bigint-scale `_pylong` semantics are still pending | Replace remaining stubs with real semantics needed by stdlib/users | Milestone 13 |
-| `int` numeric model | `Value::BigInt` support now covers core arithmetic/bitwise/shift/comparison paths, Python-floor `//`/`%`/`divmod` semantics at arbitrary precision, lazy large-stop `range(...)`, large-decimal/base-`int(...)` parsing, and large `%x`/`%X`/`%o` formatting. Remaining parity gaps are long-tail conversion/format/error-text edge cases (for example full CPython underscore/prefix diagnostics and float-to-int corner semantics). | Arbitrary-precision integer parity across arithmetic/bitwise/shift/conversion/formatting for stdlib and user workloads | Milestone 13 |
-| `dict` / `set` / `frozenset` container semantics | Runtime containers now use dedicated hash-indexed object types (`DictObject`, `SetObject`). `DictObject` is backed by a CPython-style open-addressing probe table (`Empty`/`Dummy`/`Occupied` slots with perturb probing) plus insertion-order entry storage; `set`/`frozenset` retain compact hash-bucket index helpers. Core hashability guards reject unhashable keys/items on constructor/update/assignment/membership flows, literal dict construction, `dict.fromkeys(...)`, and `collections.Counter(...)`; dict equality is insertion-order independent and set/frozenset equality is value-based (including cross-type equality). Remaining work is full CPython hash/equality edge parity and container-performance closure (growth/load-factor/key-sharing behavior). | Hash-driven container semantics with CPython-compatible hash/equality rules (`TypeError` on unhashables), insertion-order behavior, and parity/perf regression coverage | Milestone 13/14 |
-| `os` / `posix` / `pathlib` | Core filesystem/process paths plus non-`NoOp` `open`/`close`/`isatty`/`stat`/`lstat`/`rmdir`/`utime`/`scandir` and wait-status helpers; broader API surface still incomplete | Full pure-Python-usable path/process API surface for CPython test coverage in scope | Milestone 13 |
-| `io` / `tempfile` integration | `io.StringIO` and `io.text_encoding` baselines are implemented; `_io.open` now mirrors CPython `_io_open_impl` baseline validation for mode decoding, binary/text argument compatibility, buffering guards, opener/FD closefd behavior, legal newline values, and baseline text newline translation/readline behavior. Text wrappers now expose baseline public `encoding`/`errors`/`newlines` attrs and file objects expose a baseline `detach()` path used by stdlib wrappers. It remains partial versus CPython stream stack semantics (full buffered class layering and long-tail file-object contracts). | CPython-compatible `_io.open` stream-object semantics sufficient for broader stdlib consumers and remaining strict pickle flows | Milestone 13 (P0 release blocker) |
-| `os` terminal-size helpers | Baseline `os.get_terminal_size` + `os.terminal_size` object semantics are implemented for argparse/shutil call paths (`columns`/`lines` attrs), but fd/TTY/error edge behavior remains partial | Full CPython edge behavior for fd/TTY probing and error contracts | Milestone 13 |
-| `inspect` / `types` | Foundational predicates/types plus a baseline non-`NoOp` `inspect.signature` path (Signature instance with parameter-kind/default metadata); `types.MethodType` now participates as a callable type-marker in `type(...)`/`isinstance(...)` stdlib paths used by `unittest.mock`, and function objects now expose `__call__` for CPython-compatible `_callable(...)` behavior in `unittest.mock`/`mock_open` flows. Full Signature/Parameter API and broader module parity remain pending | Full behavior required by stdlib + mainstream pure-Python packages | Milestone 13 |
-| `codecs` / `unicodedata` | Core codecs plus baseline `raw-unicode-escape`/`unicode-escape` and `codecs.escape_decode` paths with minimal unicode normalization; full registry/error-handler parity remains incomplete | Full codecs registry/error-handler and unicode behavior parity | Milestone 13 |
-| `asyncio` / `threading` / `_thread` / `signal` / `_warnings` | Foundational runtime paths, including non-`NoOp` `_thread.start_new_thread`, `_warnings._acquire_lock`/`_release_lock`, and baseline threading class methods (`Thread`, `Event`, `Condition`, `Semaphore`, `Barrier`), but full contract parity remains pending | CPython-compatible behavior for supported event loop and thread/signal/warnings-lock APIs | Milestone 13/16 |
-| `socket` / `_socket` | Module-level helpers plus baseline non-`NoOp` socket class methods (`__init__`, `close`, `detach`, `fileno`) are implemented; broader network/socket-option semantics remain partial | Real socket semantics for networked stdlib modules | Milestone 13 |
-| `uuid` | Baseline UUID object construction and module helpers (`UUID.__init__`, `uuid1/3/4/5/6/7/8`, `getnode`) are implemented, but cryptographic/hash fidelity and full API parity are partial | Full CPython uuid semantic parity and edge contracts | Milestone 13 |
-| `builtins` object protocol | `object.__reduce_ex__`/`__getstate__` are now isolated under `src/vm/stdlib/pickle.rs` with baseline builtin-payload reconstruction paths (`list`, `dict`, etc.) and builtin singleton-name reductions for `Ellipsis`/`NotImplemented`; full pickling parity and protocol edge semantics remain pending | Full CPython object reduction/pickling behavior parity | Milestone 13 |
-| `sys.monitoring` / `sys._jit` scaffolding | Monitoring/JIT helper APIs remain explicit no-op placeholders (non-goal feature hooks retained for compatibility shape) | Either implement full semantics or gate them behind explicit unsupported errors before release | Milestone 14/16 |
-| `subprocess` / `_posixsubprocess` | Minimal bootstrap; `_posixsubprocess.fork_exec` now fails explicitly with a clear unsupported error instead of silent `NoOp` behavior | Production-safe process creation semantics and regression coverage | Milestone 13 |
-| `typing` / `dataclasses` / `enum` / `contextvars` | Foundation coverage with baseline non-`NoOp` dataclasses helpers (`field`, `is_dataclass`, `fields`, `asdict`, `astuple`, `replace`, `make_dataclass`) now implemented; `dataclass(...)` keyword-only decorator form and `make_dataclass(..., module=...)` are now accepted for stdlib import paths. Curated harness `test_enum.py` import blocker is closed via enum-shim/date-constructor hardening, but full enum/contextvars CPython semantics remain incomplete. | Full semantics required by modern frameworks and CPython suites in scope | Milestone 13 |
-| `pickle` / `pickletools` / `copyreg` test stack | Curated harness path executes `test_copyreg.py`; strict active lane for non-pickle modules (`json`/`csv`/`copyreg`/`genericalias`) is green. Pickle strict modules (`test_pickle.py`, `test_pickletools.py`) are intentionally moved to deferred lane (`tests/cpython_suite_deferred_pickle.txt`) to unblock non-pickle P0 closure; known fixes include strict-path `bytes.join`, singleton reducer handling, direct `_pickle` import surface, protocol 4/5 frame-boundary corruption fix, dispatch-table forwarding, alias-sensitive bytes identity handling, list/dict chunk-op parity updates, and int-subclass value-equality parity (`myint(4) == myint(4)`). Remaining protocol/runtime/perf work is still substantial (recent first-failure snapshot: `test_oob_buffers`). | Full pickle/pickletools protocol/opcode/runtime parity beyond curated smoke coverage, including protocol coverage and baseline perf reporting | Milestone 13 (P0 release blocker; deferred lane active) |
-| `_testinternalcapi` helpers | Import surface remains partial for `test_context` paths (missing `hamt` exposure); missing-name `from ... import ...` now maps to `ImportError` so CPython skip guards work correctly | Provide compatible `hamt` helper surface (or equivalent shim semantics) required by contextvars/tests | Milestone 13 |
-| `array` | Baseline `array.array` object model now includes `typecode`, `itemsize`, iterable values, and `len(...)`, but broader method/byteorder/typecode semantics remain partial | Full `array` object behavior parity for stdlib callers and CPython tests | Milestone 13 |
-| `builtins` numeric/string helper surface | Baseline non-`NoOp` `float.fromhex`, `float.hex`, and `str.maketrans` are implemented, but full CPython edge/error-text parity remains partial | Full CPython helper semantics and compatibility text contracts | Milestone 13 |
-| Native extension path | Not implemented in runtime yet | Limited C-API/abi3 and HPy compatibility milestones complete | Milestone 15 |
+| `json` | Pure-module-first path exists; native fallback still partial | Full CPython semantic parity, malformed-input differential coverage, and perf baseline | 13 |
+| `_csv`/`csv` | Native substrate exists; behavior still partial in long-tail cases | Full parser/writer parity (`test_csv` class), malformed-input hardening, perf baseline | 13 |
+| `pickle`/`pickletools`/`copyreg` | Partial parity; deferred strict pickle lane still open | Strict deferred lane closure + protocol/runtime parity + perf baseline | 13 |
+| `_io` | Core mode/newline/validation behavior implemented; stream parity incomplete | Complete `_io` behavior required by strict stdlib and pure-stdlib execution | 13 |
+| `_sre` | Core accelerator surface bootstrapped; long-tail behavior pending | Pure `Lib/re/*` default path passes strict/curated gates | 13 |
+| Hash containers | Dict backend upgraded; set/frozenset mostly hash-indexed | Long-tail semantic + performance parity closure for dict/set/frozenset | 13/14 |
 
-## Maintenance Rule
-- Any newly added `BuiltinFunction::NoOp` usage is blocked until the inventory is updated.
-- Any intentionally partial non-`NoOp` behavior must be added to this document in the same PR/commit.
+## Active Non-P0 Partial Surfaces
+
+| Surface | Current state | Closure criteria | Milestone |
+|---|---|---|---|
+| Importlib/resources/pkgutil helpers | Foundations implemented; long-tail behavior partial | CPython compatibility for packaging/resource call paths in scope | 13 |
+| `inspect`/`types` | Foundational behavior implemented | Full stdlib-required behavior parity | 13 |
+| `threading`/`signal`/`_thread`/`_warnings` | Foundations implemented | Full in-scope behavioral parity | 13/16 |
+| `socket`/`_socket` | Baseline methods/helpers implemented | Full in-scope API and behavior parity | 13 |
+| `uuid` | Foundations implemented | Full in-scope API parity | 13 |
+| `dataclasses`/`typing`/`enum`/`contextvars` | Partial stdlib compatibility | Full in-scope semantics for modern pure-Python apps | 13 |
+| VM/module decomposition | `src/vm/mod.rs` remains large | Move critical paths into focused modules with regression proof | 14 |
+
+## Strict Harness Accounting
+- Active strict suite: `tests/cpython_suite_strict_stdlib.txt`
+- Deferred strict pickle suite: `tests/cpython_suite_deferred_pickle.txt`
+- Active strict allowlist: `tests/cpython_allowlist_strict.txt` (target: empty)
+
+Policy:
+1. Active strict suite should remain green with empty allowlist.
+2. Deferred pickle suite remains explicit until re-enabled and closed.
+
+## Remaining Intentional NoOp Scope
+- Test-only CPython helper modules (`_testcapi`, `_testinternalcapi` family)
+- `sys.monitoring` and `sys._jit` scaffolding
+
+These must remain explicitly listed and must not silently expand.
+
+## Update Rules
+1. Any new partial behavior must add/update a row here in the same commit.
+2. Any row marked complete must have linked regression tests and (where relevant) perf evidence.
+3. Milestone 13 cannot close while any P0 blocker row above is unresolved.

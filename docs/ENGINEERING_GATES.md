@@ -24,6 +24,7 @@ Required modules:
 - `src/vm/stdlib/json.rs`
 - `src/vm/stdlib/re.rs`
 - `src/vm/stdlib/csv.rs`
+- `src/vm/stdlib/pickle.rs`
 
 Required evidence:
 1. `#[cfg(test)]` coverage in each module for argument validation + edge/error paths

@@ -1,5 +1,8 @@
 # Dict Backend Migration Benchmark (Milestone 13)
 
+This is a point-in-time snapshot and may be stale.
+Refresh with `scripts/bench_dict_backend.sh` and update this file in the same commit.
+
 ## Environment
 
 1. `pyrs` release binary: `target/release/pyrs`
