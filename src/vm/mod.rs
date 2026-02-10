@@ -294,6 +294,7 @@ struct OneArgCallSiteCacheEntry {
 }
 
 #[derive(Clone)]
+#[cfg_attr(debug_assertions, allow(dead_code))]
 struct LoadGlobalSiteCacheEntry {
     globals_module_id: u64,
     globals_version: u64,
@@ -301,6 +302,7 @@ struct LoadGlobalSiteCacheEntry {
     value: Value,
     fused_local_idx: Option<u32>,
     fused_const_idx: Option<u32>,
+    fused_const_small_int: Option<i64>,
     fused_direct_one_arg_no_cells: bool,
     fused_direct_code: Option<Rc<CodeObject>>,
     fused_direct_module: Option<ObjRef>,

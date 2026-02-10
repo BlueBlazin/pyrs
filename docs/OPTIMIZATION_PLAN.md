@@ -18,9 +18,9 @@ These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
 - `OPT-026` allocator/freelist strategy for hot temporaries
 
 Primary benchmark gate:
-- Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
-- Target: `< 0.10s` user-time
-- Current baseline (latest run): about `0.26-0.27s` user-time (`~0.27-0.30s` wall with startup)
+- Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
+- Target: `< 0.15s` user-time
+- Current baseline (latest run): about `1.11s` user-time (`~1.13s` wall after warm-up)
 
 ## Ground Rules
 
@@ -72,6 +72,8 @@ Canonical profiler command for this sprint:
 19. Added release-path fused recursive-call sequence for `LoadGlobal + LoadFast + BinarySubConst + CallFunction1`.
 20. Removed duplicate simple-frame scrub work by scrubbing on recycle and doing minimal state prep on acquire for one-arg no-cells pooled frames.
 21. Added by-reference int/bool fast path in fused `LOAD_FAST - CONST` call preparation to avoid hot-path `Value` clone churn before fallback.
+22. Added fused `LoadFast + CompareLtConst + JumpIfFalse` release-path branch evaluation to skip stack push/pop + compare dispatch for int/bool locals.
+23. Added `LOAD_GLOBAL` fused-call small-int RHS cache (`fused_const_small_int`) and direct fast subtract path to avoid repeated constant decoding + clone fallback churn.
 
 ## Current Hotspots (Post-Change)
 
@@ -80,7 +82,7 @@ Canonical profiler command for this sprint:
 3. Frame construction/reset overhead (`acquire_frame`) is improved but still visible in recursion-heavy code.
 4. Stack movement/copy work (`_platform_memmove`) remains significant in tight recursive loops.
 5. Attribute/method lookup and interning gaps remain for broader workloads (`OPT-022`, `OPT-023`).
-6. Recursive-call workloads are still dominated by frame/call setup and stack churn; current `fib(29)` remains around `0.26-0.27s` user-time.
+6. Recursive-call workloads are still dominated by frame/call setup and stack churn; current `fib(29)x5` remains around `1.11s` user-time (target `<0.15s`).
 7. Dict subscripting now routes through hash-probing backend lookup in `getitem` paths (linear scan bypass removed); remaining primary gap is recursive call/dispatch overhead, not dict key lookup.
 
 ## Execution Plan

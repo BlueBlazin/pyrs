@@ -5,7 +5,7 @@
 This is the permanent, canonical optimization checklist for `pyrs`.
 Every optimization item must be tracked here with explicit status.
 
-Last updated: 2026-02-10
+Last updated: 2026-02-11
 
 ## Status Legend
 
@@ -17,11 +17,12 @@ Last updated: 2026-02-10
 ## Primary Performance Gate
 
 - Command:
-  - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
+  - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
 - Target:
-  - `< 0.10s` user-time
+  - `< 0.15s` user-time
 - Current:
-  - ~`0.26-0.27s` user-time (after branch/call fusion and simple-frame recycle/call-path cleanup passes)
+  - ~`1.11s` user-time (`~1.13s` wall, warm) for the `fib(29)x5` gate
+  - ~`0.24s` user-time for `print(fib(29))` single-run reference
 
 ## CPython Reference Map
 
@@ -103,4 +104,8 @@ Last updated: 2026-02-10
 - Latest call-path checkpoint:
   - simple-frame pool preparation now avoids duplicate full scrub on acquire (frames are scrubbed on recycle and minimally prepared on acquire),
   - fused `LOAD_FAST - CONST` one-arg call path now uses by-reference int/bool arithmetic fast path before generic `Value` cloning fallback,
-  - recursive benchmark is currently stable around `0.26-0.27s` user-time for `fib(29)` across repeated runs.
+  - recursive benchmark is currently stable around `1.11s` user-time for `fib(29)x5` across repeated warm runs.
+- Latest dispatch/call-path checkpoint:
+  - release-path `LoadFast + CompareLtConst + JumpIfFalse` fusion now bypasses intermediate stack bool work for int/bool locals,
+  - `LOAD_GLOBAL` fused one-arg call path now caches small-int RHS constants and routes through a direct subtract helper before fallback,
+  - this wave reduced `fib(29)x5` from about `1.34s` user-time to about `1.11s` user-time, but frame push/recycle and eval-loop dispatch still dominate profiles.

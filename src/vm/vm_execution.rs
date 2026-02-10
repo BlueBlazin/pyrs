@@ -194,26 +194,121 @@ impl Vm {
                             .arg
                             .ok_or_else(|| RuntimeError::new("missing local argument"))?
                             as usize;
-                        let fast_hit = {
-                            let frame = self.frames.last_mut().expect("frame exists");
-                            if idx < frame.fast_locals.len() {
-                                if let Some(value) = &frame.fast_locals[idx] {
-                                    frame.stack.push(value.clone());
-                                    true
+                        #[cfg(not(debug_assertions))]
+                        let mut fused_compare_jump = false;
+                        #[cfg(not(debug_assertions))]
+                        {
+                            let fused = {
+                                let frame = self.frames.last().expect("frame exists");
+                                if idx >= frame.fast_locals.len() {
+                                    None
+                                } else if let Some(left) = frame.fast_locals[idx].as_ref() {
+                                    if let (Some(next), Some(jump)) = (
+                                        frame.code.instructions.get(frame.ip),
+                                        frame.code.instructions.get(frame.ip + 1),
+                                    ) {
+                                        if next.opcode == Opcode::CompareLtConst
+                                            && jump.opcode == Opcode::JumpIfFalse
+                                        {
+                                            if let (Some(const_idx), Some(target)) =
+                                                (next.arg.map(|arg| arg as usize), jump.arg)
+                                            {
+                                                if const_idx < frame.code.constants.len() {
+                                                    let left_int = match left {
+                                                        Value::Int(integer) => Some(*integer),
+                                                        Value::Bool(flag) => {
+                                                            Some(if *flag { 1 } else { 0 })
+                                                        }
+                                                        _ => None,
+                                                    };
+                                                    let right_int =
+                                                        match &frame.code.constants[const_idx] {
+                                                            Value::Int(integer) => Some(*integer),
+                                                            Value::Bool(flag) => {
+                                                                Some(if *flag { 1 } else { 0 })
+                                                            }
+                                                            _ => None,
+                                                        };
+                                                    if let (Some(left_int), Some(right_int)) =
+                                                        (left_int, right_int)
+                                                    {
+                                                        Some((left_int < right_int, target as usize))
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some((truthy, target)) = fused {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                if truthy {
+                                    frame.ip += 2;
+                                } else {
+                                    frame.ip = target;
+                                }
+                                fused_compare_jump = true;
+                            }
+                        }
+                        #[cfg(not(debug_assertions))]
+                        if !fused_compare_jump {
+                            let fast_hit = {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                if idx < frame.fast_locals.len() {
+                                    if let Some(value) = &frame.fast_locals[idx] {
+                                        frame.stack.push(value.clone());
+                                        true
+                                    } else {
+                                        false
+                                    }
                                 } else {
                                     false
                                 }
-                            } else {
-                                false
+                            };
+                            if !fast_hit {
+                                let value = self.load_fast_local(idx)?;
+                                self.frames
+                                    .last_mut()
+                                    .expect("frame exists")
+                                    .stack
+                                    .push(value);
                             }
-                        };
-                        if !fast_hit {
-                            let value = self.load_fast_local(idx)?;
-                            self.frames
-                                .last_mut()
-                                .expect("frame exists")
-                                .stack
-                                .push(value);
+                        }
+                        #[cfg(debug_assertions)]
+                        {
+                            let fast_hit = {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                if idx < frame.fast_locals.len() {
+                                    if let Some(value) = &frame.fast_locals[idx] {
+                                        frame.stack.push(value.clone());
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            };
+                            if !fast_hit {
+                                let value = self.load_fast_local(idx)?;
+                                self.frames
+                                    .last_mut()
+                                    .expect("frame exists")
+                                    .stack
+                                    .push(value);
+                            }
                         }
                     }
                     Opcode::LoadDeref => {
@@ -291,10 +386,17 @@ impl Vm {
                             (frame.function_globals.id(), frame.function_globals_version)
                         };
                         let mut value = None;
+                        #[cfg(not(debug_assertions))]
                         let mut fused_candidate: Option<(usize, usize)> = None;
+                        #[cfg(not(debug_assertions))]
                         let mut fused_direct_one_arg_no_cells = false;
+                        #[cfg(not(debug_assertions))]
                         let mut fused_direct_cached: Option<(Rc<CodeObject>, ObjRef, Option<ObjRef>)> =
                             None;
+                        #[cfg(not(debug_assertions))]
+                        let mut fused_const_small_int: Option<i64> = None;
+                        #[cfg(not(debug_assertions))]
+                        let mut fused_from_cached_direct = false;
                         if let Some(frame) = self.frames.last() {
                             if let Some(entry) = frame.load_global_inline_cache.get(site_index) {
                                 if let Some(cached) = entry {
@@ -303,14 +405,20 @@ impl Vm {
                                         && cached.builtins_version == self.builtins_version
                                     {
                                         value = Some(cached.value.clone());
+                                        #[cfg(not(debug_assertions))]
                                         if let (Some(local_idx), Some(const_idx)) =
                                             (cached.fused_local_idx, cached.fused_const_idx)
                                         {
                                             fused_candidate =
                                                 Some((local_idx as usize, const_idx as usize));
                                         }
-                                        fused_direct_one_arg_no_cells =
-                                            cached.fused_direct_one_arg_no_cells;
+                                        #[cfg(not(debug_assertions))]
+                                        {
+                                            fused_direct_one_arg_no_cells =
+                                                cached.fused_direct_one_arg_no_cells;
+                                            fused_const_small_int = cached.fused_const_small_int;
+                                        }
+                                        #[cfg(not(debug_assertions))]
                                         if let (Some(code), Some(module)) = (
                                             cached.fused_direct_code.clone(),
                                             cached.fused_direct_module.clone(),
@@ -321,65 +429,73 @@ impl Vm {
                                                 cached.fused_direct_owner_class.clone(),
                                             ));
                                         }
+                                        #[cfg(not(debug_assertions))]
+                                        if !push_null
+                                            && fused_direct_one_arg_no_cells
+                                            && fused_candidate.is_some()
+                                        {
+                                            if let (
+                                                Some((local_idx, const_idx)),
+                                                Some((code, module, owner_class)),
+                                            ) = (fused_candidate, fused_direct_cached.as_ref())
+                                            {
+                                                let arg = if let Some(right_int) =
+                                                    fused_const_small_int
+                                                {
+                                                    self.fused_fast_local_sub_small_int_arg(
+                                                        local_idx, right_int,
+                                                    )?
+                                                } else {
+                                                    self.fused_fast_local_sub_const_arg(
+                                                        local_idx, const_idx,
+                                                    )?
+                                                };
+                                                {
+                                                    let caller =
+                                                        self.frames.last_mut().expect("frame exists");
+                                                    caller.ip += 3;
+                                                }
+                                                self.push_simple_positional_function_frame_one_arg_no_cells(
+                                                    code.clone(),
+                                                    module.clone(),
+                                                    owner_class.clone(),
+                                                    arg,
+                                                )?;
+                                                fused_from_cached_direct = true;
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                        let value = if let Some(value) = value {
+                        #[cfg(not(debug_assertions))]
+                        let value = if fused_from_cached_direct {
+                            Value::None
+                        } else if let Some(value) = value {
                             value
                         } else {
-                            #[cfg(not(debug_assertions))]
                             if !push_null {
                                 fused_candidate = self.fused_global_fast_sub_call_one_arg_pattern();
                             }
-                            let (value, cacheable, globals_module_id, globals_version) = {
-                                let frame = self.frames.last().expect("frame exists");
-                                let name = frame
-                                    .code
-                                    .names
-                                    .get(idx)
-                                    .ok_or_else(|| RuntimeError::new("name index out of range"))?;
-                                let value = if let Object::Module(module_data) =
-                                    &*frame.function_globals.kind()
-                                {
-                                    module_data.globals.get(name).cloned()
-                                } else {
-                                    None
-                                };
-                                let value = value.or_else(|| {
-                                    if let Some(fallback) = &frame.locals_fallback {
-                                        if let Some(value) = fallback.get(name) {
-                                            return Some(value.clone());
-                                        }
-                                    }
-                                    if let Some(fallback) = &frame.globals_fallback {
-                                        if let Object::Module(module_data) = &*fallback.kind() {
-                                            return module_data.globals.get(name).cloned();
-                                        }
-                                    }
-                                    None
-                                });
-                                let value = value
-                                    .or_else(|| self.builtins.get(name).cloned())
-                                    .ok_or_else(|| {
-                                        RuntimeError::new(format!("name '{name}' is not defined"))
-                                    })?;
-                                let cacheable =
-                                    frame.locals_fallback.is_none() && frame.globals_fallback.is_none()
-                                        && frame.function_globals_version != 0;
-                                (
-                                    value,
-                                    cacheable,
-                                    frame.function_globals.id(),
-                                    frame.function_globals_version,
-                                )
-                            };
+                            let (value, cacheable, globals_module_id, globals_version) =
+                                self.resolve_load_global_value(idx)?;
                             if cacheable {
                                 if fused_candidate.is_some() {
                                     fused_direct_cached =
                                         self.fused_direct_one_arg_no_cells_metadata(&value);
                                     fused_direct_one_arg_no_cells =
                                         fused_direct_cached.is_some();
+                                    fused_const_small_int =
+                                        fused_candidate.and_then(|(_, const_idx)| {
+                                            self.frames
+                                                .last()
+                                                .and_then(|frame| frame.code.constants.get(const_idx))
+                                                .and_then(|constant| match constant {
+                                                    Value::Int(integer) => Some(*integer),
+                                                    Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
+                                                    _ => None,
+                                                })
+                                        });
                                 }
                                 if let Some(frame) = self.frames.last_mut() {
                                     if let Some(slot) =
@@ -408,6 +524,7 @@ impl Vm {
                                             fused_const_idx: fused_candidate
                                                 .as_ref()
                                                 .map(|(_, const_idx)| *const_idx as u32),
+                                            fused_const_small_int,
                                             fused_direct_one_arg_no_cells,
                                             fused_direct_code,
                                             fused_direct_module,
@@ -418,8 +535,37 @@ impl Vm {
                             }
                             value
                         };
+                        #[cfg(debug_assertions)]
+                        let value = if let Some(value) = value {
+                            value
+                        } else {
+                            let (value, cacheable, globals_module_id, globals_version) =
+                                self.resolve_load_global_value(idx)?;
+                            if cacheable {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    if let Some(slot) =
+                                        frame.load_global_inline_cache.get_mut(site_index)
+                                    {
+                                        *slot = Some(LoadGlobalSiteCacheEntry {
+                                            globals_module_id,
+                                            globals_version,
+                                            builtins_version: self.builtins_version,
+                                            value: value.clone(),
+                                            fused_local_idx: None,
+                                            fused_const_idx: None,
+                                            fused_const_small_int: None,
+                                            fused_direct_one_arg_no_cells: false,
+                                            fused_direct_code: None,
+                                            fused_direct_module: None,
+                                            fused_direct_owner_class: None,
+                                        });
+                                    }
+                                }
+                            }
+                            value
+                        };
                         #[cfg(not(debug_assertions))]
-                        let mut fused = false;
+                        let mut fused = fused_from_cached_direct;
                         #[cfg(debug_assertions)]
                         let fused = false;
 
@@ -427,16 +573,25 @@ impl Vm {
                         {
                             if !push_null {
                                 if let Some((local_idx, const_idx)) = fused_candidate {
-                                    let caller_idx = self.frames.len().saturating_sub(1);
-                                    let arg =
-                                        self.fused_fast_local_sub_const_arg(local_idx, const_idx)?;
+                                    let arg = if let Some(right_int) = fused_const_small_int {
+                                        self.fused_fast_local_sub_small_int_arg(local_idx, right_int)?
+                                    } else {
+                                        self.fused_fast_local_sub_const_arg(local_idx, const_idx)?
+                                    };
                                     if let Value::Function(func_obj) = &value {
+                                        {
+                                            let caller = self.frames.last_mut().expect("frame exists");
+                                            caller.ip += 3;
+                                        }
                                         if fused_direct_one_arg_no_cells {
                                             if let Some((code, module, owner_class)) =
-                                                fused_direct_cached.clone()
+                                                fused_direct_cached.as_ref()
                                             {
                                                 self.push_simple_positional_function_frame_one_arg_no_cells(
-                                                    code, module, owner_class, arg,
+                                                    code.clone(),
+                                                    module.clone(),
+                                                    owner_class.clone(),
+                                                    arg,
                                                 )?;
                                             } else {
                                                 self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
@@ -445,9 +600,6 @@ impl Vm {
                                             }
                                         } else {
                                             self.push_function_call_one_arg_from_obj(func_obj, arg)?;
-                                        }
-                                        if let Some(frame) = self.frames.get_mut(caller_idx) {
-                                            frame.ip += 3;
                                         }
                                         fused = true;
                                     }
@@ -4984,6 +5136,49 @@ impl Vm {
     }
 
     #[inline]
+    fn resolve_load_global_value(
+        &self,
+        name_idx: usize,
+    ) -> Result<(Value, bool, u64, u64), RuntimeError> {
+        let frame = self.frames.last().expect("frame exists");
+        let name = frame
+            .code
+            .names
+            .get(name_idx)
+            .ok_or_else(|| RuntimeError::new("name index out of range"))?;
+        let value = if let Object::Module(module_data) = &*frame.function_globals.kind() {
+            module_data.globals.get(name).cloned()
+        } else {
+            None
+        };
+        let value = value.or_else(|| {
+            if let Some(fallback) = &frame.locals_fallback {
+                if let Some(value) = fallback.get(name) {
+                    return Some(value.clone());
+                }
+            }
+            if let Some(fallback) = &frame.globals_fallback {
+                if let Object::Module(module_data) = &*fallback.kind() {
+                    return module_data.globals.get(name).cloned();
+                }
+            }
+            None
+        });
+        let value = value
+            .or_else(|| self.builtins.get(name).cloned())
+            .ok_or_else(|| RuntimeError::new(format!("name '{name}' is not defined")))?;
+        let cacheable = frame.locals_fallback.is_none()
+            && frame.globals_fallback.is_none()
+            && frame.function_globals_version != 0;
+        Ok((
+            value,
+            cacheable,
+            frame.function_globals.id(),
+            frame.function_globals_version,
+        ))
+    }
+
+    #[inline]
     fn next_jump_if_false_target(&self) -> Option<usize> {
         let frame = self.frames.last()?;
         let next = frame.code.instructions.get(frame.ip)?;
@@ -5014,6 +5209,7 @@ impl Vm {
         Some((load_fast.arg? as usize, binary_sub_const.arg? as usize))
     }
 
+    #[cfg(not(debug_assertions))]
     #[inline]
     fn fused_direct_one_arg_no_cells_metadata(
         &self,
@@ -5121,6 +5317,51 @@ impl Vm {
             }
             right => sub_values(left, right, &self.heap),
         }
+    }
+
+    #[inline]
+    #[cfg(not(debug_assertions))]
+    fn fused_fast_local_sub_small_int_arg(
+        &mut self,
+        local_idx: usize,
+        right_int: i64,
+    ) -> Result<Value, RuntimeError> {
+        #[inline]
+        fn small_int_like(value: &Value) -> Option<i64> {
+            match value {
+                Value::Int(integer) => Some(*integer),
+                Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
+                _ => None,
+            }
+        }
+
+        if let Some(left_int) = self
+            .frames
+            .last()
+            .and_then(|frame| frame.fast_locals.get(local_idx))
+            .and_then(Option::as_ref)
+            .and_then(small_int_like)
+        {
+            return match left_int.checked_sub(right_int) {
+                Some(diff) => Ok(Value::Int(diff)),
+                None => sub_values(Value::Int(left_int), Value::Int(right_int), &self.heap),
+            };
+        }
+
+        let left = {
+            let frame = self.frames.last().expect("frame exists");
+            if local_idx < frame.fast_locals.len() {
+                frame.fast_locals[local_idx].clone()
+            } else {
+                None
+            }
+        };
+        let left = if let Some(value) = left {
+            value
+        } else {
+            self.load_fast_local(local_idx)?
+        };
+        sub_values(left, Value::Int(right_int), &self.heap)
     }
 
     fn dispatch_call_no_kwargs(&mut self, func: Value, args: Vec<Value>) -> Result<(), RuntimeError> {
