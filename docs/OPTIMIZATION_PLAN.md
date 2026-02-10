@@ -20,7 +20,7 @@ These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
 Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
 - Target: `< 0.10s` user-time
-- Current baseline (latest run): about `0.84s` user-time (`~1.2-1.3s` wall with startup)
+- Current baseline (latest run): about `0.82s` user-time (`~1.2-1.3s` wall with startup)
 
 ## Ground Rules
 
