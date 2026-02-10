@@ -91,4 +91,7 @@ Last updated: 2026-02-10
   - direct `CALL_FUNCTION` arity-2/3 specialization paths added for plain positional calls,
   - small-int `id()` fast cache for CPython range `[-5, 256]` added in `Heap`,
   - initial `OPT-022` wiring started by reducing repeat module-global key allocation (`get_mut`/upsert path instead of unconditional key reallocation).
+- Latest call-path checkpoint:
+  - one-arg plain-function fast path now bypasses generic cell/binding setup for no-closure, non-generator call shapes;
+  - benchmark remains approximately `0.59-0.61s` user-time for `fib(29)` (no order-of-magnitude improvement yet).
 - `OPT-009` remains in progress: boxed-frame pool and reuse path are active, but profiling still shows frame setup/reset as a visible hotspot in recursive call workloads.

@@ -4787,6 +4787,19 @@ impl Vm {
                 ))
             });
         if let Some((code, module, owner_class, closure)) = cached_hot {
+            if code.plain_positional_arg0_cell.is_none()
+                && code.cellvars.is_empty()
+                && closure.is_empty()
+                && !code.is_generator
+                && !code.is_comprehension
+            {
+                return self.push_simple_positional_function_frame_one_arg_no_cells(
+                    code,
+                    module,
+                    owner_class,
+                    arg0,
+                );
+            }
             return self.push_simple_positional_function_frame_one_arg(
                 code,
                 module,
@@ -4833,6 +4846,19 @@ impl Vm {
                     });
                 }
             }
+            if code.plain_positional_arg0_cell.is_none()
+                && code.cellvars.is_empty()
+                && closure.is_empty()
+                && !code.is_generator
+                && !code.is_comprehension
+            {
+                return self.push_simple_positional_function_frame_one_arg_no_cells(
+                    code,
+                    module,
+                    owner_class,
+                    arg0,
+                );
+            }
             return self.push_simple_positional_function_frame_one_arg(
                 code,
                 module,
@@ -4847,6 +4873,41 @@ impl Vm {
             }
         }
         self.push_function_call_from_obj(func, vec![arg0], HashMap::new())
+    }
+
+    fn push_simple_positional_function_frame_one_arg_no_cells(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+        arg0: Value,
+    ) -> Result<(), RuntimeError> {
+        let mut frame = self.acquire_frame(
+            code.clone(),
+            module,
+            false,
+            false,
+            Vec::new(),
+            owner_class,
+        );
+        if let Some(active_exception) = self
+            .frames
+            .last()
+            .and_then(|caller| caller.active_exception.as_ref())
+        {
+            frame.active_exception = Some(active_exception.clone());
+        }
+        if let Some(slot_idx) = code.plain_positional_arg0_slot {
+            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                *slot = Some(arg0);
+            } else if let Some(name) = code.posonly_params.first().or_else(|| code.params.first()) {
+                frame.locals.insert(name.clone(), arg0);
+            }
+        } else if let Some(name) = code.posonly_params.first().or_else(|| code.params.first()) {
+            frame.locals.insert(name.clone(), arg0);
+        }
+        self.frames.push(frame);
+        Ok(())
     }
 
     fn push_function_call_two_args_from_obj(
