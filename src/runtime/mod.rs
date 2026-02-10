@@ -2056,6 +2056,7 @@ pub enum BuiltinFunction {
     OsPathIsAbs,
     OsPathIsDir,
     OsPathIsFile,
+    OsPathIsLink,
     OsPathSplitExt,
     OsPathAbsPath,
     OsPathExpandUser,
@@ -4481,6 +4482,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsPathIsAbs
             | BuiltinFunction::OsPathIsDir
             | BuiltinFunction::OsPathIsFile
+            | BuiltinFunction::OsPathIsLink
             | BuiltinFunction::OsPathSplitExt
             | BuiltinFunction::OsPathAbsPath
             | BuiltinFunction::OsPathExpandUser

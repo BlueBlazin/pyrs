@@ -1773,6 +1773,7 @@ impl Vm {
                 ("isatty", BuiltinFunction::OsIsATty),
                 ("urandom", BuiltinFunction::OsURandom),
                 ("stat", BuiltinFunction::OsStat),
+                ("fstat", BuiltinFunction::OsStat),
                 ("lstat", BuiltinFunction::OsLStat),
                 ("mkdir", BuiltinFunction::OsMkdir),
                 ("chmod", BuiltinFunction::OsChmod),
@@ -2005,6 +2006,7 @@ impl Vm {
                 ("isabs", BuiltinFunction::OsPathIsAbs),
                 ("isdir", BuiltinFunction::OsPathIsDir),
                 ("isfile", BuiltinFunction::OsPathIsFile),
+                ("islink", BuiltinFunction::OsPathIsLink),
                 ("splitext", BuiltinFunction::OsPathSplitExt),
                 ("commonprefix", BuiltinFunction::OsPathCommonPrefix),
             ],
@@ -10386,6 +10388,10 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         let bindings = bind_arguments(func_data, &self.heap, args, kwargs)?;
         let cells = self.build_cells(&func_data.code, func_data.closure.clone());
+        let caller_active_exception = self
+            .frames
+            .last()
+            .and_then(|frame| frame.active_exception.clone());
         let mut frame = Frame::new(
             func_data.code.clone(),
             func_data.module.clone(),
@@ -10394,6 +10400,7 @@ impl Vm {
             cells,
             func_data.owner_class.clone(),
         );
+        frame.active_exception = caller_active_exception;
         if is_comprehension_code(&func_data.code) {
             if let Some(caller) = self.frames.last() {
                 if caller.return_class && caller.module.id() == func_data.module.id() {
@@ -12417,6 +12424,10 @@ impl Vm {
                             cells,
                             func_data.owner_class.clone(),
                         );
+                        frame.active_exception = self
+                            .frames
+                            .last()
+                            .and_then(|caller| caller.active_exception.clone());
                         frame.return_instance = Some(instance);
                         frame.expect_none_return = true;
                         apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
@@ -17831,6 +17842,7 @@ impl Vm {
             BuiltinFunction::OsPathIsAbs => self.builtin_os_path_isabs(args, kwargs),
             BuiltinFunction::OsPathIsDir => self.builtin_os_path_isdir(args, kwargs),
             BuiltinFunction::OsPathIsFile => self.builtin_os_path_isfile(args, kwargs),
+            BuiltinFunction::OsPathIsLink => self.builtin_os_path_islink(args, kwargs),
             BuiltinFunction::OsPathSplitExt => self.builtin_os_path_splitext(args, kwargs),
             BuiltinFunction::OsPathAbsPath => self.builtin_os_path_abspath(args, kwargs),
             BuiltinFunction::OsPathExpandUser => self.builtin_os_path_expanduser(args, kwargs),
@@ -25815,9 +25827,38 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("stat() expects one argument"));
         }
-        let path = value_to_path(&args[0])?;
-        let metadata =
-            fs::metadata(path).map_err(|err| RuntimeError::new(format!("stat failed: {err}")))?;
+        let metadata = match &args[0] {
+            Value::Int(fd) => {
+                if let Some(file) = self.open_files.get(fd) {
+                    file.metadata()
+                        .map_err(|err| RuntimeError::new(format!("fstat failed: {err}")))?
+                } else {
+                    let fd_path = format!("/proc/self/fd/{fd}");
+                    let fallback_fd_path = format!("/dev/fd/{fd}");
+                    fs::metadata(&fd_path)
+                        .or_else(|_| fs::metadata(&fallback_fd_path))
+                        .map_err(|err| RuntimeError::new(format!("fstat failed: {err}")))?
+                }
+            }
+            Value::Bool(flag) => {
+                let fd = if *flag { 1 } else { 0 };
+                if let Some(file) = self.open_files.get(&fd) {
+                    file.metadata()
+                        .map_err(|err| RuntimeError::new(format!("fstat failed: {err}")))?
+                } else {
+                    let fd_path = format!("/proc/self/fd/{fd}");
+                    let fallback_fd_path = format!("/dev/fd/{fd}");
+                    fs::metadata(&fd_path)
+                        .or_else(|_| fs::metadata(&fallback_fd_path))
+                        .map_err(|err| RuntimeError::new(format!("fstat failed: {err}")))?
+                }
+            }
+            _ => {
+                let path = value_to_path(&args[0])?;
+                fs::metadata(path)
+                    .map_err(|err| RuntimeError::new(format!("stat failed: {err}")))?
+            }
+        };
         self.build_stat_result(metadata, false)
     }
 
@@ -26045,7 +26086,7 @@ impl Vm {
             .remove("followlinks")
             .map(|value| is_truthy(&value))
             .unwrap_or(false);
-        let _ = kwargs.remove("onerror");
+        let _onerror = kwargs.remove("onerror");
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "walk() got an unexpected keyword argument",
@@ -26062,12 +26103,24 @@ impl Vm {
             topdown: bool,
             followlinks: bool,
         ) -> Result<(), RuntimeError> {
-            let entries = fs::read_dir(current)
-                .map_err(|err| RuntimeError::new(format!("walk failed: {err}")))?;
+            let entries = match fs::read_dir(current) {
+                Ok(entries) => entries,
+                Err(err) => {
+                    // CPython os.walk ignores read errors by default.
+                    let _ = err;
+                    return Ok(());
+                }
+            };
             let mut dir_entries: Vec<(String, PathBuf)> = Vec::new();
             let mut file_entries: Vec<String> = Vec::new();
             for entry in entries {
-                let entry = entry.map_err(|err| RuntimeError::new(format!("walk failed: {err}")))?;
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        let _ = err;
+                        continue;
+                    }
+                };
                 let name = entry.file_name().to_string_lossy().to_string();
                 let path = entry.path();
                 let file_type = entry
@@ -27318,6 +27371,22 @@ impl Vm {
         }
         let path = value_to_path(&args[0])?;
         Ok(Value::Bool(PathBuf::from(path).is_file()))
+    }
+
+    fn builtin_os_path_islink(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("islink() expects one argument"));
+        }
+        let path = value_to_path(&args[0])?;
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(_) => return Ok(Value::Bool(false)),
+        };
+        Ok(Value::Bool(metadata.file_type().is_symlink()))
     }
 
     fn builtin_os_path_splitext(
@@ -31236,6 +31305,17 @@ impl Vm {
             Value::Instance(instance) => instance,
             _ => return Err(RuntimeError::new("TextIOWrapper() argument 1 must be file object")),
         };
+        let buffer_fd = match Self::instance_attr_get(&buffer_instance, "_fd") {
+            Some(Value::Int(fd)) => Some(fd),
+            _ => None,
+        };
+        let buffer_is_bytesio = matches!(
+            Self::instance_attr_get(&buffer_instance, "_value"),
+            Some(Value::ByteArray(_)) | Some(Value::Bytes(_))
+        );
+        if buffer_fd.is_none() && !buffer_is_bytesio {
+            return Err(RuntimeError::new("TextIOWrapper() argument 1 must be file object"));
+        }
 
         let encoding = if !args.is_empty() {
             Some(args.remove(0))
@@ -31274,8 +31354,13 @@ impl Vm {
             }
         }
 
-        let fd = self.io_file_fd_from_instance(&buffer_instance)?;
-        let source_mode = Self::io_file_mode(&buffer_instance).unwrap_or_else(|| "r".to_string());
+        let source_mode = Self::io_file_mode(&buffer_instance).unwrap_or_else(|| {
+            if buffer_fd.is_some() {
+                "r".to_string()
+            } else {
+                "r+".to_string()
+            }
+        });
         let mut mode = source_mode.replace('b', "");
         if mode.is_empty() {
             mode = "r".to_string();
@@ -31289,12 +31374,14 @@ impl Vm {
             Some(Value::Bool(true))
         );
 
-        Self::instance_attr_set(&instance, "_fd", Value::Int(fd))?;
+        if let Some(fd) = buffer_fd {
+            Self::instance_attr_set(&instance, "_fd", Value::Int(fd))?;
+        }
         Self::instance_attr_set(&instance, "_mode", Value::Str(mode))?;
         Self::instance_attr_set(&instance, "_binary", Value::Bool(false))?;
         Self::instance_attr_set(&instance, "_closed", Value::Bool(closed))?;
         Self::instance_attr_set(&instance, "closed", Value::Bool(closed))?;
-        Self::instance_attr_set(&instance, "_closefd", Value::Bool(closefd))?;
+        Self::instance_attr_set(&instance, "_closefd", Value::Bool(closefd && buffer_fd.is_some()))?;
         let encoding_value = match encoding.unwrap_or(Value::None) {
             Value::None => Value::None,
             Value::Str(value) => {
@@ -31541,6 +31628,25 @@ impl Vm {
         }
     }
 
+    fn io_file_text_buffer_bytesio(instance: &ObjRef) -> Option<ObjRef> {
+        if Self::io_file_is_binary(instance) {
+            return None;
+        }
+        let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") else {
+            return None;
+        };
+        if buffer.id() == instance.id() {
+            return None;
+        }
+        if matches!(
+            Self::instance_attr_get(&buffer, "_value"),
+            Some(Value::ByteArray(_)) | Some(Value::Bytes(_))
+        ) {
+            return Some(buffer);
+        }
+        None
+    }
+
     fn io_normalize_universal_newlines(text: &str) -> String {
         let mut out = String::with_capacity(text.len());
         let mut chars = text.chars().peekable();
@@ -31651,6 +31757,23 @@ impl Vm {
         } else {
             None
         };
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let mut read_args = vec![Value::Instance(buffer)];
+            if let Some(limit) = size {
+                read_args.push(Value::Int(limit as i64));
+            }
+            let bytes_value = self.builtin_bytesio_read(read_args, HashMap::new())?;
+            let bytes = bytes_like_from_value(bytes_value)?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| RuntimeError::new("read() encountered non-UTF-8 bytes"))?;
+            let newline = Self::io_file_newline(&instance);
+            let normalized = if newline.is_none() {
+                Self::io_normalize_universal_newlines(&text)
+            } else {
+                text
+            };
+            return Ok(Value::Str(normalized));
+        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let bytes = self.io_file_read_bytes(fd, size)?;
         if Self::io_file_is_binary(&instance) {
@@ -31687,6 +31810,23 @@ impl Vm {
         } else {
             None
         };
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let mut read_args = vec![Value::Instance(buffer)];
+            if let Some(max_len) = limit {
+                read_args.push(Value::Int(max_len as i64));
+            }
+            let bytes_value = self.builtin_bytesio_readline(read_args, HashMap::new())?;
+            let bytes = bytes_like_from_value(bytes_value)?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| RuntimeError::new("readline() encountered non-UTF-8 bytes"))?;
+            let newline = Self::io_file_newline(&instance);
+            let normalized = if newline.is_none() {
+                Self::io_normalize_universal_newlines(&text)
+            } else {
+                text
+            };
+            return Ok(Value::Str(normalized));
+        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let binary = Self::io_file_is_binary(&instance);
         let newline = if binary {
@@ -31836,6 +31976,20 @@ impl Vm {
             return Err(RuntimeError::new("write() expects one argument"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "write")?;
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let text = match args.remove(0) {
+                Value::Str(text) => text,
+                _ => return Err(RuntimeError::new("write() argument must be str")),
+            };
+            let newline = Self::io_file_newline(&instance);
+            let translated = Self::io_translate_write_newlines(text.clone(), newline.as_deref());
+            let payload = self.heap.alloc_bytes(translated.into_bytes());
+            let _ = self.builtin_bytesio_write(
+                vec![Value::Instance(buffer), payload],
+                HashMap::new(),
+            )?;
+            return Ok(Value::Int(text.chars().count() as i64));
+        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let payload = if Self::io_file_is_binary(&instance) {
             self.value_to_bytes_payload(args.remove(0))?
@@ -31886,6 +32040,13 @@ impl Vm {
             return Err(RuntimeError::new("truncate() expects optional size"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "truncate")?;
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let mut truncate_args = vec![Value::Instance(buffer)];
+            if !args.is_empty() {
+                truncate_args.push(args.remove(0));
+            }
+            return self.builtin_bytesio_truncate(truncate_args, HashMap::new());
+        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let file = self
             .open_files
@@ -31919,6 +32080,13 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "seek")?;
         if args.is_empty() {
             return Err(RuntimeError::new("seek() missing offset argument"));
+        }
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let mut seek_args = vec![Value::Instance(buffer), args.remove(0)];
+            if !args.is_empty() {
+                seek_args.push(args.remove(0));
+            }
+            return self.builtin_bytesio_seek(seek_args, HashMap::new());
         }
         let offset = value_to_int(args.remove(0))?;
         let whence = if args.is_empty() {
@@ -31955,6 +32123,9 @@ impl Vm {
             return Err(RuntimeError::new("tell() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "tell")?;
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            return self.builtin_bytesio_tell(vec![Value::Instance(buffer)], HashMap::new());
+        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let file = self
             .open_files
@@ -31975,6 +32146,12 @@ impl Vm {
             return Err(RuntimeError::new("close() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "close")?;
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let _ = self.builtin_bytesio_close(vec![Value::Instance(buffer)], HashMap::new())?;
+            Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
+            Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
+            return Ok(Value::None);
+        }
         self.io_file_close_instance(&instance)?;
         Ok(Value::None)
     }
@@ -31988,6 +32165,9 @@ impl Vm {
             return Err(RuntimeError::new("flush() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "flush")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Ok(Value::None);
+        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let file = self
             .open_files
@@ -32076,6 +32256,9 @@ impl Vm {
             return Err(RuntimeError::new("fileno() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "fileno")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Err(RuntimeError::new("fileno"));
+        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         #[cfg(unix)]
         if let Some(file) = self.open_files.get(&fd) {
@@ -32093,6 +32276,9 @@ impl Vm {
             return Err(RuntimeError::new("readable() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "readable")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Ok(Value::Bool(true));
+        }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         Ok(Value::Bool(mode.starts_with('r') || mode.contains('+')))
     }
@@ -32106,6 +32292,9 @@ impl Vm {
             return Err(RuntimeError::new("writable() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "writable")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Ok(Value::Bool(true));
+        }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         Ok(Value::Bool(
             mode.starts_with('w')
@@ -32124,6 +32313,9 @@ impl Vm {
             return Err(RuntimeError::new("seekable() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "seekable")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Ok(Value::Bool(true));
+        }
         let _ = self.io_file_fd_from_instance(&instance)?;
         Ok(Value::Bool(true))
     }
