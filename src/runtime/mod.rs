@@ -1850,6 +1850,9 @@ pub enum BuiltinFunction {
     Compile,
     Ord,
     Chr,
+    Bin,
+    Oct,
+    Hex,
     Abs,
     Sum,
     Min,
@@ -2974,6 +2977,30 @@ impl BuiltinFunction {
                 let ch = char::from_u32(codepoint as u32)
                     .ok_or_else(|| RuntimeError::new("chr() arg not in range(0x110000)"))?;
                 Ok(Value::Str(ch.to_string()))
+            }
+            BuiltinFunction::Bin => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("bin() expects one argument"));
+                }
+                let rendered = int_to_prefixed_base_string(&args[0], 2, "0b")
+                    .ok_or_else(|| RuntimeError::new("bin() argument must be an integer"))?;
+                Ok(Value::Str(rendered))
+            }
+            BuiltinFunction::Oct => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("oct() expects one argument"));
+                }
+                let rendered = int_to_prefixed_base_string(&args[0], 8, "0o")
+                    .ok_or_else(|| RuntimeError::new("oct() argument must be an integer"))?;
+                Ok(Value::Str(rendered))
+            }
+            BuiltinFunction::Hex => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("hex() expects one argument"));
+                }
+                let rendered = int_to_prefixed_base_string(&args[0], 16, "0x")
+                    .ok_or_else(|| RuntimeError::new("hex() argument must be an integer"))?;
+                Ok(Value::Str(rendered))
             }
             BuiltinFunction::Abs => {
                 if args.len() != 1 {
@@ -4896,6 +4923,46 @@ fn value_to_float(value: Value) -> Result<f64, RuntimeError> {
             .parse::<f64>()
             .map_err(|_| RuntimeError::new("invalid float literal")),
         _ => Err(RuntimeError::new("expected numeric value")),
+    }
+}
+
+fn int_to_prefixed_base_string(value: &Value, radix: u32, prefix: &str) -> Option<String> {
+    match value {
+        Value::Bool(flag) => {
+            if *flag {
+                Some(format!("{prefix}1"))
+            } else {
+                Some(format!("{prefix}0"))
+            }
+        }
+        Value::Int(number) => {
+            let negative = *number < 0;
+            let magnitude = if negative {
+                ((*number as i128).wrapping_neg()) as u128
+            } else {
+                *number as u128
+            };
+            let digits = match radix {
+                2 => format!("{magnitude:b}"),
+                8 => format!("{magnitude:o}"),
+                16 => format!("{magnitude:x}"),
+                _ => return None,
+            };
+            if negative {
+                Some(format!("-{prefix}{digits}"))
+            } else {
+                Some(format!("{prefix}{digits}"))
+            }
+        }
+        Value::BigInt(number) => {
+            let text = number.to_str_radix(radix)?;
+            if let Some(rest) = text.strip_prefix('-') {
+                Some(format!("-{prefix}{rest}"))
+            } else {
+                Some(format!("{prefix}{text}"))
+            }
+        }
+        _ => None,
     }
 }
 

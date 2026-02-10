@@ -1433,6 +1433,33 @@ h = int(3.9)\n";
 }
 
 #[test]
+fn executes_bin_oct_hex_builtins() {
+    let source = "a = bin(5)\n\
+b = oct(8)\n\
+c = hex(255)\n\
+d = hex(-255)\n\
+e = hex(True)\n\
+f = hex(2**200)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Str("0b101".to_string())));
+    assert_eq!(vm.get_global("b"), Some(Value::Str("0o10".to_string())));
+    assert_eq!(vm.get_global("c"), Some(Value::Str("0xff".to_string())));
+    assert_eq!(vm.get_global("d"), Some(Value::Str("-0xff".to_string())));
+    assert_eq!(vm.get_global("e"), Some(Value::Str("0x1".to_string())));
+    match vm.get_global("f") {
+        Some(Value::Str(text)) => {
+            assert!(text.starts_with("0x1"));
+            assert!(text.len() > 10);
+        }
+        other => panic!("expected hex string for large int, got {other:?}"),
+    }
+}
+
+#[test]
 fn executes_abs_builtin() {
     let source = "a = abs(-3)\n\
 b = abs(True)\n\

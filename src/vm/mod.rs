@@ -37394,6 +37394,12 @@ impl Vm {
         self.builtins
             .insert("chr".to_string(), Value::Builtin(BuiltinFunction::Chr));
         self.builtins
+            .insert("bin".to_string(), Value::Builtin(BuiltinFunction::Bin));
+        self.builtins
+            .insert("oct".to_string(), Value::Builtin(BuiltinFunction::Oct));
+        self.builtins
+            .insert("hex".to_string(), Value::Builtin(BuiltinFunction::Hex));
+        self.builtins
             .insert("abs".to_string(), Value::Builtin(BuiltinFunction::Abs));
         self.builtins
             .insert("sum".to_string(), Value::Builtin(BuiltinFunction::Sum));
