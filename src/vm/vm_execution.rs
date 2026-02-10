@@ -263,6 +263,7 @@ impl Vm {
                             (frame.function_globals.id(), frame.function_globals_version)
                         };
                         let mut value = None;
+                        let mut fused_candidate: Option<(usize, usize)> = None;
                         if let Some(frame) = self.frames.last() {
                             if let Some(entry) = frame.load_global_inline_cache.get(site_index) {
                                 if let Some(cached) = entry {
@@ -271,6 +272,12 @@ impl Vm {
                                         && cached.builtins_version == self.builtins_version
                                     {
                                         value = Some(cached.value.clone());
+                                        if let (Some(local_idx), Some(const_idx)) =
+                                            (cached.fused_local_idx, cached.fused_const_idx)
+                                        {
+                                            fused_candidate =
+                                                Some((local_idx as usize, const_idx as usize));
+                                        }
                                     }
                                 }
                             }
@@ -278,6 +285,10 @@ impl Vm {
                         let value = if let Some(value) = value {
                             value
                         } else {
+                            #[cfg(not(debug_assertions))]
+                            if !push_null {
+                                fused_candidate = self.fused_global_fast_sub_call_one_arg_pattern();
+                            }
                             let (value, cacheable, globals_module_id, globals_version) = {
                                 let frame = self.frames.last().expect("frame exists");
                                 let name = frame
@@ -330,6 +341,12 @@ impl Vm {
                                             globals_version,
                                             builtins_version: self.builtins_version,
                                             value: value.clone(),
+                                            fused_local_idx: fused_candidate
+                                                .as_ref()
+                                                .map(|(local_idx, _)| *local_idx as u32),
+                                            fused_const_idx: fused_candidate
+                                                .as_ref()
+                                                .map(|(_, const_idx)| *const_idx as u32),
                                         });
                                     }
                                 }
@@ -344,9 +361,7 @@ impl Vm {
                         #[cfg(not(debug_assertions))]
                         {
                             if !push_null {
-                                if let Some((local_idx, const_idx)) =
-                                    self.fused_global_fast_sub_call_one_arg_pattern()
-                                {
+                                if let Some((local_idx, const_idx)) = fused_candidate {
                                     if let Value::Function(func_obj) = &value {
                                         let caller_idx = self.frames.len().saturating_sub(1);
                                         let left_fast = {

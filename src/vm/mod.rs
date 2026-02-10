@@ -295,6 +295,8 @@ struct LoadGlobalSiteCacheEntry {
     globals_version: u64,
     builtins_version: u64,
     value: Value,
+    fused_local_idx: Option<u32>,
+    fused_const_idx: Option<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
