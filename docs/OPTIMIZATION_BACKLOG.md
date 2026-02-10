@@ -21,7 +21,7 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.98s` user-time (`~0.99-1.00s` wall, warm) for the `fib(29)x5` gate
+  - ~`0.95s` user-time (`~0.96s` wall, warm) for the `fib(29)x5` gate
   - ~`0.24s` user-time for `print(fib(29))` single-run reference
 
 ## CPython Reference Map
@@ -113,4 +113,5 @@ Last updated: 2026-02-11
 - Latest dispatch checkpoint:
   - `LoadFast` now classifies quickening sites once (`LoadFastPlain` vs `LoadFastCompareLtConstJump`) and stores fused compare-jump metadata in per-site frame cache, removing repeated pattern-scan overhead at hot load sites,
   - conservative `LoadFast -> ReturnValue` fast-return fusion landed for strict clean one-arg no-cells frames,
-  - benchmark gate remains roughly flat (`~0.98s` user), confirming remaining bottleneck is frame/call churn + eval-loop dispatch rather than compare-jump probing.
+  - `RETURN_VALUE` path now uses direct frame-local stack pops (removing `pop_value().unwrap_or(...)` overhead),
+  - benchmark improved modestly to about `0.95s` user; dominant bottleneck remains frame/call churn + eval-loop dispatch.

@@ -4089,14 +4089,20 @@ impl Vm {
                             }
                         };
                         if simple_fast_return {
-                            let value = self.pop_value().unwrap_or(Value::None);
+                            let value = {
+                                let frame = self.frames.last_mut().expect("frame exists");
+                                frame.stack.pop().unwrap_or(Value::None)
+                            };
                             let frame = self.frames.pop().expect("frame exists");
                             let caller = self.frames.last_mut().expect("caller frame exists");
                             caller.stack.push(value);
                             self.recycle_simple_frame_clean(frame);
                             return Ok(None);
                         }
-                        let value = self.pop_value().unwrap_or(Value::None);
+                        let value = {
+                            let frame = self.frames.last_mut().expect("frame exists");
+                            frame.stack.pop().unwrap_or(Value::None)
+                        };
                         let mut frame = self.frames.pop().expect("frame exists");
                         if let Some(module_dict) = frame.module_locals_dict.take() {
                             self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
