@@ -5197,50 +5197,51 @@ fn bind_arguments(
     })
 }
 
+fn assign_binding(frame: &mut Frame, code: &CodeObject, name: &str, value: Value) {
+    if let Some(idx) = code.cellvar_to_index.get(name).copied() {
+        if let Some(cell) = frame.cells.get(idx) {
+            if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                cell_data.value = Some(value);
+                return;
+            }
+        }
+    }
+    if let Some(slot_idx) = code.name_to_index.get(name).copied() {
+        if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+            *slot = Some(value.clone());
+        }
+        // Fast locals are authoritative; keep dict-style locals sparse.
+        if let Some(existing) = frame.locals.get_mut(name) {
+            *existing = value;
+        }
+        return;
+    }
+    frame.locals.insert(name.to_string(), value);
+}
+
 fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments, heap: &Heap) {
-    let mut assign = |name: &str, value: Value| {
-        if let Some(idx) = code.cellvar_to_index.get(name).copied() {
-            if let Some(cell) = frame.cells.get(idx) {
-                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
-                    cell_data.value = Some(value);
-                    return;
-                }
-            }
-        }
-        if let Some(slot_idx) = code.name_to_index.get(name).copied() {
-            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
-                *slot = Some(value.clone());
-            }
-            // Fast locals are authoritative; keep dict-style locals sparse.
-            if let Some(existing) = frame.locals.get_mut(name) {
-                *existing = value;
-            }
-            return;
-        }
-        frame.locals.insert(name.to_string(), value);
-    };
     for (name, value) in code.posonly_params.iter().zip(bindings.posonly.into_iter()) {
-        assign(name, value);
+        assign_binding(frame, code, name, value);
     }
     for (name, value) in code.params.iter().zip(bindings.positional.into_iter()) {
-        assign(name, value);
+        assign_binding(frame, code, name, value);
     }
     for (name, value) in code.kwonly_params.iter().zip(bindings.kwonly.into_iter()) {
-        assign(name, value);
+        assign_binding(frame, code, name, value);
     }
 
     if let Some(name) = code.vararg.as_ref() {
         let value = bindings
             .vararg
             .unwrap_or_else(|| heap.alloc_tuple(Vec::new()));
-        assign(name, value);
+        assign_binding(frame, code, name, value);
     }
 
     if let Some(name) = code.kwarg.as_ref() {
         let value = bindings
             .kwarg
             .unwrap_or_else(|| heap.alloc_dict(Vec::new()));
-        assign(name, value);
+        assign_binding(frame, code, name, value);
     }
 }
 

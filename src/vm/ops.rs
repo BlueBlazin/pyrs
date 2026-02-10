@@ -29,6 +29,31 @@ fn int_like_to_bigint(value: &Value) -> Option<BigInt> {
     }
 }
 
+#[inline]
+fn int_like_to_i64(value: &Value) -> Option<i64> {
+    match value {
+        Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
+        Value::Int(number) => Some(*number),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_int_storage__")
+            {
+                Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
+                Some(Value::Int(number)) => Some(*number),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[inline]
+fn integer_i64_pair(left: &Value, right: &Value) -> Option<(i64, i64)> {
+    let left = int_like_to_i64(left)?;
+    let right = int_like_to_i64(right)?;
+    Some((left, right))
+}
+
 fn integer_pair(left: &Value, right: &Value) -> Option<(BigInt, BigInt)> {
     let left = int_like_to_bigint(left)?;
     let right = int_like_to_bigint(right)?;
@@ -43,14 +68,28 @@ fn bigint_to_value(value: BigInt) -> Value {
 }
 
 pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = integer_i64_pair(&left, &right) {
+        if let Some(sum) = left.checked_add(right) {
+            return Ok(Value::Int(sum));
+        }
+        return Ok(bigint_to_value(
+            BigInt::from_i64(left).add(&BigInt::from_i64(right)),
+        ));
+    }
     if let Some((left, right)) = integer_pair(&left, &right) {
         return Ok(bigint_to_value(left.add(&right)));
     }
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return match (left, right) {
-            (NumericValue::Int(left), NumericValue::Int(right)) => Ok(bigint_to_value(
-                BigInt::from_i64(left).add(&BigInt::from_i64(right)),
-            )),
+            (NumericValue::Int(left), NumericValue::Int(right)) => {
+                if let Some(sum) = left.checked_add(right) {
+                    Ok(Value::Int(sum))
+                } else {
+                    Ok(bigint_to_value(
+                        BigInt::from_i64(left).add(&BigInt::from_i64(right)),
+                    ))
+                }
+            }
             (left, right) => Ok(Value::Float(numeric_as_f64(left) + numeric_as_f64(right))),
         };
     }
@@ -140,13 +179,27 @@ pub(super) fn sub_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         }
         return set_op_result(left, difference, heap);
     }
+    if let Some((left, right)) = integer_i64_pair(&left, &right) {
+        if let Some(difference) = left.checked_sub(right) {
+            return Ok(Value::Int(difference));
+        }
+        return Ok(bigint_to_value(
+            BigInt::from_i64(left).sub(&BigInt::from_i64(right)),
+        ));
+    }
     if let Some((left, right)) = integer_pair(&left, &right) {
         return Ok(bigint_to_value(left.sub(&right)));
     }
     match numeric_pair(&left, &right) {
-        Some((NumericValue::Int(left), NumericValue::Int(right))) => Ok(bigint_to_value(
-            BigInt::from_i64(left).sub(&BigInt::from_i64(right)),
-        )),
+        Some((NumericValue::Int(left), NumericValue::Int(right))) => {
+            if let Some(difference) = left.checked_sub(right) {
+                Ok(Value::Int(difference))
+            } else {
+                Ok(bigint_to_value(
+                    BigInt::from_i64(left).sub(&BigInt::from_i64(right)),
+                ))
+            }
+        }
         Some((left, right)) => Ok(Value::Float(numeric_as_f64(left) - numeric_as_f64(right))),
         None => Err(RuntimeError::new("unsupported operand type for -")),
     }
@@ -163,6 +216,9 @@ pub(super) fn div_values(left: Value, right: Value) -> Result<Value, RuntimeErro
 }
 
 pub(super) fn floor_div_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = integer_i64_pair(&left, &right) {
+        return Ok(Value::Int(python_floor_div(left, right)?));
+    }
     if let Some((left, right)) = integer_pair(&left, &right) {
         let (quotient, _) = left
             .div_mod_floor(&right)
@@ -188,6 +244,9 @@ pub(super) fn floor_div_values(left: Value, right: Value) -> Result<Value, Runti
 pub(super) fn mod_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
     if let Value::Str(format) = left {
         return string_percent_format(&format, right).map(Value::Str);
+    }
+    if let Some((left, right)) = integer_i64_pair(&left, &right) {
+        return Ok(Value::Int(python_mod(left, right)?));
     }
     if let Some((left, right)) = integer_pair(&left, &right) {
         let (_, remainder) = left
@@ -929,6 +988,9 @@ pub(super) fn ordering_from_cmp_value(value: Value) -> Result<Ordering, RuntimeE
 }
 
 pub(super) fn compare_order(left: Value, right: Value) -> Result<Ordering, RuntimeError> {
+    if let Some((left, right)) = integer_i64_pair(&left, &right) {
+        return Ok(left.cmp(&right));
+    }
     if let Some((left, right)) = integer_pair(&left, &right) {
         return Ok(left.cmp_total(&right));
     }
@@ -1185,14 +1247,28 @@ fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
+    if let Some((left, right)) = integer_i64_pair(&left, &right) {
+        if let Some(product) = left.checked_mul(right) {
+            return Ok(Value::Int(product));
+        }
+        return Ok(bigint_to_value(
+            BigInt::from_i64(left).mul(&BigInt::from_i64(right)),
+        ));
+    }
     if let Some((left, right)) = integer_pair(&left, &right) {
         return Ok(bigint_to_value(left.mul(&right)));
     }
     if let Some((left, right)) = numeric_pair(&left, &right) {
         return match (left, right) {
-            (NumericValue::Int(left), NumericValue::Int(right)) => Ok(bigint_to_value(
-                BigInt::from_i64(left).mul(&BigInt::from_i64(right)),
-            )),
+            (NumericValue::Int(left), NumericValue::Int(right)) => {
+                if let Some(product) = left.checked_mul(right) {
+                    Ok(Value::Int(product))
+                } else {
+                    Ok(bigint_to_value(
+                        BigInt::from_i64(left).mul(&BigInt::from_i64(right)),
+                    ))
+                }
+            }
             (left, right) => Ok(Value::Float(numeric_as_f64(left) * numeric_as_f64(right))),
         };
     }

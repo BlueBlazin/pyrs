@@ -1927,107 +1927,23 @@ impl Vm {
                             .arg
                             .ok_or_else(|| RuntimeError::new("missing call argument"))?
                             as usize;
-                        let mut args = Vec::with_capacity(argc);
-                        for _ in 0..argc {
-                            args.push(self.pop_value()?);
-                        }
-                        args.reverse();
-                        let func = self.pop_value()?;
-                        match func {
-                            Value::Function(func) => {
-                                self.push_function_call_from_obj(&func, args, HashMap::new())?;
-                            }
-                            Value::BoundMethod(method) => {
-                                let method_data = match &*method.kind() {
-                                    Object::BoundMethod(data) => data.clone(),
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attempted to call non-function",
-                                        ));
-                                    }
-                                };
-                                match &*method_data.function.kind() {
-                                    Object::Function(_) => {
-                                        let mut bound_args = Vec::with_capacity(args.len() + 1);
-                                        bound_args
-                                            .push(self.receiver_value(&method_data.receiver)?);
-                                        bound_args.extend(args);
-                                        self.push_function_call_from_obj(
-                                            &method_data.function,
-                                            bound_args,
-                                            HashMap::new(),
-                                        )?;
-                                    }
-                                    Object::NativeMethod(native) => {
-                                        let caller_depth = self.frames.len();
-                                        let caller_idx = caller_depth.saturating_sub(1);
-                                        let caller_ip = self
-                                            .frames
-                                            .get(caller_idx)
-                                            .map(|frame| frame.ip)
-                                            .unwrap_or(0);
-                                        let call_result = self.call_native_method(
-                                            native.kind,
-                                            method_data.receiver.clone(),
-                                            args,
-                                            HashMap::new(),
-                                        );
-                                        self.finalize_native_opcode_call(
-                                            caller_depth,
-                                            caller_ip,
-                                            call_result,
-                                        )?;
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "attempted to call non-function",
-                                        ));
-                                    }
+                        if argc == 1 {
+                            let arg0 = self.pop_value()?;
+                            let func = self.pop_value()?;
+                            match func {
+                                Value::Function(func_obj) => {
+                                    self.push_function_call_one_arg_from_obj(&func_obj, arg0)?;
                                 }
+                                other => self.dispatch_call_no_kwargs(other, vec![arg0])?,
                             }
-                            Value::Class(class) => {
-                                match self.call_internal(
-                                    Value::Class(class),
-                                    args,
-                                    HashMap::new(),
-                                )? {
-                                    InternalCallOutcome::Value(value) => self.push_value(value),
-                                    InternalCallOutcome::CallerExceptionHandled => {}
-                                }
+                        } else {
+                            let mut args = Vec::with_capacity(argc);
+                            for _ in 0..argc {
+                                args.push(self.pop_value()?);
                             }
-                            Value::Builtin(builtin) => {
-                                let caller_depth = self.frames.len();
-                                let caller_idx = caller_depth.saturating_sub(1);
-                                let caller_ip = self
-                                    .frames
-                                    .get(caller_idx)
-                                    .map(|frame| frame.ip)
-                                    .unwrap_or(0);
-                                let call_result = self.call_builtin(builtin, args, HashMap::new());
-                                self.finalize_builtin_opcode_call(
-                                    caller_depth,
-                                    caller_ip,
-                                    call_result,
-                                )?;
-                            }
-                            Value::Instance(instance) => {
-                                let receiver = Value::Instance(instance.clone());
-                                let call_target = self
-                                    .lookup_bound_special_method(&receiver, "__call__")?
-                                    .ok_or_else(|| {
-                                        RuntimeError::new("attempted to call non-function")
-                                    })?;
-                                match self.call_internal(call_target, args, HashMap::new())? {
-                                    InternalCallOutcome::Value(value) => self.push_value(value),
-                                    InternalCallOutcome::CallerExceptionHandled => {}
-                                }
-                            }
-                            Value::ExceptionType(name) => {
-                                let value =
-                                    self.instantiate_exception_type(&name, &args, &HashMap::new())?;
-                                self.push_value(value);
-                            }
-                            _ => return Err(RuntimeError::new("attempted to call non-function")),
+                            args.reverse();
+                            let func = self.pop_value()?;
+                            self.dispatch_call_no_kwargs(func, args)?;
                         }
                     }
                     Opcode::CallCpython => {
@@ -4097,25 +4013,21 @@ impl Vm {
     }
 
     pub(super) fn pop_value(&mut self) -> Result<Value, RuntimeError> {
-        let (frame_name, ip, opcode_name) = if let Some(frame) = self.frames.last() {
-            let ip = frame.ip.saturating_sub(1);
-            let opcode_name = frame
-                .code
-                .instructions
-                .get(ip)
-                .map(|instr| format!("{:?}", instr.opcode))
-                .unwrap_or_else(|| "<unknown>".to_string());
-            (frame.code.name.clone(), ip, opcode_name)
-        } else {
-            ("<no-frame>".to_string(), 0, "<no-frame>".to_string())
-        };
         let frame = self.frames.last_mut().expect("frame exists");
-        frame.stack.pop().ok_or_else(|| {
-            RuntimeError::new(format!(
-                "stack underflow (pop_value) in frame '{}' at ip {} opcode {}",
-                frame_name, ip, opcode_name
-            ))
-        })
+        if let Some(value) = frame.stack.pop() {
+            return Ok(value);
+        }
+        let ip = frame.ip.saturating_sub(1);
+        let opcode_name = frame
+            .code
+            .instructions
+            .get(ip)
+            .map(|instr| format!("{:?}", instr.opcode))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        Err(RuntimeError::new(format!(
+            "stack underflow (pop_value) in frame '{}' at ip {} opcode {}",
+            frame.code.name, ip, opcode_name
+        )))
     }
 
     pub(super) fn push_value(&mut self, value: Value) {
@@ -4363,28 +4275,317 @@ impl Vm {
         }
     }
 
+    fn dispatch_call_no_kwargs(&mut self, func: Value, args: Vec<Value>) -> Result<(), RuntimeError> {
+        match func {
+            Value::Function(func) => {
+                self.push_function_call_from_obj(&func, args, HashMap::new())?;
+            }
+            Value::BoundMethod(method) => {
+                let method_data = match &*method.kind() {
+                    Object::BoundMethod(data) => data.clone(),
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                };
+                match &*method_data.function.kind() {
+                    Object::Function(_) => {
+                        let mut bound_args = Vec::with_capacity(args.len() + 1);
+                        bound_args.push(self.receiver_value(&method_data.receiver)?);
+                        bound_args.extend(args);
+                        self.push_function_call_from_obj(
+                            &method_data.function,
+                            bound_args,
+                            HashMap::new(),
+                        )?;
+                    }
+                    Object::NativeMethod(native) => {
+                        let caller_depth = self.frames.len();
+                        let caller_idx = caller_depth.saturating_sub(1);
+                        let caller_ip = self
+                            .frames
+                            .get(caller_idx)
+                            .map(|frame| frame.ip)
+                            .unwrap_or(0);
+                        let call_result = self.call_native_method(
+                            native.kind,
+                            method_data.receiver.clone(),
+                            args,
+                            HashMap::new(),
+                        );
+                        self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)?;
+                    }
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                }
+            }
+            Value::Class(class) => {
+                match self.call_internal(Value::Class(class), args, HashMap::new())? {
+                    InternalCallOutcome::Value(value) => self.push_value(value),
+                    InternalCallOutcome::CallerExceptionHandled => {}
+                }
+            }
+            Value::Builtin(builtin) => {
+                let caller_depth = self.frames.len();
+                let caller_idx = caller_depth.saturating_sub(1);
+                let caller_ip = self
+                    .frames
+                    .get(caller_idx)
+                    .map(|frame| frame.ip)
+                    .unwrap_or(0);
+                let call_result = self.call_builtin(builtin, args, HashMap::new());
+                self.finalize_builtin_opcode_call(caller_depth, caller_ip, call_result)?;
+            }
+            Value::Instance(instance) => {
+                let receiver = Value::Instance(instance.clone());
+                let call_target = self
+                    .lookup_bound_special_method(&receiver, "__call__")?
+                    .ok_or_else(|| RuntimeError::new("attempted to call non-function"))?;
+                match self.call_internal(call_target, args, HashMap::new())? {
+                    InternalCallOutcome::Value(value) => self.push_value(value),
+                    InternalCallOutcome::CallerExceptionHandled => {}
+                }
+            }
+            Value::ExceptionType(name) => {
+                let value = self.instantiate_exception_type(&name, &args, &HashMap::new())?;
+                self.push_value(value);
+            }
+            _ => return Err(RuntimeError::new("attempted to call non-function")),
+        }
+        Ok(())
+    }
+
+    fn push_function_call_one_arg_from_obj(
+        &mut self,
+        func: &ObjRef,
+        arg0: Value,
+    ) -> Result<(), RuntimeError> {
+        let (code, module, closure, owner_class, simple_positional_path) = {
+            let func_kind = func.kind();
+            let func_data = match &*func_kind {
+                Object::Function(data) => data,
+                _ => return Err(RuntimeError::new("attempted to call non-function")),
+            };
+            let code = func_data.code.clone();
+            let total_positional = code.posonly_params.len() + code.params.len();
+            let simple_positional_path = func_data.defaults.is_empty()
+                && func_data.kwonly_defaults.is_empty()
+                && code.kwonly_params.is_empty()
+                && code.vararg.is_none()
+                && code.kwarg.is_none()
+                && total_positional == 1;
+            (
+                code,
+                func_data.module.clone(),
+                func_data.closure.clone(),
+                func_data.owner_class.clone(),
+                simple_positional_path,
+            )
+        };
+        if simple_positional_path {
+            return self.push_simple_positional_function_frame_one_arg(
+                code,
+                module,
+                owner_class,
+                closure,
+                arg0,
+            );
+        }
+        self.push_function_call_from_obj(func, vec![arg0], HashMap::new())
+    }
+
+    fn push_simple_positional_function_frame_one_arg(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+        closure: Vec<ObjRef>,
+        arg0: Value,
+    ) -> Result<(), RuntimeError> {
+        let cells = self.build_cells(&code, closure);
+        let caller_active_exception = self
+            .frames
+            .last()
+            .and_then(|frame| frame.active_exception.clone());
+        let mut frame = Frame::new(
+            code.clone(),
+            module.clone(),
+            false,
+            false,
+            cells,
+            owner_class,
+        );
+        frame.active_exception = caller_active_exception;
+        if is_comprehension_code(&code) {
+            if let Some(caller) = self.frames.last() {
+                if caller.return_class && caller.module.id() == module.id() {
+                    frame.globals_fallback = Some(caller.function_globals.clone());
+                }
+            }
+        }
+
+        if let Some(cell_idx) = code.positional_param_cell_indexes.get(0).and_then(|idx| *idx) {
+            if let Some(cell) = frame.cells.get(cell_idx) {
+                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                    cell_data.value = Some(arg0);
+                }
+            }
+        } else if let Some(slot_idx) = code.positional_param_slot_indexes.get(0).and_then(|idx| *idx)
+        {
+            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                *slot = Some(arg0);
+            }
+        } else if let Some(name) = code
+            .posonly_params
+            .first()
+            .or_else(|| code.params.first())
+            .cloned()
+        {
+            frame.locals.insert(name, arg0);
+        }
+
+        if code.is_generator {
+            let generator = match self.heap.alloc_generator(GeneratorObject::new(
+                code.is_coroutine,
+                code.is_async_generator,
+            )) {
+                Value::Generator(obj) => obj,
+                _ => unreachable!(),
+            };
+            frame.generator_owner = Some(generator.clone());
+            self.generator_states.insert(generator.id(), frame);
+            self.push_value(Value::Generator(generator));
+            return Ok(());
+        }
+        self.frames.push(frame);
+        Ok(())
+    }
+
     pub(super) fn push_function_call_from_obj(
         &mut self,
         func: &ObjRef,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<(), RuntimeError> {
-        let (bindings, code, module, closure, owner_class) = {
+        let (code, module, closure, owner_class, simple_positional_path) = {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
+            let code = func_data.code.clone();
+            let total_positional = code.posonly_params.len() + code.params.len();
+            let simple_positional_path = kwargs.is_empty()
+                && func_data.defaults.is_empty()
+                && func_data.kwonly_defaults.is_empty()
+                && code.kwonly_params.is_empty()
+                && code.vararg.is_none()
+                && code.kwarg.is_none()
+                && args.len() == total_positional;
             (
-                bind_arguments(func_data, &self.heap, args, kwargs)?,
-                func_data.code.clone(),
+                code,
                 func_data.module.clone(),
                 func_data.closure.clone(),
                 func_data.owner_class.clone(),
+                simple_positional_path,
             )
+        };
+        if simple_positional_path {
+            return self.push_simple_positional_function_frame(
+                code,
+                module,
+                owner_class,
+                closure,
+                args,
+            );
+        }
+        let bindings = {
+            let func_kind = func.kind();
+            let func_data = match &*func_kind {
+                Object::Function(data) => data,
+                _ => return Err(RuntimeError::new("attempted to call non-function")),
+            };
+            bind_arguments(func_data, &self.heap, args, kwargs)?
         };
         let cells = self.build_cells(&code, closure);
         self.push_function_frame(code, module, owner_class, bindings, cells)
+    }
+
+    fn push_simple_positional_function_frame(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+        closure: Vec<ObjRef>,
+        args: Vec<Value>,
+    ) -> Result<(), RuntimeError> {
+        let cells = self.build_cells(&code, closure);
+        let caller_active_exception = self
+            .frames
+            .last()
+            .and_then(|frame| frame.active_exception.clone());
+        let mut frame = Frame::new(
+            code.clone(),
+            module.clone(),
+            false,
+            false,
+            cells,
+            owner_class,
+        );
+        frame.active_exception = caller_active_exception;
+        if is_comprehension_code(&code) {
+            if let Some(caller) = self.frames.last() {
+                if caller.return_class && caller.module.id() == module.id() {
+                    frame.globals_fallback = Some(caller.function_globals.clone());
+                }
+            }
+        }
+
+        let posonly_len = code.posonly_params.len();
+        for (arg_idx, value) in args.into_iter().enumerate() {
+            if let Some(cell_idx) = code
+                .positional_param_cell_indexes
+                .get(arg_idx)
+                .and_then(|idx| *idx)
+            {
+                if let Some(cell) = frame.cells.get(cell_idx) {
+                    if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                        cell_data.value = Some(value);
+                        continue;
+                    }
+                }
+            }
+            if let Some(slot_idx) = code
+                .positional_param_slot_indexes
+                .get(arg_idx)
+                .and_then(|idx| *idx)
+            {
+                if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                    *slot = Some(value);
+                    continue;
+                }
+            }
+            let fallback_name = if arg_idx < posonly_len {
+                code.posonly_params.get(arg_idx)
+            } else {
+                code.params.get(arg_idx - posonly_len)
+            };
+            if let Some(name) = fallback_name {
+                frame.locals.insert(name.clone(), value);
+            }
+        }
+
+        if code.is_generator {
+            let generator = match self.heap.alloc_generator(GeneratorObject::new(
+                code.is_coroutine,
+                code.is_async_generator,
+            )) {
+                Value::Generator(obj) => obj,
+                _ => unreachable!(),
+            };
+            frame.generator_owner = Some(generator.clone());
+            self.generator_states.insert(generator.id(), frame);
+            self.push_value(Value::Generator(generator));
+            return Ok(());
+        }
+        self.frames.push(frame);
+        Ok(())
     }
 
     fn push_function_frame(
