@@ -25,7 +25,7 @@ Status values:
 |---|---|---|---|---|---|
 | AQ-101 | Hash-container growth policy | Throughput stability | Dict backend moved to open addressing; tuning remains | Load-factor/growth policy tuning with adversarial tests and benchmarks | IN_PROGRESS |
 | AQ-102 | Clone pressure in hot paths | Throughput + memory churn | Clone audit tooling exists; hotspots remain | Reduce avoidable full-data clones and add perf sentinels | IN_PROGRESS |
-| AQ-103 | VM monolith reviewability | Defect risk | Some extractions landed; `src/vm/mod.rs` still large | Continue concern-based extraction with behavior-preserving tests | IN_PROGRESS |
+| AQ-103 | VM monolith reviewability | Defect risk | Major split landed: `src/vm/mod.rs` reduced from ~43k to ~6.5k with domain `impl Vm` files; further tightening still needed | Continue concern-based extraction with behavior-preserving tests and keep clone hotspots moving out of central dispatch paths | IN_PROGRESS |
 
 ## Audit Procedure
 1. Add minimal repro test (and CPython differential test when applicable).
