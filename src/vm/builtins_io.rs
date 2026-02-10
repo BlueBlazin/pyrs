@@ -1,0 +1,2940 @@
+impl Vm {
+    fn builtin_io_open(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 8 {
+            return Err(RuntimeError::new("open() expected at most 8 arguments"));
+        }
+
+        let file_arg = args.remove(0);
+        let mut mode_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut buffering_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut encoding_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut errors_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut newline_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut closefd_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut opener_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new("open() expected at most 8 arguments"));
+        }
+
+        if let Some(value) = kwargs.remove("mode") {
+            if mode_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for mode"));
+            }
+            mode_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("buffering") {
+            if buffering_arg.is_some() {
+                return Err(RuntimeError::new(
+                    "open() got multiple values for buffering",
+                ));
+            }
+            buffering_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("encoding") {
+            if encoding_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for encoding"));
+            }
+            encoding_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("errors") {
+            if errors_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for errors"));
+            }
+            errors_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("newline") {
+            if newline_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for newline"));
+            }
+            newline_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("closefd") {
+            if closefd_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for closefd"));
+            }
+            closefd_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("opener") {
+            if opener_arg.is_some() {
+                return Err(RuntimeError::new("open() got multiple values for opener"));
+            }
+            opener_arg = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "open() got an unexpected keyword argument",
+            ));
+        }
+
+        let mut mode = match mode_arg.unwrap_or(Value::Str("r".to_string())) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("open() mode must be str")),
+        };
+        // Keep mode validation close to CPython's _io_open_impl in Modules/_io/_iomodule.c.
+        let mut creating = false;
+        let mut reading = false;
+        let mut writing = false;
+        let mut appending = false;
+        let mut updating = false;
+        let mut text_mode = false;
+        let mut binary_mode = false;
+        for ch in mode.chars() {
+            match ch {
+                'x' => {
+                    if creating {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    creating = true;
+                }
+                'r' => {
+                    if reading {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    reading = true;
+                }
+                'w' => {
+                    if writing {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    writing = true;
+                }
+                'a' => {
+                    if appending {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    appending = true;
+                }
+                '+' => {
+                    if updating {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    updating = true;
+                }
+                't' => {
+                    if text_mode {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    text_mode = true;
+                }
+                'b' => {
+                    if binary_mode {
+                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                    }
+                    binary_mode = true;
+                }
+                _ => return Err(RuntimeError::new(format!("invalid mode: '{mode}'"))),
+            }
+        }
+
+        if text_mode && binary_mode {
+            return Err(RuntimeError::new("can't have text and binary mode at once"));
+        }
+        let mode_kind_count = creating as u8 + reading as u8 + writing as u8 + appending as u8;
+        if mode_kind_count != 1 {
+            return Err(RuntimeError::new(
+                "must have exactly one of create/read/write/append mode",
+            ));
+        }
+        let mode_kind = if creating {
+            'x'
+        } else if reading {
+            'r'
+        } else if writing {
+            'w'
+        } else {
+            'a'
+        };
+        if binary_mode && updating {
+            mode = match mode_kind {
+                'a' => "ab+".to_string(),
+                'x' => "xb+".to_string(),
+                _ => "rb+".to_string(),
+            };
+        }
+
+        let mut buffering = value_to_int(buffering_arg.unwrap_or(Value::Int(-1)))?;
+        if buffering < -1 {
+            return Err(RuntimeError::new("invalid buffering size"));
+        }
+        if binary_mode && buffering == 1 {
+            // CPython emits RuntimeWarning and falls back to default buffering.
+            buffering = -1;
+        }
+        if buffering == 0 && !binary_mode {
+            return Err(RuntimeError::new("can't have unbuffered text I/O"));
+        }
+
+        let encoding = match encoding_arg.unwrap_or(Value::None) {
+            Value::None => None,
+            Value::Str(value) => Some(value),
+            _ => return Err(RuntimeError::new("open() encoding must be str or None")),
+        };
+        let errors = match errors_arg.unwrap_or(Value::None) {
+            Value::None => None,
+            Value::Str(value) => Some(value),
+            _ => return Err(RuntimeError::new("open() errors must be str or None")),
+        };
+        let newline = match newline_arg.unwrap_or(Value::None) {
+            Value::None => None,
+            Value::Str(value) => Some(value),
+            _ => return Err(RuntimeError::new("open() newline must be str or None")),
+        };
+        if let Some(value) = newline.as_deref() {
+            if !matches!(value, "" | "\n" | "\r" | "\r\n") {
+                return Err(RuntimeError::new(format!("illegal newline value: {value}")));
+            }
+        }
+        if binary_mode && encoding.is_some() {
+            return Err(RuntimeError::new(
+                "binary mode doesn't take an encoding argument",
+            ));
+        }
+        if binary_mode && errors.is_some() {
+            return Err(RuntimeError::new("binary mode doesn't take an errors argument"));
+        }
+        if binary_mode && newline.is_some() {
+            return Err(RuntimeError::new("binary mode doesn't take a newline argument"));
+        }
+        if let Some(encoding_name) = encoding.as_ref() {
+            self.ensure_known_text_encoding(encoding_name)?;
+        }
+        let closefd = is_truthy(&closefd_arg.unwrap_or(Value::Bool(true)));
+        let opener = opener_arg.unwrap_or(Value::None);
+
+        let opener_value = if matches!(opener, Value::None) {
+            None
+        } else {
+            Some(opener)
+        };
+
+        let fd = match file_arg {
+            Value::Int(fd) => {
+                if fd < 0 {
+                    return Err(RuntimeError::new("bad file descriptor"));
+                }
+                if self.find_open_file(fd).is_none() && fd > 2 {
+                    return Err(RuntimeError::new("bad file descriptor"));
+                }
+                fd
+            }
+            Value::Bool(flag) => {
+                let fd = if flag { 1 } else { 0 };
+                if self.find_open_file(fd).is_none() && fd > 2 {
+                    return Err(RuntimeError::new("bad file descriptor"));
+                }
+                fd
+            }
+            pathlike => {
+                if !closefd {
+                    return Err(RuntimeError::new("Cannot use closefd=False with file name"));
+                }
+                let path = self.io_open_path_from_value(pathlike)?;
+                if let Some(opener) = opener_value {
+                    let mut flags = if updating {
+                        2
+                    } else if mode_kind == 'r' {
+                        0
+                    } else {
+                        1
+                    };
+                    match mode_kind {
+                        'w' => {
+                            flags |= 64 | 512;
+                        }
+                        'a' => {
+                            flags |= 64 | 1024;
+                        }
+                        'x' => {
+                            flags |= 64 | 128;
+                        }
+                        _ => {}
+                    }
+                    let opener_result = match self.call_internal(
+                        opener,
+                        vec![Value::Str(path.clone()), Value::Int(flags)],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("open failed: opener callback raised"));
+                        }
+                    };
+                    let fd = value_to_int(opener_result)?;
+                    if fd < 0 {
+                        return Err(RuntimeError::new(format!("opener returned {fd}")));
+                    }
+                    if self.find_open_file(fd).is_none() && fd > 2 {
+                        return Err(RuntimeError::new("bad file descriptor"));
+                    }
+                    fd
+                } else {
+                    let mut options = fs::OpenOptions::new();
+                    match mode_kind {
+                        'r' => {
+                            options.read(true);
+                            if updating {
+                                options.write(true);
+                            }
+                        }
+                        'w' => {
+                            options.write(true).create(true).truncate(true);
+                            if updating {
+                                options.read(true);
+                            }
+                        }
+                        'a' => {
+                            options.write(true).append(true).create(true);
+                            if updating {
+                                options.read(true);
+                            }
+                        }
+                        'x' => {
+                            options.write(true).create_new(true);
+                            if updating {
+                                options.read(true);
+                            }
+                        }
+                        _ => return Err(RuntimeError::new("invalid mode")),
+                    }
+                    let file = options
+                        .open(path)
+                        .map_err(|err| RuntimeError::new(format!("open() failed: {err}")))?;
+                    self.alloc_open_fd(file)
+                }
+            }
+        };
+
+        let raw_mode = if binary_mode {
+            mode.clone()
+        } else {
+            let mut raw_mode = mode.chars().filter(|ch| *ch != 't').collect::<String>();
+            if !raw_mode.contains('b') {
+                raw_mode.push('b');
+            }
+            raw_mode
+        };
+        let raw_instance = self.alloc_io_file_instance(
+            "FileIO", fd, &raw_mode, true, closefd, None, None, None,
+        )?;
+        let buffered_instance = if buffering == 0 {
+            raw_instance.clone()
+        } else {
+            let buffered_class = if mode_kind == 'r' && !updating {
+                "BufferedReader"
+            } else if (mode_kind == 'w' || mode_kind == 'x' || mode_kind == 'a') && !updating {
+                "BufferedWriter"
+            } else {
+                "BufferedRandom"
+            };
+            let instance =
+                self.alloc_io_file_instance(buffered_class, fd, &raw_mode, true, closefd, None, None, None)?;
+            if let Value::Instance(buffer_ref) = &instance {
+                if let Value::Instance(raw_ref) = &raw_instance {
+                    Self::instance_attr_set(buffer_ref, "raw", Value::Instance(raw_ref.clone()))?;
+                }
+            }
+            instance
+        };
+        if binary_mode {
+            return Ok(buffered_instance);
+        }
+        let text_instance = self.alloc_io_file_instance(
+            "TextIOWrapper",
+            fd,
+            &mode,
+            false,
+            closefd,
+            encoding,
+            errors,
+            newline,
+        )?;
+        let line_buffering = buffering == 1;
+        if let (Value::Instance(text_ref), Value::Instance(raw_ref), Value::Instance(buffer_ref)) =
+            (&text_instance, &raw_instance, &buffered_instance)
+        {
+            Self::instance_attr_set(text_ref, "buffer", Value::Instance(buffer_ref.clone()))?;
+            Self::instance_attr_set(text_ref, "raw", Value::Instance(raw_ref.clone()))?;
+            Self::instance_attr_set(text_ref, "_line_buffering", Value::Bool(line_buffering))?;
+        }
+        Ok(text_instance)
+    }
+
+    fn ensure_known_text_encoding(&mut self, encoding: &str) -> Result<(), RuntimeError> {
+        match self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.to_string())],
+            HashMap::new(),
+        ) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(RuntimeError::new(format!(
+                "LookupError: unknown encoding: {}",
+                encoding
+            ))),
+        }
+    }
+
+    fn io_open_path_from_value(&mut self, value: Value) -> Result<String, RuntimeError> {
+        match value {
+            Value::Str(_) | Value::Bytes(_) => value_to_path(&value),
+            other => {
+                let Some(fspath) = self.lookup_bound_special_method(&other, "__fspath__")? else {
+                    return Err(RuntimeError::new(
+                        "expected str, bytes or os.PathLike object",
+                    ));
+                };
+                let path_value = match self.call_internal(fspath, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("__fspath__() raised an exception"));
+                    }
+                };
+                match path_value {
+                    Value::Str(_) | Value::Bytes(_) => value_to_path(&path_value),
+                    _ => Err(RuntimeError::new("__fspath__() must return str or bytes")),
+                }
+            }
+        }
+    }
+
+    fn builtin_io_read_text(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("read_text() expects one argument"));
+        }
+        let path = self.path_arg_to_string(args[0].clone())?;
+        let text = fs::read_to_string(path)
+            .map_err(|err| RuntimeError::new(format!("read_text failed: {err}")))?;
+        Ok(Value::Str(text))
+    }
+
+    fn builtin_io_write_text(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("write_text() expects path and text"));
+        }
+        let path = self.path_arg_to_string(args[0].clone())?;
+        let text = match &args[1] {
+            Value::Str(text) => text.clone(),
+            other => format_value(other),
+        };
+        fs::write(path, text)
+            .map_err(|err| RuntimeError::new(format!("write_text failed: {err}")))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_io_text_encoding(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let mut encoding: Option<Value> = None;
+        let mut _stacklevel: Option<Value> = None;
+
+        if let Some(value) = kwargs.get("encoding") {
+            encoding = Some(value.clone());
+        }
+        if let Some(value) = kwargs.get("stacklevel") {
+            _stacklevel = Some(value.clone());
+        }
+        for name in kwargs.keys() {
+            if name != "encoding" && name != "stacklevel" {
+                return Err(RuntimeError::new(
+                    "text_encoding() got unexpected keyword argument",
+                ));
+            }
+        }
+
+        if encoding.is_none() && !args.is_empty() {
+            encoding = Some(args.remove(0));
+        }
+        if _stacklevel.is_none() && !args.is_empty() {
+            _stacklevel = Some(args.remove(0));
+        }
+        if !args.is_empty() {
+            return Err(RuntimeError::new(
+                "text_encoding() takes at most 2 arguments",
+            ));
+        }
+
+        match encoding.unwrap_or(Value::None) {
+            Value::None => Ok(Value::Str("utf-8".to_string())),
+            Value::Str(value) => Ok(Value::Str(value)),
+            _ => Err(RuntimeError::new(
+                "text_encoding() argument 'encoding' must be str or None",
+            )),
+        }
+    }
+
+    fn builtin_io_textiowrapper_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = match args.first() {
+            Some(Value::Instance(instance)) => instance.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TextIOWrapper.__init__() expects self and buffer",
+                ));
+            }
+        };
+        args.remove(0);
+        let buffer_value = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("buffer") {
+            value
+        } else {
+            return Err(RuntimeError::new(
+                "TextIOWrapper.__init__() missing required buffer argument",
+            ));
+        };
+        let buffer_instance = match buffer_value {
+            Value::Instance(instance) => instance,
+            _ => return Err(RuntimeError::new("TextIOWrapper() argument 1 must be file object")),
+        };
+        let buffer_fd = match Self::instance_attr_get(&buffer_instance, "_fd") {
+            Some(Value::Int(fd)) => Some(fd),
+            _ => None,
+        };
+        let buffer_is_bytesio = matches!(
+            Self::instance_attr_get(&buffer_instance, "_value"),
+            Some(Value::ByteArray(_)) | Some(Value::Bytes(_))
+        );
+        if buffer_fd.is_none() && !buffer_is_bytesio {
+            return Err(RuntimeError::new("TextIOWrapper() argument 1 must be file object"));
+        }
+
+        let encoding = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("encoding")
+        };
+        let errors = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("errors")
+        };
+        let newline = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("newline")
+        };
+        if !args.is_empty() {
+            args.remove(0);
+        }
+        if !args.is_empty() {
+            args.remove(0);
+        }
+        for key in kwargs.keys() {
+            if !matches!(
+                key.as_str(),
+                "encoding"
+                    | "errors"
+                    | "newline"
+                    | "line_buffering"
+                    | "write_through"
+                    | "buffer"
+            ) {
+                return Err(RuntimeError::new(
+                    "TextIOWrapper.__init__() got unexpected keyword argument",
+                ));
+            }
+        }
+
+        let source_mode = Self::io_file_mode(&buffer_instance).unwrap_or_else(|| {
+            if buffer_fd.is_some() {
+                "r".to_string()
+            } else {
+                "r+".to_string()
+            }
+        });
+        let mut mode = source_mode.replace('b', "");
+        if mode.is_empty() {
+            mode = "r".to_string();
+        }
+        let closefd = !matches!(
+            Self::instance_attr_get(&buffer_instance, "_closefd"),
+            Some(Value::Bool(false))
+        );
+        let closed = matches!(
+            Self::instance_attr_get(&buffer_instance, "_closed"),
+            Some(Value::Bool(true))
+        );
+
+        if let Some(fd) = buffer_fd {
+            Self::instance_attr_set(&instance, "_fd", Value::Int(fd))?;
+        }
+        Self::instance_attr_set(&instance, "_mode", Value::Str(mode))?;
+        Self::instance_attr_set(&instance, "_binary", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "_closed", Value::Bool(closed))?;
+        Self::instance_attr_set(&instance, "closed", Value::Bool(closed))?;
+        Self::instance_attr_set(&instance, "_closefd", Value::Bool(closefd && buffer_fd.is_some()))?;
+        let encoding_value = match encoding.unwrap_or(Value::None) {
+            Value::None => Value::Str("utf-8".to_string()),
+            Value::Str(value) => {
+                self.ensure_known_text_encoding(&value)?;
+                Value::Str(value)
+            }
+            _ => return Err(RuntimeError::new("TextIOWrapper encoding must be str or None")),
+        };
+        Self::instance_attr_set(&instance, "_encoding", encoding_value.clone())?;
+        Self::instance_attr_set(&instance, "encoding", encoding_value)?;
+        let errors_value = match errors.unwrap_or(Value::None) {
+            Value::None => Value::Str("strict".to_string()),
+            Value::Str(value) => Value::Str(value),
+            _ => return Err(RuntimeError::new("TextIOWrapper errors must be str or None")),
+        };
+        Self::instance_attr_set(
+            &instance,
+            "_errors",
+            errors_value.clone(),
+        )?;
+        Self::instance_attr_set(&instance, "errors", errors_value)?;
+        let newline_value = match newline.unwrap_or(Value::None) {
+            Value::None => Value::None,
+            Value::Str(value) => {
+                if !matches!(value.as_str(), "" | "\n" | "\r" | "\r\n") {
+                    return Err(RuntimeError::new(format!("illegal newline value: {value}")));
+                }
+                Value::Str(value)
+            }
+            _ => return Err(RuntimeError::new("TextIOWrapper newline must be str or None")),
+        };
+        Self::instance_attr_set(&instance, "_newline", newline_value.clone())?;
+        let observed_newlines = match &newline_value {
+            Value::None => Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string()),
+            Value::Str(value) if value.is_empty() => {
+                Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string())
+            }
+            Value::Str(value) => Value::Str(value.clone()),
+            _ => Value::None,
+        };
+        Self::instance_attr_set(&instance, "newlines", observed_newlines)?;
+        Self::instance_attr_set(&instance, "buffer", Value::Instance(buffer_instance.clone()))?;
+        Self::instance_attr_set(&instance, "raw", Value::Instance(buffer_instance))?;
+        Ok(Value::None)
+    }
+
+    fn io_class_ref(&self, class_name: &str) -> Result<ObjRef, RuntimeError> {
+        let module = self
+            .modules
+            .get("_io")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("module '_io' not found"))?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("module '_io' is invalid"));
+        };
+        match module_data.globals.get(class_name) {
+            Some(Value::Class(class_ref)) => Ok(class_ref.clone()),
+            _ => Err(RuntimeError::new(format!(
+                "module '_io' has no {} class",
+                class_name
+            ))),
+        }
+    }
+
+    fn install_io_file_methods(class_data: &mut ClassObject) {
+        class_data.attrs.insert(
+            "read".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileRead),
+        );
+        class_data.attrs.insert(
+            "readline".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileReadLine),
+        );
+        class_data.attrs.insert(
+            "readlines".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileReadLines),
+        );
+        class_data.attrs.insert(
+            "write".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileWrite),
+        );
+        class_data.attrs.insert(
+            "writelines".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileWriteLines),
+        );
+        class_data.attrs.insert(
+            "truncate".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileTruncate),
+        );
+        class_data.attrs.insert(
+            "seek".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileSeek),
+        );
+        class_data.attrs.insert(
+            "tell".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileTell),
+        );
+        class_data.attrs.insert(
+            "close".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileClose),
+        );
+        class_data.attrs.insert(
+            "flush".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileFlush),
+        );
+        class_data.attrs.insert(
+            "__iter__".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileIter),
+        );
+        class_data.attrs.insert(
+            "__next__".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileNext),
+        );
+        class_data.attrs.insert(
+            "__enter__".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileEnter),
+        );
+        class_data.attrs.insert(
+            "__exit__".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileExit),
+        );
+        class_data.attrs.insert(
+            "fileno".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileFileno),
+        );
+        class_data.attrs.insert(
+            "detach".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileDetach),
+        );
+        class_data.attrs.insert(
+            "readable".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileReadable),
+        );
+        class_data.attrs.insert(
+            "writable".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileWritable),
+        );
+        class_data.attrs.insert(
+            "seekable".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileSeekable),
+        );
+    }
+
+    fn alloc_io_file_instance(
+        &self,
+        class_name: &str,
+        fd: i64,
+        mode: &str,
+        binary: bool,
+        closefd: bool,
+        encoding: Option<String>,
+        errors: Option<String>,
+        newline: Option<String>,
+    ) -> Result<Value, RuntimeError> {
+        let class_ref = self.io_class_ref(class_name)?;
+        let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        let instance_value = Value::Instance(instance.clone());
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new("expected io instance"));
+        };
+        instance_data
+            .attrs
+            .insert("_fd".to_string(), Value::Int(fd));
+        instance_data
+            .attrs
+            .insert("_mode".to_string(), Value::Str(mode.to_string()));
+        instance_data
+            .attrs
+            .insert("mode".to_string(), Value::Str(mode.to_string()));
+        instance_data
+            .attrs
+            .insert("_binary".to_string(), Value::Bool(binary));
+        instance_data
+            .attrs
+            .insert("_closed".to_string(), Value::Bool(false));
+        instance_data
+            .attrs
+            .insert("closed".to_string(), Value::Bool(false));
+        instance_data
+            .attrs
+            .insert("_closefd".to_string(), Value::Bool(closefd));
+        instance_data.attrs.insert("name".to_string(), Value::Int(fd));
+        let encoding_value = if binary {
+            encoding.map(Value::Str).unwrap_or(Value::None)
+        } else {
+            Value::Str(encoding.unwrap_or_else(|| "utf-8".to_string()))
+        };
+        let errors_value = if binary {
+            errors.map(Value::Str).unwrap_or(Value::None)
+        } else {
+            Value::Str(errors.unwrap_or_else(|| "strict".to_string()))
+        };
+        let newline_value = newline.map(Value::Str).unwrap_or(Value::None);
+        instance_data.attrs.insert(
+            "_encoding".to_string(),
+            encoding_value.clone(),
+        );
+        instance_data.attrs.insert(
+            "_errors".to_string(),
+            errors_value.clone(),
+        );
+        instance_data.attrs.insert(
+            "_newline".to_string(),
+            newline_value.clone(),
+        );
+        if !binary {
+            let observed_newlines = match &newline_value {
+                Value::None => Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string()),
+                Value::Str(value) if value.is_empty() => {
+                    Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string())
+                }
+                Value::Str(value) => Value::Str(value.clone()),
+                _ => Value::None,
+            };
+            instance_data
+                .attrs
+                .insert("encoding".to_string(), encoding_value);
+            instance_data.attrs.insert("errors".to_string(), errors_value);
+            instance_data
+                .attrs
+                .insert("newlines".to_string(), observed_newlines);
+        }
+        if !binary {
+            instance_data
+                .attrs
+                .insert("buffer".to_string(), instance_value.clone());
+            instance_data
+                .attrs
+                .insert("raw".to_string(), instance_value.clone());
+        }
+        Ok(instance_value)
+    }
+
+    fn io_file_fd_from_instance(&self, instance: &ObjRef) -> Result<i64, RuntimeError> {
+        self.io_file_fd_from_instance_inner(instance, 0)
+    }
+
+    fn io_file_fd_from_instance_inner(
+        &self,
+        instance: &ObjRef,
+        depth: usize,
+    ) -> Result<i64, RuntimeError> {
+        if depth > 8 {
+            return Err(RuntimeError::new("invalid file object"));
+        }
+        let closed = matches!(
+            Self::instance_attr_get(instance, "_closed"),
+            Some(Value::Bool(true))
+        );
+        if closed {
+            return Err(RuntimeError::new("I/O operation on closed file"));
+        }
+        match Self::instance_attr_get(instance, "_fd") {
+            Some(Value::Int(fd)) => Ok(fd),
+            _ => {
+                for key in ["buffer", "raw"] {
+                    if let Some(Value::Instance(inner)) = Self::instance_attr_get(instance, key) {
+                        if inner.id() != instance.id() {
+                            return self.io_file_fd_from_instance_inner(&inner, depth + 1);
+                        }
+                    }
+                }
+                Err(RuntimeError::new("invalid file object"))
+            }
+        }
+    }
+
+    fn io_file_is_binary(instance: &ObjRef) -> bool {
+        matches!(
+            Self::instance_attr_get(instance, "_binary"),
+            Some(Value::Bool(true))
+        )
+    }
+
+    fn io_file_mode(instance: &ObjRef) -> Option<String> {
+        match Self::instance_attr_get(instance, "_mode") {
+            Some(Value::Str(mode)) => Some(mode),
+            _ => None,
+        }
+    }
+
+    fn io_file_newline(instance: &ObjRef) -> Option<String> {
+        match Self::instance_attr_get(instance, "_newline") {
+            Some(Value::Str(newline)) => Some(newline),
+            _ => None,
+        }
+    }
+
+    fn io_file_text_buffer_bytesio(instance: &ObjRef) -> Option<ObjRef> {
+        if Self::io_file_is_binary(instance) {
+            return None;
+        }
+        let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") else {
+            return None;
+        };
+        if buffer.id() == instance.id() {
+            return None;
+        }
+        if matches!(
+            Self::instance_attr_get(&buffer, "_value"),
+            Some(Value::ByteArray(_)) | Some(Value::Bytes(_))
+        ) {
+            return Some(buffer);
+        }
+        None
+    }
+
+    fn io_normalize_universal_newlines(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\r' {
+                if chars.peek() == Some(&'\n') {
+                    let _ = chars.next();
+                }
+                out.push('\n');
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
+    fn io_translate_write_newlines(mut text: String, newline: Option<&str>) -> String {
+        match newline {
+            Some("") | Some("\n") => text,
+            Some("\r") => text.replace('\n', "\r"),
+            Some("\r\n") => text.replace('\n', "\r\n"),
+            None => {
+                if cfg!(windows) {
+                    text = text.replace('\n', "\r\n");
+                }
+                text
+            }
+            Some(_) => text,
+        }
+    }
+
+    fn io_file_read_bytes(
+        &mut self,
+        fd: i64,
+        size: Option<usize>,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let mut out = Vec::new();
+        match size {
+            Some(limit) => {
+                let mut buf = vec![0u8; limit];
+                let count = file
+                    .read(&mut buf)
+                    .map_err(|err| RuntimeError::new(format!("read failed: {err}")))?;
+                buf.truncate(count);
+                out = buf;
+            }
+            None => {
+                file.read_to_end(&mut out)
+                    .map_err(|err| RuntimeError::new(format!("read failed: {err}")))?;
+            }
+        }
+        Ok(out)
+    }
+
+    fn io_file_close_instance(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
+        if matches!(
+            Self::instance_attr_get(instance, "_closed"),
+            Some(Value::Bool(true))
+        ) {
+            return Ok(());
+        }
+
+        let mut linked = Vec::new();
+        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") {
+            if buffer.id() != instance.id() {
+                linked.push(buffer);
+            }
+        }
+        if let Some(Value::Instance(raw)) = Self::instance_attr_get(instance, "raw") {
+            if raw.id() != instance.id() && !linked.iter().any(|item| item.id() == raw.id()) {
+                linked.push(raw);
+            }
+        }
+
+        if let Some(Value::Int(fd)) = Self::instance_attr_get(instance, "_fd") {
+            let closefd = !matches!(
+                Self::instance_attr_get(instance, "_closefd"),
+                Some(Value::Bool(false))
+            );
+            if closefd {
+                self.open_files.remove(&fd);
+            }
+        }
+        Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(instance, "closed", Value::Bool(true))?;
+        for nested in linked {
+            self.io_file_close_instance(&nested)?;
+        }
+        Ok(())
+    }
+
+    fn builtin_io_file_read(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("read() expects optional size"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "read")?;
+        let size = if let Some(value) = args.pop() {
+            let size = value_to_int(value)?;
+            if size < 0 { None } else { Some(size as usize) }
+        } else {
+            None
+        };
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let mut read_args = vec![Value::Instance(buffer)];
+            if let Some(limit) = size {
+                read_args.push(Value::Int(limit as i64));
+            }
+            let bytes_value = self.builtin_bytesio_read(read_args, HashMap::new())?;
+            let bytes = bytes_like_from_value(bytes_value)?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| RuntimeError::new("read() encountered non-UTF-8 bytes"))?;
+            let newline = Self::io_file_newline(&instance);
+            let normalized = if newline.is_none() {
+                Self::io_normalize_universal_newlines(&text)
+            } else {
+                text
+            };
+            return Ok(Value::Str(normalized));
+        }
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let bytes = self.io_file_read_bytes(fd, size)?;
+        if Self::io_file_is_binary(&instance) {
+            Ok(self.heap.alloc_bytes(bytes))
+        } else {
+            let text = String::from_utf8(bytes)
+                .map_err(|_| RuntimeError::new("read() encountered non-UTF-8 bytes"))?;
+            let newline = Self::io_file_newline(&instance);
+            let normalized = if newline.is_none() {
+                Self::io_normalize_universal_newlines(&text)
+            } else {
+                text
+            };
+            Ok(Value::Str(normalized))
+        }
+    }
+
+    fn builtin_io_file_readline(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("readline() expects optional size"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "readline")?;
+        let limit = if let Some(value) = args.pop() {
+            let value = value_to_int(value)?;
+            if value < 0 {
+                None
+            } else {
+                Some(value as usize)
+            }
+        } else {
+            None
+        };
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let mut read_args = vec![Value::Instance(buffer)];
+            if let Some(max_len) = limit {
+                read_args.push(Value::Int(max_len as i64));
+            }
+            let bytes_value = self.builtin_bytesio_readline(read_args, HashMap::new())?;
+            let bytes = bytes_like_from_value(bytes_value)?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| RuntimeError::new("readline() encountered non-UTF-8 bytes"))?;
+            let newline = Self::io_file_newline(&instance);
+            let normalized = if newline.is_none() {
+                Self::io_normalize_universal_newlines(&text)
+            } else {
+                text
+            };
+            return Ok(Value::Str(normalized));
+        }
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let binary = Self::io_file_is_binary(&instance);
+        let newline = if binary {
+            None
+        } else {
+            Self::io_file_newline(&instance)
+        };
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let mut out = Vec::new();
+        while limit.map(|max| out.len() < max).unwrap_or(true) {
+            let mut byte = [0u8; 1];
+            let count = file
+                .read(&mut byte)
+                .map_err(|err| RuntimeError::new(format!("readline failed: {err}")))?;
+            if count == 0 {
+                break;
+            }
+            out.push(byte[0]);
+            if byte[0] == b'\n' {
+                if binary || newline.as_deref() != Some("\r") {
+                    break;
+                }
+            }
+            if !binary {
+                match newline.as_deref() {
+                    None | Some("") => {
+                        if byte[0] == b'\n' {
+                            break;
+                        }
+                        if byte[0] == b'\r' {
+                            if limit.map(|max| out.len() < max).unwrap_or(true) {
+                                let mut next = [0u8; 1];
+                                let next_count =
+                                    file.read(&mut next).map_err(|err| {
+                                        RuntimeError::new(format!("readline failed: {err}"))
+                                    })?;
+                                if next_count == 1 {
+                                    if next[0] == b'\n' {
+                                        out.push(next[0]);
+                                    } else {
+                                        file.seek(SeekFrom::Current(-1)).map_err(|err| {
+                                            RuntimeError::new(format!("readline failed: {err}"))
+                                        })?;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    Some("\n") => {
+                        if byte[0] == b'\n' {
+                            break;
+                        }
+                    }
+                    Some("\r") => {
+                        if byte[0] == b'\r' {
+                            break;
+                        }
+                    }
+                    Some("\r\n") => {
+                        if byte[0] == b'\r' {
+                            if limit.map(|max| out.len() < max).unwrap_or(true) {
+                                let mut next = [0u8; 1];
+                                let next_count =
+                                    file.read(&mut next).map_err(|err| {
+                                        RuntimeError::new(format!("readline failed: {err}"))
+                                    })?;
+                                if next_count == 1 {
+                                    if next[0] == b'\n' {
+                                        out.push(next[0]);
+                                        break;
+                                    }
+                                    file.seek(SeekFrom::Current(-1)).map_err(|err| {
+                                        RuntimeError::new(format!("readline failed: {err}"))
+                                    })?;
+                                }
+                            }
+                        }
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        if binary {
+            Ok(self.heap.alloc_bytes(out))
+        } else {
+            let text = String::from_utf8(out)
+                .map_err(|_| RuntimeError::new("readline() encountered non-UTF-8 bytes"))?;
+            let normalized = if newline.is_none() {
+                Self::io_normalize_universal_newlines(&text)
+            } else {
+                text
+            };
+            Ok(Value::Str(normalized))
+        }
+    }
+
+    fn builtin_io_file_readlines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("readlines() expects optional hint"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "readlines")?;
+        let hint = if let Some(value) = args.pop() {
+            let parsed = value_to_int(value)?;
+            if parsed <= 0 { None } else { Some(parsed as usize) }
+        } else {
+            None
+        };
+        let mut lines = Vec::new();
+        let mut consumed = 0usize;
+        loop {
+            let line =
+                self.builtin_io_file_readline(vec![Value::Instance(instance.clone())], HashMap::new())?;
+            let bytes = match &line {
+                Value::Str(text) => text.as_bytes().len(),
+                Value::Bytes(obj) => match &*obj.kind() {
+                    Object::Bytes(values) => values.len(),
+                    _ => 0,
+                },
+                _ => 0,
+            };
+            if bytes == 0 {
+                break;
+            }
+            consumed = consumed.saturating_add(bytes);
+            lines.push(line);
+            if hint.map(|limit| consumed >= limit).unwrap_or(false) {
+                break;
+            }
+        }
+        Ok(self.heap.alloc_list(lines))
+    }
+
+    fn builtin_io_file_write(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("write() expects one argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "write")?;
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let text = match args.remove(0) {
+                Value::Str(text) => text,
+                _ => return Err(RuntimeError::new("write() argument must be str")),
+            };
+            let newline = Self::io_file_newline(&instance);
+            let translated = Self::io_translate_write_newlines(text.clone(), newline.as_deref());
+            let payload = self.heap.alloc_bytes(translated.into_bytes());
+            let _ = self.builtin_bytesio_write(
+                vec![Value::Instance(buffer), payload],
+                HashMap::new(),
+            )?;
+            return Ok(Value::Int(text.chars().count() as i64));
+        }
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let payload = if Self::io_file_is_binary(&instance) {
+            self.value_to_bytes_payload(args.remove(0))?
+        } else {
+            match args.remove(0) {
+                Value::Str(text) => {
+                    let newline = Self::io_file_newline(&instance);
+                    let translated = Self::io_translate_write_newlines(text, newline.as_deref());
+                    translated.into_bytes()
+                }
+                _ => return Err(RuntimeError::new("write() argument must be str")),
+            }
+        };
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        file.write_all(&payload)
+            .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        Ok(Value::Int(payload.len() as i64))
+    }
+
+    fn builtin_io_file_writelines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("writelines() expects one iterable argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "writelines")?;
+        let values = self.collect_iterable_values(args.remove(0))?;
+        for value in values {
+            let _ = self.builtin_io_file_write(
+                vec![Value::Instance(instance.clone()), value],
+                HashMap::new(),
+            )?;
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_io_file_truncate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("truncate() expects optional size"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "truncate")?;
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let mut truncate_args = vec![Value::Instance(buffer)];
+            if !args.is_empty() {
+                truncate_args.push(args.remove(0));
+            }
+            return self.builtin_bytesio_truncate(truncate_args, HashMap::new());
+        }
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let target_size = if args.is_empty() {
+            file.stream_position()
+                .map_err(|err| RuntimeError::new(format!("truncate failed: {err}")))?
+                as i64
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        if target_size < 0 {
+            return Err(RuntimeError::new("truncate() size must be non-negative"));
+        }
+        file.set_len(target_size as u64)
+            .map_err(|err| RuntimeError::new(format!("truncate failed: {err}")))?;
+        Ok(Value::Int(target_size))
+    }
+
+    fn builtin_io_file_seek(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "seek() expects offset and optional whence",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "seek")?;
+        if args.is_empty() {
+            return Err(RuntimeError::new("seek() missing offset argument"));
+        }
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let mut seek_args = vec![Value::Instance(buffer), args.remove(0)];
+            if !args.is_empty() {
+                seek_args.push(args.remove(0));
+            }
+            return self.builtin_bytesio_seek(seek_args, HashMap::new());
+        }
+        let offset = value_to_int(args.remove(0))?;
+        let whence = if args.is_empty() {
+            0
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let position = match whence {
+            0 => {
+                if offset < 0 {
+                    return Err(RuntimeError::new("negative seek position"));
+                }
+                file.seek(SeekFrom::Start(offset as u64))
+            }
+            1 => file.seek(SeekFrom::Current(offset)),
+            2 => file.seek(SeekFrom::End(offset)),
+            _ => return Err(RuntimeError::new("invalid whence")),
+        }
+        .map_err(|err| RuntimeError::new(format!("seek failed: {err}")))?;
+        Ok(Value::Int(position as i64))
+    }
+
+    fn builtin_io_file_tell(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("tell() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "tell")?;
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            return self.builtin_bytesio_tell(vec![Value::Instance(buffer)], HashMap::new());
+        }
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let position = file
+            .stream_position()
+            .map_err(|err| RuntimeError::new(format!("tell failed: {err}")))?;
+        Ok(Value::Int(position as i64))
+    }
+
+    fn builtin_io_file_close(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("close() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "close")?;
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
+            let _ = self.builtin_bytesio_close(vec![Value::Instance(buffer)], HashMap::new())?;
+            Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
+            Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
+            return Ok(Value::None);
+        }
+        self.io_file_close_instance(&instance)?;
+        Ok(Value::None)
+    }
+
+    fn builtin_io_file_flush(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("flush() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "flush")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Ok(Value::None);
+        }
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        let file = self
+            .open_files
+            .get_mut(&fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        file.flush()
+            .map_err(|err| RuntimeError::new(format!("flush failed: {err}")))?;
+        Ok(Value::None)
+    }
+
+    fn builtin_io_file_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__iter__() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "__iter__")?;
+        Ok(Value::Instance(instance))
+    }
+
+    fn builtin_io_file_next(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__next__() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "__next__")?;
+        let line =
+            self.builtin_io_file_readline(vec![Value::Instance(instance)], HashMap::new())?;
+        let is_empty = match &line {
+            Value::Str(text) => text.is_empty(),
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(bytes) => bytes.is_empty(),
+                _ => false,
+            },
+            _ => false,
+        };
+        if is_empty {
+            Err(RuntimeError::new("StopIteration"))
+        } else {
+            Ok(line)
+        }
+    }
+
+    fn builtin_io_file_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__enter__() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "__enter__")?;
+        if matches!(
+            Self::instance_attr_get(&instance, "_closed"),
+            Some(Value::Bool(true))
+        ) {
+            return Err(RuntimeError::new("ValueError: I/O operation on closed file"));
+        }
+        Ok(Value::Instance(instance))
+    }
+
+    fn builtin_io_file_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new("__exit__() expects up to 3 arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "__exit__")?;
+        self.io_file_close_instance(&instance)?;
+        Ok(Value::Bool(false))
+    }
+
+    fn builtin_io_file_fileno(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("fileno() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "fileno")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Err(RuntimeError::new("fileno"));
+        }
+        let fd = self.io_file_fd_from_instance(&instance)?;
+        #[cfg(unix)]
+        if let Some(file) = self.open_files.get(&fd) {
+            return Ok(Value::Int(file.as_raw_fd() as i64));
+        }
+        Ok(Value::Int(fd))
+    }
+
+    fn builtin_io_file_detach(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("detach() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "detach")?;
+        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer") {
+            if buffer.id() != instance.id() {
+                Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
+                Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
+                Self::instance_attr_set(&instance, "buffer", Value::None)?;
+                Self::instance_attr_set(&instance, "raw", Value::None)?;
+                return Ok(Value::Instance(buffer));
+            }
+        }
+        Err(RuntimeError::new("detach"))
+    }
+
+    fn builtin_io_file_readable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("readable() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "readable")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Ok(Value::Bool(true));
+        }
+        let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
+        Ok(Value::Bool(mode.starts_with('r') || mode.contains('+')))
+    }
+
+    fn builtin_io_file_writable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("writable() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "writable")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Ok(Value::Bool(true));
+        }
+        let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
+        Ok(Value::Bool(
+            mode.starts_with('w')
+                || mode.starts_with('a')
+                || mode.starts_with('x')
+                || mode.contains('+'),
+        ))
+    }
+
+    fn builtin_io_file_seekable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("seekable() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "seekable")?;
+        if Self::io_file_text_buffer_bytesio(&instance).is_some() {
+            return Ok(Value::Bool(true));
+        }
+        let _ = self.io_file_fd_from_instance(&instance)?;
+        Ok(Value::Bool(true))
+    }
+
+    fn builtin_iobase_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__iter__() expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_iobase_next(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__next__() expects no arguments"));
+        }
+        let receiver = args.remove(0);
+        let readline = self.builtin_getattr(
+            vec![receiver.clone(), Value::Str("readline".to_string())],
+            HashMap::new(),
+        )?;
+        let line = match self.call_internal(readline, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(
+                    "__next__() iteration failed",
+                ));
+            }
+        };
+        let is_empty = match &line {
+            Value::Str(text) => text.is_empty(),
+            Value::Bytes(obj) => matches!(&*obj.kind(), Object::Bytes(values) if values.is_empty()),
+            _ => false,
+        };
+        if is_empty {
+            Err(RuntimeError::new("StopIteration"))
+        } else {
+            Ok(line)
+        }
+    }
+
+    fn stringio_buffer_from_instance(
+        &self,
+        instance: &ObjRef,
+    ) -> Result<(Vec<char>, usize), RuntimeError> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new("StringIO receiver must be instance"));
+        };
+        let text = match instance_data.attrs.get("_value") {
+            Some(Value::Str(value)) => value.chars().collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let pos = match instance_data.attrs.get("_pos") {
+            Some(Value::Int(value)) if *value >= 0 => *value as usize,
+            _ => 0,
+        };
+        Ok((text, pos))
+    }
+
+    fn stringio_store_buffer(
+        &mut self,
+        instance: &ObjRef,
+        text: Vec<char>,
+        pos: usize,
+    ) -> Result<(), RuntimeError> {
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new("StringIO receiver must be instance"));
+        };
+        instance_data
+            .attrs
+            .insert("_value".to_string(), Value::Str(text.iter().collect()));
+        instance_data
+            .attrs
+            .insert("_pos".to_string(), Value::Int(pos as i64));
+        Ok(())
+    }
+
+    fn stringio_next_line_end(buffer: &[char], pos: usize, limit: Option<usize>) -> usize {
+        let mut end = pos;
+        while end < buffer.len() {
+            let ch = buffer[end];
+            if ch == '\n' {
+                end += 1;
+                break;
+            }
+            if ch == '\r' {
+                end += 1;
+                if end < buffer.len() && buffer[end] == '\n' {
+                    if limit.is_some_and(|max| end - pos >= max) {
+                        break;
+                    }
+                    end += 1;
+                }
+                break;
+            }
+            end += 1;
+            if limit.is_some_and(|max| end - pos >= max) {
+                break;
+            }
+        }
+        end
+    }
+
+    fn builtin_stringio_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("StringIO.__init__ expects instance"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let initial = args.pop().or_else(|| kwargs.remove("initial_value"));
+        let _ = kwargs.remove("newline");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("StringIO.__init__ unexpected keyword"));
+        }
+        let text = match initial {
+            None => Vec::new(),
+            Some(Value::Str(value)) => value.chars().collect(),
+            Some(value) => format_value(&value).chars().collect(),
+        };
+        self.stringio_store_buffer(&receiver, text, 0)?;
+        Ok(Value::None)
+    }
+
+    fn builtin_stringio_write(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("StringIO.write expects 1 argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let input = match args.remove(0) {
+            Value::Str(value) => value,
+            other => format_value(&other),
+        };
+        let mut insert = input.chars().collect::<Vec<_>>();
+        let (buffer, mut pos) = self.stringio_buffer_from_instance(&receiver)?;
+        if pos > buffer.len() {
+            pos = buffer.len();
+        }
+        let tail_start = pos.saturating_add(insert.len());
+        let mut new_buf = Vec::new();
+        new_buf.extend_from_slice(&buffer[..pos]);
+        new_buf.append(&mut insert);
+        if tail_start < buffer.len() {
+            new_buf.extend_from_slice(&buffer[tail_start..]);
+        }
+        let new_pos = pos + input.chars().count();
+        self.stringio_store_buffer(&receiver, new_buf, new_pos)?;
+        Ok(Value::Int(new_pos as i64 - pos as i64))
+    }
+
+    fn builtin_stringio_read(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("StringIO.read expects 0-1 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let size = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
+        let end = if size < 0 {
+            buffer.len()
+        } else {
+            (pos + size as usize).min(buffer.len())
+        };
+        let out: String = buffer[pos..end].iter().collect();
+        self.stringio_store_buffer(&receiver, buffer, end)?;
+        Ok(Value::Str(out))
+    }
+
+    fn builtin_stringio_readline(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("StringIO.readline expects 0-1 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let limit = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
+        if pos >= buffer.len() {
+            return Ok(Value::Str(String::new()));
+        }
+        let max = if limit < 0 { None } else { Some(limit as usize) };
+        let end = Self::stringio_next_line_end(&buffer, pos, max);
+        let out: String = buffer[pos..end].iter().collect();
+        self.stringio_store_buffer(&receiver, buffer, end)?;
+        Ok(Value::Str(out))
+    }
+
+    fn builtin_stringio_getvalue(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.getvalue expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let (buffer, _pos) = self.stringio_buffer_from_instance(&receiver)?;
+        Ok(Value::Str(buffer.iter().collect()))
+    }
+
+    fn builtin_stringio_seek(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new("StringIO.seek expects 1-2 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let offset = value_to_int(args.remove(0))?;
+        let whence = if args.is_empty() {
+            0
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
+        let base = match whence {
+            0 => 0i64,
+            1 => pos as i64,
+            2 => buffer.len() as i64,
+            _ => return Err(RuntimeError::new("StringIO.seek invalid whence")),
+        };
+        let mut new_pos = base + offset;
+        if new_pos < 0 {
+            new_pos = 0;
+        }
+        let new_pos = new_pos as usize;
+        self.stringio_store_buffer(&receiver, buffer, new_pos)?;
+        Ok(Value::Int(new_pos as i64))
+    }
+
+    fn builtin_stringio_tell(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.tell expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let (_buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
+        Ok(Value::Int(pos as i64))
+    }
+
+    fn builtin_stringio_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.__iter__ expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_stringio_next(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.__next__ expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
+        if pos >= buffer.len() {
+            return Err(RuntimeError::new("StopIteration"));
+        }
+        let end = Self::stringio_next_line_end(&buffer, pos, None);
+        let out: String = buffer[pos..end].iter().collect();
+        self.stringio_store_buffer(&receiver, buffer, end)?;
+        Ok(Value::Str(out))
+    }
+
+    fn builtin_stringio_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.__enter__ expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_stringio_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "StringIO.__exit__ expects up to 3 arguments",
+            ));
+        }
+        let _receiver = self.receiver_from_value(&args.remove(0))?;
+        Ok(Value::Bool(false))
+    }
+
+    fn bytesio_state_from_instance(
+        &mut self,
+        instance: &ObjRef,
+    ) -> Result<(ObjRef, usize, bool), RuntimeError> {
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+        };
+        let pos = match instance_data.attrs.get("_pos") {
+            Some(Value::Int(value)) if *value >= 0 => *value as usize,
+            _ => 0,
+        };
+        let closed = matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true)));
+        let current_value = instance_data.attrs.get("_value").cloned();
+        let (value_obj, needs_store_value) = match current_value {
+            Some(Value::ByteArray(obj)) => (obj, false),
+            Some(Value::Bytes(obj)) => {
+                let bytes = match &*obj.kind() {
+                    Object::Bytes(values) => values.clone(),
+                    _ => Vec::new(),
+                };
+                match self.heap.alloc_bytearray(bytes) {
+                    Value::ByteArray(obj) => (obj, true),
+                    _ => unreachable!(),
+                }
+            }
+            Some(other) => {
+                let bytes = self
+                    .value_to_bytes_payload(other)
+                    .map_err(|_| RuntimeError::new("BytesIO internal buffer is invalid"))?;
+                match self.heap.alloc_bytearray(bytes) {
+                    Value::ByteArray(obj) => (obj, true),
+                    _ => unreachable!(),
+                }
+            }
+            None => match self.heap.alloc_bytearray(Vec::new()) {
+                Value::ByteArray(obj) => (obj, true),
+                _ => unreachable!(),
+            },
+        };
+        if needs_store_value {
+            if let Some(slot) = instance_data.attrs.get_mut("_value") {
+                *slot = Value::ByteArray(value_obj.clone());
+            } else {
+                instance_data
+                    .attrs
+                    .insert("_value".to_string(), Value::ByteArray(value_obj.clone()));
+            }
+        }
+        Ok((value_obj, pos, closed))
+    }
+
+    fn bytesio_store_state(
+        &mut self,
+        instance: &ObjRef,
+        value_obj: ObjRef,
+        pos: usize,
+        closed: bool,
+    ) -> Result<(), RuntimeError> {
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+        };
+        if let Some(slot) = instance_data.attrs.get_mut("_value") {
+            *slot = Value::ByteArray(value_obj);
+        } else {
+            instance_data
+                .attrs
+                .insert("_value".to_string(), Value::ByteArray(value_obj));
+        }
+        if let Some(slot) = instance_data.attrs.get_mut("_pos") {
+            *slot = Value::Int(pos as i64);
+        } else {
+            instance_data
+                .attrs
+                .insert("_pos".to_string(), Value::Int(pos as i64));
+        }
+        if let Some(slot) = instance_data.attrs.get_mut("_closed") {
+            *slot = Value::Bool(closed);
+        } else {
+            instance_data
+                .attrs
+                .insert("_closed".to_string(), Value::Bool(closed));
+        }
+        if let Some(slot) = instance_data.attrs.get_mut("closed") {
+            *slot = Value::Bool(closed);
+        } else {
+            instance_data
+                .attrs
+                .insert("closed".to_string(), Value::Bool(closed));
+        }
+        Ok(())
+    }
+
+    fn bytesio_ensure_open(&self, instance: &ObjRef) -> Result<(), RuntimeError> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+        };
+        if matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true))) {
+            Err(RuntimeError::new("I/O operation on closed file."))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn builtin_bytesio_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("BytesIO.__init__ expects instance"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let initial = args.pop().or_else(|| kwargs.remove("initial_bytes"));
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("BytesIO.__init__ unexpected keyword"));
+        }
+        let bytes = match initial {
+            None => Vec::new(),
+            Some(value) => bytes_like_from_value(value)?,
+        };
+        let value_obj = match self.heap.alloc_bytearray(bytes) {
+            Value::ByteArray(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.bytesio_store_state(&receiver, value_obj, 0, false)?;
+        Ok(Value::None)
+    }
+
+    fn builtin_bytesio_write(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("BytesIO.write expects 1 argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let payload = bytes_like_from_value(args.remove(0))?;
+        let written = payload.len();
+        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        pos = {
+            let Object::ByteArray(buffer) = &mut *value_obj.kind_mut() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            if pos > buffer.len() {
+                buffer.resize(pos, 0);
+            }
+            let end = pos.saturating_add(written);
+            if end > buffer.len() {
+                buffer.resize(end, 0);
+            }
+            buffer[pos..end].copy_from_slice(&payload);
+            end
+        };
+        self.bytesio_store_state(&receiver, value_obj, pos, closed)?;
+        Ok(Value::Int(written as i64))
+    }
+
+    fn builtin_bytesio_writelines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("BytesIO.writelines expects one iterable argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let values = self.collect_iterable_values(args.remove(0))?;
+        for value in values {
+            let _ = self.builtin_bytesio_write(
+                vec![Value::Instance(receiver.clone()), value],
+                HashMap::new(),
+            )?;
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_bytesio_truncate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("BytesIO.truncate expects optional size"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let target_size = if args.is_empty() {
+            pos as i64
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        if target_size < 0 {
+            return Err(RuntimeError::new("negative size value"));
+        }
+        {
+            let Object::ByteArray(buffer) = &mut *value_obj.kind_mut() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            let size = target_size as usize;
+            if size < buffer.len() {
+                buffer.truncate(size);
+            } else if size > buffer.len() {
+                buffer.resize(size, 0);
+            }
+        }
+        self.bytesio_store_state(&receiver, value_obj, pos, closed)?;
+        Ok(Value::Int(target_size))
+    }
+
+    fn builtin_bytesio_read(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("BytesIO.read expects 0-1 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let size = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let (out, end) = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            if pos > buffer.len() {
+                pos = buffer.len();
+            }
+            let end = if size < 0 {
+                buffer.len()
+            } else {
+                (pos + size as usize).min(buffer.len())
+            };
+            (buffer[pos..end].to_vec(), end)
+        };
+        self.bytesio_store_state(&receiver, value_obj, end, closed)?;
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    fn builtin_bytesio_readline(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("BytesIO.readline expects 0-1 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let limit = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let line_out = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            if pos > buffer.len() {
+                pos = buffer.len();
+            }
+            if pos >= buffer.len() {
+                None
+            } else {
+                let mut end = pos;
+                while end < buffer.len() {
+                    if buffer[end] == b'\n' {
+                        end += 1;
+                        break;
+                    }
+                    end += 1;
+                    if limit >= 0 && (end - pos) as i64 >= limit {
+                        break;
+                    }
+                }
+                Some((buffer[pos..end].to_vec(), end))
+            }
+        };
+        let Some((out, end)) = line_out else {
+            return Ok(self.heap.alloc_bytes(Vec::new()));
+        };
+        self.bytesio_store_state(&receiver, value_obj, end, closed)?;
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    fn builtin_bytesio_readinto(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("BytesIO.readinto expects 1 argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let target = args.remove(0);
+        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let remaining = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            if pos > buffer.len() {
+                pos = buffer.len();
+            }
+            buffer[pos..].to_vec()
+        };
+        let copied = match target {
+            Value::ByteArray(obj) => {
+                let Object::ByteArray(values) = &mut *obj.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let count = values.len().min(remaining.len());
+                values[..count].copy_from_slice(&remaining[..count]);
+                count
+            }
+            Value::MemoryView(view_obj) => {
+                let source = match &*view_obj.kind() {
+                    Object::MemoryView(view) => view.source.clone(),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "readinto() argument must be read-write bytes-like object",
+                        ));
+                    }
+                };
+                let Object::ByteArray(values) = &mut *source.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let count = values.len().min(remaining.len());
+                values[..count].copy_from_slice(&remaining[..count]);
+                count
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    "readinto() argument must be read-write bytes-like object",
+                ));
+            }
+        };
+        self.bytesio_store_state(&receiver, value_obj, pos + copied, closed)?;
+        Ok(Value::Int(copied as i64))
+    }
+
+    fn builtin_bytesio_getvalue(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.getvalue expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        let Object::ByteArray(buffer) = &*value_obj.kind() else {
+            return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+        };
+        Ok(self.heap.alloc_bytes(buffer.to_vec()))
+    }
+
+    fn builtin_bytesio_getbuffer(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.getbuffer expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        Ok(self.heap.alloc_memoryview(value_obj))
+    }
+
+    fn builtin_bytesio_seek(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new("BytesIO.seek expects 1-2 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let offset = value_to_int(args.remove(0))?;
+        let whence = if args.is_empty() {
+            0
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let new_pos = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            let base = match whence {
+                0 => 0i64,
+                1 => pos as i64,
+                2 => buffer.len() as i64,
+                _ => return Err(RuntimeError::new("BytesIO.seek invalid whence")),
+            };
+            let new_pos = base + offset;
+            if new_pos < 0 {
+                return Err(RuntimeError::new("negative seek value"));
+            }
+            new_pos as usize
+        };
+        self.bytesio_store_state(&receiver, value_obj, new_pos, closed)?;
+        Ok(Value::Int(new_pos as i64))
+    }
+
+    fn builtin_bytesio_tell(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.tell expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let (_value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        Ok(Value::Int(pos as i64))
+    }
+
+    fn builtin_bytesio_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.__iter__ expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_bytesio_next(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.__next__ expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let line =
+            self.builtin_bytesio_readline(vec![Value::Instance(receiver)], HashMap::new())?;
+        let is_empty = if let Value::Bytes(obj) = &line {
+            matches!(&*obj.kind(), Object::Bytes(values) if values.is_empty())
+        } else {
+            false
+        };
+        if is_empty {
+            return Err(RuntimeError::new("StopIteration"));
+        }
+        Ok(line)
+    }
+
+    fn builtin_bytesio_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.__enter__ expects no arguments"));
+        }
+        Ok(args.remove(0))
+    }
+
+    fn builtin_bytesio_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "BytesIO.__exit__ expects up to 3 arguments",
+            ));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let (value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        self.bytesio_store_state(&receiver, value_obj, pos, true)?;
+        Ok(Value::Bool(false))
+    }
+
+    fn builtin_bytesio_close(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.close expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let (value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        self.bytesio_store_state(&receiver, value_obj, pos, true)?;
+        Ok(Value::None)
+    }
+
+    fn parse_struct_format(&self, format: &str) -> Result<StructFormatSpec, RuntimeError> {
+        let mut chars = format.chars().peekable();
+        let mut endian = StructEndian::Little;
+        if let Some(prefix) = chars.peek().copied() {
+            match prefix {
+                '<' => {
+                    endian = StructEndian::Little;
+                    chars.next();
+                }
+                '>' | '!' => {
+                    endian = StructEndian::Big;
+                    chars.next();
+                }
+                '@' | '=' => {
+                    endian = StructEndian::Little;
+                    chars.next();
+                }
+                _ => {}
+            }
+        }
+
+        let mut fields = Vec::new();
+        let mut size = 0usize;
+        let mut value_count = 0usize;
+        while let Some(ch) = chars.next() {
+            let mut count = if ch.is_ascii_digit() {
+                let mut digits = String::new();
+                digits.push(ch);
+                while let Some(next) = chars.peek().copied() {
+                    if next.is_ascii_digit() {
+                        digits.push(next);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                digits
+                    .parse::<usize>()
+                    .map_err(|_| RuntimeError::new("bad struct format"))?
+            } else {
+                1
+            };
+            let code = if ch.is_ascii_digit() {
+                chars
+                    .next()
+                    .ok_or_else(|| RuntimeError::new("bad struct format"))?
+            } else {
+                ch
+            };
+            if count == 0 && code != 's' {
+                continue;
+            }
+            let (kind, unit_size, takes_value, repeat_values) = match code {
+                'x' => (StructFieldKind::Pad, 1usize, false, false),
+                's' => (StructFieldKind::Bytes, 1usize, true, false),
+                'c' => (StructFieldKind::Char, 1usize, true, true),
+                '?' => (StructFieldKind::Bool, 1usize, true, true),
+                'b' => (StructFieldKind::I8, 1usize, true, true),
+                'B' => (StructFieldKind::U8, 1usize, true, true),
+                'h' => (StructFieldKind::I16, 2usize, true, true),
+                'H' => (StructFieldKind::U16, 2usize, true, true),
+                'i' | 'l' => (StructFieldKind::I32, 4usize, true, true),
+                'I' | 'L' => (StructFieldKind::U32, 4usize, true, true),
+                'q' => (StructFieldKind::I64, 8usize, true, true),
+                'Q' => (StructFieldKind::U64, 8usize, true, true),
+                'f' => (StructFieldKind::F32, 4usize, true, true),
+                'd' => (StructFieldKind::F64, 8usize, true, true),
+                _ => {
+                    return Err(RuntimeError::new(format!(
+                        "bad char in struct format: {code}"
+                    )));
+                }
+            };
+            if code == 's' && ch.is_ascii_digit() {
+                // count is already parsed from prefix digits.
+            } else if code == 's' && count == 0 {
+                count = 0;
+            }
+            fields.push(StructFieldSpec { kind, count });
+            let field_size = if code == 's' {
+                count
+            } else {
+                unit_size.saturating_mul(count)
+            };
+            size = size.saturating_add(field_size);
+            if takes_value {
+                value_count = value_count.saturating_add(if repeat_values { count } else { 1 });
+            }
+        }
+        Ok(StructFormatSpec {
+            endian,
+            fields,
+            size,
+            value_count,
+        })
+    }
+
+    fn struct_pack_format_values(
+        &mut self,
+        spec: &StructFormatSpec,
+        values: &[Value],
+    ) -> Result<Vec<u8>, RuntimeError> {
+        if values.len() != spec.value_count {
+            return Err(RuntimeError::new(format!(
+                "pack expected {} items for packing (got {})",
+                spec.value_count,
+                values.len()
+            )));
+        }
+        let mut result = Vec::with_capacity(spec.size);
+        let mut value_idx = 0usize;
+        for field in &spec.fields {
+            match field.kind {
+                StructFieldKind::Pad => {
+                    result.extend(std::iter::repeat(0u8).take(field.count));
+                }
+                StructFieldKind::Bytes => {
+                    let bytes = bytes_like_from_value(values[value_idx].clone())?;
+                    value_idx += 1;
+                    if bytes.len() >= field.count {
+                        result.extend_from_slice(&bytes[..field.count]);
+                    } else {
+                        result.extend_from_slice(&bytes);
+                        result.extend(std::iter::repeat(0u8).take(field.count - bytes.len()));
+                    }
+                }
+                StructFieldKind::Char => {
+                    for _ in 0..field.count {
+                        let bytes = bytes_like_from_value(values[value_idx].clone())?;
+                        value_idx += 1;
+                        if bytes.len() != 1 {
+                            return Err(RuntimeError::new("char format requires a bytes object of length 1"));
+                        }
+                        result.push(bytes[0]);
+                    }
+                }
+                StructFieldKind::Bool => {
+                    for _ in 0..field.count {
+                        let flag = is_truthy(&values[value_idx]);
+                        value_idx += 1;
+                        result.push(if flag { 1 } else { 0 });
+                    }
+                }
+                StructFieldKind::I8 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = i8::try_from(raw)
+                            .map_err(|_| RuntimeError::new("byte format requires -128 <= number <= 127"))?;
+                        result.push(value as u8);
+                    }
+                }
+                StructFieldKind::U8 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = u8::try_from(raw)
+                            .map_err(|_| RuntimeError::new("ubyte format requires 0 <= number <= 255"))?;
+                        result.push(value);
+                    }
+                }
+                StructFieldKind::I16 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = i16::try_from(raw).map_err(|_| {
+                            RuntimeError::new("short format requires -32768 <= number <= 32767")
+                        })?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::U16 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = u16::try_from(raw).map_err(|_| {
+                            RuntimeError::new("ushort format requires 0 <= number <= 65535")
+                        })?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::I32 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = i32::try_from(raw).map_err(|_| {
+                            RuntimeError::new(
+                                "int format requires -2147483648 <= number <= 2147483647",
+                            )
+                        })?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::U32 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = u32::try_from(raw).map_err(|_| {
+                            RuntimeError::new(
+                                "uint format requires 0 <= number <= 4294967295",
+                            )
+                        })?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::I64 => {
+                    for _ in 0..field.count {
+                        let value = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::U64 => {
+                    for _ in 0..field.count {
+                        let raw = value_to_int(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let value = u64::try_from(raw)
+                            .map_err(|_| RuntimeError::new("argument out of range"))?;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::F32 => {
+                    for _ in 0..field.count {
+                        let value = value_to_f64(values[value_idx].clone())? as f32;
+                        value_idx += 1;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+                StructFieldKind::F64 => {
+                    for _ in 0..field.count {
+                        let value = value_to_f64(values[value_idx].clone())?;
+                        value_idx += 1;
+                        let bytes = match spec.endian {
+                            StructEndian::Little => value.to_le_bytes(),
+                            StructEndian::Big => value.to_be_bytes(),
+                        };
+                        result.extend_from_slice(&bytes);
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn struct_unpack_format_bytes(
+        &mut self,
+        spec: &StructFormatSpec,
+        bytes: &[u8],
+    ) -> Result<Vec<Value>, RuntimeError> {
+        if bytes.len() != spec.size {
+            return Err(RuntimeError::new(format!(
+                "unpack requires a buffer of {} bytes",
+                spec.size
+            )));
+        }
+        let mut values = Vec::with_capacity(spec.value_count);
+        let mut pos = 0usize;
+        for field in &spec.fields {
+            match field.kind {
+                StructFieldKind::Pad => {
+                    pos += field.count;
+                }
+                StructFieldKind::Bytes => {
+                    values.push(self.heap.alloc_bytes(bytes[pos..pos + field.count].to_vec()));
+                    pos += field.count;
+                }
+                StructFieldKind::Char => {
+                    for _ in 0..field.count {
+                        values.push(self.heap.alloc_bytes(vec![bytes[pos]]));
+                        pos += 1;
+                    }
+                }
+                StructFieldKind::Bool => {
+                    for _ in 0..field.count {
+                        values.push(Value::Bool(bytes[pos] != 0));
+                        pos += 1;
+                    }
+                }
+                StructFieldKind::I8 => {
+                    for _ in 0..field.count {
+                        values.push(Value::Int((bytes[pos] as i8) as i64));
+                        pos += 1;
+                    }
+                }
+                StructFieldKind::U8 => {
+                    for _ in 0..field.count {
+                        values.push(Value::Int(bytes[pos] as i64));
+                        pos += 1;
+                    }
+                }
+                StructFieldKind::I16 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => i16::from_le_bytes([bytes[pos], bytes[pos + 1]]),
+                            StructEndian::Big => i16::from_be_bytes([bytes[pos], bytes[pos + 1]]),
+                        };
+                        values.push(Value::Int(value as i64));
+                        pos += 2;
+                    }
+                }
+                StructFieldKind::U16 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => u16::from_le_bytes([bytes[pos], bytes[pos + 1]]),
+                            StructEndian::Big => u16::from_be_bytes([bytes[pos], bytes[pos + 1]]),
+                        };
+                        values.push(Value::Int(value as i64));
+                        pos += 2;
+                    }
+                }
+                StructFieldKind::I32 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => i32::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                            StructEndian::Big => i32::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                        };
+                        values.push(Value::Int(value as i64));
+                        pos += 4;
+                    }
+                }
+                StructFieldKind::U32 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => u32::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                            StructEndian::Big => u32::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                        };
+                        values.push(Value::Int(value as i64));
+                        pos += 4;
+                    }
+                }
+                StructFieldKind::I64 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => i64::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                            StructEndian::Big => i64::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                        };
+                        values.push(Value::Int(value));
+                        pos += 8;
+                    }
+                }
+                StructFieldKind::U64 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => u64::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                            StructEndian::Big => u64::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                        };
+                        if value <= i64::MAX as u64 {
+                            values.push(Value::Int(value as i64));
+                        } else {
+                            values.push(Value::BigInt(BigInt::from_u64(value)));
+                        }
+                        pos += 8;
+                    }
+                }
+                StructFieldKind::F32 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => f32::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                            StructEndian::Big => f32::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                            ]),
+                        };
+                        values.push(Value::Float(value as f64));
+                        pos += 4;
+                    }
+                }
+                StructFieldKind::F64 => {
+                    for _ in 0..field.count {
+                        let value = match spec.endian {
+                            StructEndian::Little => f64::from_le_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                            StructEndian::Big => f64::from_be_bytes([
+                                bytes[pos],
+                                bytes[pos + 1],
+                                bytes[pos + 2],
+                                bytes[pos + 3],
+                                bytes[pos + 4],
+                                bytes[pos + 5],
+                                bytes[pos + 6],
+                                bytes[pos + 7],
+                            ]),
+                        };
+                        values.push(Value::Float(value));
+                        pos += 8;
+                    }
+                }
+            }
+        }
+        Ok(values)
+    }
+
+    fn struct_normalize_offset(
+        &self,
+        offset: i64,
+        buffer_len: usize,
+        needed: usize,
+    ) -> Result<usize, RuntimeError> {
+        let mut start = offset;
+        if start < 0 {
+            start += buffer_len as i64;
+        }
+        if start < 0 {
+            return Err(RuntimeError::new("offset out of range"));
+        }
+        let start = start as usize;
+        if start > buffer_len || start.saturating_add(needed) > buffer_len {
+            return Err(RuntimeError::new("unpack_from requires a buffer of sufficient size"));
+        }
+        Ok(start)
+    }
+
+}
