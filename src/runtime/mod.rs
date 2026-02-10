@@ -2057,6 +2057,7 @@ pub enum BuiltinFunction {
     OsPathIsDir,
     OsPathIsFile,
     OsPathIsLink,
+    OsPathIsJunction,
     OsPathSplitExt,
     OsPathAbsPath,
     OsPathExpandUser,
@@ -2281,6 +2282,7 @@ pub enum BuiltinFunction {
     IoFileEnter,
     IoFileExit,
     IoFileFileno,
+    IoFileDetach,
     IoFileReadable,
     IoFileWritable,
     IoFileSeekable,
@@ -2508,6 +2510,7 @@ impl BuiltinFunction {
             | BuiltinFunction::IoBaseNext
             | BuiltinFunction::BytesIOWriteLines
             | BuiltinFunction::BytesIOTruncate
+            | BuiltinFunction::IoFileDetach
             | BuiltinFunction::RePatternFindAll
             | BuiltinFunction::RePatternFindIter
             | BuiltinFunction::CollectionsChainMapInit
@@ -4483,6 +4486,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsPathIsDir
             | BuiltinFunction::OsPathIsFile
             | BuiltinFunction::OsPathIsLink
+            | BuiltinFunction::OsPathIsJunction
             | BuiltinFunction::OsPathSplitExt
             | BuiltinFunction::OsPathAbsPath
             | BuiltinFunction::OsPathExpandUser

@@ -172,6 +172,7 @@ fn configure_vm_for_execution(
 
 fn configure_vm_for_command(vm: &mut Vm, import_site: bool) -> Result<(), String> {
     let (stdlib_paths, strict_site_import) = detect_cpython_stdlib_paths();
+    vm.set_sys_no_site_flag(!import_site);
     for stdlib_path in &stdlib_paths {
         vm.add_module_path(stdlib_path.clone());
     }

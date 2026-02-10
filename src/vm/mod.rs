@@ -800,6 +800,12 @@ impl Vm {
                     .insert("context_aware_warnings".to_string(), Value::Bool(false));
                 flags_data
                     .globals
+                    .insert("no_site".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("no_user_site".to_string(), Value::Int(0));
+                flags_data
+                    .globals
                     .insert("optimize".to_string(), Value::Int(0));
                 flags_data
                     .globals
@@ -807,6 +813,12 @@ impl Vm {
                 flags_data
                     .globals
                     .insert("bytes_warning".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("ignore_environment".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("isolated".to_string(), Value::Int(0));
                 flags_data
                     .globals
                     .insert("dev_mode".to_string(), Value::Bool(false));
@@ -830,6 +842,12 @@ impl Vm {
             module_data.globals.insert(
                 "version".to_string(),
                 Value::Str("3.14.0 (pyrs)".to_string()),
+            );
+            module_data.globals.insert(
+                "copyright".to_string(),
+                Value::Str(
+                    "Copyright (c) 2001-2026 Python Software Foundation.".to_string(),
+                ),
             );
             let implementation = match self
                 .heap
@@ -1244,6 +1262,24 @@ impl Vm {
         self.register_module("sys", sys_module);
         self.sync_sys_path_from_module_paths();
         self.refresh_sys_modules_dict();
+    }
+
+    pub fn set_sys_no_site_flag(&mut self, no_site: bool) {
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return;
+        };
+        let flags_module = match &*sys_module.kind() {
+            Object::Module(module_data) => match module_data.globals.get("flags") {
+                Some(Value::Module(flags)) => flags.clone(),
+                _ => return,
+            },
+            _ => return,
+        };
+        if let Object::Module(flags_data) = &mut *flags_module.kind_mut() {
+            flags_data
+                .globals
+                .insert("no_site".to_string(), Value::Int(if no_site { 1 } else { 0 }));
+        }
     }
 
     fn install_importlib_modules(&mut self) {
@@ -1815,6 +1851,10 @@ impl Vm {
                 ("pardir", Value::Str("..".to_string())),
                 ("extsep", Value::Str(".".to_string())),
                 (
+                    "linesep",
+                    Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string()),
+                ),
+                (
                     "defpath",
                     Value::Str(
                         if cfg!(windows) {
@@ -2007,6 +2047,7 @@ impl Vm {
                 ("isdir", BuiltinFunction::OsPathIsDir),
                 ("isfile", BuiltinFunction::OsPathIsFile),
                 ("islink", BuiltinFunction::OsPathIsLink),
+                ("isjunction", BuiltinFunction::OsPathIsJunction),
                 ("splitext", BuiltinFunction::OsPathSplitExt),
                 ("commonprefix", BuiltinFunction::OsPathCommonPrefix),
             ],
@@ -3828,6 +3869,10 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoFileFileno),
                             );
                             class_data.attrs.insert(
+                                "detach".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileDetach),
+                            );
+                            class_data.attrs.insert(
                                 "readable".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileReadable),
                             );
@@ -4166,6 +4211,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "fileno".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileFileno),
+                            );
+                            class_data.attrs.insert(
+                                "detach".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileDetach),
                             );
                             class_data.attrs.insert(
                                 "readable".to_string(),
@@ -17843,6 +17892,7 @@ impl Vm {
             BuiltinFunction::OsPathIsDir => self.builtin_os_path_isdir(args, kwargs),
             BuiltinFunction::OsPathIsFile => self.builtin_os_path_isfile(args, kwargs),
             BuiltinFunction::OsPathIsLink => self.builtin_os_path_islink(args, kwargs),
+            BuiltinFunction::OsPathIsJunction => self.builtin_os_path_isjunction(args, kwargs),
             BuiltinFunction::OsPathSplitExt => self.builtin_os_path_splitext(args, kwargs),
             BuiltinFunction::OsPathAbsPath => self.builtin_os_path_abspath(args, kwargs),
             BuiltinFunction::OsPathExpandUser => self.builtin_os_path_expanduser(args, kwargs),
@@ -18121,6 +18171,7 @@ impl Vm {
             BuiltinFunction::IoFileEnter => self.builtin_io_file_enter(args, kwargs),
             BuiltinFunction::IoFileExit => self.builtin_io_file_exit(args, kwargs),
             BuiltinFunction::IoFileFileno => self.builtin_io_file_fileno(args, kwargs),
+            BuiltinFunction::IoFileDetach => self.builtin_io_file_detach(args, kwargs),
             BuiltinFunction::IoFileReadable => self.builtin_io_file_readable(args, kwargs),
             BuiltinFunction::IoFileWritable => self.builtin_io_file_writable(args, kwargs),
             BuiltinFunction::IoFileSeekable => self.builtin_io_file_seekable(args, kwargs),
@@ -26086,7 +26137,7 @@ impl Vm {
             .remove("followlinks")
             .map(|value| is_truthy(&value))
             .unwrap_or(false);
-        let _onerror = kwargs.remove("onerror");
+        let onerror = kwargs.remove("onerror");
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "walk() got an unexpected keyword argument",
@@ -26096,18 +26147,50 @@ impl Vm {
         let root = PathBuf::from(&root_str);
         let mut rows = Vec::new();
 
+        fn os_walk_error_value(path: &Path, err: &std::io::Error) -> Value {
+            let name = match err.kind() {
+                std::io::ErrorKind::NotFound => "FileNotFoundError",
+                std::io::ErrorKind::PermissionDenied => "PermissionError",
+                std::io::ErrorKind::AlreadyExists => "FileExistsError",
+                _ => "OSError",
+            };
+            let exception = ExceptionObject::new(name, Some(err.to_string()));
+            {
+                let mut attrs = exception.attrs.borrow_mut();
+                attrs.insert(
+                    "filename".to_string(),
+                    Value::Str(path.to_string_lossy().to_string()),
+                );
+                if let Some(errno) = err.raw_os_error() {
+                    attrs.insert("errno".to_string(), Value::Int(errno as i64));
+                }
+                attrs.insert("strerror".to_string(), Value::Str(err.to_string()));
+            }
+            Value::Exception(exception)
+        }
+
         fn collect_walk(
             vm: &mut Vm,
             rows: &mut Vec<Value>,
             current: &Path,
             topdown: bool,
             followlinks: bool,
+            onerror: Option<Value>,
         ) -> Result<(), RuntimeError> {
             let entries = match fs::read_dir(current) {
                 Ok(entries) => entries,
                 Err(err) => {
-                    // CPython os.walk ignores read errors by default.
-                    let _ = err;
+                    if let Some(callback) = onerror {
+                        let exc = os_walk_error_value(current, &err);
+                        match vm.call_internal(callback, vec![exc], HashMap::new())? {
+                            InternalCallOutcome::Value(_) => {}
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(vm.runtime_error_from_active_exception(
+                                    "walk() onerror callback raised",
+                                ));
+                            }
+                        }
+                    }
                     return Ok(());
                 }
             };
@@ -26117,7 +26200,17 @@ impl Vm {
                 let entry = match entry {
                     Ok(entry) => entry,
                     Err(err) => {
-                        let _ = err;
+                        if let Some(callback) = onerror.clone() {
+                            let exc = os_walk_error_value(current, &err);
+                            match vm.call_internal(callback, vec![exc], HashMap::new())? {
+                                InternalCallOutcome::Value(_) => {}
+                                InternalCallOutcome::CallerExceptionHandled => {
+                                    return Err(vm.runtime_error_from_active_exception(
+                                        "walk() onerror callback raised",
+                                    ));
+                                }
+                            }
+                        }
                         continue;
                     }
                 };
@@ -26158,7 +26251,7 @@ impl Vm {
                 emit_row(vm, rows);
             }
             for (_, child) in &dir_entries {
-                collect_walk(vm, rows, child, topdown, followlinks)?;
+                collect_walk(vm, rows, child, topdown, followlinks, onerror.clone())?;
             }
             if !topdown {
                 emit_row(vm, rows);
@@ -26166,7 +26259,7 @@ impl Vm {
             Ok(())
         }
 
-        collect_walk(self, &mut rows, &root, topdown, followlinks)?;
+        collect_walk(self, &mut rows, &root, topdown, followlinks, onerror)?;
         Ok(self.heap.alloc_list(rows))
     }
 
@@ -27387,6 +27480,31 @@ impl Vm {
             Err(_) => return Ok(Value::Bool(false)),
         };
         Ok(Value::Bool(metadata.file_type().is_symlink()))
+    }
+
+    fn builtin_os_path_isjunction(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("isjunction() expects one argument"));
+        }
+        #[cfg(windows)]
+        {
+            let path = value_to_path(&args[0])?;
+            let metadata = match fs::symlink_metadata(path) {
+                Ok(metadata) => metadata,
+                Err(_) => return Ok(Value::Bool(false)),
+            };
+            return Ok(Value::Bool(
+                metadata.file_type().is_symlink() && metadata.is_dir(),
+            ));
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Value::Bool(false))
+        }
     }
 
     fn builtin_os_path_splitext(
@@ -31383,23 +31501,26 @@ impl Vm {
         Self::instance_attr_set(&instance, "closed", Value::Bool(closed))?;
         Self::instance_attr_set(&instance, "_closefd", Value::Bool(closefd && buffer_fd.is_some()))?;
         let encoding_value = match encoding.unwrap_or(Value::None) {
-            Value::None => Value::None,
+            Value::None => Value::Str("utf-8".to_string()),
             Value::Str(value) => {
                 self.ensure_known_text_encoding(&value)?;
                 Value::Str(value)
             }
             _ => return Err(RuntimeError::new("TextIOWrapper encoding must be str or None")),
         };
-        Self::instance_attr_set(&instance, "_encoding", encoding_value)?;
+        Self::instance_attr_set(&instance, "_encoding", encoding_value.clone())?;
+        Self::instance_attr_set(&instance, "encoding", encoding_value)?;
+        let errors_value = match errors.unwrap_or(Value::None) {
+            Value::None => Value::Str("strict".to_string()),
+            Value::Str(value) => Value::Str(value),
+            _ => return Err(RuntimeError::new("TextIOWrapper errors must be str or None")),
+        };
         Self::instance_attr_set(
             &instance,
             "_errors",
-            match errors.unwrap_or(Value::None) {
-                Value::None => Value::None,
-                Value::Str(value) => Value::Str(value),
-                _ => return Err(RuntimeError::new("TextIOWrapper errors must be str or None")),
-            },
+            errors_value.clone(),
         )?;
+        Self::instance_attr_set(&instance, "errors", errors_value)?;
         let newline_value = match newline.unwrap_or(Value::None) {
             Value::None => Value::None,
             Value::Str(value) => {
@@ -31410,7 +31531,16 @@ impl Vm {
             }
             _ => return Err(RuntimeError::new("TextIOWrapper newline must be str or None")),
         };
-        Self::instance_attr_set(&instance, "_newline", newline_value)?;
+        Self::instance_attr_set(&instance, "_newline", newline_value.clone())?;
+        let observed_newlines = match &newline_value {
+            Value::None => Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string()),
+            Value::Str(value) if value.is_empty() => {
+                Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string())
+            }
+            Value::Str(value) => Value::Str(value.clone()),
+            _ => Value::None,
+        };
+        Self::instance_attr_set(&instance, "newlines", observed_newlines)?;
         Self::instance_attr_set(&instance, "buffer", Value::Instance(buffer_instance.clone()))?;
         Self::instance_attr_set(&instance, "raw", Value::Instance(buffer_instance))?;
         Ok(Value::None)
@@ -31496,6 +31626,10 @@ impl Vm {
             Value::Builtin(BuiltinFunction::IoFileFileno),
         );
         class_data.attrs.insert(
+            "detach".to_string(),
+            Value::Builtin(BuiltinFunction::IoFileDetach),
+        );
+        class_data.attrs.insert(
             "readable".to_string(),
             Value::Builtin(BuiltinFunction::IoFileReadable),
         );
@@ -31550,18 +31684,47 @@ impl Vm {
         instance_data
             .attrs
             .insert("_closefd".to_string(), Value::Bool(closefd));
+        instance_data.attrs.insert("name".to_string(), Value::Int(fd));
+        let encoding_value = if binary {
+            encoding.map(Value::Str).unwrap_or(Value::None)
+        } else {
+            Value::Str(encoding.unwrap_or_else(|| "utf-8".to_string()))
+        };
+        let errors_value = if binary {
+            errors.map(Value::Str).unwrap_or(Value::None)
+        } else {
+            Value::Str(errors.unwrap_or_else(|| "strict".to_string()))
+        };
+        let newline_value = newline.map(Value::Str).unwrap_or(Value::None);
         instance_data.attrs.insert(
             "_encoding".to_string(),
-            encoding.map(Value::Str).unwrap_or(Value::None),
+            encoding_value.clone(),
         );
         instance_data.attrs.insert(
             "_errors".to_string(),
-            errors.map(Value::Str).unwrap_or(Value::None),
+            errors_value.clone(),
         );
         instance_data.attrs.insert(
             "_newline".to_string(),
-            newline.map(Value::Str).unwrap_or(Value::None),
+            newline_value.clone(),
         );
+        if !binary {
+            let observed_newlines = match &newline_value {
+                Value::None => Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string()),
+                Value::Str(value) if value.is_empty() => {
+                    Value::Str(if cfg!(windows) { "\r\n" } else { "\n" }.to_string())
+                }
+                Value::Str(value) => Value::Str(value.clone()),
+                _ => Value::None,
+            };
+            instance_data
+                .attrs
+                .insert("encoding".to_string(), encoding_value);
+            instance_data.attrs.insert("errors".to_string(), errors_value);
+            instance_data
+                .attrs
+                .insert("newlines".to_string(), observed_newlines);
+        }
         if !binary {
             instance_data
                 .attrs
@@ -32265,6 +32428,27 @@ impl Vm {
             return Ok(Value::Int(file.as_raw_fd() as i64));
         }
         Ok(Value::Int(fd))
+    }
+
+    fn builtin_io_file_detach(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("detach() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "detach")?;
+        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer") {
+            if buffer.id() != instance.id() {
+                Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
+                Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
+                Self::instance_attr_set(&instance, "buffer", Value::None)?;
+                Self::instance_attr_set(&instance, "raw", Value::None)?;
+                return Ok(Value::Instance(buffer));
+            }
+        }
+        Err(RuntimeError::new("detach"))
     }
 
     fn builtin_io_file_readable(
@@ -41242,6 +41426,20 @@ fn runtime_error_line_matches_exception(line: &str, exception: &str) -> bool {
     }
 }
 
+#[inline]
+fn should_refine_os_error(message: &str) -> bool {
+    message.contains("open failed:")
+        || message.contains("open() failed:")
+        || message.contains("mkdir failed:")
+        || message.contains("chmod failed:")
+        || message.contains("access failed:")
+        || message.contains("remove failed:")
+        || message.contains("rmdir failed:")
+        || message.contains("stat failed:")
+        || message.contains("lstat failed:")
+        || message.contains("scandir failed:")
+}
+
 fn classify_runtime_error(message: &str) -> &'static str {
     const DIRECT_PREFIX_EXCEPTIONS: [&str; 23] = [
         "TypeError",
@@ -41278,6 +41476,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
         {
             for exception in DIRECT_PREFIX_EXCEPTIONS {
                 if runtime_error_line_matches_exception(last_non_empty_line, exception) {
+                    if exception == "OSError" && should_refine_os_error(last_non_empty_line) {
+                        continue;
+                    }
                     return exception;
                 }
             }
@@ -41285,6 +41486,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     }
     for exception in DIRECT_PREFIX_EXCEPTIONS {
         if runtime_error_line_matches_exception(message, exception) {
+            if exception == "OSError" && should_refine_os_error(message) {
+                continue;
+            }
             return exception;
         }
     }
@@ -41504,6 +41708,17 @@ fn classify_runtime_error(message: &str) -> &'static str {
             return "NotADirectoryError";
         }
     }
+    if message.contains("rmdir failed:") {
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
     if message.contains("remove failed:") {
         if message.contains("No such file or directory") || message.contains("os error 2") {
             return "FileNotFoundError";
@@ -41514,7 +41729,11 @@ fn classify_runtime_error(message: &str) -> &'static str {
         if message.contains("Not a directory") || message.contains("os error 20") {
             return "NotADirectoryError";
         }
-        if message.contains("Permission denied") || message.contains("os error 13") {
+        if message.contains("Permission denied")
+            || message.contains("os error 13")
+            || message.contains("Operation not permitted")
+            || message.contains("os error 1")
+        {
             return "PermissionError";
         }
     }
