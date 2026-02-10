@@ -23,6 +23,7 @@ Status:
 ## Runtime and Object Model
 - `[x]` Identity/refcount/cycle-GC foundations
 - `[x]` Core runtime object model and class/function/frame foundations
+- `[x]` Core truth-value protocol semantics (`__bool__` then `__len__`) in VM control flow and key builtins
 - `[~]` Long-tail data-model parity (descriptor/attribute/metaclass/slots edges) pending
 - `[~]` Numeric long-tail parity (big-int conversion/formatting/error-edge behavior) pending
 - `[~]` Hash-container semantic/perf closure (`dict`/`set`/`frozenset`) pending

@@ -61,6 +61,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - Roadmap and milestone definitions: `docs/ROADMAP.md`
 - Production checklist and release blockers: `docs/PRODUCTION_READINESS.md`
 - Stub/partial implementation ledger: `docs/STUB_ACCOUNTING.md`
+- Object-model parity audit log: `docs/OBJECT_MODEL_AUDIT.md`
 - Stdlib pure-Python migration strategy: `docs/STDLIB_MIGRATION_PLAN.md`
 - Engineering quality gates: `docs/ENGINEERING_GATES.md`
 - Algorithmic/semantic audit backlog: `docs/ALGO_AUDIT_BACKLOG.md`
@@ -78,3 +79,4 @@ Milestone 13 completion is blocked on P0 closure of:
 ## Current Focus
 - Pause new feature expansion until docs are consistent and cleanup is complete.
 - Then resume Milestone 13 closure using the native-core-first plan above.
+- Keep object-model parity work tracked in `docs/OBJECT_MODEL_AUDIT.md` and prioritize protocol-dispatch correctness over short-term patching.

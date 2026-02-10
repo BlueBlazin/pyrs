@@ -4092,6 +4092,7 @@ impl Vm {
             BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStreamIsATty => self.builtin_sys_stream_isatty(args, kwargs),
             BuiltinFunction::Int => self.builtin_int(args, kwargs),
+            BuiltinFunction::Bool => self.builtin_bool(args, kwargs),
             BuiltinFunction::Float => self.builtin_float(args, kwargs),
             BuiltinFunction::Complex => self.builtin_complex(args, kwargs),
             BuiltinFunction::Str => self.builtin_str(args, kwargs),

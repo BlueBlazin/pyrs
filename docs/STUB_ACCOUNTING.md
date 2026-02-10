@@ -33,6 +33,7 @@ No partially implemented surface is allowed to remain untracked.
 | `socket`/`_socket` | Baseline methods/helpers implemented | Full in-scope API and behavior parity | 13 |
 | `uuid` | Foundations implemented | Full in-scope API parity | 13 |
 | `dataclasses`/`typing`/`enum`/`contextvars` | Partial stdlib compatibility | Full in-scope semantics for modern pure-Python apps | 13 |
+| Object-model protocol dispatch (`__contains__`/iterator fallback, slot edge parity) | Truthiness path (`__bool__`/`__len__`) landed; membership/iterator fallback edges still partial | Align membership + sequence fallback semantics with CPython data model/tests | 13 |
 | VM/module decomposition | `src/vm/mod.rs` remains large | Move critical paths into focused modules with regression proof | 14 |
 
 ## Strict Harness Accounting

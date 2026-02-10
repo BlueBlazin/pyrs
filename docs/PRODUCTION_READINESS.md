@@ -33,6 +33,7 @@ Status:
 
 ### Runtime and Object Model
 - `[x]` Object identity (`id`, `is`) and refcount/cycle-GC foundations
+- `[x]` Core truth-value protocol semantics (`__bool__`/`__len__`) for VM control flow and key coercion sites
 - `[~]` Data-model parity closure (descriptors, attribute hooks, metaclass/super edges, slots edges)
 - `[~]` Numeric long-tail parity (big-int conversion/format/error-edge behavior)
 

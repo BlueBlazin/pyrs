@@ -58,6 +58,7 @@ Milestone 13 is complete only when all are true:
   - `_csv` parity for `Lib/csv.py`
   - `_sre` parity for `Lib/re/*`
   - `_pickle` and object reduction protocol parity for `Lib/pickle.py`
+  - object-model protocol closure (`__bool__`/`__len__` truthiness path landed; membership/sequence fallback closure pending)
 - Pure-stdlib handoff:
   - Make CPython pure modules primary where available
   - Remove compatibility shims once corresponding native core is sufficient

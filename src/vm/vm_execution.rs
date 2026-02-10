@@ -1080,7 +1080,8 @@ impl Vm {
                     }
                     Opcode::UnaryNot => {
                         let value = self.pop_value()?;
-                        self.push_value(Value::Bool(!is_truthy(&value)));
+                        let truthy = self.truthy_from_value(&value)?;
+                        self.push_value(Value::Bool(!truthy));
                     }
                     Opcode::UnaryPos => {
                         let value = self.pop_value()?;
@@ -1092,7 +1093,8 @@ impl Vm {
                     }
                     Opcode::ToBool => {
                         let value = self.pop_value()?;
-                        self.push_value(Value::Bool(is_truthy(&value)));
+                        let truthy = self.truthy_from_value(&value)?;
+                        self.push_value(Value::Bool(truthy));
                     }
                     Opcode::BuildList => {
                         let count = instr
@@ -2925,7 +2927,7 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing jump target"))?
                             as usize;
                         let value = self.pop_value()?;
-                        if !is_truthy(&value) {
+                        if !self.truthy_from_value(&value)? {
                             let frame = self.frames.last_mut().expect("frame exists");
                             frame.ip = target;
                         }
@@ -2936,7 +2938,7 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing jump target"))?
                             as usize;
                         let value = self.pop_value()?;
-                        if is_truthy(&value) {
+                        if self.truthy_from_value(&value)? {
                             let frame = self.frames.last_mut().expect("frame exists");
                             frame.ip = target;
                         }

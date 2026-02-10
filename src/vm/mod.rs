@@ -6402,6 +6402,14 @@ fn classify_runtime_error(message: &str) -> &'static str {
     {
         return "OSError";
     }
+    if message.contains("__len__() should return >= 0") {
+        return "ValueError";
+    }
+    if message.contains("__bool__ should return bool")
+        || message.contains("object cannot be interpreted as an integer")
+    {
+        return "TypeError";
+    }
     if message.contains("unsupported operand type") || message.contains("expects") {
         return "TypeError";
     }

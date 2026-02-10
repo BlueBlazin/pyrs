@@ -1,6 +1,165 @@
 use super::*;
 
 impl Vm {
+    pub(super) fn value_type_name_for_error(&self, value: &Value) -> String {
+        match value {
+            Value::None => "NoneType".to_string(),
+            Value::Bool(_) => "bool".to_string(),
+            Value::Int(_) | Value::BigInt(_) => "int".to_string(),
+            Value::Float(_) => "float".to_string(),
+            Value::Complex { .. } => "complex".to_string(),
+            Value::Str(_) => "str".to_string(),
+            Value::List(_) => "list".to_string(),
+            Value::Tuple(_) => "tuple".to_string(),
+            Value::Dict(_) => "dict".to_string(),
+            Value::DictKeys(_) => "dict_keys".to_string(),
+            Value::Set(_) => "set".to_string(),
+            Value::FrozenSet(_) => "frozenset".to_string(),
+            Value::Bytes(_) => "bytes".to_string(),
+            Value::ByteArray(_) => "bytearray".to_string(),
+            Value::MemoryView(_) => "memoryview".to_string(),
+            Value::Iterator(_) => "iterator".to_string(),
+            Value::Generator(_) => "generator".to_string(),
+            Value::Slice { .. } => "slice".to_string(),
+            Value::Module(_) => "module".to_string(),
+            Value::Super(_) => "super".to_string(),
+            Value::BoundMethod(_) => "method".to_string(),
+            Value::Exception(exc) => exc.name.clone(),
+            Value::ExceptionType(name) => name.clone(),
+            Value::Code(_) => "code".to_string(),
+            Value::Function(_) => "function".to_string(),
+            Value::Builtin(builtin) => self.builtin_type_name(*builtin).to_string(),
+            Value::Class(class) => match &*class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "type".to_string(),
+            },
+            Value::Instance(instance) => {
+                let instance_kind = instance.kind();
+                match &*instance_kind {
+                    Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                        Object::Class(class_data) => class_data.name.clone(),
+                        _ => "object".to_string(),
+                    },
+                    _ => "object".to_string(),
+                }
+            }
+            Value::Cell(_) => "cell".to_string(),
+        }
+    }
+
+    fn truthy_from_len_result(&self, result: Value) -> Result<bool, RuntimeError> {
+        match result {
+            Value::Bool(flag) => Ok(flag),
+            Value::Int(number) => {
+                if number < 0 {
+                    Err(RuntimeError::new("__len__() should return >= 0"))
+                } else {
+                    Ok(number != 0)
+                }
+            }
+            Value::BigInt(number) => {
+                if number.is_negative() {
+                    Err(RuntimeError::new("__len__() should return >= 0"))
+                } else {
+                    Ok(!number.is_zero())
+                }
+            }
+            other => Err(RuntimeError::new(format!(
+                "'{}' object cannot be interpreted as an integer",
+                self.value_type_name_for_error(&other)
+            ))),
+        }
+    }
+
+    pub(super) fn truthy_from_value(&mut self, value: &Value) -> Result<bool, RuntimeError> {
+        match value {
+            Value::None => Ok(false),
+            Value::Bool(flag) => Ok(*flag),
+            Value::Int(number) => Ok(*number != 0),
+            Value::BigInt(number) => Ok(!number.is_zero()),
+            Value::Float(number) => Ok(*number != 0.0),
+            Value::Complex { real, imag } => Ok(*real != 0.0 || *imag != 0.0),
+            Value::Str(text) => Ok(!text.is_empty()),
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => Ok(!values.is_empty()),
+                _ => Ok(true),
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => Ok(!values.is_empty()),
+                _ => Ok(true),
+            },
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(values) => Ok(!values.is_empty()),
+                _ => Ok(true),
+            },
+            Value::DictKeys(obj) => match &*obj.kind() {
+                Object::DictKeysView(view) => match &*view.dict.kind() {
+                    Object::Dict(values) => Ok(!values.is_empty()),
+                    _ => Ok(true),
+                },
+                _ => Ok(true),
+            },
+            Value::Set(obj) => match &*obj.kind() {
+                Object::Set(values) => Ok(!values.is_empty()),
+                _ => Ok(true),
+            },
+            Value::FrozenSet(obj) => match &*obj.kind() {
+                Object::FrozenSet(values) => Ok(!values.is_empty()),
+                _ => Ok(true),
+            },
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) => Ok(!values.is_empty()),
+                _ => Ok(true),
+            },
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => Ok(!values.is_empty()),
+                _ => Ok(true),
+            },
+            Value::MemoryView(obj) => match &*obj.kind() {
+                Object::MemoryView(view) => {
+                    Ok(with_bytes_like_source(&view.source, |values| !values.is_empty())
+                        .unwrap_or(true))
+                }
+                _ => Ok(true),
+            },
+            Value::Cell(obj) => match &*obj.kind() {
+                Object::Cell(cell) => match &cell.value {
+                    Some(inner) => self.truthy_from_value(inner),
+                    None => Ok(false),
+                },
+                _ => Ok(true),
+            },
+            Value::Iterator(_) | Value::Generator(_) | Value::Slice { .. } => Ok(true),
+            other => {
+                if let Some(bool_method) = self.lookup_bound_special_method(other, "__bool__")? {
+                    let bool_value = match self.call_internal(bool_method, Vec::new(), HashMap::new())? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(self.runtime_error_from_active_exception("__bool__() failed"));
+                        }
+                    };
+                    return match bool_value {
+                        Value::Bool(flag) => Ok(flag),
+                        non_bool => Err(RuntimeError::new(format!(
+                            "__bool__ should return bool, returned {}",
+                            self.value_type_name_for_error(&non_bool)
+                        ))),
+                    };
+                }
+                if let Some(len_method) = self.lookup_bound_special_method(other, "__len__")? {
+                    let len_value = match self.call_internal(len_method, Vec::new(), HashMap::new())? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(self.runtime_error_from_active_exception("__len__() failed"));
+                        }
+                    };
+                    return self.truthy_from_len_result(len_value);
+                }
+                Ok(true)
+            }
+        }
+    }
+
     pub(super) fn builtin_print(
         &mut self,
         args: Vec<Value>,
@@ -15,10 +174,10 @@ impl Vm {
             .map(|value| format_value(&value))
             .unwrap_or_else(|| "\n".to_string());
         let file = kwargs.remove("file").unwrap_or(Value::None);
-        let flush_requested = kwargs
-            .remove("flush")
-            .map(|value| is_truthy(&value))
-            .unwrap_or(false);
+        let flush_requested = match kwargs.remove("flush") {
+            Some(value) => self.truthy_from_value(&value)?,
+            None => false,
+        };
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "print() got an unexpected keyword argument",
@@ -675,6 +834,21 @@ impl Vm {
             }
             Err(err) => Err(err),
         }
+    }
+
+    pub(super) fn builtin_bool(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new("bool() expects at most one argument"));
+        }
+        if args.is_empty() {
+            return Ok(Value::Bool(false));
+        }
+        let value = args.remove(0);
+        Ok(Value::Bool(self.truthy_from_value(&value)?))
     }
 
     pub(super) fn normalize_len_result(&self, result: Value) -> Result<Value, RuntimeError> {
@@ -1504,7 +1678,7 @@ impl Vm {
                 ));
             }
         };
-        let signed = is_truthy(&signed_arg);
+        let signed = self.truthy_from_value(&signed_arg)?;
         let value = bigint_from_bytes(&bytes, byteorder == "little", signed);
         Ok(value_from_bigint(value))
     }
@@ -1599,7 +1773,7 @@ impl Vm {
         }
 
         let _ = value_to_int(flags_value)?;
-        let _ = is_truthy(&dont_inherit_value);
+        let _ = self.truthy_from_value(&dont_inherit_value)?;
         let _ = value_to_int(optimize_value)?;
         if let Some(value) = feature_kw {
             let _ = value_to_int(value)?;
@@ -3436,10 +3610,10 @@ impl Vm {
         if args.len() != 1 {
             return Err(RuntimeError::new("sorted() expects one iterable argument"));
         }
-        let reverse = kwargs
-            .remove("reverse")
-            .map(|value| is_truthy(&value))
-            .unwrap_or(false);
+        let reverse = match kwargs.remove("reverse") {
+            Some(value) => self.truthy_from_value(&value)?,
+            None => false,
+        };
         let key_func = kwargs.remove("key").unwrap_or(Value::None);
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
@@ -3703,7 +3877,7 @@ impl Vm {
                 ));
             }
         };
-        Ok(Some(is_truthy(&result)))
+        Ok(Some(self.truthy_from_value(&result)?))
     }
 
     pub(super) fn compare_lt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
@@ -4142,7 +4316,7 @@ impl Vm {
         match iter {
             Value::Iterator(iterator_ref) => {
                 while let Some(value) = self.iterator_next_value(&iterator_ref)? {
-                    let truthy = is_truthy(&value);
+                    let truthy = self.truthy_from_value(&value)?;
                     if expect_all {
                         if !truthy {
                             result = false;
@@ -4157,7 +4331,7 @@ impl Vm {
             Value::Generator(generator) => loop {
                 match self.generator_for_iter_next(&generator)? {
                     GeneratorResumeOutcome::Yield(value) => {
-                        let truthy = is_truthy(&value);
+                        let truthy = self.truthy_from_value(&value)?;
                         if expect_all {
                             if !truthy {
                                 result = false;
@@ -4840,10 +5014,10 @@ impl Vm {
             };
 
             let include = if matches!(predicate, Value::None) {
-                is_truthy(&item)
+                self.truthy_from_value(&item)?
             } else {
                 match self.call_internal(predicate.clone(), vec![item.clone()], HashMap::new())? {
-                    InternalCallOutcome::Value(value) => is_truthy(&value),
+                    InternalCallOutcome::Value(value) => self.truthy_from_value(&value)?,
                     InternalCallOutcome::CallerExceptionHandled => {
                         return Err(RuntimeError::new("filter() callable failed"));
                     }

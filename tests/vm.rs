@@ -1363,6 +1363,104 @@ except Exception as exc:
 }
 
 #[test]
+fn bool_and_control_flow_use_truth_protocol_methods() {
+    let source = r#"class UsesLen:
+    def __len__(self):
+        return 0
+
+class UsesBool:
+    def __bool__(self):
+        return False
+
+class Both:
+    def __len__(self):
+        return 1
+    def __bool__(self):
+        return False
+
+a = bool(UsesLen())
+b = bool(UsesBool())
+c = bool(Both())
+if_len = 1 if UsesLen() else 0
+not_len = not UsesLen()
+default_bool = bool()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("a"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("b"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("c"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("if_len"), Some(Value::Int(0)));
+    assert_eq!(vm.get_global("not_len"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("default_bool"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn bool_rejects_non_bool_dunder_bool_result() {
+    let source = r#"class BadBool:
+    def __bool__(self):
+        return 1
+
+ok = False
+try:
+    bool(BadBool())
+except TypeError as exc:
+    ok = '__bool__ should return bool, returned int' in str(exc)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bool_rejects_non_integer_dunder_len_result() {
+    let source = r#"class BadLen:
+    def __len__(self):
+        return 'bad'
+
+ok = False
+try:
+    bool(BadLen())
+except TypeError as exc:
+    ok = "'str' object cannot be interpreted as an integer" in str(exc)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn comparison_result_uses_truth_protocol() {
+    let source = r#"class Flag:
+    def __init__(self, value):
+        self.value = value
+    def __bool__(self):
+        return self.value
+
+class Thing:
+    def __eq__(self, other):
+        return Flag(False)
+
+ok = (Thing() == Thing()) is False
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_list_literal_and_subscript() {
     let source = "x = [1, 2, 3]\ny = x[1]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
