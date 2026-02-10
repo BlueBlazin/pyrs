@@ -285,6 +285,12 @@ struct OneArgCallSiteCacheEntry {
     closure: Vec<ObjRef>,
 }
 
+#[derive(Clone)]
+struct LoadGlobalSiteCacheEntry {
+    cache_epoch: u64,
+    value: Value,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum QuickenedSiteKind {
     None,
@@ -333,6 +339,7 @@ struct Frame {
     yield_from_iter: Option<Value>,
     quickened_sites: Vec<QuickenedSiteKind>,
     one_arg_inline_cache: Vec<Option<OneArgCallSiteCacheEntry>>,
+    load_global_inline_cache: Vec<Option<LoadGlobalSiteCacheEntry>>,
 }
 
 impl Frame {
@@ -379,6 +386,7 @@ impl Frame {
             yield_from_iter: None,
             quickened_sites: vec![QuickenedSiteKind::None; instruction_len],
             one_arg_inline_cache: vec![None; instruction_len],
+            load_global_inline_cache: vec![None; instruction_len],
         }
     }
 
@@ -426,6 +434,7 @@ impl Frame {
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
             self.one_arg_inline_cache = vec![None; instruction_len];
+            self.load_global_inline_cache = vec![None; instruction_len];
         } else {
             if self.quickened_sites.len() < instruction_len {
                 self.quickened_sites
@@ -437,6 +446,11 @@ impl Frame {
                 self.one_arg_inline_cache.resize(instruction_len, None);
             } else {
                 self.one_arg_inline_cache.truncate(instruction_len);
+            }
+            if self.load_global_inline_cache.len() < instruction_len {
+                self.load_global_inline_cache.resize(instruction_len, None);
+            } else {
+                self.load_global_inline_cache.truncate(instruction_len);
             }
         }
 
@@ -488,7 +502,7 @@ pub struct Vm {
     prefer_pure_re_when_available: bool,
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
-    global_load_cache: HashMap<(usize, usize), Value>,
+    global_name_cache_epoch: u64,
 }
 
 impl Drop for Vm {
@@ -549,7 +563,7 @@ impl Vm {
             prefer_pure_re_when_available: true,
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
-            global_load_cache: HashMap::new(),
+            global_name_cache_epoch: 1,
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -563,10 +577,19 @@ impl Vm {
     }
 
     pub fn set_global(&mut self, name: impl Into<String>, value: Value) {
+        let mut mutated = false;
         if let Object::Module(module) = &mut *self.main_module.kind_mut() {
             module.globals.insert(name.into(), value);
-            self.global_load_cache.clear();
+            mutated = true;
         }
+        if mutated {
+            self.bump_global_name_cache_epoch();
+        }
+    }
+
+    #[inline]
+    fn bump_global_name_cache_epoch(&mut self) {
+        self.global_name_cache_epoch = self.global_name_cache_epoch.wrapping_add(1).max(1);
     }
 
     fn acquire_frame(

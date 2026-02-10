@@ -190,6 +190,29 @@ fn executes_assignment_statement() {
 }
 
 #[test]
+fn load_global_cache_invalidates_after_store_global() {
+    let source = "x = 1\ndef f():\n    return x\na = f()\nx = 2\nb = f()";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(2)));
+}
+
+#[test]
+fn load_global_cache_invalidates_after_module_attr_store() {
+    let source =
+        "import __main__ as m\nx = 1\ndef f():\n    return x\na = f()\nm.x = 3\nb = f()";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("a"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("b"), Some(Value::Int(3)));
+}
+
+#[test]
 fn executes_destructuring_assignment() {
     let module = parser::parse_module("a, b = [1, 2]").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

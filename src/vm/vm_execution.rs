@@ -243,30 +243,38 @@ impl Vm {
                             as usize;
                         let push_null = raw & 1 == 1;
                         let idx = raw >> 1;
-                        let cache_key = {
-                            let frame = self.frames.last().expect("frame exists");
-                            (Rc::as_ptr(&frame.code) as usize, idx)
+                        let site_index = self.current_site_index();
+                        let value = if let Some(cached) = self
+                            .frames
+                            .last()
+                            .and_then(|frame| frame.load_global_inline_cache.get(site_index))
+                            .and_then(|entry| entry.as_ref())
+                        {
+                            if cached.cache_epoch == self.global_name_cache_epoch {
+                                Some(cached.value.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
                         };
-                        let value = if let Some(value) = self.global_load_cache.get(&cache_key).cloned() {
+                        let value = if let Some(value) = value {
                             value
                         } else {
-                            let value = {
+                            let (value, cacheable) = {
                                 let frame = self.frames.last().expect("frame exists");
                                 let name = frame
                                     .code
                                     .names
                                     .get(idx)
                                     .ok_or_else(|| RuntimeError::new("name index out of range"))?;
-                                let value = if let Object::Module(module_data) = &*frame.function_globals.kind()
-                                {
-                                    if let Some(value) = module_data.globals.get(name) {
-                                        Some(value.clone())
+                                let value =
+                                    if let Object::Module(module_data) = &*frame.function_globals.kind()
+                                    {
+                                        module_data.globals.get(name).cloned()
                                     } else {
                                         None
-                                    }
-                                } else {
-                                    None
-                                };
+                                    };
                                 let value = value.or_else(|| {
                                     if let Some(fallback) = &frame.locals_fallback {
                                         if let Some(value) = fallback.get(name) {
@@ -280,13 +288,27 @@ impl Vm {
                                     }
                                     None
                                 });
-                                value
+                                let value = value
                                     .or_else(|| self.builtins.get(name).cloned())
                                     .ok_or_else(|| {
                                         RuntimeError::new(format!("name '{name}' is not defined"))
-                                    })
-                            }?;
-                            self.global_load_cache.insert(cache_key, value.clone());
+                                    })?;
+                                let cacheable =
+                                    frame.locals_fallback.is_none() && frame.globals_fallback.is_none();
+                                (value, cacheable)
+                            };
+                            if cacheable {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    if let Some(slot) =
+                                        frame.load_global_inline_cache.get_mut(site_index)
+                                    {
+                                        *slot = Some(LoadGlobalSiteCacheEntry {
+                                            cache_epoch: self.global_name_cache_epoch,
+                                            value: value.clone(),
+                                        });
+                                    }
+                                }
+                            }
                             value
                         };
                         if push_null {
@@ -692,6 +714,7 @@ impl Vm {
                                 name
                             )));
                         }
+                        self.bump_global_name_cache_epoch();
                     }
                     Opcode::StoreFast => {
                         let idx = instr
@@ -747,10 +770,12 @@ impl Vm {
                         };
                         let value = self.pop_value()?;
                         let target = self.pop_value()?;
+                        let mut mutated_module_globals = false;
                         match target {
                             Value::Module(module) => {
                                 if let Object::Module(module_data) = &mut *module.kind_mut() {
                                     module_data.globals.insert(attr_name, value);
+                                    mutated_module_globals = true;
                                 }
                             }
                             Value::Instance(instance) => {
@@ -779,6 +804,9 @@ impl Vm {
                                     "attribute assignment unsupported type",
                                 ));
                             }
+                        }
+                        if mutated_module_globals {
+                            self.bump_global_name_cache_epoch();
                         }
                     }
                     Opcode::StoreAttrCpython => {
@@ -797,10 +825,12 @@ impl Vm {
                         };
                         let target = self.pop_value()?;
                         let value = self.pop_value()?;
+                        let mut mutated_module_globals = false;
                         match target {
                             Value::Module(module) => {
                                 if let Object::Module(module_data) = &mut *module.kind_mut() {
                                     module_data.globals.insert(attr_name, value);
+                                    mutated_module_globals = true;
                                 }
                             }
                             Value::Instance(instance) => {
@@ -830,6 +860,9 @@ impl Vm {
                                 ));
                             }
                         }
+                        if mutated_module_globals {
+                            self.bump_global_name_cache_epoch();
+                        }
                     }
                     Opcode::DeleteAttr => {
                         let idx = instr
@@ -846,6 +879,7 @@ impl Vm {
                                 .clone()
                         };
                         let target = self.pop_value()?;
+                        let mut mutated_module_globals = false;
                         match target {
                             Value::Module(module) => {
                                 if let Object::Module(module_data) = &mut *module.kind_mut() {
@@ -855,6 +889,7 @@ impl Vm {
                                             attr_name
                                         )));
                                     }
+                                    mutated_module_globals = true;
                                 }
                             }
                             Value::Class(class) => {
@@ -889,6 +924,9 @@ impl Vm {
                                 ));
                             }
                         }
+                        if mutated_module_globals {
+                            self.bump_global_name_cache_epoch();
+                        }
                     }
                     Opcode::StoreGlobal => {
                         let idx = instr
@@ -905,13 +943,17 @@ impl Vm {
                                 .clone()
                         };
                         let value = self.pop_value()?;
+                        let mut mutated = false;
                         if let Some(frame) = self.frames.last() {
                             if let Object::Module(module_data) =
                                 &mut *frame.function_globals.kind_mut()
                             {
                                 module_data.globals.insert(name, value);
-                                self.global_load_cache.clear();
+                                mutated = true;
                             }
+                        }
+                        if mutated {
+                            self.bump_global_name_cache_epoch();
                         }
                     }
                     Opcode::BinaryAdd => {
@@ -2874,24 +2916,34 @@ impl Vm {
                                             "import caller frame missing",
                                         ));
                                     };
-                                    for (name, value) in values {
-                                        if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
-                                            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
-                                                *slot = Some(value.clone());
+                                    let mut mutated_module_globals = false;
+                                    {
+                                        for (name, value) in values {
+                                            if let Some(slot_idx) =
+                                                frame.code.name_to_index.get(&name).copied()
+                                            {
+                                                if let Some(slot) = frame.fast_locals.get_mut(slot_idx)
+                                                {
+                                                    *slot = Some(value.clone());
+                                                }
+                                                if let Some(existing) = frame.locals.get_mut(&name) {
+                                                    *existing = value.clone();
+                                                }
+                                            } else {
+                                                frame.locals.insert(name.clone(), value.clone());
                                             }
-                                            if let Some(existing) = frame.locals.get_mut(&name) {
-                                                *existing = value.clone();
+                                            if let Object::Module(module_data) =
+                                                &mut *frame.function_globals.kind_mut()
+                                            {
+                                                module_data.globals.insert(name, value);
+                                                mutated_module_globals = true;
                                             }
-                                        } else {
-                                            frame.locals.insert(name.clone(), value.clone());
                                         }
-                                        if let Object::Module(module_data) =
-                                            &mut *frame.function_globals.kind_mut()
-                                        {
-                                            module_data.globals.insert(name, value);
-                                        }
+                                        frame.stack.push(Value::None);
                                     }
-                                    frame.stack.push(Value::None);
+                                    if mutated_module_globals {
+                                        self.bump_global_name_cache_epoch();
+                                    }
                                     return Ok(None);
                                 }
 
@@ -4484,6 +4536,7 @@ impl Vm {
     }
 
     pub(super) fn store_name(&mut self, name: String, value: Value) {
+        let mut mutated_module_globals = false;
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
                 if let Some(dict) = frame.module_locals_dict.clone() {
@@ -4491,6 +4544,7 @@ impl Vm {
                 }
                 if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
                     module_data.globals.insert(name, value);
+                    mutated_module_globals = true;
                 }
             } else {
                 if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
@@ -4507,6 +4561,9 @@ impl Vm {
                     }
                 }
             }
+        }
+        if mutated_module_globals {
+            self.bump_global_name_cache_epoch();
         }
     }
 
@@ -4626,14 +4683,17 @@ impl Vm {
         arg0: Value,
     ) -> Result<(), RuntimeError> {
         let site_index = self.current_site_index();
-        let cached_entry = self
+        let mut clear_cached = false;
+        let cached_hot = self
             .frames
             .last()
             .and_then(|frame| frame.one_arg_inline_cache.get(site_index))
-            .cloned()
-            .flatten();
-        if let Some(entry) = cached_entry {
-            if entry.func_id == func.id() {
+            .and_then(|slot| slot.as_ref())
+            .and_then(|entry| {
+                if entry.func_id != func.id() {
+                    clear_cached = true;
+                    return None;
+                }
                 let valid = {
                     let func_kind = func.kind();
                     match &*func_kind {
@@ -4644,16 +4704,27 @@ impl Vm {
                         _ => false,
                     }
                 };
-                if valid {
-                    return self.push_simple_positional_function_frame_one_arg(
-                        entry.code,
-                        entry.module,
-                        entry.owner_class,
-                        entry.closure,
-                        arg0,
-                    );
+                if !valid {
+                    clear_cached = true;
+                    return None;
                 }
-            }
+                Some((
+                    entry.code.clone(),
+                    entry.module.clone(),
+                    entry.owner_class.clone(),
+                    entry.closure.clone(),
+                ))
+            });
+        if let Some((code, module, owner_class, closure)) = cached_hot {
+            return self.push_simple_positional_function_frame_one_arg(
+                code,
+                module,
+                owner_class,
+                closure,
+                arg0,
+            );
+        }
+        if clear_cached {
             if let Some(frame) = self.frames.last_mut() {
                 if let Some(slot) = frame.one_arg_inline_cache.get_mut(site_index) {
                     *slot = None;
