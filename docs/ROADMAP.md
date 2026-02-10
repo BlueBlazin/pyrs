@@ -384,6 +384,7 @@ Progress:
 - Import opcode parity follow-up landed: `ImportFromCpython` now resolves module attributes through module attribute machinery (`load_attr_module`), so module-level `__getattr__` fallback participates in `from ... import ...` resolution as expected.
 - Core stdlib-unlock parity fixes landed using CPython behavior as reference: `type(name, bases, dict)` now goes through VM class-construction logic (correct `__bases__`/MRO behavior), `getattr(obj, name, default)` now swallows `AttributeError` paths from `__getattr__`/generator attribute probes, and `set`/`frozenset` now expose `intersection(...)`; these close the previous `unittest.mock.mock_open()` + `test_tempfile` method-lookup blockers in strict stdlib probes.
 - `unittest.mock` callable-path parity follow-up landed: function objects now expose `__call__` at attribute level (matching CPython function object behavior used by `Lib/unittest/mock.py::_callable`), which fixes `mock.mock_open()` callability and unblocks `tempfile.NamedTemporaryFile` `test_unexpected_error` cleanup paths. Dedicated regressions are now in `tests/vm.rs`.
+- Frame/weakref cleanup timing parity follow-up landed: non-module `sys._getframe()` proxies no longer retain strong local-value snapshots, which prevents delayed weakref finalizer execution in warning-capture contexts and closes the remaining strict `tempfile` warning cleanup drift (`TestTemporaryDirectory.test_warnings_on_cleanup`).
 
 ### Milestone 14 — Performance, Observability, and Runtime Hooks (P1/P2/P3)
 DoD:
