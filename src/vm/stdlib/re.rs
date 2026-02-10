@@ -12,6 +12,13 @@ const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
 const RE_MATCH_MODULE_NAME: &str = "__re_match__";
 
 impl Vm {
+    fn coerce_sre_int_arg(&mut self, value: Value) -> Result<i64, RuntimeError> {
+        let coerced = self
+            .builtin_int(vec![value], HashMap::new())
+            .map_err(|_| RuntimeError::new("an integer is required"))?;
+        value_to_int(coerced).map_err(|_| RuntimeError::new("an integer is required"))
+    }
+
     fn re_match_groupindex_from_pattern_arg(&self, pattern_arg: &Value) -> Value {
         match pattern_arg {
             Value::Module(module) => {
@@ -472,8 +479,7 @@ impl Vm {
             return Err(RuntimeError::new("_sre.compile() expects 6 arguments"));
         }
         let pattern = args[0].clone();
-        let flags = value_to_int(args[1].clone())
-            .map_err(|_| RuntimeError::new("an integer is required"))?;
+        let flags = self.coerce_sre_int_arg(args[1].clone())?;
         let code_seq = match &args[2] {
             Value::List(obj) => match &*obj.kind() {
                 Object::List(values) => values.clone(),
@@ -486,13 +492,9 @@ impl Vm {
             _ => return Err(RuntimeError::new("compile() code must be list of integers")),
         };
         for value in code_seq {
-            let code = value_to_int(value).map_err(|_| RuntimeError::new("an integer is required"))?;
-            if !(i32::MIN as i64..=i32::MAX as i64).contains(&code) {
-                return Err(RuntimeError::new("integer overflow"));
-            }
+            let _ = self.coerce_sre_int_arg(value)?;
         }
-        let groups = value_to_int(args[3].clone())
-            .map_err(|_| RuntimeError::new("an integer is required"))?;
+        let groups = self.coerce_sre_int_arg(args[3].clone())?;
         let groupindex = match &args[4] {
             Value::Dict(_) => args[4].clone(),
             _ => return Err(RuntimeError::new("groupindex must be a dict")),

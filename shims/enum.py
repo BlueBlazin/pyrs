@@ -1,5 +1,7 @@
 """Minimal enum compatibility shim for pyrs bootstrap."""
 
+import sys
+
 
 class Enum:
     def __init__(self, *args, **kwargs):
@@ -101,6 +103,27 @@ def unique(cls):
 
 
 def global_enum(cls, update_str=False):
+    module_obj = None
+    try:
+        frame = sys._getframe(1)
+        module_name = frame.f_globals.get("__name__")
+        module_obj = sys.modules.get(module_name)
+    except Exception:
+        module_obj = None
+    if module_obj is None:
+        module_name = getattr(cls, "__module__", None)
+        if module_name:
+            module_obj = sys.modules.get(module_name)
+            if module_obj is None:
+                try:
+                    module_obj = __import__(module_name, globals(), locals(), [], 0)
+                except Exception:
+                    module_obj = None
+    if module_obj is not None:
+        for name, value in cls.__dict__.items():
+            if isinstance(name, str) and name.startswith("_"):
+                continue
+            setattr(module_obj, name, value)
     return cls
 
 

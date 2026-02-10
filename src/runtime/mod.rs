@@ -208,10 +208,13 @@ pub enum NativeMethodKind {
     BytesStartsWith,
     BytesEndsWith,
     BytesFind,
+    BytesTranslate,
     BytesJoin,
     MemoryViewEnter,
     MemoryViewExit,
     MemoryViewToReadOnly,
+    MemoryViewCast,
+    MemoryViewToList,
     MemoryViewRelease,
     StrRemovePrefix,
     StrRemoveSuffix,
@@ -222,6 +225,7 @@ pub enum NativeMethodKind {
     StrIsAlNum,
     StrIsDigit,
     StrIsSpace,
+    StrIsIdentifier,
     StrJoin,
     StrSplit,
     StrSplitLines,
@@ -230,6 +234,7 @@ pub enum NativeMethodKind {
     StrRPartition,
     StrCount,
     StrFind,
+    StrTranslate,
     StrIndex,
     StrRFind,
     StrLStrip,
@@ -1005,11 +1010,17 @@ pub enum IteratorKind {
         stop: BigInt,
         step: BigInt,
     },
+    SequenceGetItem {
+        target: Value,
+        getitem: Value,
+    },
 }
 
 #[derive(Debug)]
 pub struct MemoryViewObject {
     pub source: ObjRef,
+    pub itemsize: usize,
+    pub format: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1099,7 +1110,24 @@ impl Heap {
     }
 
     pub fn alloc_memoryview(&self, source: ObjRef) -> Value {
-        Value::MemoryView(self.alloc(Object::MemoryView(MemoryViewObject { source })))
+        Value::MemoryView(self.alloc(Object::MemoryView(MemoryViewObject {
+            source,
+            itemsize: 1,
+            format: None,
+        })))
+    }
+
+    pub fn alloc_memoryview_with(
+        &self,
+        source: ObjRef,
+        itemsize: usize,
+        format: Option<String>,
+    ) -> Value {
+        Value::MemoryView(self.alloc(Object::MemoryView(MemoryViewObject {
+            source,
+            itemsize,
+            format,
+        })))
     }
 
     pub fn alloc_module(&self, module: ModuleObject) -> Value {
@@ -1356,6 +1384,10 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                     trace_value(source, stack, marked);
                 }
             }
+            IteratorKind::SequenceGetItem { target, getitem } => {
+                trace_value(target, stack, marked);
+                trace_value(getitem, stack, marked);
+            }
             IteratorKind::Str(_)
             | IteratorKind::Count { .. }
             | IteratorKind::RangeObject { .. }
@@ -1480,6 +1512,10 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.index = 0;
                 }
                 IteratorKind::RangeObject { .. } | IteratorKind::Range { .. } => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::SequenceGetItem { .. } => {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -2608,8 +2644,9 @@ impl BuiltinFunction {
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => {
+                            let itemsize = view.itemsize.max(1);
                             with_bytes_like_source(&view.source, |values| {
-                                Ok(Value::Int(values.len() as i64))
+                                Ok(Value::Int((values.len() / itemsize) as i64))
                             })
                             .unwrap_or_else(|| Err(RuntimeError::new("len() unsupported type")))
                         }
@@ -3602,7 +3639,13 @@ impl BuiltinFunction {
                     ));
                 }
                 if let Some(callable) = args.into_iter().next() {
-                    Ok(callable)
+                    match callable {
+                        Value::Function(_)
+                        | Value::Builtin(_)
+                        | Value::BoundMethod(_)
+                        | Value::Class(_) => Ok(callable),
+                        _ => Ok(Value::Builtin(BuiltinFunction::FunctoolsLruCache)),
+                    }
                 } else {
                     Ok(Value::Builtin(BuiltinFunction::FunctoolsLruCache))
                 }
@@ -5278,6 +5321,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     iterator.index = iterator.index.saturating_add(out.len());
                     Ok(out)
                 }
+                IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::new("expected iterable")),
                 IteratorKind::Count { .. } => Err(RuntimeError::new("expected iterable")),
             }
         }
@@ -5645,7 +5689,7 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
             Object::Generator(_) => Value::Str("generator".to_string()),
             _ => Value::Str("generator".to_string()),
         },
-        Value::Module(_) => Value::Str("module".to_string()),
+        Value::Module(_) => Value::Builtin(BuiltinFunction::TypesModuleType),
         Value::Class(_) => Value::Builtin(BuiltinFunction::Type),
         Value::Instance(instance) => match &*instance.kind() {
             Object::Instance(obj) => Value::Class(obj.class.clone()),
@@ -5911,6 +5955,9 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method bytes.endswith>".to_string()
                     }
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
+                    NativeMethodKind::BytesTranslate => {
+                        "<bound method bytes.translate>".to_string()
+                    }
                     NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
                     NativeMethodKind::MemoryViewEnter => {
                         "<bound method memoryview.__enter__>".to_string()
@@ -5920,6 +5967,12 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::MemoryViewToReadOnly => {
                         "<bound method memoryview.toreadonly>".to_string()
+                    }
+                    NativeMethodKind::MemoryViewCast => {
+                        "<bound method memoryview.cast>".to_string()
+                    }
+                    NativeMethodKind::MemoryViewToList => {
+                        "<bound method memoryview.tolist>".to_string()
                     }
                     NativeMethodKind::MemoryViewRelease => {
                         "<bound method memoryview.release>".to_string()
@@ -5937,6 +5990,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrIsAlNum => "<bound method str.isalnum>".to_string(),
                     NativeMethodKind::StrIsDigit => "<bound method str.isdigit>".to_string(),
                     NativeMethodKind::StrIsSpace => "<bound method str.isspace>".to_string(),
+                    NativeMethodKind::StrIsIdentifier => {
+                        "<bound method str.isidentifier>".to_string()
+                    }
                     NativeMethodKind::StrJoin => "<bound method str.join>".to_string(),
                     NativeMethodKind::StrSplit => "<bound method str.split>".to_string(),
                     NativeMethodKind::StrSplitLines => "<bound method str.splitlines>".to_string(),
@@ -5945,6 +6001,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrRPartition => "<bound method str.rpartition>".to_string(),
                     NativeMethodKind::StrCount => "<bound method str.count>".to_string(),
                     NativeMethodKind::StrFind => "<bound method str.find>".to_string(),
+                    NativeMethodKind::StrTranslate => {
+                        "<bound method str.translate>".to_string()
+                    }
                     NativeMethodKind::StrIndex => "<bound method str.index>".to_string(),
                     NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
                     NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
@@ -6289,6 +6348,8 @@ mod tests {
         let heap = Heap::new();
         let view = heap.alloc(Object::MemoryView(MemoryViewObject {
             source: heap.alloc(Object::ByteArray(vec![])),
+            itemsize: 1,
+            format: None,
         }));
         if let Object::MemoryView(data) = &mut *view.kind_mut() {
             data.source = view.clone();

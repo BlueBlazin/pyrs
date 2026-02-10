@@ -441,7 +441,7 @@ impl Vm {
             atexit_handlers: Vec::new(),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
-            prefer_pure_re_when_available: false,
+            prefer_pure_re_when_available: true,
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
         };
@@ -5344,7 +5344,16 @@ impl Vm {
     }
 
     fn local_shim_root() -> Option<PathBuf> {
-        std::env::current_dir().ok().map(|root| root.join("shims"))
+        let repo_shim_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shims");
+        if repo_shim_root.is_dir() {
+            return Some(repo_shim_root);
+        }
+        let cwd_shim_root = std::env::current_dir().ok()?.join("shims");
+        if cwd_shim_root.is_dir() {
+            Some(cwd_shim_root)
+        } else {
+            None
+        }
     }
 
     fn module_origin_path(module: &ObjRef) -> Option<PathBuf> {
@@ -5549,8 +5558,7 @@ impl Vm {
         if !LOCAL_SHIM_MODULES.contains(&name) {
             return None;
         }
-        let root = std::env::current_dir().ok()?;
-        let shim_root = root.join("shims");
+        let shim_root = Self::local_shim_root()?;
         self.find_module_source_in_single_root(name, &shim_root)
     }
 
@@ -6452,6 +6460,9 @@ impl Vm {
                 let frame = self.frames.pop().expect("frame exists");
                 if let Some(module_dict) = frame.module_locals_dict.clone() {
                     self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
+                }
+                if frame.is_module {
+                    self.sync_re_module_flag_aliases(&frame.module);
                 }
                 if let Some(owner) = frame.generator_owner {
                     self.finish_generator_resume(owner, Value::None);
@@ -11660,6 +11671,7 @@ impl Vm {
             "isalnum" => NativeMethodKind::StrIsAlNum,
             "isdigit" => NativeMethodKind::StrIsDigit,
             "isspace" => NativeMethodKind::StrIsSpace,
+            "isidentifier" => NativeMethodKind::StrIsIdentifier,
             "join" => NativeMethodKind::StrJoin,
             "split" => NativeMethodKind::StrSplit,
             "splitlines" => NativeMethodKind::StrSplitLines,
@@ -11668,6 +11680,7 @@ impl Vm {
             "rpartition" => NativeMethodKind::StrRPartition,
             "count" => NativeMethodKind::StrCount,
             "find" => NativeMethodKind::StrFind,
+            "translate" => NativeMethodKind::StrTranslate,
             "index" => NativeMethodKind::StrIndex,
             "rfind" => NativeMethodKind::StrRFind,
             "lstrip" => NativeMethodKind::StrLStrip,
@@ -11702,6 +11715,7 @@ impl Vm {
             "startswith" => NativeMethodKind::BytesStartsWith,
             "endswith" => NativeMethodKind::BytesEndsWith,
             "find" => NativeMethodKind::BytesFind,
+            "translate" => NativeMethodKind::BytesTranslate,
             "join" => NativeMethodKind::BytesJoin,
             _ => {
                 return Err(RuntimeError::new(format!(
@@ -11755,6 +11769,7 @@ impl Vm {
                 IteratorKind::ByteArray(_) => ("bytearray_iterator", None, None, None, false),
                 IteratorKind::MemoryView(_) => ("memoryview_iterator", None, None, None, false),
                 IteratorKind::Count { .. } => ("count", None, None, None, false),
+                IteratorKind::SequenceGetItem { .. } => ("iterator", None, None, None, false),
             },
             _ => return Err(RuntimeError::new("attribute access unsupported type")),
         };
@@ -11789,6 +11804,8 @@ impl Vm {
                 NativeMethodKind::MemoryViewToReadOnly,
                 view,
             )),
+            "cast" => Ok(self.alloc_native_bound_method(NativeMethodKind::MemoryViewCast, view)),
+            "tolist" => Ok(self.alloc_native_bound_method(NativeMethodKind::MemoryViewToList, view)),
             "release" => Ok(self.alloc_native_bound_method(
                 NativeMethodKind::MemoryViewRelease,
                 view,
@@ -11808,6 +11825,10 @@ impl Vm {
                     Object::Instance(_) => Ok(Value::Instance(view_data.source.clone())),
                     _ => Err(RuntimeError::new("memoryview receiver is invalid")),
                 },
+                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+            },
+            "itemsize" => match &*view.kind() {
+                Object::MemoryView(view_data) => Ok(Value::Int(view_data.itemsize as i64)),
                 _ => Err(RuntimeError::new("memoryview receiver is invalid")),
             },
             _ => Err(RuntimeError::new(format!(
@@ -14383,6 +14404,7 @@ impl Vm {
                     | NativeMethodKind::StrFind
                     | NativeMethodKind::StrIndex
                     | NativeMethodKind::StrRFind
+                    | NativeMethodKind::BytesTranslate
                     | NativeMethodKind::ListSort
                     | NativeMethodKind::Builtin(_)
             )
@@ -15427,7 +15449,25 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::new("bytes receiver is invalid")),
                 };
-                let needle = bytes_like_from_value(args.remove(0))?;
+                let needle = match args.remove(0) {
+                    Value::Int(value) => {
+                        if !(0..=255).contains(&value) {
+                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        }
+                        vec![value as u8]
+                    }
+                    Value::BigInt(value) => {
+                        let Some(value) = value.to_i64() else {
+                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        };
+                        if !(0..=255).contains(&value) {
+                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        }
+                        vec![value as u8]
+                    }
+                    Value::Bool(value) => vec![if value { 1 } else { 0 }],
+                    other => bytes_like_from_value(other)?,
+                };
                 let len = bytes.len() as i64;
                 let mut start = if let Some(value) = args.first() {
                     value_to_int(value.clone())?
@@ -15458,6 +15498,75 @@ impl Vm {
                 };
                 let index = found.map(|idx| idx as i64 + start).unwrap_or(-1);
                 Ok(NativeCallResult::Value(Value::Int(index)))
+            }
+            NativeMethodKind::BytesTranslate => {
+                let delete_kw = kwargs.remove("delete");
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "translate() got an unexpected keyword argument",
+                    ));
+                }
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "translate() expects table and optional delete",
+                    ));
+                }
+                if delete_kw.is_some() && args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "translate() got multiple values for delete",
+                    ));
+                }
+
+                let table_arg = args.remove(0);
+                let delete_arg = if let Some(value) = delete_kw {
+                    value
+                } else if let Some(value) = args.pop() {
+                    value
+                } else {
+                    self.heap.alloc_bytes(Vec::new())
+                };
+
+                let receiver_value = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("value")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let source = bytes_like_from_value(receiver_value.clone())?;
+                let delete = bytes_like_from_value(delete_arg)?;
+
+                let table = if matches!(table_arg, Value::None) {
+                    None
+                } else {
+                    let table = bytes_like_from_value(table_arg)?;
+                    if table.len() != 256 {
+                        return Err(RuntimeError::new(
+                            "translation table must be 256 characters long",
+                        ));
+                    }
+                    Some(table)
+                };
+
+                let mut out = Vec::with_capacity(source.len());
+                for byte in source {
+                    if delete.contains(&byte) {
+                        continue;
+                    }
+                    let mapped = if let Some(table) = &table {
+                        table[byte as usize]
+                    } else {
+                        byte
+                    };
+                    out.push(mapped);
+                }
+
+                let translated = match receiver_value {
+                    Value::ByteArray(_) => self.heap.alloc_bytearray(out),
+                    _ => self.heap.alloc_bytes(out),
+                };
+                Ok(NativeCallResult::Value(translated))
             }
             NativeMethodKind::BytesJoin => {
                 if args.len() != 1 {
@@ -15504,8 +15613,12 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("toreadonly() expects no arguments"));
                 }
-                let source = match &*receiver.kind() {
-                    Object::MemoryView(view_data) => view_data.source.clone(),
+                let (source, itemsize, format) = match &*receiver.kind() {
+                    Object::MemoryView(view_data) => (
+                        view_data.source.clone(),
+                        view_data.itemsize,
+                        view_data.format.clone(),
+                    ),
                     _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
                 };
                 let bytes = with_bytes_like_source(&source, |values| values.to_vec())
@@ -15514,7 +15627,88 @@ impl Vm {
                     Value::Bytes(obj) => obj,
                     _ => unreachable!(),
                 };
-                Ok(NativeCallResult::Value(self.heap.alloc_memoryview(source)))
+                Ok(NativeCallResult::Value(self.heap.alloc_memoryview_with(
+                    source, itemsize, format,
+                )))
+            }
+            NativeMethodKind::MemoryViewCast => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "cast() expects format and optional shape",
+                    ));
+                }
+                if args.len() == 2 && !matches!(args[1], Value::None) {
+                    return Err(RuntimeError::new(
+                        "memoryview.cast() shape argument is not supported",
+                    ));
+                }
+                let format = match &args[0] {
+                    Value::Str(value) => value.clone(),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "memoryview.cast() format must be str",
+                        ));
+                    }
+                };
+                let itemsize = match format.as_str() {
+                    "B" | "b" | "c" => 1usize,
+                    "I" => 4usize,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "memoryview.cast() unsupported format",
+                        ));
+                    }
+                };
+                let source = match &*receiver.kind() {
+                    Object::MemoryView(view_data) => view_data.source.clone(),
+                    _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
+                };
+                let byte_len = with_bytes_like_source(&source, |values| values.len())
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                if byte_len % itemsize != 0 {
+                    return Err(RuntimeError::new(
+                        "memoryview.cast() length is not a multiple of itemsize",
+                    ));
+                }
+                Ok(NativeCallResult::Value(self.heap.alloc_memoryview_with(
+                    source,
+                    itemsize,
+                    Some(format),
+                )))
+            }
+            NativeMethodKind::MemoryViewToList => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("tolist() expects no arguments"));
+                }
+                let (source, itemsize, format) = match &*receiver.kind() {
+                    Object::MemoryView(view_data) => (
+                        view_data.source.clone(),
+                        view_data.itemsize.max(1),
+                        view_data.format.clone(),
+                    ),
+                    _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
+                };
+                let bytes = with_bytes_like_source(&source, |values| values.to_vec())
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                if bytes.len() % itemsize != 0 {
+                    return Err(RuntimeError::new(
+                        "memoryview length is not a multiple of itemsize",
+                    ));
+                }
+                let mut values = Vec::new();
+                if itemsize == 1 {
+                    values.extend(bytes.into_iter().map(|byte| Value::Int(byte as i64)));
+                } else if itemsize == 4 && format.as_deref() == Some("I") {
+                    for chunk in bytes.chunks_exact(4) {
+                        let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
+                        values.push(Value::Int(u32::from_ne_bytes(raw) as i64));
+                    }
+                } else {
+                    return Err(RuntimeError::new(
+                        "memoryview.tolist() unsupported format",
+                    ));
+                }
+                Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
             }
             NativeMethodKind::MemoryViewRelease => {
                 if !args.is_empty() {
@@ -15744,6 +15938,28 @@ impl Vm {
                 };
                 let is_space = !text.is_empty() && text.chars().all(|ch| ch.is_whitespace());
                 Ok(NativeCallResult::Value(Value::Bool(is_space)))
+            }
+            NativeMethodKind::StrIsIdentifier => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("isidentifier() expects no arguments"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let mut chars = text.chars();
+                let Some(first) = chars.next() else {
+                    return Ok(NativeCallResult::Value(Value::Bool(false)));
+                };
+                if first != '_' && !first.is_alphabetic() {
+                    return Ok(NativeCallResult::Value(Value::Bool(false)));
+                }
+                let is_identifier =
+                    chars.all(|ch| ch == '_' || ch.is_alphanumeric());
+                Ok(NativeCallResult::Value(Value::Bool(is_identifier)))
             }
             NativeMethodKind::StrJoin => {
                 if args.len() != 1 {
@@ -16195,6 +16411,86 @@ impl Vm {
                     return Err(RuntimeError::new("substring not found"));
                 }
                 Ok(NativeCallResult::Value(Value::Int(found)))
+            }
+            NativeMethodKind::StrTranslate => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("translate() expects one argument"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let table = args.remove(0);
+                let mut out = String::with_capacity(text.len());
+                for ch in text.chars() {
+                    let code = ch as u32 as i64;
+                    let mapped = match &table {
+                        Value::Dict(dict_obj) => {
+                            dict_get_value(dict_obj, &Value::Int(code)).or_else(|| {
+                                dict_get_value(dict_obj, &Value::Str(ch.to_string()))
+                            })
+                        }
+                        _ => match self.getitem_value(table.clone(), Value::Int(code)) {
+                            Ok(value) => Some(value),
+                            Err(err) if runtime_error_matches_exception(&err.message, "KeyError") => {
+                                None
+                            }
+                            Err(err) => return Err(err),
+                        },
+                    };
+                    let Some(mapped) = mapped else {
+                        out.push(ch);
+                        continue;
+                    };
+                    match mapped {
+                        Value::None => {}
+                        Value::Str(fragment) => out.push_str(&fragment),
+                        Value::Int(number) => {
+                            if !(0..=0x10FFFF).contains(&number) {
+                                return Err(RuntimeError::new(
+                                    "character mapping must be in range(0x110000)",
+                                ));
+                            }
+                            let Some(mapped_char) = char::from_u32(number as u32) else {
+                                return Err(RuntimeError::new(
+                                    "character mapping must be in range(0x110000)",
+                                ));
+                            };
+                            out.push(mapped_char);
+                        }
+                        Value::BigInt(number) => {
+                            let Some(number) = number.to_i64() else {
+                                return Err(RuntimeError::new(
+                                    "character mapping must be in range(0x110000)",
+                                ));
+                            };
+                            if !(0..=0x10FFFF).contains(&number) {
+                                return Err(RuntimeError::new(
+                                    "character mapping must be in range(0x110000)",
+                                ));
+                            }
+                            let Some(mapped_char) = char::from_u32(number as u32) else {
+                                return Err(RuntimeError::new(
+                                    "character mapping must be in range(0x110000)",
+                                ));
+                            };
+                            out.push(mapped_char);
+                        }
+                        Value::Bool(value) => {
+                            let mapped_char = if value { '\u{1}' } else { '\0' };
+                            out.push(mapped_char);
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "character mapping must return integer, str or None",
+                            ));
+                        }
+                    }
+                }
+                Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::StrLStrip => {
                 if args.len() > 1 {
@@ -17179,6 +17475,16 @@ impl Vm {
         self.resume_generator(generator, None, None, GeneratorResumeKind::Next)
     }
 
+    fn sequence_iterator_via_getitem(&mut self, target: Value) -> Result<Option<Value>, RuntimeError> {
+        let Some(getitem) = self.lookup_bound_special_method(&target, "__getitem__")? else {
+            return Ok(None);
+        };
+        Ok(Some(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::SequenceGetItem { target, getitem },
+            index: 0,
+        })))
+    }
+
     fn to_iterator_value(&mut self, source: Value) -> Result<Value, RuntimeError> {
         match source {
             Value::Iterator(obj) => match &*obj.kind() {
@@ -17219,6 +17525,9 @@ impl Vm {
                         // `next(obj)` accepts iterator-like objects that only provide
                         // `__next__` even when `__iter__` is absent.
                         return Ok(other);
+                    }
+                    if let Some(iterator) = self.sequence_iterator_via_getitem(other.clone())? {
+                        return Ok(iterator);
                     }
                     return Err(RuntimeError::new("yield from expects iterable"));
                 };
@@ -17311,6 +17620,9 @@ impl Vm {
                 let other = Value::Module(module);
                 let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
                 else {
+                    if let Some(iterator) = self.sequence_iterator_via_getitem(other.clone())? {
+                        return Ok(iterator);
+                    }
                     return Err(RuntimeError::new("yield from expects iterable"));
                 };
 
@@ -17696,6 +18008,7 @@ impl Vm {
                     IteratorKind::Map { .. } => "map",
                     IteratorKind::RangeObject { .. } => "range",
                     IteratorKind::Range { .. } => "range_iterator",
+                    IteratorKind::SequenceGetItem { .. } => "iterator",
                 },
                 _ => "iterator",
             },
@@ -17705,14 +18018,19 @@ impl Vm {
     }
 
     fn iterator_next_value(&mut self, iterator_ref: &ObjRef) -> Result<Option<Value>, RuntimeError> {
-        enum PendingMapStep {
-            Evaluate {
+        enum PendingIteratorStep {
+            MapEvaluate {
                 func: Value,
                 iterators: Vec<Value>,
             },
+            SequenceGetItem {
+                target: Value,
+                getitem: Value,
+                index: i64,
+            },
         }
 
-        let pending_map_step;
+        let pending_step;
         {
             let mut iter = iterator_ref.kind_mut();
             let Object::Iterator(state) = &mut *iter else {
@@ -17848,7 +18166,7 @@ impl Vm {
                     if *exhausted {
                         return Ok(None);
                     }
-                    pending_map_step = PendingMapStep::Evaluate {
+                    pending_step = PendingIteratorStep::MapEvaluate {
                         func: func.clone(),
                         iterators: iterators.clone(),
                     };
@@ -17871,46 +18189,101 @@ impl Vm {
                     *current = current.add(step);
                     return Ok(Some(value_from_bigint(value)));
                 }
+                IteratorKind::SequenceGetItem { target, getitem } => {
+                    if state.index > i64::MAX as usize {
+                        return Err(RuntimeError::new("iterator index overflow"));
+                    }
+                    pending_step = PendingIteratorStep::SequenceGetItem {
+                        target: target.clone(),
+                        getitem: getitem.clone(),
+                        index: state.index as i64,
+                    };
+                }
             }
         }
 
-        let PendingMapStep::Evaluate { func, iterators } = pending_map_step;
-
-        let mut call_args = Vec::with_capacity(iterators.len());
-        for iterator in &iterators {
-            match self.next_from_iterator_value(iterator)? {
-                GeneratorResumeOutcome::Yield(value) => call_args.push(value),
-                GeneratorResumeOutcome::Complete(_) => {
-                    let mut iter = iterator_ref.kind_mut();
-                    if let Object::Iterator(state) = &mut *iter {
-                        if let IteratorKind::Map { exhausted, .. } = &mut state.kind {
-                            *exhausted = true;
+        match pending_step {
+            PendingIteratorStep::MapEvaluate { func, iterators } => {
+                let mut call_args = Vec::with_capacity(iterators.len());
+                for iterator in &iterators {
+                    match self.next_from_iterator_value(iterator)? {
+                        GeneratorResumeOutcome::Yield(value) => call_args.push(value),
+                        GeneratorResumeOutcome::Complete(_) => {
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter {
+                                if let IteratorKind::Map { exhausted, .. } = &mut state.kind {
+                                    *exhausted = true;
+                                }
+                            }
+                            return Ok(None);
+                        }
+                        GeneratorResumeOutcome::PropagatedException => {
+                            return Err(self.iteration_error_from_state("map() iteration failed")?);
                         }
                     }
-                    return Ok(None);
                 }
-                GeneratorResumeOutcome::PropagatedException => {
-                    return Err(self.iteration_error_from_state("map() iteration failed")?);
+
+                let value = match self.call_internal(func, call_args, HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("map() callable failed"));
+                    }
+                };
+
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter {
+                    if let IteratorKind::Map { values, .. } = &mut state.kind {
+                        values.push(value.clone());
+                        state.index += 1;
+                        return Ok(Some(value));
+                    }
+                }
+                Ok(None)
+            }
+            PendingIteratorStep::SequenceGetItem {
+                target,
+                getitem,
+                index,
+            } => {
+                let index_value = Value::Int(index);
+                let call_result = self.call_internal(getitem, vec![index_value], HashMap::new());
+                match call_result {
+                    Ok(InternalCallOutcome::Value(value)) => {
+                        {
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter {
+                                if let IteratorKind::SequenceGetItem { .. } = &mut state.kind {
+                                    state.index += 1;
+                                }
+                            }
+                        }
+                        Ok(Some(value))
+                    }
+                    Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                        if self.active_exception_is("IndexError") {
+                            self.clear_active_exception();
+                            return Ok(None);
+                        }
+                        let _ = target;
+                        let err = self.runtime_error_from_active_exception("__getitem__() failed");
+                        if runtime_error_matches_exception(&err.message, "IndexError")
+                            || err.message.contains("index out of range")
+                        {
+                            return Ok(None);
+                        }
+                        Err(err)
+                    }
+                    Err(err) => {
+                        if runtime_error_matches_exception(&err.message, "IndexError")
+                            || err.message.contains("index out of range")
+                        {
+                            return Ok(None);
+                        }
+                        Err(err)
+                    }
                 }
             }
         }
-
-        let value = match self.call_internal(func, call_args, HashMap::new())? {
-            InternalCallOutcome::Value(value) => value,
-            InternalCallOutcome::CallerExceptionHandled => {
-                return Err(RuntimeError::new("map() callable failed"));
-            }
-        };
-
-        let mut iter = iterator_ref.kind_mut();
-        if let Object::Iterator(state) = &mut *iter {
-            if let IteratorKind::Map { values, .. } = &mut state.kind {
-                values.push(value.clone());
-                state.index += 1;
-                return Ok(Some(value));
-            }
-        }
-        Ok(None)
     }
 
     fn resume_generator(
@@ -19413,7 +19786,7 @@ impl Vm {
     }
 
     fn builtin_len(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -19455,7 +19828,51 @@ impl Vm {
                 ));
             }
         }
-        BuiltinFunction::Len.call(&self.heap, args)
+        let receiver = args
+            .into_iter()
+            .next()
+            .ok_or_else(|| RuntimeError::new("len() expects one argument"))?;
+        match BuiltinFunction::Len.call(&self.heap, vec![receiver.clone()]) {
+            Ok(value) => Ok(value),
+            Err(err) if err.message == "len() unsupported type" => {
+                let Some(method) = self.lookup_bound_special_method(&receiver, "__len__")? else {
+                    return Err(err);
+                };
+                let result = match self.call_internal(method, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "len() method raised",
+                        ));
+                    }
+                };
+                self.normalize_len_result(result)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn normalize_len_result(&self, result: Value) -> Result<Value, RuntimeError> {
+        match result {
+            Value::Bool(flag) => Ok(Value::Int(if flag { 1 } else { 0 })),
+            Value::Int(number) => {
+                if number < 0 {
+                    Err(RuntimeError::new("__len__() should return >= 0"))
+                } else {
+                    Ok(Value::Int(number))
+                }
+            }
+            Value::BigInt(number) => {
+                if number.is_negative() {
+                    return Err(RuntimeError::new("__len__() should return >= 0"));
+                }
+                let as_i64 = number
+                    .to_i64()
+                    .ok_or_else(|| RuntimeError::new("len() result does not fit in an index"))?;
+                Ok(Value::Int(as_i64))
+            }
+            _ => Err(RuntimeError::new("__len__() should return an integer")),
+        }
     }
 
     fn builtin_collections_namedtuple_make(
@@ -23223,6 +23640,7 @@ impl Vm {
             BuiltinFunction::ByteArray => matches!(value, Value::ByteArray(_)),
             BuiltinFunction::MemoryView => matches!(value, Value::MemoryView(_)),
             BuiltinFunction::Complex => matches!(value, Value::Complex { .. }),
+            BuiltinFunction::Slice => matches!(value, Value::Slice { .. }),
             BuiltinFunction::TypesModuleType => matches!(value, Value::Module(_)),
             BuiltinFunction::TypesMethodType => matches!(value, Value::BoundMethod(_)),
             BuiltinFunction::Range => matches!(
@@ -23987,8 +24405,17 @@ impl Vm {
 
         match target {
             Value::Module(module) => {
+                let module_id = module.id();
+                let active_frame_index = self
+                    .frames
+                    .iter()
+                    .rposition(|frame| frame.is_module && frame.module.id() == module_id);
                 if let Object::Module(module_data) = &mut *module.kind_mut() {
-                    module_data.globals.insert(name, value);
+                    module_data.globals.insert(name.clone(), value.clone());
+                }
+                if let Some(frame_index) = active_frame_index {
+                    let dict = self.ensure_frame_module_locals_dict(frame_index);
+                    dict_set_value(&dict, Value::Str(name), value);
                 }
             }
             Value::Instance(instance) => match self.store_attr_instance(&instance, &name, value)? {
@@ -24032,6 +24459,11 @@ impl Vm {
 
         match target {
             Value::Module(module) => {
+                let module_id = module.id();
+                let active_frame_index = self
+                    .frames
+                    .iter()
+                    .rposition(|frame| frame.is_module && frame.module.id() == module_id);
                 if let Object::Module(module_data) = &mut *module.kind_mut() {
                     if module_data.globals.remove(&name).is_none() {
                         return Err(RuntimeError::new(format!(
@@ -24039,6 +24471,10 @@ impl Vm {
                             name
                         )));
                     }
+                }
+                if let Some(frame_index) = active_frame_index {
+                    let dict = self.ensure_frame_module_locals_dict(frame_index);
+                    let _ = dict_remove_value(&dict, &Value::Str(name.clone()));
                 }
             }
             Value::Class(class) => {
@@ -24352,7 +24788,70 @@ impl Vm {
         if caller_depth == 0 {
             self.run_pending_import_frames(caller_depth)?;
         }
+        self.sync_re_module_flag_aliases(&module);
         Ok(module)
+    }
+
+    fn sync_re_module_flag_aliases(&mut self, module: &ObjRef) {
+        let regex_flag_class = {
+            let module_kind = module.kind();
+            let Object::Module(module_data) = &*module_kind else {
+                return;
+            };
+            if module_data.name != "re" {
+                return;
+            }
+            module_data.globals.get("RegexFlag").cloned()
+        };
+
+        let Some(Value::Class(regex_flag_class)) = regex_flag_class else {
+            return;
+        };
+
+        let alias_names = [
+            "NOFLAG",
+            "ASCII",
+            "A",
+            "IGNORECASE",
+            "I",
+            "LOCALE",
+            "L",
+            "UNICODE",
+            "U",
+            "MULTILINE",
+            "M",
+            "DOTALL",
+            "S",
+            "VERBOSE",
+            "X",
+            "DEBUG",
+        ];
+
+        let mut pending = Vec::new();
+        for name in alias_names {
+            let needs_alias = {
+                let module_kind = module.kind();
+                let Object::Module(module_data) = &*module_kind else {
+                    return;
+                };
+                !module_data.globals.contains_key(name)
+            };
+            if !needs_alias {
+                continue;
+            }
+            if let Some(value) = class_attr_lookup(&regex_flag_class, name) {
+                pending.push((name.to_string(), value));
+            }
+        }
+
+        if pending.is_empty() {
+            return;
+        }
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            for (name, value) in pending {
+                module_data.globals.insert(name, value);
+            }
+        }
     }
 
     fn builtin_find_spec(
@@ -37037,7 +37536,22 @@ impl Vm {
                     Ok(self.heap.alloc_list(out))
                 }
                 Value::Dict(_) => Err(RuntimeError::new("slicing unsupported for dict")),
-                _ => Err(RuntimeError::new("subscript unsupported type")),
+                other => {
+                    if let Some(getitem) =
+                        self.lookup_bound_special_method(&other, "__getitem__")?
+                    {
+                        match self.call_internal(getitem, vec![Value::Slice { lower, upper, step }], HashMap::new())? {
+                            InternalCallOutcome::Value(value) => Ok(value),
+                            InternalCallOutcome::CallerExceptionHandled => Err(
+                                self.runtime_error_from_active_exception(
+                                    "subscript lookup failed",
+                                ),
+                            ),
+                        }
+                    } else {
+                        Err(RuntimeError::new("subscript unsupported type"))
+                    }
+                }
             },
             index => match value {
                 Value::List(obj) => match &*obj.kind() {
@@ -37220,7 +37734,22 @@ impl Vm {
                         Ok(Value::Class(class))
                     }
                 }
-                _ => Err(RuntimeError::new("subscript unsupported type")),
+                other => {
+                    if let Some(getitem) =
+                        self.lookup_bound_special_method(&other, "__getitem__")?
+                    {
+                        match self.call_internal(getitem, vec![index], HashMap::new())? {
+                            InternalCallOutcome::Value(value) => Ok(value),
+                            InternalCallOutcome::CallerExceptionHandled => Err(
+                                self.runtime_error_from_active_exception(
+                                    "subscript lookup failed",
+                                ),
+                            ),
+                        }
+                    } else {
+                        Err(RuntimeError::new("subscript unsupported type"))
+                    }
+                }
             },
         }
     }
@@ -39432,6 +39961,9 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                         .collect::<Vec<_>>();
                     iterator.index = chars.len();
                     out
+                }
+                IteratorKind::SequenceGetItem { .. } => {
+                    return Err(RuntimeError::new("expected bytes-like payload"));
                 }
                 IteratorKind::Count { .. } => {
                     return Err(RuntimeError::new("expected bytes-like payload"));

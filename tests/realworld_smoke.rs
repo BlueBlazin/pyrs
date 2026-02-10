@@ -51,6 +51,7 @@ fn run_sandboxed_script(root: &Path, entry_rel: &str) -> (i32, String, String) {
     fs::create_dir_all(&home).expect("create home");
 
     let mut child = Command::new(pyrs_bin())
+        .arg("-S")
         .arg(root.join(entry_rel))
         .current_dir(root)
         .env_clear()

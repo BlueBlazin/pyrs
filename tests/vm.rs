@@ -1316,6 +1316,53 @@ fn executes_builtin_len() {
 }
 
 #[test]
+fn executes_builtin_len_via_dunder_len() {
+    let source = r#"class Sized:
+    def __len__(self):
+        return 7
+
+x = len(Sized())
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(7)));
+}
+
+#[test]
+fn builtin_len_rejects_invalid_dunder_len_results() {
+    let source = r#"class Negative:
+    def __len__(self):
+        return -1
+
+class NonInteger:
+    def __len__(self):
+        return 'bad'
+
+neg = False
+nonint = False
+try:
+    len(Negative())
+except Exception as exc:
+    neg = '__len__() should return >= 0' in str(exc)
+
+try:
+    len(NonInteger())
+except Exception as exc:
+    nonint = '__len__() should return an integer' in str(exc)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("neg"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("nonint"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_list_literal_and_subscript() {
     let source = "x = [1, 2, 3]\ny = x[1]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -2063,6 +2110,30 @@ ok = (
     and hasattr(_sre, 'ascii_tolower')
     and m is not None
     and m.group(0) == 'aaa'
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-re import preference test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import re
+origin = getattr(re, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = (
+    norm.endswith('/re/__init__.py')
+    and ('/shims/' not in norm)
+    and hasattr(re, 'compile')
+    and hasattr(re, 'Pattern')
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -6189,6 +6260,24 @@ fn exposes_functools_wraps_decorator_callable() {
 }
 
 #[test]
+fn functools_lru_cache_decorator_with_maxsize_argument_is_callable() {
+    let source = r#"import functools
+
+@functools.lru_cache(8)
+def add1(x):
+    return x + 1
+
+ok = (add1(1) == 2 and add1(2) == 3)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn functools_wraps_preserves_function_dict_metadata() {
     let source = "import functools\n\ndef base(x):\n    return x + 1\nbase.client_skip = lambda f: f\n\n@functools.wraps(base)\ndef wrapper(x):\n    return base(x)\n\nok = (hasattr(wrapper, 'client_skip') and wrapper.client_skip is base.client_skip and wrapper.__wrapped__ is base and wrapper.__name__ == 'base')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -7892,6 +7981,16 @@ fn string_predicates_isascii_isdigit_and_islower_work() {
 }
 
 #[test]
+fn string_isidentifier_supports_basic_python_identifier_rules() {
+    let source = "ok = ('group_1'.isidentifier() and '_x'.isidentifier() and not ''.isidentifier() and not '9x'.isidentifier() and not 'x-y'.isidentifier())\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn string_partition_helpers_work() {
     let source = "a = 'ab=cd'.partition('=')\n\
 b = 'ab=cd'.rpartition('=')\n\
@@ -9082,8 +9181,13 @@ fn mktemp_style_temp_object_finalizer_runs_before_rmdir() {
     let temp_dir = std::env::temp_dir().join(format!("pyrs_mktemp_style_{unique}"));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
-    let source = format!(
-        r#"import os
+    let dir_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let handle = std::thread::Builder::new()
+        .name("tempfile-mktemp-finalizer".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = format!(
+                r#"import os
 import tempfile
 
 class Mktemped:
@@ -9108,14 +9212,19 @@ def run(directory):
 
 ok = run('{dir}')
 "#,
-        dir = temp_dir.to_string_lossy().replace('\\', "\\\\"),
-    );
-    let module = parser::parse_module(&source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+                dir = dir_literal
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn tempfile mktemp-finalizer regression thread");
+    handle
+        .join()
+        .expect("tempfile mktemp-finalizer regression thread should complete");
 
     let _ = std::fs::remove_dir_all(temp_dir);
 }
