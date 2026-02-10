@@ -195,63 +195,171 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing local argument"))?
                             as usize;
                         #[cfg(not(debug_assertions))]
+                        {
+                            let fast_return = {
+                                let frame = self.frames.last().expect("frame exists");
+                                let next_is_return = frame
+                                    .code
+                                    .instructions
+                                    .get(frame.ip)
+                                    .map(|next| next.opcode == Opcode::ReturnValue)
+                                    .unwrap_or(false);
+                                if next_is_return
+                                    && frame.simple_one_arg_no_cells
+                                    && frame.code.fast_local_count == 1
+                                    && frame.code.plain_positional_arg0_slot == Some(0)
+                                    && idx == 0
+                                    && frame.stack.is_empty()
+                                    && frame.locals.is_empty()
+                                    && frame.cells.is_empty()
+                                    && frame.blocks.is_empty()
+                                    && frame.class_bases.is_empty()
+                                    && frame.class_keywords.is_empty()
+                                    && frame.module_locals_dict.is_none()
+                                    && frame.globals_fallback.is_none()
+                                    && frame.locals_fallback.is_none()
+                                    && frame.return_instance.is_none()
+                                    && frame.class_metaclass.is_none()
+                                    && frame.generator_owner.is_none()
+                                    && frame.generator_resume_value.is_none()
+                                    && frame.generator_pending_throw.is_none()
+                                    && frame.generator_resume_kind.is_none()
+                                    && frame.yield_from_iter.is_none()
+                                    && frame.active_exception.is_none()
+                                    && !frame.discard_result
+                                    && !frame.return_class
+                                    && !frame.expect_none_return
+                                    && !frame.generator_awaiting_resume_value
+                                    && !frame.is_module
+                                    && !frame.return_module
+                                {
+                                    frame.fast_locals.get(0).and_then(Option::as_ref).cloned()
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(value) = fast_return {
+                                let frame = self.frames.pop().expect("frame exists");
+                                if let Some(caller) = self.frames.last_mut() {
+                                    caller.stack.push(value);
+                                    self.recycle_simple_frame_clean(frame);
+                                    return Ok(None);
+                                }
+                                self.recycle_simple_frame_clean(frame);
+                                return Ok(Some(value));
+                            }
+                        }
+                        #[cfg(not(debug_assertions))]
                         let mut fused_compare_jump = false;
                         #[cfg(not(debug_assertions))]
                         {
+                            let value_to_i64 = |value: &Value| -> Option<i64> {
+                                match value {
+                                    Value::Int(integer) => Some(*integer),
+                                    Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
+                                    _ => None,
+                                }
+                            };
+                            let site_index = self.current_site_index();
+                            let mut cache_to_store: Option<LoadFastSiteCacheEntry> = None;
+                            let mut mark_plain = false;
+                            let mut clear_cached_site = false;
                             let fused = {
                                 let frame = self.frames.last().expect("frame exists");
                                 if idx >= frame.fast_locals.len() {
                                     None
                                 } else if let Some(left) = frame.fast_locals[idx].as_ref() {
-                                    if let (Some(next), Some(jump)) = (
-                                        frame.code.instructions.get(frame.ip),
-                                        frame.code.instructions.get(frame.ip + 1),
-                                    ) {
-                                        if next.opcode == Opcode::CompareLtConst
-                                            && jump.opcode == Opcode::JumpIfFalse
-                                        {
-                                            if let (Some(const_idx), Some(target)) =
-                                                (next.arg.map(|arg| arg as usize), jump.arg)
+                                    let left_int = value_to_i64(left);
+                                    match frame
+                                        .quickened_sites
+                                        .get(site_index)
+                                        .copied()
+                                        .unwrap_or(QuickenedSiteKind::None)
+                                    {
+                                        QuickenedSiteKind::LoadFastCompareLtConstJump => {
+                                            if let Some(Some(cache)) =
+                                                frame.load_fast_inline_cache.get(site_index)
                                             {
-                                                if const_idx < frame.code.constants.len() {
-                                                    let left_int = match left {
-                                                        Value::Int(integer) => Some(*integer),
-                                                        Value::Bool(flag) => {
-                                                            Some(if *flag { 1 } else { 0 })
-                                                        }
-                                                        _ => None,
-                                                    };
-                                                    let right_int =
-                                                        match &frame.code.constants[const_idx] {
-                                                            Value::Int(integer) => Some(*integer),
-                                                            Value::Bool(flag) => {
-                                                                Some(if *flag { 1 } else { 0 })
-                                                            }
-                                                            _ => None,
-                                                        };
-                                                    if let (Some(left_int), Some(right_int)) =
-                                                        (left_int, right_int)
+                                                left_int.map(|int| {
+                                                    (int < cache.compare_rhs_int, cache.jump_target)
+                                                })
+                                            } else {
+                                                clear_cached_site = true;
+                                                None
+                                            }
+                                        }
+                                        QuickenedSiteKind::LoadFastPlain => None,
+                                        _ => {
+                                            if let (Some(next), Some(jump)) = (
+                                                frame.code.instructions.get(frame.ip),
+                                                frame.code.instructions.get(frame.ip + 1),
+                                            ) {
+                                                if next.opcode == Opcode::CompareLtConst
+                                                    && jump.opcode == Opcode::JumpIfFalse
+                                                {
+                                                    if let (Some(const_idx), Some(target)) =
+                                                        (next.arg.map(|arg| arg as usize), jump.arg)
                                                     {
-                                                        Some((left_int < right_int, target as usize))
+                                                        if const_idx < frame.code.constants.len() {
+                                                            if let (Some(left_int), Some(right_int)) = (
+                                                                left_int,
+                                                                value_to_i64(
+                                                                    &frame.code.constants[const_idx],
+                                                                ),
+                                                            ) {
+                                                                cache_to_store = Some(
+                                                                    LoadFastSiteCacheEntry {
+                                                                        compare_rhs_int: right_int,
+                                                                        jump_target: target as usize,
+                                                                    },
+                                                                );
+                                                                Some((left_int < right_int, target as usize))
+                                                            } else {
+                                                                mark_plain = true;
+                                                                None
+                                                            }
+                                                        } else {
+                                                            mark_plain = true;
+                                                            None
+                                                        }
                                                     } else {
+                                                        mark_plain = true;
                                                         None
                                                     }
                                                 } else {
+                                                    mark_plain = true;
                                                     None
                                                 }
                                             } else {
+                                                mark_plain = true;
                                                 None
                                             }
-                                        } else {
-                                            None
                                         }
-                                    } else {
-                                        None
                                     }
                                 } else {
                                     None
                                 }
                             };
+                            if clear_cached_site {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    if let Some(slot) = frame.load_fast_inline_cache.get_mut(site_index) {
+                                        *slot = None;
+                                    }
+                                }
+                                self.mark_quickened_site(site_index, QuickenedSiteKind::LoadFastPlain);
+                            } else if let Some(cache) = cache_to_store {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    if let Some(slot) = frame.load_fast_inline_cache.get_mut(site_index) {
+                                        *slot = Some(cache);
+                                    }
+                                }
+                                self.mark_quickened_site(
+                                    site_index,
+                                    QuickenedSiteKind::LoadFastCompareLtConstJump,
+                                );
+                            } else if mark_plain {
+                                self.mark_quickened_site(site_index, QuickenedSiteKind::LoadFastPlain);
+                            }
                             if let Some((truthy, target)) = fused {
                                 let frame = self.frames.last_mut().expect("frame exists");
                                 if truthy {
@@ -3953,6 +4061,8 @@ impl Vm {
                             } else {
                                 let frame = self.frames.last().expect("frame exists");
                                 frame.simple_one_arg_no_cells
+                                    && frame.code.fast_local_count == 1
+                                    && frame.code.plain_positional_arg0_slot == Some(0)
                                     && !frame.is_module
                                     && !frame.discard_result
                                     && frame.generator_owner.is_none()
@@ -3962,6 +4072,20 @@ impl Vm {
                                     && frame.module_locals_dict.is_none()
                                     && !frame.expect_none_return
                                     && frame.active_exception.is_none()
+                                    && frame.locals.is_empty()
+                                    && frame.cells.is_empty()
+                                    && frame.blocks.is_empty()
+                                    && frame.class_bases.is_empty()
+                                    && frame.class_keywords.is_empty()
+                                    && frame.stack.len() == 1
+                                    && frame.globals_fallback.is_none()
+                                    && frame.locals_fallback.is_none()
+                                    && frame.class_metaclass.is_none()
+                                    && !frame.generator_awaiting_resume_value
+                                    && frame.generator_resume_value.is_none()
+                                    && frame.generator_pending_throw.is_none()
+                                    && frame.generator_resume_kind.is_none()
+                                    && frame.yield_from_iter.is_none()
                             }
                         };
                         if simple_fast_return {
@@ -3969,7 +4093,7 @@ impl Vm {
                             let frame = self.frames.pop().expect("frame exists");
                             let caller = self.frames.last_mut().expect("caller frame exists");
                             caller.stack.push(value);
-                            self.recycle_simple_frame(frame);
+                            self.recycle_simple_frame_clean(frame);
                             return Ok(None);
                         }
                         let value = self.pop_value().unwrap_or(Value::None);

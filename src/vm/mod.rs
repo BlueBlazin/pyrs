@@ -309,9 +309,19 @@ struct LoadGlobalSiteCacheEntry {
     fused_direct_owner_class: Option<ObjRef>,
 }
 
+#[derive(Clone, Copy)]
+#[cfg_attr(debug_assertions, allow(dead_code))]
+struct LoadFastSiteCacheEntry {
+    compare_rhs_int: i64,
+    jump_target: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(debug_assertions, allow(dead_code))]
 enum QuickenedSiteKind {
     None,
+    LoadFastPlain,
+    LoadFastCompareLtConstJump,
     AddInt,
     SubInt,
     CompareLtInt,
@@ -357,6 +367,7 @@ struct Frame {
     generator_resume_kind: Option<GeneratorResumeKind>,
     yield_from_iter: Option<Value>,
     quickened_sites: Vec<QuickenedSiteKind>,
+    load_fast_inline_cache: Vec<Option<LoadFastSiteCacheEntry>>,
     one_arg_inline_cache: Vec<Option<OneArgCallSiteCacheEntry>>,
     load_global_inline_cache: Vec<Option<LoadGlobalSiteCacheEntry>>,
     simple_one_arg_no_cells: bool,
@@ -406,6 +417,7 @@ impl Frame {
             generator_resume_kind: None,
             yield_from_iter: None,
             quickened_sites: vec![QuickenedSiteKind::None; instruction_len],
+            load_fast_inline_cache: vec![None; instruction_len],
             one_arg_inline_cache: vec![None; instruction_len],
             load_global_inline_cache: vec![None; instruction_len],
             simple_one_arg_no_cells: false,
@@ -463,6 +475,7 @@ impl Frame {
 
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
+            self.load_fast_inline_cache = vec![None; instruction_len];
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
             let fast_locals_len = self.code.fast_local_count;
@@ -533,6 +546,7 @@ impl Frame {
 
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
+            self.load_fast_inline_cache = vec![None; instruction_len];
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
             let fast_locals_len = self.code.fast_local_count;
@@ -891,6 +905,22 @@ impl Vm {
         if !single_arg_direct_slot {
             frame.fast_locals.fill(None);
         }
+        self.simple_frame_pool.push(frame);
+    }
+
+    #[inline(always)]
+    fn recycle_simple_frame_clean(&mut self, mut frame: Box<Frame>) {
+        if self.simple_frame_pool.len() >= 256 {
+            return;
+        }
+        frame.ip = 0;
+        frame.last_ip = 0;
+        if let Some(slot) = frame.fast_locals.get_mut(0) {
+            *slot = None;
+        } else {
+            frame.fast_locals.fill(None);
+        }
+        frame.simple_one_arg_no_cells = true;
         self.simple_frame_pool.push(frame);
     }
 

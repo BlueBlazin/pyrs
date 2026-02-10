@@ -21,7 +21,7 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`1.00s` user-time (`~1.01-1.02s` wall, warm) for the `fib(29)x5` gate
+  - ~`0.98s` user-time (`~0.99-1.00s` wall, warm) for the `fib(29)x5` gate
   - ~`0.24s` user-time for `print(fib(29))` single-run reference
 
 ## CPython Reference Map
@@ -110,3 +110,7 @@ Last updated: 2026-02-11
   - `LOAD_GLOBAL` fused one-arg call path now caches small-int RHS constants and routes through a direct subtract helper before fallback,
   - borrowed simple-frame acquisition + strict simple-frame `ReturnValue` fast-return path landed for clean one-arg no-cells frames,
   - this wave reduced `fib(29)x5` from about `1.34s` user-time to about `1.00s` user-time, but frame push/recycle and eval-loop dispatch still dominate profiles.
+- Latest dispatch checkpoint:
+  - `LoadFast` now classifies quickening sites once (`LoadFastPlain` vs `LoadFastCompareLtConstJump`) and stores fused compare-jump metadata in per-site frame cache, removing repeated pattern-scan overhead at hot load sites,
+  - conservative `LoadFast -> ReturnValue` fast-return fusion landed for strict clean one-arg no-cells frames,
+  - benchmark gate remains roughly flat (`~0.98s` user), confirming remaining bottleneck is frame/call churn + eval-loop dispatch rather than compare-jump probing.
