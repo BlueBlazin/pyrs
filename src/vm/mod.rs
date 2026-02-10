@@ -275,14 +275,18 @@ enum RePatternValue {
     Bytes(Vec<u8>),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OneArgCallHotPath {
+    Generic,
+    SimplePositional,
+    SimplePositionalNoCells,
+}
+
 #[derive(Clone)]
 struct OneArgCallSiteCacheEntry {
     func_id: u64,
     func_epoch: u64,
-    code: Rc<CodeObject>,
-    module: ObjRef,
-    owner_class: Option<ObjRef>,
-    closure: Vec<ObjRef>,
+    hot_path: OneArgCallHotPath,
 }
 
 #[derive(Clone)]
@@ -405,65 +409,47 @@ impl Frame {
     ) {
         let same_code = Rc::ptr_eq(&self.code, &code);
         let instruction_len = code.instructions.len();
+        debug_assert!(self.stack.is_empty());
+        debug_assert!(self.locals.is_empty());
+        debug_assert!(self.blocks.is_empty());
+        debug_assert!(self.class_bases.is_empty());
+        debug_assert!(self.class_keywords.is_empty());
+        debug_assert!(self.module_locals_dict.is_none());
+        debug_assert!(self.globals_fallback.is_none());
+        debug_assert!(self.locals_fallback.is_none());
+        debug_assert!(self.return_instance.is_none());
+        debug_assert!(self.class_metaclass.is_none());
+        debug_assert!(self.active_exception.is_none());
+        debug_assert!(self.generator_owner.is_none());
+        debug_assert!(self.generator_resume_value.is_none());
+        debug_assert!(self.generator_pending_throw.is_none());
+        debug_assert!(self.generator_resume_kind.is_none());
+        debug_assert!(self.yield_from_iter.is_none());
         self.code = code;
         self.ip = 0;
         self.last_ip = 0;
-        self.stack.clear();
-        self.locals.clear();
         self.cells = cells;
-        self.module_locals_dict = None;
         self.module = module.clone();
         self.function_globals_version = module_globals_version(&module);
         self.function_globals = module;
-        self.globals_fallback = None;
-        self.locals_fallback = None;
         self.owner_class = owner_class;
         self.is_module = is_module;
         self.return_module = return_module;
         self.discard_result = false;
-        self.return_instance = None;
         self.return_class = false;
-        self.class_bases.clear();
-        self.class_metaclass = None;
-        self.class_keywords.clear();
-        self.blocks.clear();
-        self.active_exception = None;
         self.expect_none_return = false;
-        self.generator_owner = None;
         self.generator_awaiting_resume_value = false;
-        self.generator_resume_value = None;
-        self.generator_pending_throw = None;
-        self.generator_resume_kind = None;
-        self.yield_from_iter = None;
 
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
-        } else {
-            if self.quickened_sites.len() < instruction_len {
-                self.quickened_sites
-                    .resize(instruction_len, QuickenedSiteKind::None);
+            let fast_locals_len = self.code.fast_local_count;
+            if self.fast_locals.len() < fast_locals_len {
+                self.fast_locals.resize(fast_locals_len, None);
             } else {
-                self.quickened_sites.truncate(instruction_len);
+                self.fast_locals.truncate(fast_locals_len);
             }
-            if self.one_arg_inline_cache.len() < instruction_len {
-                self.one_arg_inline_cache.resize(instruction_len, None);
-            } else {
-                self.one_arg_inline_cache.truncate(instruction_len);
-            }
-            if self.load_global_inline_cache.len() < instruction_len {
-                self.load_global_inline_cache.resize(instruction_len, None);
-            } else {
-                self.load_global_inline_cache.truncate(instruction_len);
-            }
-        }
-
-        let fast_locals_len = self.code.fast_local_count;
-        if self.fast_locals.len() < fast_locals_len {
-            self.fast_locals.resize(fast_locals_len, None);
-        } else {
-            self.fast_locals.truncate(fast_locals_len);
         }
         self.fast_locals.fill(None);
     }
@@ -642,12 +628,24 @@ impl Vm {
         if self.frame_pool.len() >= 256 {
             return;
         }
-        frame.stack.clear();
-        frame.locals.clear();
-        frame.cells.clear();
-        frame.blocks.clear();
-        frame.class_bases.clear();
-        frame.class_keywords.clear();
+        if !frame.stack.is_empty() {
+            frame.stack.clear();
+        }
+        if !frame.locals.is_empty() {
+            frame.locals.clear();
+        }
+        if !frame.cells.is_empty() {
+            frame.cells.clear();
+        }
+        if !frame.blocks.is_empty() {
+            frame.blocks.clear();
+        }
+        if !frame.class_bases.is_empty() {
+            frame.class_bases.clear();
+        }
+        if !frame.class_keywords.is_empty() {
+            frame.class_keywords.clear();
+        }
         frame.module_locals_dict = None;
         frame.globals_fallback = None;
         frame.locals_fallback = None;

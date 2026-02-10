@@ -1505,6 +1505,19 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::Binary { left, op, right } => {
+                if matches!(op, crate::ast::BinaryOp::Sub | crate::ast::BinaryOp::Lt) {
+                    if let ExprKind::Constant(constant) = &right.node {
+                        compiler.compile_expr(left)?;
+                        let idx = compiler.code.add_const(constant_to_value(constant));
+                        let opcode = match op {
+                            crate::ast::BinaryOp::Sub => Opcode::BinarySubConst,
+                            crate::ast::BinaryOp::Lt => Opcode::CompareLtConst,
+                            _ => unreachable!(),
+                        };
+                        compiler.emit(opcode, Some(idx));
+                        return Ok(());
+                    }
+                }
                 compiler.compile_expr(left)?;
                 compiler.compile_expr(right)?;
                 let opcode = match op {
