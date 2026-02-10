@@ -247,16 +247,7 @@ impl Vm {
                 }
                 Value::Dict(obj) => {
                     ensure_hashable(&index)?;
-                    let existing = {
-                        let dict_kind = obj.kind();
-                        let Object::Dict(entries) = &*dict_kind else {
-                            return Err(RuntimeError::new("subscript unsupported type"));
-                        };
-                        entries
-                            .iter()
-                            .find(|(key, _)| *key == index)
-                            .map(|(_, value)| value.clone())
-                    };
+                    let existing = dict_get_value(&obj, &index);
                     if let Some(value) = existing {
                         return Ok(value);
                     }

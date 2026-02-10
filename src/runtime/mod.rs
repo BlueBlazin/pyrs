@@ -857,24 +857,24 @@ impl Index<usize> for SetObject {
     }
 }
 
-fn value_hash_key(value: &Value) -> Option<u64> {
-    let mut hasher = DefaultHasher::new();
+#[inline]
+fn hash_mix64(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^= value >> 31;
+    value
+}
+
+#[inline]
+fn fast_numeric_hash_bits(value: &Value) -> Option<u64> {
     match value {
-        Value::None => {
-            0u8.hash(&mut hasher);
-        }
-        Value::Bool(boolean) => {
-            1u8.hash(&mut hasher);
-            ((*boolean as i64) as f64).to_bits().hash(&mut hasher);
-        }
-        Value::Int(integer) => {
-            1u8.hash(&mut hasher);
-            (*integer as f64).to_bits().hash(&mut hasher);
-        }
+        Value::Bool(boolean) => Some((*boolean as i64 as f64).to_bits()),
+        Value::Int(integer) => Some((*integer as f64).to_bits()),
         Value::BigInt(integer) => {
-            1u8.hash(&mut hasher);
             if let Some(small) = integer.to_i64() {
-                (small as f64).to_bits().hash(&mut hasher);
+                Some((small as f64).to_bits())
             } else {
                 let as_float = integer.to_f64();
                 if as_float.is_finite()
@@ -882,18 +882,49 @@ fn value_hash_key(value: &Value) -> Option<u64> {
                         .as_ref()
                         .is_some_and(|converted| converted == integer)
                 {
-                    let normalized = if as_float == 0.0 { 0.0 } else { as_float };
-                    normalized.to_bits().hash(&mut hasher);
+                    Some(if as_float == 0.0 { 0.0 } else { as_float }.to_bits())
                 } else {
-                    0xffu8.hash(&mut hasher);
-                    integer.hash(&mut hasher);
+                    None
                 }
             }
         }
-        Value::Float(float) => {
+        Value::Float(float) => Some(if *float == 0.0 { 0.0 } else { *float }.to_bits()),
+        _ => None,
+    }
+}
+
+#[inline]
+fn fast_value_hash_key(value: &Value) -> Option<u64> {
+    match value {
+        Value::None => Some(hash_mix64(0x00)),
+        Value::Bool(_) | Value::Int(_) | Value::BigInt(_) | Value::Float(_) => {
+            let bits = fast_numeric_hash_bits(value)?;
+            Some(hash_mix64((1u64 << 56) ^ bits))
+        }
+        _ => None,
+    }
+}
+
+fn value_hash_key(value: &Value) -> Option<u64> {
+    if let Some(hash) = fast_value_hash_key(value) {
+        return Some(hash);
+    }
+    let mut hasher = DefaultHasher::new();
+    match value {
+        Value::BigInt(integer) => {
             1u8.hash(&mut hasher);
-            let normalized = if *float == 0.0 { 0.0 } else { *float };
-            normalized.to_bits().hash(&mut hasher);
+            let as_float = integer.to_f64();
+            if as_float.is_finite()
+                && BigInt::from_f64_integral(as_float)
+                    .as_ref()
+                    .is_some_and(|converted| converted == integer)
+            {
+                let normalized = if as_float == 0.0 { 0.0 } else { as_float };
+                normalized.to_bits().hash(&mut hasher);
+            } else {
+                0xffu8.hash(&mut hasher);
+                integer.hash(&mut hasher);
+            }
         }
         Value::Complex { real, imag } => {
             2u8.hash(&mut hasher);
@@ -969,6 +1000,7 @@ fn value_hash_key(value: &Value) -> Option<u64> {
         | Value::ByteArray(_)
         | Value::MemoryView(_)
         | Value::Slice { .. } => return None,
+        Value::None | Value::Bool(_) | Value::Int(_) | Value::Float(_) => unreachable!(),
     }
     Some(hasher.finish())
 }

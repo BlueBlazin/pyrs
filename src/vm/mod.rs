@@ -297,6 +297,7 @@ struct LoadGlobalSiteCacheEntry {
     value: Value,
     fused_local_idx: Option<u32>,
     fused_const_idx: Option<u32>,
+    fused_direct_one_arg_no_cells: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -349,6 +350,7 @@ struct Frame {
     quickened_sites: Vec<QuickenedSiteKind>,
     one_arg_inline_cache: Vec<Option<OneArgCallSiteCacheEntry>>,
     load_global_inline_cache: Vec<Option<LoadGlobalSiteCacheEntry>>,
+    simple_one_arg_no_cells: bool,
 }
 
 impl Frame {
@@ -397,6 +399,7 @@ impl Frame {
             quickened_sites: vec![QuickenedSiteKind::None; instruction_len],
             one_arg_inline_cache: vec![None; instruction_len],
             load_global_inline_cache: vec![None; instruction_len],
+            simple_one_arg_no_cells: false,
         }
     }
 
@@ -430,7 +433,13 @@ impl Frame {
         self.code = code;
         self.ip = 0;
         self.last_ip = 0;
-        self.cells = cells;
+        if cells.is_empty() {
+            if !self.cells.is_empty() {
+                self.cells.clear();
+            }
+        } else {
+            self.cells = cells;
+        }
         self.module = module.clone();
         self.function_globals_version = module_globals_version(&module);
         self.function_globals = module;
@@ -441,6 +450,7 @@ impl Frame {
         self.return_class = false;
         self.expect_none_return = false;
         self.generator_awaiting_resume_value = false;
+        self.simple_one_arg_no_cells = false;
 
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
@@ -456,11 +466,78 @@ impl Frame {
         self.fast_locals.fill(None);
     }
 
+    fn reset_for_reuse_simple_one_arg_no_cells(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+    ) {
+        let same_code = Rc::ptr_eq(&self.code, &code);
+        let instruction_len = code.instructions.len();
+        if !self.locals.is_empty() {
+            self.locals.clear();
+        }
+        if !self.cells.is_empty() {
+            self.cells.clear();
+        }
+        if !self.blocks.is_empty() {
+            self.blocks.clear();
+        }
+        if !self.class_bases.is_empty() {
+            self.class_bases.clear();
+        }
+        if !self.class_keywords.is_empty() {
+            self.class_keywords.clear();
+        }
+        self.module_locals_dict = None;
+        self.globals_fallback = None;
+        self.locals_fallback = None;
+        self.return_instance = None;
+        self.class_metaclass = None;
+        self.generator_owner = None;
+        self.generator_resume_value = None;
+        self.generator_pending_throw = None;
+        self.generator_resume_kind = None;
+        self.yield_from_iter = None;
+        self.code = code;
+        self.ip = 0;
+        self.last_ip = 0;
+        self.module = module.clone();
+        self.function_globals_version = module_globals_version(&module);
+        self.function_globals = module;
+        self.owner_class = owner_class;
+        self.is_module = false;
+        self.return_module = false;
+        self.discard_result = false;
+        self.return_class = false;
+        self.expect_none_return = false;
+        self.generator_awaiting_resume_value = false;
+        self.simple_one_arg_no_cells = true;
+        self.active_exception = None;
+
+        if !same_code {
+            self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
+            self.one_arg_inline_cache = vec![None; instruction_len];
+            self.load_global_inline_cache = vec![None; instruction_len];
+            let fast_locals_len = self.code.fast_local_count;
+            if self.fast_locals.len() < fast_locals_len {
+                self.fast_locals.resize(fast_locals_len, None);
+            } else {
+                self.fast_locals.truncate(fast_locals_len);
+            }
+        }
+        self.fast_locals.fill(None);
+        if !self.stack.is_empty() {
+            self.stack.clear();
+        }
+    }
+
 }
 
 pub struct Vm {
     frames: Vec<Box<Frame>>,
     frame_pool: Vec<Box<Frame>>,
+    simple_frame_pool: Vec<Box<Frame>>,
     builtins: HashMap<String, Value>,
     modules: HashMap<String, ObjRef>,
     main_module: ObjRef,
@@ -522,6 +599,7 @@ impl Vm {
         let mut vm = Self {
             frames: Vec::with_capacity(128),
             frame_pool: Vec::with_capacity(128),
+            simple_frame_pool: Vec::with_capacity(128),
             builtins: HashMap::new(),
             modules,
             main_module,
@@ -659,7 +737,68 @@ impl Vm {
         frame.generator_pending_throw = None;
         frame.generator_resume_kind = None;
         frame.yield_from_iter = None;
+        frame.simple_one_arg_no_cells = false;
         self.frame_pool.push(frame);
+    }
+
+    fn acquire_simple_frame_no_cells(
+        &mut self,
+        code: Rc<CodeObject>,
+        module: ObjRef,
+        owner_class: Option<ObjRef>,
+    ) -> Box<Frame> {
+        if let Some(mut frame) = self.simple_frame_pool.pop() {
+            frame.reset_for_reuse_simple_one_arg_no_cells(code, module, owner_class);
+            frame
+        } else {
+            let mut frame = Box::new(Frame::new(
+                code,
+                module,
+                false,
+                false,
+                Vec::new(),
+                owner_class,
+            ));
+            frame.simple_one_arg_no_cells = true;
+            frame
+        }
+    }
+
+    fn recycle_simple_frame(&mut self, mut frame: Box<Frame>) {
+        if self.simple_frame_pool.len() >= 256 {
+            return;
+        }
+        if !frame.locals.is_empty() {
+            frame.locals.clear();
+        }
+        if !frame.cells.is_empty() {
+            frame.cells.clear();
+        }
+        if !frame.blocks.is_empty() {
+            frame.blocks.clear();
+        }
+        if !frame.class_bases.is_empty() {
+            frame.class_bases.clear();
+        }
+        if !frame.class_keywords.is_empty() {
+            frame.class_keywords.clear();
+        }
+        if !frame.stack.is_empty() {
+            frame.stack.clear();
+        }
+        frame.module_locals_dict = None;
+        frame.globals_fallback = None;
+        frame.locals_fallback = None;
+        frame.return_instance = None;
+        frame.class_metaclass = None;
+        frame.generator_owner = None;
+        frame.generator_resume_value = None;
+        frame.generator_pending_throw = None;
+        frame.generator_resume_kind = None;
+        frame.yield_from_iter = None;
+        frame.active_exception = None;
+        frame.discard_result = false;
+        self.simple_frame_pool.push(frame);
     }
 
     pub fn get_global(&self, name: &str) -> Option<Value> {

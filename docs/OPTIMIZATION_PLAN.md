@@ -76,6 +76,7 @@ Primary benchmark gate:
 4. Stack movement/copy work (`_platform_memmove`) remains significant in tight recursive loops.
 5. Attribute/method lookup and interning gaps remain for broader workloads (`OPT-022`, `OPT-023`).
 6. Recursive-call workloads are still dominated by frame/call setup and stack churn; current `fib(29)` remains around `0.28-0.29s` user-time.
+7. Dict subscripting now routes through hash-probing backend lookup in `getitem` paths (linear scan bypass removed); remaining primary gap is recursive call/dispatch overhead, not dict key lookup.
 
 ## Execution Plan
 

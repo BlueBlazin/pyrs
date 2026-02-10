@@ -97,3 +97,6 @@ Last updated: 2026-02-10
   - runtime fuses `CompareLt* + JumpIfFalse` and `LoadGlobal + LoadFast + BinarySubConst + CallFunction1` on release builds;
   - benchmark currently stabilizes around `0.28-0.29s` user-time for `fib(29)` (still above target).
 - `OPT-009` remains in progress: boxed-frame pool and reuse path are active, but profiling still shows frame setup/reset as a visible hotspot in recursive call workloads.
+- Latest dict-path checkpoint:
+  - fixed `Vm::getitem_value` for `Value::Dict` to route through `DictObject` backend lookup APIs (`find_with_hash`) instead of linear `entries.iter().find(...)` scans with generic `==`,
+  - dict microbench regression is resolved: `200k` insert+getitem loop now runs around `0.33s` user-time (previously observed in multi-second to extreme outlier ranges when subscripting bypassed backend probing).

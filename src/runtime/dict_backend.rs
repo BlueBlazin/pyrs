@@ -95,24 +95,32 @@ impl DictBackend {
     }
 
     pub(super) fn insert(&mut self, key: Value, value: Value) {
-        if let Some(index) = self.find_index(&key) {
-            self.entries[index].1 = value;
-            return;
-        }
         let Some(hash) = value_lookup_hash(&key) else {
+            if let Some(index) = self.find_index(&key) {
+                self.entries[index].1 = value;
+                return;
+            }
             self.entries.push((key, value));
             self.used = self.entries.len();
             return;
         };
 
-        self.ensure_insert_capacity();
-        let slot = match self.lookup_slot(&key, hash) {
-            SlotLookup::Found { entry, .. } => {
+        if self.slots.is_empty() {
+            self.resize_slots(MIN_TABLE_SIZE);
+        }
+
+        let mut slot = match self.lookup_slot(&key, hash) {
+            SlotLookup::Found { entry } => {
                 self.entries[entry].1 = value;
                 return;
             }
             SlotLookup::Vacant(slot) => slot,
         };
+        let usable_slots = (self.slots.len() * LOAD_NUMERATOR) / LOAD_DENOMINATOR;
+        if self.filled + 1 > usable_slots {
+            self.resize_slots(self.slots.len() * 2);
+            slot = self.lookup_vacant_slot(hash);
+        }
 
         let entry = self.entries.len();
         self.entries.push((key, value));
@@ -173,17 +181,6 @@ impl DictBackend {
         self.entries
             .iter()
             .position(|(stored, _)| value_key_equal(stored, key))
-    }
-
-    fn ensure_insert_capacity(&mut self) {
-        if self.slots.is_empty() {
-            self.resize_slots(MIN_TABLE_SIZE);
-            return;
-        }
-        let usable_slots = (self.slots.len() * LOAD_NUMERATOR) / LOAD_DENOMINATOR;
-        if self.filled + 1 > usable_slots {
-            self.resize_slots(self.slots.len() * 2);
-        }
     }
 
     fn maybe_resize_after_remove(&mut self) {

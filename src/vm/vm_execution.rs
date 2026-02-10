@@ -264,6 +264,7 @@ impl Vm {
                         };
                         let mut value = None;
                         let mut fused_candidate: Option<(usize, usize)> = None;
+                        let mut fused_direct_one_arg_no_cells = false;
                         if let Some(frame) = self.frames.last() {
                             if let Some(entry) = frame.load_global_inline_cache.get(site_index) {
                                 if let Some(cached) = entry {
@@ -278,6 +279,8 @@ impl Vm {
                                             fused_candidate =
                                                 Some((local_idx as usize, const_idx as usize));
                                         }
+                                        fused_direct_one_arg_no_cells =
+                                            cached.fused_direct_one_arg_no_cells;
                                     }
                                 }
                             }
@@ -332,6 +335,10 @@ impl Vm {
                                 )
                             };
                             if cacheable {
+                                if fused_candidate.is_some() {
+                                    fused_direct_one_arg_no_cells =
+                                        self.is_fused_direct_one_arg_no_cells(&value);
+                                }
                                 if let Some(frame) = self.frames.last_mut() {
                                     if let Some(slot) =
                                         frame.load_global_inline_cache.get_mut(site_index)
@@ -347,6 +354,7 @@ impl Vm {
                                             fused_const_idx: fused_candidate
                                                 .as_ref()
                                                 .map(|(_, const_idx)| *const_idx as u32),
+                                            fused_direct_one_arg_no_cells,
                                         });
                                     }
                                 }
@@ -362,73 +370,17 @@ impl Vm {
                         {
                             if !push_null {
                                 if let Some((local_idx, const_idx)) = fused_candidate {
+                                    let caller_idx = self.frames.len().saturating_sub(1);
+                                    let arg =
+                                        self.fused_fast_local_sub_const_arg(local_idx, const_idx)?;
                                     if let Value::Function(func_obj) = &value {
-                                        let caller_idx = self.frames.len().saturating_sub(1);
-                                        let left_fast = {
-                                            let frame = self.frames.last().expect("frame exists");
-                                            if local_idx < frame.fast_locals.len() {
-                                                match &frame.fast_locals[local_idx] {
-                                                    Some(value) => Some(value.clone()),
-                                                    None => None,
-                                                }
-                                            } else {
-                                                None
-                                            }
-                                        };
-                                        let left = if let Some(value) = left_fast {
-                                            value
+                                        if fused_direct_one_arg_no_cells {
+                                            self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
+                                                func_obj, arg,
+                                            )?;
                                         } else {
-                                            self.load_fast_local(local_idx)?
-                                        };
-                                        let arg = {
-                                            let frame = self.frames.last().expect("frame exists");
-                                            if const_idx >= frame.code.constants.len() {
-                                                return Err(RuntimeError::new(
-                                                    "constant index out of range",
-                                                ));
-                                            }
-                                            match &frame.code.constants[const_idx] {
-                                                Value::Int(right) => match left {
-                                                    Value::Int(left_int) => {
-                                                        match left_int.checked_sub(*right) {
-                                                            Some(diff) => Value::Int(diff),
-                                                            None => sub_values(
-                                                                Value::Int(left_int),
-                                                                Value::Int(*right),
-                                                                &self.heap,
-                                                            )?,
-                                                        }
-                                                    }
-                                                    other => sub_values(
-                                                        other,
-                                                        Value::Int(*right),
-                                                        &self.heap,
-                                                    )?,
-                                                },
-                                                Value::Bool(flag) => {
-                                                    let right = if *flag { 1 } else { 0 };
-                                                    match left {
-                                                        Value::Int(left_int) => {
-                                                            match left_int.checked_sub(right) {
-                                                                Some(diff) => Value::Int(diff),
-                                                                None => sub_values(
-                                                                    Value::Int(left_int),
-                                                                    Value::Int(right),
-                                                                    &self.heap,
-                                                                )?,
-                                                            }
-                                                        }
-                                                        other => sub_values(
-                                                            other,
-                                                            Value::Int(right),
-                                                            &self.heap,
-                                                        )?,
-                                                    }
-                                                }
-                                                right => sub_values(left, right.clone(), &self.heap)?,
-                                            }
-                                        };
-                                        self.push_function_call_one_arg_from_obj(func_obj, arg)?;
+                                            self.push_function_call_one_arg_from_obj(func_obj, arg)?;
+                                        }
                                         if let Some(frame) = self.frames.get_mut(caller_idx) {
                                             frame.ip += 3;
                                         }
@@ -3680,14 +3632,23 @@ impl Vm {
                         }
                         if can_recycle {
                             let discard = frame.discard_result;
+                            let simple_no_cells = frame.simple_one_arg_no_cells;
                             if let Some(caller) = self.frames.last_mut() {
                                 if !discard {
                                     caller.stack.push(value);
                                 }
-                                self.recycle_frame(frame);
+                                if simple_no_cells {
+                                    self.recycle_simple_frame(frame);
+                                } else {
+                                    self.recycle_frame(frame);
+                                }
                                 return Ok(None);
                             }
-                            self.recycle_frame(frame);
+                            if simple_no_cells {
+                                self.recycle_simple_frame(frame);
+                            } else {
+                                self.recycle_frame(frame);
+                            }
                             return Ok(Some(value));
                         }
                         let value = if frame.return_class {
@@ -3735,14 +3696,23 @@ impl Vm {
                         }
                         if can_recycle {
                             let discard = frame.discard_result;
+                            let simple_no_cells = frame.simple_one_arg_no_cells;
                             if let Some(caller) = self.frames.last_mut() {
                                 if !discard {
                                     caller.stack.push(value);
                                 }
-                                self.recycle_frame(frame);
+                                if simple_no_cells {
+                                    self.recycle_simple_frame(frame);
+                                } else {
+                                    self.recycle_frame(frame);
+                                }
                                 return Ok(None);
                             }
-                            self.recycle_frame(frame);
+                            if simple_no_cells {
+                                self.recycle_simple_frame(frame);
+                            } else {
+                                self.recycle_frame(frame);
+                            }
                             return Ok(Some(value));
                         }
                         let value = if frame.return_class {
@@ -4979,6 +4949,72 @@ impl Vm {
         Some((load_fast.arg? as usize, binary_sub_const.arg? as usize))
     }
 
+    #[inline]
+    fn is_fused_direct_one_arg_no_cells(&self, value: &Value) -> bool {
+        let func = match value {
+            Value::Function(func) => func,
+            _ => return false,
+        };
+        let func_kind = func.kind();
+        let func_data = match &*func_kind {
+            Object::Function(data) => data,
+            _ => return false,
+        };
+        let code = func_data.code.clone();
+        func_data.plain_positional_call_arity == Some(1)
+            && code.plain_positional_arg0_cell.is_none()
+            && code.cellvars.is_empty()
+            && func_data.closure.is_empty()
+            && !code.is_generator
+            && !code.is_comprehension
+    }
+
+    #[inline]
+    #[cfg(not(debug_assertions))]
+    fn fused_fast_local_sub_const_arg(
+        &mut self,
+        local_idx: usize,
+        const_idx: usize,
+    ) -> Result<Value, RuntimeError> {
+        let left_fast = {
+            let frame = self.frames.last().expect("frame exists");
+            if local_idx < frame.fast_locals.len() {
+                frame.fast_locals[local_idx].clone()
+            } else {
+                None
+            }
+        };
+        let left = if let Some(value) = left_fast {
+            value
+        } else {
+            self.load_fast_local(local_idx)?
+        };
+        let frame = self.frames.last().expect("frame exists");
+        if const_idx >= frame.code.constants.len() {
+            return Err(RuntimeError::new("constant index out of range"));
+        }
+        match &frame.code.constants[const_idx] {
+            Value::Int(right) => match left {
+                Value::Int(left_int) => match left_int.checked_sub(*right) {
+                    Some(diff) => Ok(Value::Int(diff)),
+                    None => sub_values(Value::Int(left_int), Value::Int(*right), &self.heap),
+                },
+                other => sub_values(other, Value::Int(*right), &self.heap),
+            },
+            Value::Bool(flag) => {
+                let right = if *flag { 1 } else { 0 };
+                match left {
+                    Value::Int(left_int) => match left_int.checked_sub(right) {
+                        Some(diff) => Ok(Value::Int(diff)),
+                        None => sub_values(Value::Int(left_int), Value::Int(right), &self.heap),
+                    },
+                    other => sub_values(other, Value::Int(right), &self.heap),
+                }
+            }
+            right => sub_values(left, right.clone(), &self.heap),
+        }
+    }
+
     fn dispatch_call_no_kwargs(&mut self, func: Value, args: Vec<Value>) -> Result<(), RuntimeError> {
         match func {
             Value::Function(func) => {
@@ -5231,7 +5267,7 @@ impl Vm {
         } else {
             None
         };
-        let mut frame = self.acquire_frame(code, module, false, false, Vec::new(), owner_class);
+        let mut frame = self.acquire_simple_frame_no_cells(code, module, owner_class);
         if let Some(active_exception) = self
             .frames
             .last()
