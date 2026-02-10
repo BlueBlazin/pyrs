@@ -69,7 +69,7 @@ Milestone 13 is complete only when all are true:
 - Robustness/performance proof:
   - malformed-input differential tests
   - benchmark deltas and hotspot profiling for blockers
-  - landed optimization baseline: frame fast-local slot path, object-backed function-call dispatch (no full `FunctionObject` clone in opcode call paths), and release build tuning (`lto = "thin"`, `codegen-units = 1`)
+  - landed optimization baseline: CPython-style fast-locals design (`f_localsplus`-like slot-backed locals with lazy dict sync), object-backed function-call dispatch (no full `FunctionObject` clone in opcode call paths), and release build tuning (`lto = "thin"`, `codegen-units = 1`)
 
 ## Milestone 14 (Performance and Architecture)
 Deliverables:

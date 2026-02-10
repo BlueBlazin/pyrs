@@ -416,6 +416,13 @@ impl Vm {
         }
         let frame = &self.frames[frame_index];
         let mut map = frame.locals.clone();
+        for (idx, slot) in frame.fast_locals.iter().enumerate() {
+            if let Some(value) = slot {
+                if let Some(name) = frame.code.names.get(idx) {
+                    map.insert(name.clone(), value.clone());
+                }
+            }
+        }
         for (idx, name) in frame.code.cellvars.iter().enumerate() {
             if !map.contains_key(name) {
                 if let Some(cell) = frame.cells.get(idx) {
@@ -969,6 +976,13 @@ impl Vm {
                 }
             } else {
                 names.extend(frame.locals.keys().cloned());
+                for (idx, slot) in frame.fast_locals.iter().enumerate() {
+                    if slot.is_some() {
+                        if let Some(name) = frame.code.names.get(idx) {
+                            names.push(name.clone());
+                        }
+                    }
+                }
             }
         }
 
@@ -1022,6 +1036,13 @@ impl Vm {
             // We expose the local names but not copied local values.
             let mut names = HashSet::new();
             names.extend(frame.locals.keys().cloned());
+            for (idx, slot) in frame.fast_locals.iter().enumerate() {
+                if slot.is_some() {
+                    if let Some(name) = frame.code.names.get(idx) {
+                        names.insert(name.clone());
+                    }
+                }
+            }
             names.extend(frame.code.cellvars.iter().cloned());
             names.extend(frame.code.freevars.iter().cloned());
             let mut entries = Vec::with_capacity(names.len());
@@ -5592,15 +5613,15 @@ impl Vm {
                 .posonly_params
                 .iter()
                 .chain(frame.code.params.iter())
-                .find_map(|name| frame.locals.get(name).cloned())
-                .or_else(|| frame.locals.get("self").cloned())
+                .find_map(|name| Vm::frame_local_value(frame, name))
+                .or_else(|| Vm::frame_local_value(frame, "self"))
                 .ok_or_else(|| {
                     RuntimeError::new(
                         "super(): unable to determine object for zero-argument super()",
                     )
                 })?;
 
-            let class_from_locals = frame.locals.get("__class__").and_then(|value| match value {
+            let class_from_locals = Vm::frame_local_value(frame, "__class__").and_then(|value| match value {
                 Value::Class(class) => Some(class.clone()),
                 _ => None,
             });

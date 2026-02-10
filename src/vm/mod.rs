@@ -627,6 +627,13 @@ impl Vm {
             return None;
         }
         let mut fallback = frame.locals.clone();
+        for (idx, slot) in frame.fast_locals.iter().enumerate() {
+            if let Some(value) = slot {
+                if let Some(name) = frame.code.names.get(idx) {
+                    fallback.insert(name.clone(), value.clone());
+                }
+            }
+        }
         for name in &frame.code.cellvars {
             if let Some(value) = frame_cell_value(frame, name) {
                 fallback.insert(name.clone(), value);
@@ -5192,7 +5199,7 @@ fn bind_arguments(
 
 fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments, heap: &Heap) {
     let mut assign = |name: &str, value: Value| {
-        if let Some(idx) = code.cellvars.iter().position(|cell| cell == name) {
+        if let Some(idx) = code.cellvar_to_index.get(name).copied() {
             if let Some(cell) = frame.cells.get(idx) {
                 if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
                     cell_data.value = Some(value);
@@ -5200,16 +5207,17 @@ fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments
                 }
             }
         }
-        if let Some(slot_idx) = code.names.iter().position(|local| local == name) {
+        if let Some(slot_idx) = code.name_to_index.get(name).copied() {
             if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                 *slot = Some(value.clone());
             }
+            // Fast locals are authoritative; keep dict-style locals sparse.
+            if let Some(existing) = frame.locals.get_mut(name) {
+                *existing = value;
+            }
+            return;
         }
-        if let Some(existing) = frame.locals.get_mut(name) {
-            *existing = value;
-        } else {
-            frame.locals.insert(name.to_string(), value);
-        }
+        frame.locals.insert(name.to_string(), value);
     };
     for (name, value) in code.posonly_params.iter().zip(bindings.posonly.into_iter()) {
         assign(name, value);

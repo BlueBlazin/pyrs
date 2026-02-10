@@ -603,9 +603,7 @@ impl Vm {
                         let mut removed = false;
                         if let Some(frame) = self.frames.last_mut() {
                             if !frame.is_module {
-                                if let Some(slot_idx) =
-                                    frame.code.names.iter().position(|entry| entry == &name)
-                                {
+                                if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
                                     if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                                         removed = slot.take().is_some();
                                     }
@@ -2762,7 +2760,16 @@ impl Vm {
                                         ));
                                     };
                                     for (name, value) in values {
-                                        frame.locals.insert(name.clone(), value.clone());
+                                        if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
+                                            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                                                *slot = Some(value.clone());
+                                            }
+                                            if let Some(existing) = frame.locals.get_mut(&name) {
+                                                *existing = value.clone();
+                                            }
+                                        } else {
+                                            frame.locals.insert(name.clone(), value.clone());
+                                        }
                                         if let Object::Module(module_data) =
                                             &mut *frame.function_globals.kind_mut()
                                         {
@@ -4223,8 +4230,6 @@ impl Vm {
         }
         if let Some(existing) = frame.locals.get_mut(&name) {
             *existing = value;
-        } else {
-            frame.locals.insert(name, value);
         }
         Ok(())
     }
@@ -4295,9 +4300,18 @@ impl Vm {
         None
     }
 
+    pub(super) fn frame_local_value(frame: &Frame, name: &str) -> Option<Value> {
+        if let Some(idx) = frame.code.name_to_index.get(name).copied() {
+            if let Some(value) = frame.fast_locals.get(idx).and_then(|slot| slot.clone()) {
+                return Some(value);
+            }
+        }
+        frame.locals.get(name).cloned()
+    }
+
     pub(super) fn lookup_name(&self, name: &str) -> Result<Value, RuntimeError> {
         if let Some(frame) = self.frames.last() {
-            if let Some(value) = frame.locals.get(name) {
+            if let Some(value) = Self::frame_local_value(frame, name) {
                 return Ok(value.clone());
             }
             if let Some(fallback) = &frame.locals_fallback {
@@ -4332,7 +4346,7 @@ impl Vm {
                     module_data.globals.insert(name, value);
                 }
             } else {
-                if let Some(slot_idx) = frame.code.names.iter().position(|entry| entry == &name) {
+                if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
                     if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                         *slot = Some(value.clone());
                     }
@@ -4340,7 +4354,10 @@ impl Vm {
                 if let Some(existing) = frame.locals.get_mut(&name) {
                     *existing = value;
                 } else {
-                    frame.locals.insert(name, value);
+                    // Keep fast locals authoritative; only retain truly dynamic names here.
+                    if !frame.code.name_to_index.contains_key(&name) {
+                        frame.locals.insert(name, value);
+                    }
                 }
             }
         }
@@ -4414,23 +4431,6 @@ impl Vm {
         }
         self.frames.push(frame);
         Ok(())
-    }
-
-    pub(super) fn push_function_call(
-        &mut self,
-        func_data: &FunctionObject,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<(), RuntimeError> {
-        let bindings = bind_arguments(func_data, &self.heap, args, kwargs)?;
-        let cells = self.build_cells(&func_data.code, func_data.closure.clone());
-        self.push_function_frame(
-            func_data.code.clone(),
-            func_data.module.clone(),
-            func_data.owner_class.clone(),
-            bindings,
-            cells,
-        )
     }
 
     pub(super) fn receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {

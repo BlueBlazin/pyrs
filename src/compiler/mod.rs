@@ -1205,6 +1205,7 @@ impl Compiler {
     fn finish(mut self) -> CodeObject {
         self.emit(Opcode::LoadConst, Some(0));
         self.emit(Opcode::ReturnValue, None);
+        self.code.rebuild_layout_indexes();
         self.code
     }
 

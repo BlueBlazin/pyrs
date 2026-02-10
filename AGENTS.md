@@ -79,7 +79,7 @@ Milestone 13 completion is blocked on P0 closure of:
 ## Current Focus
 - Milestone 13 remains the active priority with native-core-first closure.
 - Current optimization wave:
-  - frame fast-local slots are in place for `LOAD_FAST*`/`STORE_FAST*` execution paths,
+  - frame fast-local slots are in place for `LOAD_FAST*`/`STORE_FAST*` execution paths and are now authoritative for function-local state (CPython `f_localsplus` style),
   - object-backed function call dispatch avoids cloning full `FunctionObject` payloads in opcode call paths,
   - release profile tuning (`lto = "thin"`, `codegen-units = 1`) is enabled.
 - Keep object-model parity work tracked in `docs/OBJECT_MODEL_AUDIT.md` and prioritize protocol-dispatch correctness over short-term patching.

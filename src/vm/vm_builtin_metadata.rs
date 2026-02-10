@@ -1558,12 +1558,8 @@ impl Vm {
 
         let needs_run = match callable {
             Value::Function(func) => {
-                let func_data = match &*func.kind() {
-                    Object::Function(data) => data.clone(),
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
-                };
                 let depth_before = self.frames.len();
-                self.push_function_call(&func_data, args, kwargs)?;
+                self.push_function_call_from_obj(&func, args, kwargs)?;
                 self.frames.len() > depth_before
             }
             Value::BoundMethod(method) => {
@@ -1572,12 +1568,12 @@ impl Vm {
                     _ => return Err(RuntimeError::new("attempted to call non-function")),
                 };
                 match &*method_data.function.kind() {
-                    Object::Function(data) => {
+                    Object::Function(_) => {
                         let mut bound_args = Vec::with_capacity(args.len() + 1);
                         bound_args.push(self.receiver_value(&method_data.receiver)?);
                         bound_args.extend(args);
                         let depth_before = self.frames.len();
-                        self.push_function_call(data, bound_args, kwargs)?;
+                        self.push_function_call_from_obj(&method_data.function, bound_args, kwargs)?;
                         self.frames.len() > depth_before
                     }
                     Object::NativeMethod(native) => {

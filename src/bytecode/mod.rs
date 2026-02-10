@@ -4,6 +4,8 @@ pub mod cpython;
 pub mod metadata;
 pub mod pyc;
 
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     Nop,
@@ -150,6 +152,8 @@ pub struct CodeObject {
     pub vararg: Option<String>,
     pub kwarg: Option<String>,
     pub kwonly_params: Vec<String>,
+    pub name_to_index: HashMap<String, usize>,
+    pub cellvar_to_index: HashMap<String, usize>,
     pub is_generator: bool,
     pub is_coroutine: bool,
     pub is_async_generator: bool,
@@ -171,6 +175,8 @@ impl CodeObject {
             vararg: None,
             kwarg: None,
             kwonly_params: Vec::new(),
+            name_to_index: HashMap::new(),
+            cellvar_to_index: HashMap::new(),
             is_generator: false,
             is_coroutine: false,
             is_async_generator: false,
@@ -184,16 +190,23 @@ impl CodeObject {
 
     pub fn add_name(&mut self, name: impl Into<String>) -> u32 {
         let name = name.into();
-        if let Some((idx, _)) = self
-            .names
-            .iter()
-            .enumerate()
-            .find(|(_, existing)| *existing == &name)
-        {
-            return idx as u32;
+        if let Some(idx) = self.name_to_index.get(&name) {
+            return *idx as u32;
         }
+        self.name_to_index.insert(name.clone(), self.names.len());
         self.names.push(name);
         (self.names.len() - 1) as u32
+    }
+
+    pub fn rebuild_layout_indexes(&mut self) {
+        self.name_to_index.clear();
+        for (idx, name) in self.names.iter().enumerate() {
+            self.name_to_index.insert(name.clone(), idx);
+        }
+        self.cellvar_to_index.clear();
+        for (idx, name) in self.cellvars.iter().enumerate() {
+            self.cellvar_to_index.insert(name.clone(), idx);
+        }
     }
 
     pub fn disassemble(&self) -> String {

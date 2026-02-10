@@ -144,6 +144,7 @@ impl<'a> Translator<'a> {
         result.instructions = instructions;
         result.locations = vec![crate::bytecode::Location::unknown(); result.instructions.len()];
         result.constants = self.constants.clone();
+        result.rebuild_layout_indexes();
         Ok(result)
     }
 

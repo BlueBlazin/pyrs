@@ -19,6 +19,7 @@ This document defines the current structure and ownership boundaries for the VM 
 ### Execution and dispatch
 - `/Users/$USER/pyrs/src/vm/vm_execution.rs`
   - bytecode execution loop and core execution flow control
+  - CPython-style fast-locals handling (slot-backed locals similar to `f_localsplus`, with dict-style locals synced on demand)
 - `/Users/$USER/pyrs/src/vm/vm_native_dispatch.rs`
   - dispatch from `BuiltinFunction`/native method kinds to VM handlers
 - `/Users/$USER/pyrs/src/vm/vm_builtin_metadata.rs`
