@@ -21,7 +21,7 @@ Last updated: 2026-02-10
 - Target:
   - `< 0.10s` user-time
 - Current:
-  - ~`0.60s` user-time (after per-site `LOAD_GLOBAL` inline cache + one-arg cache-path cleanup)
+  - ~`0.59s` user-time (after versioned `LOAD_GLOBAL` guards + arity-2/3 call specialization + frame/setup trimming)
 
 ## CPython Reference Map
 
@@ -56,7 +56,7 @@ Last updated: 2026-02-10
 | `OPT-007` | P0 | binding | Precompute positional param slot/cell indexes on `CodeObject` | `pycore_frame.h` locals indexing | `[x]` |
 | `OPT-008` | P0 | frames | Lightweight function-frame type/path (remove class/module baggage from pure function calls) | `pycore_frame.h`, `ceval.c` | `[~]` |
 | `OPT-009` | P0 | frames | Frame freelist/pool for non-generator frames | `frame.c` freelist patterns | `[~]` |
-| `OPT-010` | P0 | calls | Fast arity call paths (`argc=2`, `argc=3`) without temporary vec/hashmap churn | `call.c` vectorcall fast arities | `[ ]` |
+| `OPT-010` | P0 | calls | Fast arity call paths (`argc=2`, `argc=3`) without temporary vec/hashmap churn | `call.c` vectorcall fast arities | `[~]` |
 | `OPT-011` | P0 | dispatch | Add adaptive specialized opcodes for hot integer compare/add/sub paths | `generated_cases.c.h` | `[~]` |
 | `OPT-012` | P0 | lookup | `LOAD_GLOBAL` cached lookup with invalidation on globals/builtins mutation | `ceval.c` inline cache strategy | `[x]` |
 | `OPT-013` | P0 | lookup | Reduce local/global hash churn for repeated name access in hot loops | `ceval.c`, name cache patterns | `[~]` |
@@ -67,8 +67,8 @@ Last updated: 2026-02-10
 | `OPT-018` | P1 | toolchain | Evaluate local `target-cpu=native` measurement profile | N/A (toolchain) | `[ ]` |
 | `OPT-019` | P2 | toolchain | Evaluate PGO/BOLT branch for release artifacts | CPython PGO precedent | `[ ]` |
 | `OPT-020` | P0 | validation | Keep benchmark + flamegraph regression gate for each optimization wave | N/A | `[~]` |
-| `OPT-021` | P0 | integer model | CPython small-int/immortal integer strategy review and implementation decision (`[-5, 256]` cache equivalent or explicit immediate-int justification with parity/perf proof) | `longobject.c` | `[!]` |
-| `OPT-022` | P0 | unicode | Implement explicit string interning strategy for identifiers/attribute names/module globals (and wire compiler/import call sites) | `unicodeobject.c`, `pycore_unicodeobject.h` | `[ ]` |
+| `OPT-021` | P0 | integer model | CPython small-int/immortal integer strategy review and implementation decision (`[-5, 256]` cache equivalent or explicit immediate-int justification with parity/perf proof) | `longobject.c` | `[x]` |
+| `OPT-022` | P0 | unicode | Implement explicit string interning strategy for identifiers/attribute names/module globals (and wire compiler/import call sites) | `unicodeobject.c`, `pycore_unicodeobject.h` | `[~]` |
 | `OPT-023` | P0 | dispatch | Add `LOAD_ATTR`/method-call inline cache specialization path (type/version guarded) | `ceval.c`, `generated_cases.c.h` | `[ ]` |
 | `OPT-024` | P1 | calls | Extend call specialization beyond `CALL_FUNCTION` (`CALL_KW`, bound-method calls, builtin/vectorcall analog path) | `call.c`, `ceval.c` | `[ ]` |
 | `OPT-025` | P1 | containers | Dict/set probe/load-factor/resizing tuning against CPython behavior (not just correctness) | `dictobject.c`, `setobject.c` | `[ ]` |
@@ -86,4 +86,9 @@ Last updated: 2026-02-10
   - per-site frame `LOAD_GLOBAL` inline cache slots with VM epoch invalidation (replacing hot global hash-map cache lookup),
   - one-arg call-site cache hot-path clone removal,
   - regression tests for global cache invalidation on `StoreGlobal` and module-attribute mutation.
+- New landed checkpoint:
+  - `LOAD_GLOBAL` cache now guarded by namespace versions (`function_globals` + `builtins`) with frame-version propagation on module writes,
+  - direct `CALL_FUNCTION` arity-2/3 specialization paths added for plain positional calls,
+  - small-int `id()` fast cache for CPython range `[-5, 256]` added in `Heap`,
+  - initial `OPT-022` wiring started by reducing repeat module-global key allocation (`get_mut`/upsert path instead of unconditional key reallocation).
 - `OPT-009` remains in progress: boxed-frame pool and reuse path are active, but profiling still shows frame setup/reset as a visible hotspot in recursive call workloads.

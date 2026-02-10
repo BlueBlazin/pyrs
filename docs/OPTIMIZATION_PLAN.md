@@ -20,7 +20,7 @@ These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
 Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
 - Target: `< 0.10s` user-time
-- Current baseline (latest run): about `0.60s` user-time (`~0.62s` wall with startup)
+- Current baseline (latest run): about `0.59s` user-time (`~0.62s` wall with startup)
 
 ## Ground Rules
 
@@ -58,6 +58,10 @@ Primary benchmark gate:
 8. Reduced per-opcode finalizer polling overhead by gating on pending-finalizer state.
 9. Replaced global hash-map `LOAD_GLOBAL` cache lookups with per-site frame inline cache slots guarded by VM cache epoch invalidation.
 10. Removed eager one-arg call-site cache cloning on hot path and retained cache only as guarded call metadata.
+11. Reworked `LOAD_GLOBAL` cache guards to CPython-style namespace version checks (`function_globals` version + builtins version), removing VM-wide cache epoch invalidation.
+12. Added direct `CALL_FUNCTION` arity-2/arity-3 fast paths for plain positional functions.
+13. Extended positional binding precompute data for args 1/2 and routed hot simple-call frame setup through shared frame-prep/store helpers.
+14. Landed CPython-range small-int fast-ID path (`[-5, 256]`) to avoid hash-map growth on immediate-id hot/value paths.
 
 ## Current Hotspots (Post-Change)
 
