@@ -65,6 +65,7 @@ pub enum Opcode {
     MakeFunction,
     BuildClass,
     CallFunction,
+    CallFunction1,
     CallFunctionKw,
     CallFunctionVar,
     ImportName,

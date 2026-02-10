@@ -2291,6 +2291,40 @@ impl Vm {
                             self.dispatch_call_no_kwargs(func, args)?;
                         }
                     }
+                    Opcode::CallFunction1 => {
+                        let site_index = self.current_site_index();
+                        let quickened_one_arg =
+                            self.is_quickened_site(site_index, QuickenedSiteKind::CallFunctionOneArg);
+                        let (func, arg0) = {
+                            let frame = self.frames.last_mut().expect("frame exists");
+                            let arg0 = frame
+                                .stack
+                                .pop()
+                                .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction1 arg0)"))?;
+                            let func = frame
+                                .stack
+                                .pop()
+                                .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction1 func)"))?;
+                            (func, arg0)
+                        };
+                        match func {
+                            Value::Function(func_obj) => {
+                                if !quickened_one_arg {
+                                    self.mark_quickened_site(
+                                        site_index,
+                                        QuickenedSiteKind::CallFunctionOneArg,
+                                    );
+                                }
+                                self.push_function_call_one_arg_from_obj(&func_obj, arg0)?;
+                            }
+                            other => {
+                                if quickened_one_arg {
+                                    self.clear_quickened_site(site_index);
+                                }
+                                self.dispatch_call_no_kwargs(other, vec![arg0])?
+                            }
+                        }
+                    }
                     Opcode::CallCpython => {
                         let arg = instr
                             .arg
@@ -3096,7 +3130,11 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing jump target"))?
                             as usize;
                         let value = self.pop_value()?;
-                        if !self.truthy_from_value(&value)? {
+                        let truthy = match value {
+                            Value::Bool(flag) => flag,
+                            other => self.truthy_from_value(&other)?,
+                        };
+                        if !truthy {
                             let frame = self.frames.last_mut().expect("frame exists");
                             frame.ip = target;
                         }
@@ -3107,7 +3145,11 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("missing jump target"))?
                             as usize;
                         let value = self.pop_value()?;
-                        if self.truthy_from_value(&value)? {
+                        let truthy = match value {
+                            Value::Bool(flag) => flag,
+                            other => self.truthy_from_value(&other)?,
+                        };
+                        if truthy {
                             let frame = self.frames.last_mut().expect("frame exists");
                             frame.ip = target;
                         }

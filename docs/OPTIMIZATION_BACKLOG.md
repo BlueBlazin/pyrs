@@ -21,7 +21,7 @@ Last updated: 2026-02-10
 - Target:
   - `< 0.10s` user-time
 - Current:
-  - ~`0.59s` user-time (after versioned `LOAD_GLOBAL` guards + arity-2/3 call specialization + frame/setup trimming)
+  - ~`0.44s` user-time (after versioned `LOAD_GLOBAL` guards + call-path specialization + frame/setup trimming)
 
 ## CPython Reference Map
 
@@ -93,5 +93,7 @@ Last updated: 2026-02-10
   - initial `OPT-022` wiring started by reducing repeat module-global key allocation (`get_mut`/upsert path instead of unconditional key reallocation).
 - Latest call-path checkpoint:
   - one-arg plain-function fast path now bypasses generic cell/binding setup for no-closure, non-generator call shapes;
-  - benchmark remains approximately `0.59-0.61s` user-time for `fib(29)` (no order-of-magnitude improvement yet).
+  - compiler now lowers one-positional-arg calls to dedicated `CallFunction1` opcode;
+  - jump truthiness fast path now avoids generic truthy conversion for bools (`JumpIfTrue/False`);
+  - benchmark currently stabilizes around `0.44-0.45s` user-time for `fib(29)` (still above target).
 - `OPT-009` remains in progress: boxed-frame pool and reuse path are active, but profiling still shows frame setup/reset as a visible hotspot in recursive call workloads.

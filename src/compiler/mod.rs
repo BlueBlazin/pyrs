@@ -1831,6 +1831,11 @@ impl Compiler {
     }
 
     fn emit(&mut self, opcode: Opcode, arg: Option<u32>) {
+        let (opcode, arg) = if matches!(opcode, Opcode::CallFunction) && arg == Some(1) {
+            (Opcode::CallFunction1, None)
+        } else {
+            (opcode, arg)
+        };
         self.code.instructions.push(Instruction::new(opcode, arg));
         self.code.locations.push(crate::bytecode::Location::new(
             self.current_span.line,

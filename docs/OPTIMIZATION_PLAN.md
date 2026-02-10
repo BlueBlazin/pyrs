@@ -20,7 +20,7 @@ These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
 Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
 - Target: `< 0.10s` user-time
-- Current baseline (latest run): about `0.59s` user-time (`~0.62s` wall with startup)
+- Current baseline (latest run): about `0.44s` user-time (`~0.44-0.46s` wall with startup)
 
 ## Ground Rules
 
@@ -63,6 +63,8 @@ Primary benchmark gate:
 13. Extended positional binding precompute data for args 1/2 and routed hot simple-call frame setup through shared frame-prep/store helpers.
 14. Landed CPython-range small-int fast-ID path (`[-5, 256]`) to avoid hash-map growth on immediate-id hot/value paths.
 15. Added a dedicated one-arg plain-function fast path for no-closure/non-generator calls (direct fast-local bind) to reduce generic call/setup overhead on recursive workloads.
+16. Added dedicated `CallFunction1` opcode lowering for one-positional-arg calls (compiler -> VM).
+17. Added bool fast path in `JumpIfTrue/JumpIfFalse` to skip generic truthiness conversion for common compare-result branches.
 
 ## Current Hotspots (Post-Change)
 
@@ -71,7 +73,7 @@ Primary benchmark gate:
 3. Frame construction/reset overhead (`acquire_frame`) is improved but still visible in recursion-heavy code.
 4. Stack movement/copy work (`_platform_memmove`) remains significant in tight recursive loops.
 5. Attribute/method lookup and interning gaps remain for broader workloads (`OPT-022`, `OPT-023`).
-6. Recursive-call workloads are still dominated by frame/call setup; current `fib(29)` remains around `0.59-0.61s` user-time.
+6. Recursive-call workloads are still dominated by frame/call setup and stack churn; current `fib(29)` remains around `0.44-0.45s` user-time.
 
 ## Execution Plan
 
