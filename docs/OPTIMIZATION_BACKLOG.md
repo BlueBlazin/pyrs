@@ -21,7 +21,7 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.63-0.64s` user-time (`~0.65-0.67s` wall) for the `fib(29)x5` gate
+  - ~`0.60-0.61s` user-time (`~0.62-0.64s` wall) for the `fib(29)x5` gate
   - ~`0.14-0.15s` user-time for `print(fib(29))` single-run reference
 
 ## CPython Reference Map
@@ -120,6 +120,11 @@ Last updated: 2026-02-11
   - `Value::Exception` now stores boxed exception payloads, removing large inline exception object copies from hot stack/value transport paths,
   - `Value::Slice` now stores boxed slice payloads, reducing enum max-size pressure and value move cost in generic VM operations,
   - benchmark improved to about `0.63-0.64s` user for `fib(29)x5` on release builds; dominant bottleneck remains frame/call setup and eval-loop dispatch.
+- Latest call/dispatch checkpoint:
+  - `LOAD_GLOBAL` fused direct-call path now executes through cached code/module metadata (no per-hit function-object metadata lookup in that lane),
+  - `LOAD_FAST`/`LOAD_FAST2` now use primitive-value clone bypasses (`int`/`float`/`bool`/`None`) for stack push hot paths,
+  - removed per-op quickening bookkeeping in `BinaryAdd`/`BinarySub` and `CallFunction1` hot lanes where dedicated opcode fast paths already exist,
+  - benchmark currently stabilizes around `0.60-0.61s` user for `fib(29)x5`; remaining top cost is eval-loop dispatch + frame push/pop churn.
 - Latest call/dispatch checkpoint:
   - fixed `LOAD_GLOBAL` fused-direct path to avoid borrow-check workarounds and route cached direct no-cells calls through borrowed function metadata paths,
   - one-arg no-cells inline-cache hot path now avoids per-call `code/module/owner_class` cloning and dispatches through `push_simple_positional_function_frame_one_arg_no_cells_from_func`,
