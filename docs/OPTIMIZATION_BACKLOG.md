@@ -99,6 +99,7 @@ Latest local snapshot (2026-02-11):
   - Added no-keyword builtin `bool` fast lanes for zero-arg and single-arg calls in opcode dispatch.
   - Added no-keyword small-arity internal-call fast paths in `call_internal` to reduce call/arg churn in stdlib-heavy paths (notably pickle stack).
   - Reduced `LOAD_NAME`/`STORE_NAME` churn in module-scope hot loops by removing `String` clone in `LOAD_NAME` and routing `STORE_NAME` through indexed name storage (`store_name_by_index`) with in-place module/global updates.
+  - Added guarded module-scope `LOAD_NAME` site caching (reusing global cache slots with module+builtins version guards) to reduce repeated name lookup/hash churn in top-level loops.
   - Dispatch benchmark now sits around `~0.48-0.60s` in current local runs while preserving vm + curated harness parity.
 - Container checkpoint:
   - Dict backend now keeps an explicit entry-to-slot backreference map, removing O(slots) delete slot scans and replacing broad slot-index decrements with live-entry-directed updates after removal.

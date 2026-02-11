@@ -208,15 +208,83 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing name argument"))?
                     as usize;
-                let value = {
+                let site_index = self.current_site_index();
+                let (value, cacheable, cache_hit, globals_module_id, globals_version) = {
                     let frame = self.frames.last().expect("frame exists");
                     let name = frame
                         .code
                         .names
                         .get(idx)
                         .ok_or_else(|| RuntimeError::new("name index out of range"))?;
-                    self.lookup_name(name)?
+                    let globals_module_id = frame.module.id();
+                    let globals_version = module_globals_version(&frame.module);
+                    let cacheable = frame.is_module
+                        && frame.locals.is_empty()
+                        && frame.locals_fallback.is_none()
+                        && frame.globals_fallback.is_none()
+                        && frame.module_locals_dict.is_none();
+                    if cacheable {
+                        if let Some(Some(cached)) =
+                            frame.load_global_inline_cache.get(site_index)
+                        {
+                            if cached.globals_module_id == globals_module_id
+                                && cached.globals_version == globals_version
+                                && cached.builtins_version == self.builtins_version
+                            {
+                                (
+                                    cached.value.clone(),
+                                    true,
+                                    true,
+                                    globals_module_id,
+                                    globals_version,
+                                )
+                            } else {
+                                (
+                                    self.lookup_name(name)?,
+                                    true,
+                                    false,
+                                    globals_module_id,
+                                    globals_version,
+                                )
+                            }
+                        } else {
+                            (
+                                self.lookup_name(name)?,
+                                true,
+                                false,
+                                globals_module_id,
+                                globals_version,
+                            )
+                        }
+                    } else {
+                        (
+                            self.lookup_name(name)?,
+                            false,
+                            false,
+                            globals_module_id,
+                            globals_version,
+                        )
+                    }
                 };
+                if cacheable && !cache_hit {
+                    if let Some(frame) = self.frames.last_mut() {
+                        if let Some(slot) = frame.load_global_inline_cache.get_mut(site_index)
+                        {
+                            *slot = Some(LoadGlobalSiteCacheEntry {
+                                globals_module_id,
+                                globals_version,
+                                builtins_version: self.builtins_version,
+                                value: value.clone(),
+                                fused_local_idx: None,
+                                fused_const_idx: None,
+                                fused_const_small_int: None,
+                                fused_direct_one_arg_no_cells: false,
+                                fused_direct_func: None,
+                                fused_direct_func_epoch: 0,
+                            });
+                        }
+                    }
+                }
                 self.frames
                     .last_mut()
                     .expect("frame exists")

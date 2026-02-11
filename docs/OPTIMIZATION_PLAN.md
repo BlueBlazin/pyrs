@@ -69,6 +69,7 @@ Interpretation:
   - Current checkpoint: no-keyword single-argument builtin `len` call-site fast lane is in place for hot container loops.
   - Current checkpoint: module-scope `LOAD_NAME`/`STORE_NAME` overhead reduced by avoiding per-opcode name cloning and using indexed store path.
   - Current checkpoint: no-keyword builtin `bool` zero/single-arg fast lanes are in place in dispatch.
+  - Current checkpoint: module-scope `LOAD_NAME` now uses version-guarded site caching for hash-churn reduction in top-level loops.
 - Remove avoidable temporary allocations/clone churn in argument plumbing.
 - Align frame setup/teardown with CPython fast-call lifecycle patterns.
 

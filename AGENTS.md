@@ -98,6 +98,7 @@ Milestone 13 completion is blocked on P0 closure of:
   - no-keyword single-argument builtin `len` fast lane is active in opcode call dispatch for hot container loops.
   - no-keyword builtin `bool` zero/single-arg fast lanes are active in opcode call dispatch.
   - module-scope `LOAD_NAME`/`STORE_NAME` paths now avoid per-opcode name-clone churn; `STORE_NAME` uses indexed storage path with direct module/global upsert.
+  - module-scope `LOAD_NAME` now has version-guarded site caching against module+builtins versions.
 - Optimization sprint exit is based on broad workload closure (dispatch/call/container/startup), not only fib recursion.
 - CI now runs `scripts/bench_dispatch_hotpath.sh` as non-blocking telemetry and uploads the benchmark artifact for regression tracking.
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
