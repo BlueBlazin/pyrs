@@ -2363,8 +2363,7 @@ impl Vm {
                 if let Some(frame) = self.frames.last_mut() {
                     let append_matching_note = |value: &mut Value| {
                         if let Value::Exception(candidate) = value {
-                            if candidate.name == target_name
-                                && candidate.message == target_message
+                            if candidate.name == target_name && candidate.message == target_message
                             {
                                 candidate.notes.push(note.clone());
                             }
@@ -4710,6 +4709,7 @@ impl Vm {
             BuiltinFunction::IoTextIOWrapperInit => {
                 self.builtin_io_textiowrapper_init(args, kwargs)
             }
+            BuiltinFunction::IoFileInit => self.builtin_io_file_init(args, kwargs),
             BuiltinFunction::IoFileRead => self.builtin_io_file_read(args, kwargs),
             BuiltinFunction::IoFileReadLine => self.builtin_io_file_readline(args, kwargs),
             BuiltinFunction::IoFileReadLines => self.builtin_io_file_readlines(args, kwargs),
@@ -4731,9 +4731,7 @@ impl Vm {
             BuiltinFunction::IoFileSeekable => self.builtin_io_file_seekable(args, kwargs),
             BuiltinFunction::IoBufferedInit => self.builtin_io_buffered_init(args, kwargs),
             BuiltinFunction::IoBufferedRead => self.builtin_io_buffered_read(args, kwargs),
-            BuiltinFunction::IoBufferedReadLine => {
-                self.builtin_io_buffered_readline(args, kwargs)
-            }
+            BuiltinFunction::IoBufferedReadLine => self.builtin_io_buffered_readline(args, kwargs),
             BuiltinFunction::IoBufferedWrite => self.builtin_io_buffered_write(args, kwargs),
             BuiltinFunction::IoBufferedSeek => self.builtin_io_buffered_seek(args, kwargs),
             BuiltinFunction::IoBufferedTell => self.builtin_io_buffered_tell(args, kwargs),

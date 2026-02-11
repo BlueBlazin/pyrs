@@ -2422,6 +2422,7 @@ pub enum BuiltinFunction {
     IoWriteText,
     IoTextEncoding,
     IoTextIOWrapperInit,
+    IoFileInit,
     IoFileRead,
     IoFileReadLine,
     IoFileReadLines,
@@ -2665,6 +2666,7 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOEnter
             | BuiltinFunction::BytesIOExit
             | BuiltinFunction::BytesIOClose
+            | BuiltinFunction::IoFileInit
             | BuiltinFunction::IoFileWriteLines
             | BuiltinFunction::IoFileTruncate
             | BuiltinFunction::IoBaseIter

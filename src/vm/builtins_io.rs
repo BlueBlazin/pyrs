@@ -783,6 +783,235 @@ impl Vm {
         );
     }
 
+    pub(super) fn install_stringio_methods(class_data: &mut ClassObject) {
+        class_data.attrs.insert(
+            "__iter__".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOIter),
+        );
+        class_data.attrs.insert(
+            "__next__".to_string(),
+            Value::Builtin(BuiltinFunction::StringIONext),
+        );
+        class_data.attrs.insert(
+            "__enter__".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOEnter),
+        );
+        class_data.attrs.insert(
+            "__exit__".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOExit),
+        );
+        class_data.attrs.insert(
+            "write".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOWrite),
+        );
+        class_data.attrs.insert(
+            "read".to_string(),
+            Value::Builtin(BuiltinFunction::StringIORead),
+        );
+        class_data.attrs.insert(
+            "readline".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOReadLine),
+        );
+        class_data.attrs.insert(
+            "getvalue".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOGetValue),
+        );
+        class_data.attrs.insert(
+            "seek".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOSeek),
+        );
+        class_data.attrs.insert(
+            "tell".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOTell),
+        );
+        class_data.attrs.insert(
+            "__init__".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOInit),
+        );
+    }
+
+    pub(super) fn install_bytesio_methods(class_data: &mut ClassObject) {
+        class_data.attrs.insert(
+            "__iter__".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOIter),
+        );
+        class_data.attrs.insert(
+            "__next__".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIONext),
+        );
+        class_data.attrs.insert(
+            "__enter__".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOEnter),
+        );
+        class_data.attrs.insert(
+            "__exit__".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOExit),
+        );
+        class_data.attrs.insert(
+            "close".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOClose),
+        );
+        class_data.attrs.insert(
+            "write".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOWrite),
+        );
+        class_data.attrs.insert(
+            "writelines".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOWriteLines),
+        );
+        class_data.attrs.insert(
+            "truncate".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOTruncate),
+        );
+        class_data.attrs.insert(
+            "read".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIORead),
+        );
+        class_data.attrs.insert(
+            "readline".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOReadLine),
+        );
+        class_data.attrs.insert(
+            "readinto".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOReadInto),
+        );
+        class_data.attrs.insert(
+            "getvalue".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOGetValue),
+        );
+        class_data.attrs.insert(
+            "getbuffer".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOGetBuffer),
+        );
+        class_data.attrs.insert(
+            "seek".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOSeek),
+        );
+        class_data.attrs.insert(
+            "tell".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOTell),
+        );
+        class_data.attrs.insert(
+            "__init__".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOInit),
+        );
+    }
+
+    fn fileio_force_binary_mode(mode: &str) -> Result<String, RuntimeError> {
+        if mode.chars().any(|ch| ch == 't') {
+            return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+        }
+        if mode.chars().any(|ch| ch == 'b') {
+            return Ok(mode.to_string());
+        }
+        if let Some(prefix) = mode.strip_suffix('+') {
+            return Ok(format!("{prefix}b+"));
+        }
+        Ok(format!("{mode}b"))
+    }
+
+    pub(super) fn builtin_io_file_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let receiver = self.take_bound_instance_arg(&mut args, "FileIO.__init__")?;
+
+        let mut file_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut mode_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut closefd_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut opener_arg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new("FileIO() expected at most 4 arguments"));
+        }
+
+        if let Some(value) = kwargs.remove("file") {
+            if file_arg.is_some() {
+                return Err(RuntimeError::new("FileIO() got multiple values for file"));
+            }
+            file_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("mode") {
+            if mode_arg.is_some() {
+                return Err(RuntimeError::new("FileIO() got multiple values for mode"));
+            }
+            mode_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("closefd") {
+            if closefd_arg.is_some() {
+                return Err(RuntimeError::new(
+                    "FileIO() got multiple values for closefd",
+                ));
+            }
+            closefd_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("opener") {
+            if opener_arg.is_some() {
+                return Err(RuntimeError::new("FileIO() got multiple values for opener"));
+            }
+            opener_arg = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "FileIO() got an unexpected keyword argument",
+            ));
+        }
+
+        let file = file_arg
+            .ok_or_else(|| RuntimeError::new("FileIO() missing required argument 'file'"))?;
+        let mode = match mode_arg.unwrap_or(Value::Str("r".to_string())) {
+            Value::Str(mode) => mode,
+            _ => return Err(RuntimeError::new("FileIO() mode must be str")),
+        };
+        let normalized_mode = Self::fileio_force_binary_mode(&mode)?;
+
+        let mut open_kwargs = HashMap::new();
+        if let Some(closefd) = closefd_arg {
+            open_kwargs.insert("closefd".to_string(), closefd);
+        }
+        if let Some(opener) = opener_arg {
+            open_kwargs.insert("opener".to_string(), opener);
+        }
+
+        let opened = self.builtin_io_open(
+            vec![file, Value::Str(normalized_mode), Value::Int(0)],
+            open_kwargs,
+        )?;
+        let opened_instance = match opened {
+            Value::Instance(instance) => instance,
+            _ => return Err(RuntimeError::new("FileIO initialization failed")),
+        };
+        let attrs = match &*opened_instance.kind() {
+            Object::Instance(instance_data) => instance_data.attrs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "FileIO initialization produced invalid object",
+                ));
+            }
+        };
+        let Object::Instance(receiver_data) = &mut *receiver.kind_mut() else {
+            return Err(RuntimeError::new("FileIO receiver must be instance"));
+        };
+        receiver_data.attrs = attrs;
+        Ok(Value::None)
+    }
+
     pub(super) fn alloc_io_file_instance(
         &self,
         class_name: &str,

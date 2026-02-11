@@ -6699,6 +6699,91 @@ fn exposes_io_textiowrapper_and_sys_platform() {
 }
 
 #[test]
+fn io_module_exposes_fileio_and_underlying_ctor_works() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_fileio_ctor_{unique}.txt"));
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+writer = io.FileIO(path, 'wb')
+writer.write(b'alpha')
+writer.close()
+reader = io.FileIO(path, 'r')
+data = reader.read()
+reader.close()
+ok = hasattr(io, 'FileIO') and data == b'alpha'
+"#,
+        path = temp.display().to_string(),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn _io_fileio_constructor_supports_binary_and_rejects_text_mode() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs__io_fileio_ctor_{unique}.txt"));
+
+    let source = format!(
+        r#"import _io
+path = {path:?}
+writer = _io.FileIO(path, 'wb')
+writer.write(b'alpha')
+writer.close()
+reader = _io.FileIO(path, 'r')
+data = reader.read()
+reader.close()
+caught = False
+try:
+    _io.FileIO(path, 'rt')
+except ValueError:
+    caught = True
+ok = (data == b'alpha' and caught)
+"#,
+        path = temp.display().to_string(),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn _io_stringio_exposes_runtime_methods() {
+    let source = r#"import _io
+s = _io.StringIO("a\nb\n")
+first = s.readline()
+rest = s.read()
+ok = (
+    hasattr(_io.StringIO, "write")
+    and hasattr(_io.StringIO, "getvalue")
+    and first == "a\n"
+    and rest == "b\n"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn io_textiowrapper_init_wraps_binary_buffer_for_readline() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

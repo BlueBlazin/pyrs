@@ -2261,55 +2261,27 @@ impl Vm {
                     ("TextIOWrapper", textio)
                 },
                 {
+                    let fileio = self
+                        .heap
+                        .alloc_class(ClassObject::new("FileIO".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &fileio {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_io_file_methods(class_data);
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileInit),
+                            );
+                        }
+                    }
+                    ("FileIO", fileio)
+                },
+                {
                     let stringio = self
                         .heap
                         .alloc_class(ClassObject::new("StringIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &stringio {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            class_data.attrs.insert(
-                                "__iter__".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOIter),
-                            );
-                            class_data.attrs.insert(
-                                "__next__".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIONext),
-                            );
-                            class_data.attrs.insert(
-                                "__enter__".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOEnter),
-                            );
-                            class_data.attrs.insert(
-                                "__exit__".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOExit),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOWrite),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIORead),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "getvalue".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOGetValue),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOTell),
-                            );
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::StringIOInit),
-                            );
+                            Self::install_stringio_methods(class_data);
                         }
                     }
                     ("StringIO", stringio)
@@ -2320,70 +2292,7 @@ impl Vm {
                         .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &bytesio {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            class_data.attrs.insert(
-                                "__iter__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOIter),
-                            );
-                            class_data.attrs.insert(
-                                "__next__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIONext),
-                            );
-                            class_data.attrs.insert(
-                                "__enter__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOEnter),
-                            );
-                            class_data.attrs.insert(
-                                "__exit__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOExit),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOClose),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOWrite),
-                            );
-                            class_data.attrs.insert(
-                                "writelines".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOWriteLines),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIORead),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "getvalue".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOGetValue),
-                            );
-                            class_data.attrs.insert(
-                                "getbuffer".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOGetBuffer),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOTell),
-                            );
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOInit),
-                            );
+                            Self::install_bytesio_methods(class_data);
                         }
                     }
                     ("BytesIO", bytesio)
@@ -2561,6 +2470,7 @@ impl Vm {
                     self.heap.alloc_list(vec![
                         Value::Str("open".to_string()),
                         Value::Str("TextIOWrapper".to_string()),
+                        Value::Str("FileIO".to_string()),
                         Value::Str("StringIO".to_string()),
                         Value::Str("BytesIO".to_string()),
                         Value::Str("BufferedReader".to_string()),
@@ -2683,6 +2593,10 @@ impl Vm {
                     if let Value::Class(class_ref) = &fileio {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoFileInit),
+                            );
                         }
                     }
                     ("FileIO", fileio)
@@ -2693,70 +2607,7 @@ impl Vm {
                         .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &bytesio {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            class_data.attrs.insert(
-                                "__iter__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOIter),
-                            );
-                            class_data.attrs.insert(
-                                "__next__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIONext),
-                            );
-                            class_data.attrs.insert(
-                                "__enter__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOEnter),
-                            );
-                            class_data.attrs.insert(
-                                "__exit__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOExit),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOClose),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOWrite),
-                            );
-                            class_data.attrs.insert(
-                                "writelines".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOWriteLines),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIORead),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "getvalue".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOGetValue),
-                            );
-                            class_data.attrs.insert(
-                                "getbuffer".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOGetBuffer),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOTell),
-                            );
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::BytesIOInit),
-                            );
+                            Self::install_bytesio_methods(class_data);
                         }
                     }
                     ("BytesIO", bytesio)
@@ -2871,11 +2722,17 @@ impl Vm {
                     self.heap
                         .alloc_class(ClassObject::new("BufferedRWPair".to_string(), Vec::new())),
                 ),
-                (
-                    "StringIO",
-                    self.heap
-                        .alloc_class(ClassObject::new("StringIO".to_string(), Vec::new())),
-                ),
+                ("StringIO", {
+                    let stringio = self
+                        .heap
+                        .alloc_class(ClassObject::new("StringIO".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &stringio {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_stringio_methods(class_data);
+                        }
+                    }
+                    stringio
+                }),
                 {
                     let class = self
                         .heap
