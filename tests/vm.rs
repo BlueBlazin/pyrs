@@ -6911,6 +6911,56 @@ ok = api_ok and iter_ok and b.closed and closed_enter and closed_read and closed
 }
 
 #[test]
+fn _io_stringio_and_bytesio_extra_method_surface_parity() {
+    let source = r#"import _io
+s = _io.StringIO("a\nb\n")
+readlines_hint_ok = (s.readlines(2) == ["a\n"])
+s.seek(0)
+trunc_ok = (s.truncate(1) == 1 and s.getvalue() == "a")
+flush_open_ok = (s.flush() is None)
+isatty_open_ok = (s.isatty() is False)
+w = _io.StringIO()
+writelines_ok = (w.writelines(["x", "y"]) is None and w.getvalue() == "xy")
+s.close()
+flush_closed_ok = (s.flush() is None)
+isatty_closed = False
+try:
+    s.isatty()
+except ValueError:
+    isatty_closed = True
+
+b = _io.BytesIO(b"a\nb\n")
+read1_ok = (b.read1(2) == b"a\n")
+readlines_ok = (b.readlines(2) == [b"b\n"])
+flush_bytes_ok = (b.flush() is None)
+isatty_bytes_ok = (b.isatty() is False)
+b.close()
+flush_bytes_closed = False
+isatty_bytes_closed = False
+try:
+    b.flush()
+except ValueError:
+    flush_bytes_closed = True
+try:
+    b.isatty()
+except ValueError:
+    isatty_bytes_closed = True
+
+ok = (
+    readlines_hint_ok and trunc_ok and flush_open_ok and isatty_open_ok and
+    writelines_ok and flush_closed_ok and isatty_closed and read1_ok and
+    readlines_ok and flush_bytes_ok and isatty_bytes_ok and flush_bytes_closed
+    and isatty_bytes_closed
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn io_textiowrapper_init_wraps_binary_buffer_for_readline() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -8584,6 +8634,16 @@ fn staticmethod_does_not_bind_instance_receiver() {
 #[test]
 fn classmethod_binds_class_receiver_for_class_and_instance_access() {
     let source = "class C:\n    value = 3\n    @classmethod\n    def f(cls, x):\n        return cls.value + x\nok = (C.f(2) == 5 and C().f(2) == 5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn inherited_builtin_attrs_on_user_classes_do_not_bind_instance_receiver() {
+    let source = "class Base:\n    buftype = str\n    sizefn = len\nclass Child(Base):\n    pass\nc = Child()\nok = (c.buftype is str and c.sizefn is len and c.buftype('abc') == 'abc' and c.sizefn([1, 2, 3]) == 3)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

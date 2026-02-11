@@ -37,6 +37,8 @@ Primary references used for this audit:
   - fallback to `__contains__` when available
   - fallback to iterator protocol (`__iter__`)
   - fallback to sequence protocol (`__getitem__`-driven iteration)
+- Fixed inherited class-attribute builtin binding for user classes:
+  - inherited `str`/`len`-style builtin attributes now stay unbound on instance access (`instance.attr is str/len`) instead of being turned into bound methods.
 
 ## Remaining Object-Model Parity Work (Milestone 13)
 

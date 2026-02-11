@@ -2454,14 +2454,19 @@ pub enum BuiltinFunction {
     StringIOWrite,
     StringIORead,
     StringIOReadLine,
+    StringIOReadLines,
     StringIOGetValue,
     StringIOSeek,
     StringIOTell,
+    StringIOWriteLines,
+    StringIOTruncate,
     StringIOIter,
     StringIONext,
     StringIOEnter,
     StringIOExit,
     StringIOClose,
+    StringIOFlush,
+    StringIOIsAtty,
     StringIOReadable,
     StringIOWritable,
     StringIOSeekable,
@@ -2470,7 +2475,9 @@ pub enum BuiltinFunction {
     BytesIOWriteLines,
     BytesIOTruncate,
     BytesIORead,
+    BytesIORead1,
     BytesIOReadLine,
+    BytesIOReadLines,
     BytesIOReadInto,
     BytesIOGetValue,
     BytesIOGetBuffer,
@@ -2481,6 +2488,8 @@ pub enum BuiltinFunction {
     BytesIOEnter,
     BytesIOExit,
     BytesIOClose,
+    BytesIOFlush,
+    BytesIOIsAtty,
     BytesIOReadable,
     BytesIOWritable,
     BytesIOSeekable,
@@ -2652,21 +2661,28 @@ impl BuiltinFunction {
             | BuiltinFunction::StringIOWrite
             | BuiltinFunction::StringIORead
             | BuiltinFunction::StringIOReadLine
+            | BuiltinFunction::StringIOReadLines
             | BuiltinFunction::StringIOGetValue
             | BuiltinFunction::StringIOSeek
             | BuiltinFunction::StringIOTell
+            | BuiltinFunction::StringIOWriteLines
+            | BuiltinFunction::StringIOTruncate
             | BuiltinFunction::StringIOIter
             | BuiltinFunction::StringIONext
             | BuiltinFunction::StringIOEnter
             | BuiltinFunction::StringIOExit
             | BuiltinFunction::StringIOClose
+            | BuiltinFunction::StringIOFlush
+            | BuiltinFunction::StringIOIsAtty
             | BuiltinFunction::StringIOReadable
             | BuiltinFunction::StringIOWritable
             | BuiltinFunction::StringIOSeekable
             | BuiltinFunction::BytesIOInit
             | BuiltinFunction::BytesIOWrite
             | BuiltinFunction::BytesIORead
+            | BuiltinFunction::BytesIORead1
             | BuiltinFunction::BytesIOReadLine
+            | BuiltinFunction::BytesIOReadLines
             | BuiltinFunction::BytesIOReadInto
             | BuiltinFunction::BytesIOGetValue
             | BuiltinFunction::BytesIOGetBuffer
@@ -2677,6 +2693,8 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOEnter
             | BuiltinFunction::BytesIOExit
             | BuiltinFunction::BytesIOClose
+            | BuiltinFunction::BytesIOFlush
+            | BuiltinFunction::BytesIOIsAtty
             | BuiltinFunction::BytesIOReadable
             | BuiltinFunction::BytesIOWritable
             | BuiltinFunction::BytesIOSeekable

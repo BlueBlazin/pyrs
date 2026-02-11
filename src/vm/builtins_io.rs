@@ -813,6 +813,10 @@ impl Vm {
             Value::Builtin(BuiltinFunction::StringIOReadLine),
         );
         class_data.attrs.insert(
+            "readlines".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOReadLines),
+        );
+        class_data.attrs.insert(
             "getvalue".to_string(),
             Value::Builtin(BuiltinFunction::StringIOGetValue),
         );
@@ -825,8 +829,24 @@ impl Vm {
             Value::Builtin(BuiltinFunction::StringIOTell),
         );
         class_data.attrs.insert(
+            "writelines".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOWriteLines),
+        );
+        class_data.attrs.insert(
+            "truncate".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOTruncate),
+        );
+        class_data.attrs.insert(
             "close".to_string(),
             Value::Builtin(BuiltinFunction::StringIOClose),
+        );
+        class_data.attrs.insert(
+            "flush".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOFlush),
+        );
+        class_data.attrs.insert(
+            "isatty".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOIsAtty),
         );
         class_data.attrs.insert(
             "readable".to_string(),
@@ -884,8 +904,16 @@ impl Vm {
             Value::Builtin(BuiltinFunction::BytesIORead),
         );
         class_data.attrs.insert(
+            "read1".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIORead1),
+        );
+        class_data.attrs.insert(
             "readline".to_string(),
             Value::Builtin(BuiltinFunction::BytesIOReadLine),
+        );
+        class_data.attrs.insert(
+            "readlines".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOReadLines),
         );
         class_data.attrs.insert(
             "readinto".to_string(),
@@ -906,6 +934,14 @@ impl Vm {
         class_data.attrs.insert(
             "tell".to_string(),
             Value::Builtin(BuiltinFunction::BytesIOTell),
+        );
+        class_data.attrs.insert(
+            "flush".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOFlush),
+        );
+        class_data.attrs.insert(
+            "isatty".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOIsAtty),
         );
         class_data.attrs.insert(
             "readable".to_string(),
@@ -2125,6 +2161,30 @@ impl Vm {
         }
     }
 
+    fn io_index_arg_to_int(&mut self, value: Value) -> Result<i64, RuntimeError> {
+        match value {
+            Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => value_to_int(value),
+            other => {
+                let Some(index_method) = self.lookup_bound_special_method(&other, "__index__")?
+                else {
+                    return Err(RuntimeError::new("unsupported operand type"));
+                };
+                let indexed = match self.call_internal(index_method, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(
+                            self.runtime_error_from_active_exception("__index__() call failed")
+                        );
+                    }
+                };
+                match indexed {
+                    Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => value_to_int(indexed),
+                    _ => Err(RuntimeError::new("TypeError: __index__ returned non-int")),
+                }
+            }
+        }
+    }
+
     pub(super) fn stringio_store_buffer(
         &mut self,
         instance: &ObjRef,
@@ -2249,17 +2309,23 @@ impl Vm {
         if translated != input {
             insert = translated.chars().collect::<Vec<_>>();
         }
-        let (buffer, mut pos) = self.stringio_buffer_from_instance(&receiver)?;
-        if pos > buffer.len() {
-            pos = buffer.len();
-        }
+        let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         let insert_len = insert.len();
-        let tail_start = pos.saturating_add(insert_len);
+        if insert_len == 0 {
+            return Ok(Value::Int(0));
+        }
         let mut new_buf = Vec::new();
-        new_buf.extend_from_slice(&buffer[..pos]);
-        new_buf.append(&mut insert);
-        if tail_start < buffer.len() {
-            new_buf.extend_from_slice(&buffer[tail_start..]);
+        if pos > buffer.len() {
+            new_buf.extend_from_slice(&buffer);
+            new_buf.resize(pos, '\0');
+            new_buf.append(&mut insert);
+        } else {
+            let tail_start = pos.saturating_add(insert_len);
+            new_buf.extend_from_slice(&buffer[..pos]);
+            new_buf.append(&mut insert);
+            if tail_start < buffer.len() {
+                new_buf.extend_from_slice(&buffer[tail_start..]);
+            }
         }
         let new_pos = pos + insert_len;
         self.stringio_store_buffer(&receiver, new_buf, new_pos)?;
@@ -2276,8 +2342,14 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         Self::stringio_ensure_open(&receiver)?;
-        let size = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let size = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
+        if pos >= buffer.len() {
+            return Ok(Value::Str(String::new()));
+        }
         let end = if size < 0 {
             buffer.len()
         } else {
@@ -2298,7 +2370,10 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         Self::stringio_ensure_open(&receiver)?;
-        let limit = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let limit = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         if pos >= buffer.len() {
             return Ok(Value::Str(String::new()));
@@ -2312,6 +2387,43 @@ impl Vm {
         let out: String = buffer[pos..end].iter().collect();
         self.stringio_store_buffer(&receiver, buffer, end)?;
         Ok(Value::Str(out))
+    }
+
+    pub(super) fn builtin_stringio_readlines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "StringIO.readlines expects 0-1 arguments",
+            ));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let hint = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
+        let mut lines = Vec::new();
+        let mut consumed = 0i64;
+        loop {
+            let line = self.builtin_stringio_readline(
+                vec![Value::Instance(receiver.clone())],
+                HashMap::new(),
+            )?;
+            let Value::Str(text) = line else {
+                break;
+            };
+            if text.is_empty() {
+                break;
+            }
+            consumed += text.chars().count() as i64;
+            lines.push(Value::Str(text));
+            if hint > 0 && consumed >= hint {
+                break;
+            }
+        }
+        Ok(self.heap.alloc_list(lines))
     }
 
     pub(super) fn builtin_stringio_getvalue(
@@ -2338,11 +2450,11 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         Self::stringio_ensure_open(&receiver)?;
-        let offset = value_to_int(args.remove(0))?;
+        let offset = self.io_index_arg_to_int(args.remove(0))?;
         let whence = if args.is_empty() {
             0
         } else {
-            value_to_int(args.remove(0))?
+            self.io_index_arg_to_int(args.remove(0))?
         };
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         if !matches!(whence, 0 | 1 | 2) {
@@ -2382,6 +2494,76 @@ impl Vm {
         Self::stringio_ensure_open(&receiver)?;
         let (_buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         Ok(Value::Int(pos as i64))
+    }
+
+    pub(super) fn builtin_stringio_writelines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("StringIO.writelines expects 1 argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
+        let values = self.collect_iterable_values(args.remove(0))?;
+        for item in values {
+            let _ = self.builtin_stringio_write(
+                vec![Value::Instance(receiver.clone()), item],
+                HashMap::new(),
+            )?;
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_stringio_truncate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("StringIO.truncate expects 0-1 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
+        let (mut buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
+        let size = match args.pop() {
+            None | Some(Value::None) => pos as i64,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
+        if size < 0 {
+            return Err(RuntimeError::new("ValueError: negative size value"));
+        }
+        let size = size as usize;
+        if buffer.len() > size {
+            buffer.truncate(size);
+        }
+        self.stringio_store_buffer(&receiver, buffer, pos)?;
+        Ok(Value::Int(size as i64))
+    }
+
+    pub(super) fn builtin_stringio_flush(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.flush expects no arguments"));
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_stringio_isatty(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.isatty expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
+        Ok(Value::Bool(false))
     }
 
     pub(super) fn builtin_stringio_iter(
@@ -2646,6 +2828,9 @@ impl Vm {
         let payload = bytes_like_from_value(args.remove(0))?;
         let written = payload.len();
         let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        if written == 0 {
+            return Ok(Value::Int(0));
+        }
         pos = {
             let Object::ByteArray(buffer) = &mut *value_obj.kind_mut() else {
                 return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
@@ -2697,10 +2882,9 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
         let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
-        let target_size = if args.is_empty() {
-            pos as i64
-        } else {
-            value_to_int(args.remove(0))?
+        let target_size = match args.pop() {
+            None | Some(Value::None) => pos as i64,
+            Some(value) => self.io_index_arg_to_int(value)?,
         };
         if target_size < 0 {
             return Err(RuntimeError::new("negative size value"));
@@ -2730,14 +2914,17 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let size = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
-        let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
+        let size = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
+        let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
         let (out, end) = {
             let Object::ByteArray(buffer) = &*value_obj.kind() else {
                 return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
             };
-            if pos > buffer.len() {
-                pos = buffer.len();
+            if pos >= buffer.len() {
+                return Ok(self.heap.alloc_bytes(Vec::new()));
             }
             let end = if size < 0 {
                 buffer.len()
@@ -2750,6 +2937,14 @@ impl Vm {
         Ok(self.heap.alloc_bytes(out))
     }
 
+    pub(super) fn builtin_bytesio_read1(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_bytesio_read(args, kwargs)
+    }
+
     pub(super) fn builtin_bytesio_readline(
         &mut self,
         mut args: Vec<Value>,
@@ -2760,7 +2955,10 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let limit = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
+        let limit = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
         let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
         let line_out = {
             let Object::ByteArray(buffer) = &*value_obj.kind() else {
@@ -2791,6 +2989,47 @@ impl Vm {
         };
         self.bytesio_store_state(&receiver, value_obj, end, closed)?;
         Ok(self.heap.alloc_bytes(out))
+    }
+
+    pub(super) fn builtin_bytesio_readlines(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("BytesIO.readlines expects 0-1 arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let hint = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
+        let mut lines = Vec::new();
+        let mut consumed = 0i64;
+        loop {
+            let line = self.builtin_bytesio_readline(
+                vec![Value::Instance(receiver.clone())],
+                HashMap::new(),
+            )?;
+            let Value::Bytes(bytes_obj) = line else {
+                break;
+            };
+            let line_len = {
+                let Object::Bytes(values) = &*bytes_obj.kind() else {
+                    break;
+                };
+                values.len()
+            };
+            if line_len == 0 {
+                break;
+            }
+            consumed += line_len as i64;
+            lines.push(Value::Bytes(bytes_obj));
+            if hint > 0 && consumed >= hint {
+                break;
+            }
+        }
+        Ok(self.heap.alloc_list(lines))
     }
 
     pub(super) fn builtin_bytesio_readinto(
@@ -2894,11 +3133,11 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let offset = value_to_int(args.remove(0))?;
+        let offset = self.io_index_arg_to_int(args.remove(0))?;
         let whence = if args.is_empty() {
             0
         } else {
-            value_to_int(args.remove(0))?
+            self.io_index_arg_to_int(args.remove(0))?
         };
         let (value_obj, pos, closed) = self.bytesio_state_from_instance(&receiver)?;
         let new_pos = {
@@ -2933,6 +3172,32 @@ impl Vm {
         self.bytesio_ensure_open(&receiver)?;
         let (_value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
         Ok(Value::Int(pos as i64))
+    }
+
+    pub(super) fn builtin_bytesio_flush(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.flush expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_bytesio_isatty(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.isatty expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        Ok(Value::Bool(false))
     }
 
     pub(super) fn builtin_bytesio_iter(

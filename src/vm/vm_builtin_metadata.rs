@@ -2902,7 +2902,15 @@ impl Vm {
             return Ok(AttrAccessOutcome::Value(attr));
         }
 
-        let class_attr = class_attr_lookup(&class_ref, attr_name);
+        let mut class_attr_owner: Option<ObjRef> = None;
+        let class_attr = class_attr_walk(&class_ref)
+            .into_iter()
+            .find_map(|candidate| {
+                class_attr_lookup_direct(&candidate, attr_name).map(|value| {
+                    class_attr_owner = Some(candidate);
+                    value
+                })
+            });
         if let Some(attr) = class_attr.clone() {
             let (getter, setter, deleter) = self.descriptor_hooks(&attr)?;
             if setter.is_some() || deleter.is_some() {
@@ -2998,10 +3006,11 @@ impl Vm {
                 ));
             }
             if let Value::Builtin(builtin) = attr.clone() {
-                let direct_user_defined_attr = matches!(&*class_ref.kind(), Object::Class(class_data)
-                    if matches!(class_data.attrs.get("__pyrs_user_class__"), Some(Value::Bool(true)))
-                        && class_data.attrs.contains_key(attr_name));
-                if direct_user_defined_attr {
+                let owner_is_user_class = class_attr_owner
+                    .as_ref()
+                    .is_some_and(|owner| matches!(&*owner.kind(), Object::Class(class_data)
+                        if matches!(class_data.attrs.get("__pyrs_user_class__"), Some(Value::Bool(true)))));
+                if owner_is_user_class {
                     return Ok(AttrAccessOutcome::Value(Value::Builtin(builtin)));
                 }
                 return Ok(AttrAccessOutcome::Value(
@@ -3350,10 +3359,14 @@ impl Vm {
 
     fn validate_cpickle_unpickler_memo_assignment(value: &Value) -> Result<(), RuntimeError> {
         let Value::Dict(dict_obj) = value else {
-            return Err(RuntimeError::new("TypeError: unpickler memo must be a dict"));
+            return Err(RuntimeError::new(
+                "TypeError: unpickler memo must be a dict",
+            ));
         };
         let Object::Dict(entries) = &*dict_obj.kind() else {
-            return Err(RuntimeError::new("TypeError: unpickler memo must be a dict"));
+            return Err(RuntimeError::new(
+                "TypeError: unpickler memo must be a dict",
+            ));
         };
         for (key, _) in entries.iter() {
             let is_negative_index = match key {
@@ -3361,15 +3374,11 @@ impl Vm {
                 Value::BigInt(index) => index.is_negative(),
                 Value::Bool(_) => false,
                 _ => {
-                    return Err(RuntimeError::new(
-                        "TypeError: memo keys must be integers",
-                    ));
+                    return Err(RuntimeError::new("TypeError: memo keys must be integers"));
                 }
             };
             if is_negative_index {
-                return Err(RuntimeError::new(
-                    "ValueError: memo key out of range",
-                ));
+                return Err(RuntimeError::new("ValueError: memo key out of range"));
             }
         }
         Ok(())

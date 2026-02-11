@@ -36,7 +36,7 @@ Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 | `json` parity and hardening | `[~]` | Full semantic, malformed-input, and perf closure still required |
 | `_csv`/`csv` parity and hardening | `[~]` | Full parser/writer semantic and perf closure still required |
 | `pickle`/`pickletools`/`copyreg` parity and hardening | `[~]` | Still open; deferred strict pickle lane remains open |
-| `_io` behavioral parity needed by stdlib | `[~]` | Core mode/newline/validation landed; `io.FileIO`/`_io.FileIO.__init__` and `_io.StringIO`/`_io.BytesIO` close/context/open-state/readable/writable/seekable surfaces are now wired with stricter init/seek validation, but full stream long-tail is still pending |
+| `_io` behavioral parity needed by stdlib | `[~]` | Core mode/newline/validation landed; `io.FileIO`/`_io.FileIO.__init__` and `_io.StringIO`/`_io.BytesIO` close/context/open-state/readable/writable/seekable plus `read1`/`readlines`/`writelines`/`truncate`/`flush`/`isatty` basics are now wired (with stricter init/seek and `__index__`-style integer coercion in key size/limit paths), but full stream long-tail is still pending |
 | `_sre` parity needed for pure `re` default | `[~]` | Core surface exists; long-tail behavior still pending |
 | Hash-container parity and performance closure (`dict`/`set`/`frozenset`) | `[~]` | Backend upgraded; long-tail semantic/perf closure pending |
 | VM throughput/perf closure vs CPython for production workloads | `[~]` | Fib recursion gate is near baseline on this machine, but major throughput gaps remain in dispatch and container/stdlib hotpaths; closure requires `OPT-022` through `OPT-026` completion (`docs/OPTIMIZATION_BACKLOG.md`) |
