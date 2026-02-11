@@ -21,10 +21,10 @@ Required benchmark suite for this sprint:
 3. `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.53-0.54s` vs `python3.10 ~0.50s` (`~1.07x`)
-- dispatch hotpath: `pyrs ~0.855s` vs `python3.10 ~0.059s` (`~14.5x`)
-- dict microbench: `pyrs ~0.29s` vs `python3.10 ~0.02s`
-- pickle hotspot: `pyrs ~4.38s` vs `python3.10 ~0.44s` (`~10.0x`)
+- `fib(29)x5`: `pyrs ~0.53-0.54s` vs `python3.10 ~0.49-0.50s` (`~1.07x`)
+- dispatch hotpath: `pyrs ~0.83-0.86s` vs `python3.10 ~0.053-0.059s` (`~14-16x`)
+- dict microbench: `pyrs ~0.27-0.29s` vs `python3.10 ~0.01-0.02s`
+- pickle hotspot: `pyrs ~4.2-4.4s` vs `python3.10 ~0.41-0.44s` (`~10x`)
 
 Implementation strategy is tracked in `docs/OPTIMIZATION_PLAN.md` and is explicitly CPython-referenced.
 Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.

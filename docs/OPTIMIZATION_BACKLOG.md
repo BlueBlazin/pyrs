@@ -21,10 +21,10 @@ Last updated: 2026-02-11
 - `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.53-0.54s` user vs `python3.10 ~0.50s` user (`~1.07x`)
-- dispatch hotpath: `pyrs ~0.855s` vs `python3.10 ~0.059s` (`~14.5x`)
-- dict microbench: `pyrs ~0.29s` vs `python3.10 ~0.02s`
-- pickle hotspot: `pyrs ~4.38s` vs `python3.10 ~0.44s` (`~10.0x`)
+- `fib(29)x5`: `pyrs ~0.53-0.54s` user vs `python3.10 ~0.49-0.50s` user (`~1.07x`)
+- dispatch hotpath: `pyrs ~0.83-0.86s` vs `python3.10 ~0.053-0.059s` (`~14-16x`)
+- dict microbench: `pyrs ~0.27-0.29s` vs `python3.10 ~0.01-0.02s`
+- pickle hotspot: `pyrs ~4.2-4.4s` vs `python3.10 ~0.41-0.44s` (`~10x`)
 
 ## CPython Reference Map
 
@@ -89,7 +89,7 @@ Latest local snapshot (2026-02-11):
 
 - Latest optimization checkpoint:
   - `load_attr_instance` now bypasses generic bound-method invocation when `__getattribute__` resolves to builtin `object.__getattribute__`, routing directly to default slot-style attribute resolution.
-  - This closes a major non-semantic dispatch overhead source and improves dispatch benchmark from ~`0.955s` to ~`0.855s` in current local runs.
+  - This closes a major non-semantic dispatch overhead source and improves dispatch benchmark from ~`0.955s` to ~`0.83-0.86s` in current local runs.
 - Fib recursion gate is near `python3.10` on this machine and now serves as a regression smoke, not the sole optimization target.
 - Largest remaining throughput gaps are dispatch hotpath and pickle/container-heavy workloads.
 - Active foundational items for closure: `OPT-022`, `OPT-023`, `OPT-024`, `OPT-025`, `OPT-026`.

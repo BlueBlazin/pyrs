@@ -2771,6 +2771,15 @@ impl Vm {
                             }
                             self.push_function_call_one_arg_from_obj(&func_obj, arg0)?;
                         }
+                        Value::BoundMethod(method_obj) => {
+                            if quickened_one_arg {
+                                self.clear_quickened_site(site_index);
+                            }
+                            self.push_bound_method_call_one_arg_from_obj(
+                                &method_obj,
+                                arg0,
+                            )?;
+                        }
                         other => {
                             if quickened_one_arg {
                                 self.clear_quickened_site(site_index);
@@ -2851,6 +2860,12 @@ impl Vm {
                 match func {
                     Value::Function(func_obj) => {
                         self.push_function_call_one_arg_from_obj(&func_obj, arg0)?;
+                    }
+                    Value::BoundMethod(method_obj) => {
+                        self.push_bound_method_call_one_arg_from_obj(
+                            &method_obj,
+                            arg0,
+                        )?;
                     }
                     other => {
                         self.dispatch_call_no_kwargs(other, vec![arg0])?
@@ -5690,6 +5705,45 @@ impl Vm {
             _ => return Err(RuntimeError::new("attempted to call non-function")),
         }
         Ok(())
+    }
+
+    #[inline]
+    fn push_bound_method_call_one_arg_from_obj(
+        &mut self,
+        method: &ObjRef,
+        arg0: Value,
+    ) -> Result<(), RuntimeError> {
+        let (function, receiver) = {
+            let method_kind = method.kind();
+            let method_data = match &*method_kind {
+                Object::BoundMethod(data) => data,
+                _ => return Err(RuntimeError::new("attempted to call non-function")),
+            };
+            (method_data.function.clone(), method_data.receiver.clone())
+        };
+        match &*function.kind() {
+            Object::Function(_) => {
+                let receiver_value = self.receiver_value(&receiver)?;
+                self.push_function_call_two_args_from_obj(&function, receiver_value, arg0)
+            }
+            Object::NativeMethod(native) => {
+                let caller_depth = self.frames.len();
+                let caller_idx = caller_depth.saturating_sub(1);
+                let caller_ip = self
+                    .frames
+                    .get(caller_idx)
+                    .map(|frame| frame.ip)
+                    .unwrap_or(0);
+                let call_result = self.call_native_method(
+                    native.kind,
+                    receiver,
+                    vec![arg0],
+                    HashMap::new(),
+                );
+                self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
+            }
+            _ => Err(RuntimeError::new("attempted to call non-function")),
+        }
     }
 
     fn push_function_call_one_arg_from_obj(
