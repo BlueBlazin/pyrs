@@ -54,7 +54,9 @@ impl Vm {
         let format = self.struct_format_from_value(args.remove(0), "iter_unpack")?;
         let spec = self.parse_struct_format(&format)?;
         if spec.size == 0 {
-            return Err(RuntimeError::new("iter_unpack() requires a non-empty format"));
+            return Err(RuntimeError::new(
+                "iter_unpack() requires a non-empty format",
+            ));
         }
         let buffer = bytes_like_from_value(args.remove(0))?;
         if buffer.len() % spec.size != 0 {
@@ -74,12 +76,12 @@ impl Vm {
             Value::List(obj) => obj,
             _ => unreachable!(),
         };
-        Ok(Value::Iterator(
-            self.heap.alloc(Object::Iterator(IteratorObject {
+        Ok(Value::Iterator(self.heap.alloc(Object::Iterator(
+            IteratorObject {
                 kind: IteratorKind::List(list),
                 index: 0,
-            })),
-        ))
+            },
+        ))))
     }
 
     pub(super) fn builtin_struct_pack_into(
@@ -145,7 +147,10 @@ impl Vm {
         Ok(self.heap.alloc_tuple(values))
     }
 
-    pub(super) fn struct_format_from_receiver(&self, receiver: &ObjRef) -> Result<String, RuntimeError> {
+    pub(super) fn struct_format_from_receiver(
+        &self,
+        receiver: &ObjRef,
+    ) -> Result<String, RuntimeError> {
         let Object::Instance(instance_data) = &*receiver.kind() else {
             return Err(RuntimeError::new("Struct method expects struct instance"));
         };
@@ -455,7 +460,11 @@ impl Vm {
         instance_data.attrs.get(name).cloned()
     }
 
-    pub(super) fn instance_attr_set(instance: &ObjRef, name: &str, value: Value) -> Result<(), RuntimeError> {
+    pub(super) fn instance_attr_set(
+        instance: &ObjRef,
+        name: &str,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
             return Err(RuntimeError::new("expected instance object"));
         };
@@ -1652,7 +1661,10 @@ impl Vm {
         }
     }
 
-    pub(super) fn make_uuid_instance_from_bytes(&self, mut bytes: [u8; 16]) -> Result<Value, RuntimeError> {
+    pub(super) fn make_uuid_instance_from_bytes(
+        &self,
+        mut bytes: [u8; 16],
+    ) -> Result<Value, RuntimeError> {
         apply_uuid_variant(&mut bytes);
         let class_ref = self.uuid_class_ref()?;
         let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
@@ -2171,11 +2183,10 @@ impl Vm {
             let callable = self.load_attr_module(&module, "warn_explicit")?;
             return match self.call_internal(callable, args, kwargs)? {
                 InternalCallOutcome::Value(value) => Ok(value),
-                InternalCallOutcome::CallerExceptionHandled => Err(
-                    self.runtime_error_from_active_exception(
-                        "warn_explicit() raised exception",
-                    ),
-                ),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Err(self
+                        .runtime_error_from_active_exception("warn_explicit() raised exception"))
+                }
             };
         }
         if kwargs
@@ -2194,4 +2205,14 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_testinternalcapi_get_recursion_depth(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(RuntimeError::new("get_recursion_depth() takes no arguments"));
+        }
+        Ok(Value::Int(self.frames.len().max(1) as i64))
+    }
 }

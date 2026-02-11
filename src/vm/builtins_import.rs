@@ -164,7 +164,10 @@ impl Vm {
         Ok(Value::Module(module))
     }
 
-    pub(super) fn run_pending_import_frames(&mut self, caller_depth: usize) -> Result<(), RuntimeError> {
+    pub(super) fn run_pending_import_frames(
+        &mut self,
+        caller_depth: usize,
+    ) -> Result<(), RuntimeError> {
         if self.frames.len() <= caller_depth {
             return Ok(());
         }
@@ -732,7 +735,10 @@ impl Vm {
         })
     }
 
-    pub(super) fn opcode_info_by_number(&self, opcode: i64) -> Option<&crate::bytecode::metadata::OpcodeInfo> {
+    pub(super) fn opcode_info_by_number(
+        &self,
+        opcode: i64,
+    ) -> Option<&crate::bytecode::metadata::OpcodeInfo> {
         if opcode < 0 || opcode > i64::from(u16::MAX) {
             return None;
         }
@@ -778,5 +784,4 @@ impl Vm {
         let cache = cache_path_from_source_path(&path);
         Ok(Value::Str(cache))
     }
-
 }

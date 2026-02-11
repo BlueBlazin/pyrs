@@ -55,7 +55,12 @@ impl Vm {
         Some((start.clone(), stop.clone(), step.clone()))
     }
 
-    pub(super) fn range_object_len_bigint(&self, start: &BigInt, stop: &BigInt, step: &BigInt) -> BigInt {
+    pub(super) fn range_object_len_bigint(
+        &self,
+        start: &BigInt,
+        stop: &BigInt,
+        step: &BigInt,
+    ) -> BigInt {
         let one = BigInt::one();
         if step.is_negative() {
             if start.cmp_total(stop) != Ordering::Greater {
@@ -89,7 +94,11 @@ impl Vm {
         value_from_bigint(start.add(&offset))
     }
 
-    pub(super) fn getitem_value(&mut self, value: Value, index: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn getitem_value(
+        &mut self,
+        value: Value,
+        index: Value,
+    ) -> Result<Value, RuntimeError> {
         if let Value::Instance(instance) = &value {
             if let Some(values) = self.namedtuple_instance_values(instance) {
                 return self.getitem_value(self.heap.alloc_tuple(values), index);
@@ -107,117 +116,116 @@ impl Vm {
                 let upper = slice.upper;
                 let step = slice.step;
                 match value {
-                Value::List(obj) => match &*obj.kind() {
-                    Object::List(values) => {
-                        let indices = slice_indices(values.len(), lower, upper, step)?;
-                        let mut result = Vec::with_capacity(indices.len());
-                        for idx in indices {
-                            result.push(values[idx].clone());
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => {
+                            let indices = slice_indices(values.len(), lower, upper, step)?;
+                            let mut result = Vec::with_capacity(indices.len());
+                            for idx in indices {
+                                result.push(values[idx].clone());
+                            }
+                            Ok(self.heap.alloc_list(result))
                         }
-                        Ok(self.heap.alloc_list(result))
-                    }
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
-                },
-                Value::Tuple(obj) => match &*obj.kind() {
-                    Object::Tuple(values) => {
-                        let indices = slice_indices(values.len(), lower, upper, step)?;
-                        let mut result = Vec::with_capacity(indices.len());
-                        for idx in indices {
-                            result.push(values[idx].clone());
+                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                    },
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => {
+                            let indices = slice_indices(values.len(), lower, upper, step)?;
+                            let mut result = Vec::with_capacity(indices.len());
+                            for idx in indices {
+                                result.push(values[idx].clone());
+                            }
+                            Ok(self.heap.alloc_tuple(result))
                         }
-                        Ok(self.heap.alloc_tuple(result))
+                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                    },
+                    Value::Str(value) => {
+                        let chars: Vec<char> = value.chars().collect();
+                        let indices = slice_indices(chars.len(), lower, upper, step)?;
+                        let mut result = String::new();
+                        for idx in indices {
+                            result.push(chars[idx]);
+                        }
+                        Ok(Value::Str(result))
                     }
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
-                },
-                Value::Str(value) => {
-                    let chars: Vec<char> = value.chars().collect();
-                    let indices = slice_indices(chars.len(), lower, upper, step)?;
-                    let mut result = String::new();
-                    for idx in indices {
-                        result.push(chars[idx]);
+                    Value::Bytes(obj) => match &*obj.kind() {
+                        Object::Bytes(values) => {
+                            let indices = slice_indices(values.len(), lower, upper, step)?;
+                            let mut result = Vec::with_capacity(indices.len());
+                            for idx in indices {
+                                result.push(values[idx]);
+                            }
+                            Ok(self.heap.alloc_bytes(result))
+                        }
+                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                    },
+                    Value::ByteArray(obj) => match &*obj.kind() {
+                        Object::ByteArray(values) => {
+                            let indices = slice_indices(values.len(), lower, upper, step)?;
+                            let mut result = Vec::with_capacity(indices.len());
+                            for idx in indices {
+                                result.push(values[idx]);
+                            }
+                            Ok(self.heap.alloc_bytearray(result))
+                        }
+                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                    },
+                    Value::MemoryView(obj) => match &*obj.kind() {
+                        Object::MemoryView(view) => {
+                            with_bytes_like_source(&view.source, |values| {
+                                let indices = slice_indices(values.len(), lower, upper, step)?;
+                                let mut result = Vec::with_capacity(indices.len());
+                                for idx in indices {
+                                    result.push(values[idx]);
+                                }
+                                Ok(self.heap.alloc_bytes(result))
+                            })
+                            .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type")))
+                        }
+                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                    },
+                    Value::Iterator(obj) => {
+                        let Some((start, stop, step_value)) = self.range_object_parts(&obj) else {
+                            return Err(RuntimeError::new("subscript unsupported type"));
+                        };
+                        let length = self.range_object_len_bigint(&start, &stop, &step_value);
+                        let Some(length_i64) = length.to_i64() else {
+                            return Err(RuntimeError::new("range too large for slicing"));
+                        };
+                        if length_i64 < 0 {
+                            return Err(RuntimeError::new("range too large for slicing"));
+                        }
+                        let indices = slice_indices(length_i64 as usize, lower, upper, step)?;
+                        let mut out = Vec::with_capacity(indices.len());
+                        for idx in indices {
+                            out.push(self.range_object_index_value(
+                                &start,
+                                &step_value,
+                                idx as i64,
+                            ));
+                        }
+                        Ok(self.heap.alloc_list(out))
                     }
-                    Ok(Value::Str(result))
+                    Value::Dict(_) => Err(RuntimeError::new("slicing unsupported for dict")),
+                    other => {
+                        if let Some(getitem) =
+                            self.lookup_bound_special_method(&other, "__getitem__")?
+                        {
+                            match self.call_internal(
+                                getitem,
+                                vec![Value::Slice(Box::new(SliceValue::new(lower, upper, step)))],
+                                HashMap::new(),
+                            )? {
+                                InternalCallOutcome::Value(value) => Ok(value),
+                                InternalCallOutcome::CallerExceptionHandled => Err(self
+                                    .runtime_error_from_active_exception(
+                                        "subscript lookup failed",
+                                    )),
+                            }
+                        } else {
+                            Err(RuntimeError::new("subscript unsupported type"))
+                        }
+                    }
                 }
-                Value::Bytes(obj) => match &*obj.kind() {
-                    Object::Bytes(values) => {
-                        let indices = slice_indices(values.len(), lower, upper, step)?;
-                        let mut result = Vec::with_capacity(indices.len());
-                        for idx in indices {
-                            result.push(values[idx]);
-                        }
-                        Ok(self.heap.alloc_bytes(result))
-                    }
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
-                },
-                Value::ByteArray(obj) => match &*obj.kind() {
-                    Object::ByteArray(values) => {
-                        let indices = slice_indices(values.len(), lower, upper, step)?;
-                        let mut result = Vec::with_capacity(indices.len());
-                        for idx in indices {
-                            result.push(values[idx]);
-                        }
-                        Ok(self.heap.alloc_bytearray(result))
-                    }
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
-                },
-                Value::MemoryView(obj) => match &*obj.kind() {
-                    Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                        let indices = slice_indices(values.len(), lower, upper, step)?;
-                        let mut result = Vec::with_capacity(indices.len());
-                        for idx in indices {
-                            result.push(values[idx]);
-                        }
-                        Ok(self.heap.alloc_bytes(result))
-                    })
-                    .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type"))),
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
-                },
-                Value::Iterator(obj) => {
-                    let Some((start, stop, step_value)) = self.range_object_parts(&obj) else {
-                        return Err(RuntimeError::new("subscript unsupported type"));
-                    };
-                    let length = self.range_object_len_bigint(&start, &stop, &step_value);
-                    let Some(length_i64) = length.to_i64() else {
-                        return Err(RuntimeError::new("range too large for slicing"));
-                    };
-                    if length_i64 < 0 {
-                        return Err(RuntimeError::new("range too large for slicing"));
-                    }
-                    let indices = slice_indices(length_i64 as usize, lower, upper, step)?;
-                    let mut out = Vec::with_capacity(indices.len());
-                    for idx in indices {
-                        out.push(self.range_object_index_value(
-                            &start,
-                            &step_value,
-                            idx as i64,
-                        ));
-                    }
-                    Ok(self.heap.alloc_list(out))
-                }
-                Value::Dict(_) => Err(RuntimeError::new("slicing unsupported for dict")),
-                other => {
-                    if let Some(getitem) =
-                        self.lookup_bound_special_method(&other, "__getitem__")?
-                    {
-                        match self.call_internal(
-                            getitem,
-                            vec![Value::Slice(Box::new(SliceValue::new(
-                                lower, upper, step,
-                            )))],
-                            HashMap::new(),
-                        )? {
-                            InternalCallOutcome::Value(value) => Ok(value),
-                            InternalCallOutcome::CallerExceptionHandled => Err(
-                                self.runtime_error_from_active_exception(
-                                    "subscript lookup failed",
-                                ),
-                            ),
-                        }
-                    } else {
-                        Err(RuntimeError::new("subscript unsupported type"))
-                    }
-                }
-            }
             }
             index => match value {
                 Value::List(obj) => match &*obj.kind() {
@@ -397,11 +405,10 @@ impl Vm {
                     {
                         match self.call_internal(getitem, vec![index], HashMap::new())? {
                             InternalCallOutcome::Value(value) => Ok(value),
-                            InternalCallOutcome::CallerExceptionHandled => Err(
-                                self.runtime_error_from_active_exception(
-                                    "subscript lookup failed",
-                                ),
-                            ),
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                Err(self
+                                    .runtime_error_from_active_exception("subscript lookup failed"))
+                            }
                         }
                     } else {
                         Err(RuntimeError::new("subscript unsupported type"))
@@ -422,13 +429,32 @@ impl Vm {
         }
     }
 
-    pub(super) fn collect_iterable_values(&mut self, source: Value) -> Result<Vec<Value>, RuntimeError> {
+    pub(super) fn collect_iterable_values(
+        &mut self,
+        source: Value,
+    ) -> Result<Vec<Value>, RuntimeError> {
         // Keep the original iterable alive while we consume it. This avoids
         // premature finalization for temporary objects with __del__.
         let _source_guard = source.clone();
         let iter = match self.to_iterator_value(source) {
             Ok(iter) => iter,
             Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+                if std::env::var("PYRS_DEBUG_EXPECTED_ITERABLE").is_ok() {
+                    let frames = self
+                        .frames
+                        .iter()
+                        .rev()
+                        .take(4)
+                        .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                        .collect::<Vec<_>>()
+                        .join(" <= ");
+                    eprintln!(
+                        "expected iterable: type={} repr={} frames={}",
+                        self.value_type_name_for_error(&_source_guard),
+                        format_repr(&_source_guard),
+                        frames
+                    );
+                }
                 return Err(RuntimeError::new("expected iterable"));
             }
             Err(err) => return Err(err),
@@ -527,7 +553,7 @@ impl Vm {
                                 GeneratorResumeOutcome::Complete(_) => break,
                                 GeneratorResumeOutcome::PropagatedException => {
                                     return Err(
-                                        self.iteration_error_from_state("iteration failed")?,
+                                        self.iteration_error_from_state("iteration failed")?
                                     );
                                 }
                             }
@@ -607,8 +633,10 @@ impl Vm {
             .insert("pow".to_string(), Value::Builtin(BuiltinFunction::Pow));
         self.builtins
             .insert("round".to_string(), Value::Builtin(BuiltinFunction::Round));
-        self.builtins
-            .insert("format".to_string(), Value::Builtin(BuiltinFunction::Format));
+        self.builtins.insert(
+            "format".to_string(),
+            Value::Builtin(BuiltinFunction::Format),
+        );
         self.builtins
             .insert("list".to_string(), Value::Builtin(BuiltinFunction::List));
         self.builtins
@@ -768,7 +796,8 @@ impl Vm {
                 .insert("__module__".to_string(), Value::Str("builtins".to_string()));
             type_data.attrs.insert(
                 "__bases__".to_string(),
-                self.heap.alloc_tuple(vec![Value::Class(object_class.clone())]),
+                self.heap
+                    .alloc_tuple(vec![Value::Class(object_class.clone())]),
             );
             type_data.attrs.insert(
                 "__mro__".to_string(),
@@ -1290,10 +1319,45 @@ impl Vm {
             Value::Builtin(BuiltinFunction::Str) => Ok(self.alloc_synthetic_class("str")),
             Value::Builtin(BuiltinFunction::List) => Ok(self.alloc_synthetic_class("list")),
             Value::Builtin(BuiltinFunction::Tuple) => Ok(self.alloc_synthetic_class("tuple")),
-            Value::Builtin(BuiltinFunction::Dict) => Ok(self.alloc_synthetic_class("dict")),
-            Value::Builtin(BuiltinFunction::Set) => Ok(self.alloc_synthetic_class("set")),
+            Value::Builtin(BuiltinFunction::Dict) => {
+                let class = self.alloc_synthetic_class("dict");
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    if !class_data.attrs.contains_key("fromkeys") {
+                        class_data.attrs.insert(
+                            "fromkeys".to_string(),
+                            self.alloc_builtin_unbound_method(
+                                "__dict_unbound_method__",
+                                Value::Class(class.clone()),
+                                BuiltinFunction::DictFromKeys,
+                            ),
+                        );
+                    }
+                }
+                Ok(class)
+            }
+            Value::Builtin(BuiltinFunction::Set) => {
+                let class = self.alloc_synthetic_class("set");
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    if !class_data.attrs.contains_key("__reduce__") {
+                        class_data.attrs.insert(
+                            "__reduce__".to_string(),
+                            Value::Builtin(BuiltinFunction::SetReduce),
+                        );
+                    }
+                }
+                Ok(class)
+            }
             Value::Builtin(BuiltinFunction::FrozenSet) => {
-                Ok(self.alloc_synthetic_class("frozenset"))
+                let class = self.alloc_synthetic_class("frozenset");
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    if !class_data.attrs.contains_key("__reduce__") {
+                        class_data.attrs.insert(
+                            "__reduce__".to_string(),
+                            Value::Builtin(BuiltinFunction::SetReduce),
+                        );
+                    }
+                }
+                Ok(class)
             }
             Value::Builtin(BuiltinFunction::Enumerate) => {
                 Ok(self.alloc_synthetic_class("enumerate"))

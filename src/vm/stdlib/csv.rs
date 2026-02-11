@@ -1784,8 +1784,7 @@ fn quote_csv_field(
             let mut escaped = String::new();
             let mut changed = false;
             for ch in field.chars() {
-                let must_escape_quote =
-                    quotechar.is_some_and(|quote| ch == quote) && !doublequote;
+                let must_escape_quote = quotechar.is_some_and(|quote| ch == quote) && !doublequote;
                 let must_escape_escape = ch == escape;
                 if must_escape_quote || must_escape_escape {
                     escaped.push(escape);
@@ -1881,15 +1880,24 @@ mod tests {
 
         let err = validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, ",", 0)
             .expect_err("delimiter in lineterminator should fail");
-        assert!(err.message.contains("bad delimiter or lineterminator value"));
+        assert!(
+            err.message
+                .contains("bad delimiter or lineterminator value")
+        );
 
         let err = validate_csv_parameter_consistency(',', Some('"'), None, false, "\"", 0)
             .expect_err("quotechar in lineterminator should fail");
-        assert!(err.message.contains("bad quotechar or lineterminator value"));
+        assert!(
+            err.message
+                .contains("bad quotechar or lineterminator value")
+        );
 
         let err = validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, "\\", 0)
             .expect_err("escapechar in lineterminator should fail");
-        assert!(err.message.contains("bad escapechar or lineterminator value"));
+        assert!(
+            err.message
+                .contains("bad escapechar or lineterminator value")
+        );
 
         assert!(
             validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, "", 0).is_ok()
@@ -1920,17 +1928,31 @@ mod tests {
 
     #[test]
     fn parse_csv_row_simple_honors_strict_mode_and_field_limit() {
-        let fields = parse_csv_row_simple("a,\"b,c\",d", ',', Some('"'), None, false, 0, true, true, None)
-            .expect("valid quoted row");
+        let fields = parse_csv_row_simple(
+            "a,\"b,c\",d",
+            ',',
+            Some('"'),
+            None,
+            false,
+            0,
+            true,
+            true,
+            None,
+        )
+        .expect("valid quoted row");
         let values: Vec<String> = fields.into_iter().map(|field| field.value).collect();
-        assert_eq!(values, vec!["a".to_string(), "b,c".to_string(), "d".to_string()]);
+        assert_eq!(
+            values,
+            vec!["a".to_string(), "b,c".to_string(), "d".to_string()]
+        );
 
         let err = parse_csv_row_simple("a,\"", ',', Some('"'), None, false, 0, true, true, None)
             .expect_err("strict unterminated quote should fail");
         assert!(err.message.contains("unexpected end of data"));
 
-        let err = parse_csv_row_simple("abcd", ',', Some('"'), None, false, 0, true, false, Some(3))
-            .expect_err("field limit should fail");
+        let err =
+            parse_csv_row_simple("abcd", ',', Some('"'), None, false, 0, true, false, Some(3))
+                .expect_err("field limit should fail");
         assert!(err.message.contains("field larger than field limit"));
     }
 

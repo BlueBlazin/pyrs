@@ -32,8 +32,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::containers::{
@@ -52,10 +52,10 @@ use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::parser;
 use crate::runtime::{
-    format_repr, format_value, BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject,
-    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
-    ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
-    SuperObject, Value,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
+    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
+    NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError, SuperObject, Value,
+    format_repr, format_value,
 };
 
 #[derive(Debug, Clone)]
@@ -435,9 +435,7 @@ impl Frame {
             yield_from_iter: None,
             quickened_sites: vec![QuickenedSiteKind::None; instruction_len],
             load_fast_inline_cache: vec![None; instruction_len],
-            load_attr_inline_cache: (0..instruction_len)
-                .map(|_| [None, None])
-                .collect(),
+            load_attr_inline_cache: (0..instruction_len).map(|_| [None, None]).collect(),
             one_arg_inline_cache: vec![None; instruction_len],
             load_global_inline_cache: vec![None; instruction_len],
             simple_one_arg_no_cells: false,
@@ -496,9 +494,7 @@ impl Frame {
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
             self.load_fast_inline_cache = vec![None; instruction_len];
-            self.load_attr_inline_cache = (0..instruction_len)
-                .map(|_| [None, None])
-                .collect();
+            self.load_attr_inline_cache = (0..instruction_len).map(|_| [None, None]).collect();
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
             let fast_locals_len = self.code.fast_local_count;
@@ -570,9 +566,7 @@ impl Frame {
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
             self.load_fast_inline_cache = vec![None; instruction_len];
-            self.load_attr_inline_cache = (0..instruction_len)
-                .map(|_| [None, None])
-                .collect();
+            self.load_attr_inline_cache = (0..instruction_len).map(|_| [None, None]).collect();
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
             let fast_locals_len = self.code.fast_local_count;
@@ -630,6 +624,7 @@ pub struct Vm {
     prefer_pure_re_when_available: bool,
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
+    recursion_limit: i64,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
 }
@@ -695,6 +690,7 @@ impl Vm {
             prefer_pure_re_when_available: true,
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
+            recursion_limit: 1000,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
         };
@@ -734,10 +730,20 @@ impl Vm {
             if frame.function_globals.id() == module_id {
                 frame.function_globals_version = version;
             }
+            for slot in &mut frame.load_global_inline_cache {
+                if matches!(slot, Some(cached) if cached.globals_module_id == module_id) {
+                    *slot = None;
+                }
+            }
         }
         for frame in self.generator_states.values_mut() {
             if frame.function_globals.id() == module_id {
                 frame.function_globals_version = version;
+            }
+            for slot in &mut frame.load_global_inline_cache {
+                if matches!(slot, Some(cached) if cached.globals_module_id == module_id) {
+                    *slot = None;
+                }
             }
         }
     }
@@ -792,6 +798,9 @@ impl Vm {
     fn recycle_frame(&mut self, mut frame: Box<Frame>) {
         if self.frame_pool.len() >= 256 {
             return;
+        }
+        if !frame.fast_locals.is_empty() {
+            frame.fast_locals.fill(None);
         }
         if !frame.stack.is_empty() {
             frame.stack.clear();
@@ -1767,6 +1776,14 @@ impl Vm {
                 "getfilesystemencodeerrors".to_string(),
                 Value::Builtin(BuiltinFunction::SysGetFilesystemEncodeErrors),
             );
+            module_data.globals.insert(
+                "getrecursionlimit".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetRecursionLimit),
+            );
+            module_data.globals.insert(
+                "setrecursionlimit".to_string(),
+                Value::Builtin(BuiltinFunction::SysSetRecursionLimit),
+            );
             module_data
                 .globals
                 .insert("intern".to_string(), Value::Builtin(BuiltinFunction::Str));
@@ -2265,6 +2282,10 @@ impl Vm {
             &[
                 ("set_eval_frame_default", BuiltinFunction::NoOp),
                 ("has_inline_values", BuiltinFunction::NoOp),
+                (
+                    "get_recursion_depth",
+                    BuiltinFunction::TestInternalCapiGetRecursionDepth,
+                ),
             ],
             Vec::new(),
         );
@@ -3001,11 +3022,7 @@ fn erfc_approx(x: f64) -> f64 {
                             + t * (-1.135_203_98
                                 + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
     let ans = t * poly.exp();
-    if x >= 0.0 {
-        ans
-    } else {
-        2.0 - ans
-    }
+    if x >= 0.0 { ans } else { 2.0 - ans }
 }
 
 fn binary_operator<F>(
@@ -4206,6 +4223,124 @@ fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
     })
 }
 
+fn expand_simple_group_alternation(pattern: &str) -> Option<Vec<String>> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut idx = 0usize;
+    let mut escape = false;
+    let mut in_class = false;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if escape {
+            escape = false;
+            idx += 1;
+            continue;
+        }
+        if ch == '\\' {
+            escape = true;
+            idx += 1;
+            continue;
+        }
+        if in_class {
+            if ch == ']' {
+                in_class = false;
+            }
+            idx += 1;
+            continue;
+        }
+        if ch == '[' {
+            in_class = true;
+            idx += 1;
+            continue;
+        }
+        if ch != '(' {
+            idx += 1;
+            continue;
+        }
+
+        let mut group_end = idx + 1;
+        let mut depth = 1usize;
+        let mut group_escape = false;
+        let mut group_in_class = false;
+        let mut bars = Vec::new();
+        while group_end < chars.len() {
+            let cur = chars[group_end];
+            if group_escape {
+                group_escape = false;
+                group_end += 1;
+                continue;
+            }
+            if cur == '\\' {
+                group_escape = true;
+                group_end += 1;
+                continue;
+            }
+            if group_in_class {
+                if cur == ']' {
+                    group_in_class = false;
+                }
+                group_end += 1;
+                continue;
+            }
+            if cur == '[' {
+                group_in_class = true;
+                group_end += 1;
+                continue;
+            }
+            if cur == '(' {
+                depth += 1;
+                group_end += 1;
+                continue;
+            }
+            if cur == ')' {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    break;
+                }
+                group_end += 1;
+                continue;
+            }
+            if cur == '|' && depth == 1 {
+                bars.push(group_end);
+            }
+            group_end += 1;
+        }
+        if depth != 0 || bars.is_empty() {
+            idx += 1;
+            continue;
+        }
+
+        let mut content_start = idx + 1;
+        if content_start + 1 < chars.len()
+            && chars[content_start] == '?'
+            && chars[content_start + 1] == ':'
+        {
+            content_start += 2;
+        } else if content_start < chars.len() && chars[content_start] == '?' {
+            // Unsupported group forms (named groups/lookarounds/backrefs).
+            idx += 1;
+            continue;
+        }
+
+        let mut alternatives = Vec::new();
+        let mut segment_start = content_start;
+        for bar in &bars {
+            alternatives.push(chars[segment_start..*bar].iter().collect::<String>());
+            segment_start = *bar + 1;
+        }
+        alternatives.push(chars[segment_start..group_end].iter().collect::<String>());
+
+        let prefix = chars[..idx].iter().collect::<String>();
+        let suffix = chars[group_end + 1..].iter().collect::<String>();
+        return Some(
+            alternatives
+                .into_iter()
+                .map(|alt| format!("{prefix}(?:{alt}){suffix}"))
+                .collect(),
+        );
+    }
+    None
+}
+
 fn class_matches(class: &ReCharClass, ch: char) -> bool {
     let mut matched = class.singles.contains(&ch);
     if !matched {
@@ -4216,11 +4351,7 @@ fn class_matches(class: &ReCharClass, ch: char) -> bool {
             code >= start_code && code <= end_code
         });
     }
-    if class.negated {
-        !matched
-    } else {
-        matched
-    }
+    if class.negated { !matched } else { matched }
 }
 
 fn atom_matches_char(atom: &ReAtom, ch: char) -> bool {
@@ -4356,7 +4487,18 @@ fn match_simple_regex_tokens(
 }
 
 fn simple_regex_match_details(pattern: &str, text: &str, mode: ReMode) -> Option<ReMatchDetail> {
-    let parsed = parse_simple_regex(pattern)?;
+    let parsed = if let Some(parsed) = parse_simple_regex(pattern) {
+        parsed
+    } else if let Some(expanded_patterns) = expand_simple_group_alternation(pattern) {
+        for expanded in expanded_patterns {
+            if let Some(detail) = simple_regex_match_details(&expanded, text, mode) {
+                return Some(detail);
+            }
+        }
+        return None;
+    } else {
+        return None;
+    };
     let chars: Vec<char> = text.chars().collect();
     let starts: Vec<usize> = match mode {
         ReMode::Search if !parsed.start_anchor => (0..=chars.len()).collect(),
@@ -6682,6 +6824,74 @@ fn runtime_error_line_matches_exception(line: &str, exception: &str) -> bool {
     }
 }
 
+fn extract_runtime_error_exception_name(message: &str) -> Option<String> {
+    let candidate_line = if message.starts_with("Traceback (most recent call last):") {
+        message
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(str::trim)
+            .unwrap_or("")
+    } else {
+        message.trim()
+    };
+    let candidate = candidate_line
+        .split_once(':')
+        .map(|(name, _)| name.trim())
+        .unwrap_or(candidate_line);
+    let mut chars = candidate.chars();
+    let Some(first) = chars.next() else {
+        return None;
+    };
+    if !(first.is_ascii_uppercase() || first == '_') {
+        return None;
+    }
+    if !candidate
+        .chars()
+        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    Some(candidate.to_string())
+}
+
+fn extract_runtime_error_final_message(
+    message: &str,
+    exception: &str,
+) -> Option<Option<String>> {
+    if !message.starts_with("Traceback (most recent call last):") {
+        return None;
+    }
+    let line = message
+        .lines()
+        .rev()
+        .find(|entry| !entry.trim().is_empty())
+        .map(str::trim)?;
+    if !runtime_error_line_matches_exception(line, exception) {
+        return None;
+    }
+    let message = line
+        .split_once(':')
+        .map(|(_, rest)| rest.trim_start().to_string())
+        .filter(|rest| !rest.is_empty());
+    Some(message)
+}
+
+fn extract_prefixed_exception_message(
+    message: &str,
+    exception: &str,
+) -> Option<Option<String>> {
+    let line = message.trim();
+    if !runtime_error_line_matches_exception(line, exception) {
+        return None;
+    }
+    let message = line
+        .split_once(':')
+        .map(|(_, rest)| rest.trim_start().to_string())
+        .filter(|rest| !rest.is_empty());
+    Some(message)
+}
+
 #[inline]
 fn is_os_error_family(name: &str) -> bool {
     matches!(
@@ -6850,6 +7060,8 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("bad delimiter or lineterminator value")
         || message.contains("bad quotechar or lineterminator value")
         || message.contains("bad escapechar or lineterminator value")
+        || message.contains("not enough values to unpack")
+        || message.contains("too many values to unpack")
     {
         return "ValueError";
     }
@@ -6865,6 +7077,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("argument count mismatch")
         || message.contains("decoding str is not supported")
         || message.contains("cannot pickle 'Dialect' instances")
+        || message.contains("write() argument must be str")
         || message.contains("attempted to call non-function")
         || message.contains("is not a type object")
     {
@@ -6888,11 +7101,20 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.contains("division by zero") || message.contains("modulo by zero") {
         return "ZeroDivisionError";
     }
-    if message.contains("can't decode bytes") {
+    if message.contains("can't decode bytes")
+        || message.contains("codec can't decode byte")
+        || message.contains("codec can't decode bytes")
+    {
         return "UnicodeDecodeError";
     }
     if message.contains("unknown encoding") {
         return "LookupError";
+    }
+    if message.contains("Pickler.__init__() was not called by Pickler.__init__") {
+        return "PicklingError";
+    }
+    if message.contains("Unpickler.__init__() was not called by Unpickler.__init__") {
+        return "UnpicklingError";
     }
     if message.contains("can't encode character")
         || message.contains("can't encode")

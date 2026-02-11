@@ -1,4 +1,4 @@
-use super::{value_key_equal, value_lookup_hash, Value};
+use super::{Value, value_key_equal, value_lookup_hash};
 
 const PERTURB_SHIFT: usize = 5;
 const MIN_TABLE_SIZE: usize = 8;
@@ -142,7 +142,11 @@ impl DictBackend {
         Some(self.remove(index))
     }
 
-    pub(super) fn remove_key_with_hash(&mut self, key: &Value, hash: u64) -> Option<(Value, Value)> {
+    pub(super) fn remove_key_with_hash(
+        &mut self,
+        key: &Value,
+        hash: u64,
+    ) -> Option<(Value, Value)> {
         let index = self.find_index_with_hash(key, hash)?;
         Some(self.remove(index))
     }
@@ -411,8 +415,14 @@ mod tests {
     #[test]
     fn string_key_lookup_remains_correct_after_dense_inserts() {
         let backend = DictBackend::new(vec![
-            (Value::Str("i1".to_string()), Value::Str("2147483648".to_string())),
-            (Value::Str("float".to_string()), Value::Str("43.0e12".to_string())),
+            (
+                Value::Str("i1".to_string()),
+                Value::Str("2147483648".to_string()),
+            ),
+            (
+                Value::Str("float".to_string()),
+                Value::Str("43.0e12".to_string()),
+            ),
             (Value::Str("i2".to_string()), Value::Str("17".to_string())),
             (Value::Str("s1".to_string()), Value::Str("abc".to_string())),
             (Value::Str("s2".to_string()), Value::Str("def".to_string())),

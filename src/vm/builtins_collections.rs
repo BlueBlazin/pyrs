@@ -36,7 +36,9 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, mod_values)
+        binary_operator(args, kwargs, |left, right| {
+            mod_values(left, right, &self.heap)
+        })
     }
 
     pub(super) fn builtin_operator_truediv(
@@ -1659,12 +1661,18 @@ impl Vm {
         let default = args.into_iter().next().unwrap_or(Value::None);
         let instance = match receiver {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("ChainMap.get() expected a ChainMap instance")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ChainMap.get() expected a ChainMap instance",
+                ));
+            }
         };
         let maps = {
             let instance_ref = instance.kind();
             let Object::Instance(instance_data) = &*instance_ref else {
-                return Err(RuntimeError::new("ChainMap.get() expected a ChainMap instance"));
+                return Err(RuntimeError::new(
+                    "ChainMap.get() expected a ChainMap instance",
+                ));
             };
             match instance_data.attrs.get("maps") {
                 Some(Value::List(list)) => match &*list.kind() {
@@ -1695,7 +1703,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("ChainMap.__getitem__() expects one key argument"));
+            return Err(RuntimeError::new(
+                "ChainMap.__getitem__() expects one key argument",
+            ));
         }
         let receiver = args.remove(0);
         let key = args.remove(0);
@@ -1773,7 +1783,9 @@ impl Vm {
             }
         };
         let Some(Value::Dict(dict)) = first_map else {
-            return Err(RuntimeError::new("ChainMap.__setitem__() first map must be dict"));
+            return Err(RuntimeError::new(
+                "ChainMap.__setitem__() first map must be dict",
+            ));
         };
         dict_set_value_checked(&dict, key, value)?;
         Ok(Value::None)
@@ -1785,7 +1797,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("ChainMap.__delitem__() expects one key argument"));
+            return Err(RuntimeError::new(
+                "ChainMap.__delitem__() expects one key argument",
+            ));
         }
         let receiver = args.remove(0);
         let key = args.remove(0);
@@ -1813,7 +1827,9 @@ impl Vm {
             }
         };
         let Some(Value::Dict(dict)) = first_map else {
-            return Err(RuntimeError::new("ChainMap.__delitem__() first map must be dict"));
+            return Err(RuntimeError::new(
+                "ChainMap.__delitem__() first map must be dict",
+            ));
         };
         if dict_remove_value(&dict, &key).is_none() {
             return Err(RuntimeError::new("key not found"));
@@ -1907,7 +1923,9 @@ impl Vm {
         match value {
             Value::Module(module) => Some(Value::Module(module.clone())),
             Value::Function(function) => match &*function.kind() {
-                Object::Function(function_data) => Some(Value::Module(function_data.module.clone())),
+                Object::Function(function_data) => {
+                    Some(Value::Module(function_data.module.clone()))
+                }
                 _ => None,
             },
             Value::BoundMethod(method) => match &*method.kind() {
@@ -2018,7 +2036,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("getsourcefile() expects one object argument"));
+            return Err(RuntimeError::new(
+                "getsourcefile() expects one object argument",
+            ));
         }
         let value = args.remove(0);
         let path = match self.builtin_inspect_getfile(vec![value], HashMap::new())? {
@@ -2308,10 +2328,14 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if kwargs.remove("stop").is_some() {
             if !kwargs.is_empty() {
-                return Err(RuntimeError::new("unwrap() got an unexpected keyword argument"));
+                return Err(RuntimeError::new(
+                    "unwrap() got an unexpected keyword argument",
+                ));
             }
         } else if !kwargs.is_empty() {
-            return Err(RuntimeError::new("unwrap() got an unexpected keyword argument"));
+            return Err(RuntimeError::new(
+                "unwrap() got an unexpected keyword argument",
+            ));
         }
         if args.len() != 1 {
             return Err(RuntimeError::new("unwrap() expects one argument"));
@@ -2533,5 +2557,4 @@ impl Vm {
         let namespace = self.heap.alloc_dict(Vec::new());
         self.builtin_type(vec![name, bases, namespace], HashMap::new())
     }
-
 }

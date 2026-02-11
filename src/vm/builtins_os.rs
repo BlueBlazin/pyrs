@@ -580,9 +580,7 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new(
-                "mkdir() expects path and optional mode",
-            ));
+            return Err(RuntimeError::new("mkdir() expects path and optional mode"));
         }
         let path = self.path_arg_to_string(args.remove(0))?;
         let mode = if !args.is_empty() {
@@ -793,14 +791,15 @@ impl Vm {
                 "__exit__".to_string(),
                 Value::Builtin(BuiltinFunction::OsScandirExit),
             );
-            class_data
-                .attrs
-                .insert("close".to_string(), Value::Builtin(BuiltinFunction::OsScandirClose));
+            class_data.attrs.insert(
+                "close".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirClose),
+            );
         }
 
         let mut rows = Vec::new();
-        let entries =
-            fs::read_dir(&path).map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+        let entries = fs::read_dir(&path)
+            .map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
         for entry in entries {
             let entry = entry.map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
             let file_type = entry
@@ -822,9 +821,10 @@ impl Vm {
                 instance_data
                     .attrs
                     .insert("_is_file".to_string(), Value::Bool(file_type.is_file()));
-                instance_data
-                    .attrs
-                    .insert("_is_symlink".to_string(), Value::Bool(file_type.is_symlink()));
+                instance_data.attrs.insert(
+                    "_is_symlink".to_string(),
+                    Value::Bool(file_type.is_symlink()),
+                );
             }
             rows.push(Value::Instance(direntry));
         }
@@ -835,7 +835,9 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("_entries".to_string(), entries_list);
-            instance_data.attrs.insert("_index".to_string(), Value::Int(0));
+            instance_data
+                .attrs
+                .insert("_index".to_string(), Value::Int(0));
             instance_data
                 .attrs
                 .insert("_closed".to_string(), Value::Bool(false));
@@ -947,7 +949,9 @@ impl Vm {
             true
         };
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("is_dir() got an unexpected keyword argument"));
+            return Err(RuntimeError::new(
+                "is_dir() got an unexpected keyword argument",
+            ));
         }
         let Value::Instance(instance) = &args[0] else {
             return Err(RuntimeError::new("is_dir() expects DirEntry"));
@@ -957,7 +961,9 @@ impl Vm {
             _ => return Ok(Value::Bool(false)),
         };
         let is_dir = if follow_symlinks {
-            fs::metadata(path).map(|meta| meta.is_dir()).unwrap_or(false)
+            fs::metadata(path)
+                .map(|meta| meta.is_dir())
+                .unwrap_or(false)
         } else {
             fs::symlink_metadata(path)
                 .map(|meta| meta.file_type().is_dir())
@@ -982,7 +988,9 @@ impl Vm {
             true
         };
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("is_file() got an unexpected keyword argument"));
+            return Err(RuntimeError::new(
+                "is_file() got an unexpected keyword argument",
+            ));
         }
         let Value::Instance(instance) = &args[0] else {
             return Err(RuntimeError::new("is_file() expects DirEntry"));
@@ -992,7 +1000,9 @@ impl Vm {
             _ => return Ok(Value::Bool(false)),
         };
         let is_file = if follow_symlinks {
-            fs::metadata(path).map(|meta| meta.is_file()).unwrap_or(false)
+            fs::metadata(path)
+                .map(|meta| meta.is_file())
+                .unwrap_or(false)
         } else {
             fs::symlink_metadata(path)
                 .map(|meta| meta.file_type().is_file())
@@ -1139,9 +1149,12 @@ impl Vm {
                         .map(|(name, _)| Value::Str(name.clone()))
                         .collect(),
                 );
-                let filenames = vm
-                    .heap
-                    .alloc_list(file_entries.iter().map(|name| Value::Str(name.clone())).collect());
+                let filenames = vm.heap.alloc_list(
+                    file_entries
+                        .iter()
+                        .map(|name| Value::Str(name.clone()))
+                        .collect(),
+                );
                 rows.push(vm.heap.alloc_tuple(vec![
                     Value::Str(current.to_string_lossy().to_string()),
                     dirnames,
@@ -1518,7 +1531,10 @@ impl Vm {
         }
     }
 
-    pub(super) fn subprocess_argv_from_value(&self, value: Value) -> Result<Vec<String>, RuntimeError> {
+    pub(super) fn subprocess_argv_from_value(
+        &self,
+        value: Value,
+    ) -> Result<Vec<String>, RuntimeError> {
         match value {
             Value::Str(text) => Ok(vec![text]),
             Value::Bytes(obj) => match &*obj.kind() {
@@ -1529,7 +1545,10 @@ impl Vm {
         }
     }
 
-    pub(super) fn rewrite_pyrs_subprocess_argv(&self, argv: Vec<String>) -> Result<Vec<String>, RuntimeError> {
+    pub(super) fn rewrite_pyrs_subprocess_argv(
+        &self,
+        argv: Vec<String>,
+    ) -> Result<Vec<String>, RuntimeError> {
         if argv.is_empty() {
             return Err(RuntimeError::new("empty command"));
         }
@@ -1989,6 +2008,13 @@ impl Vm {
             })
             .ok_or_else(|| RuntimeError::new("os.stat_result missing"))?;
 
+        if let Object::Class(class_data) = &mut *stat_result_class.kind_mut() {
+            class_data
+                .attrs
+                .entry("__pyrs_tuple_backed_type__".to_string())
+                .or_insert(Value::Bool(true));
+        }
+
         let instance = match self
             .heap
             .alloc_instance(InstanceObject::new(stat_result_class))
@@ -2082,6 +2108,49 @@ impl Vm {
                     .attrs
                     .insert("st_gid".to_string(), Value::Int(0));
             }
+
+            // Model os.stat_result as a tuple-backed struct-sequence so tuple
+            // protocol behavior (len/iter/equality/pickle) matches CPython.
+            let st_ino = instance_data
+                .attrs
+                .get("st_ino")
+                .cloned()
+                .unwrap_or(Value::Int(0));
+            let st_dev = instance_data
+                .attrs
+                .get("st_dev")
+                .cloned()
+                .unwrap_or(Value::Int(0));
+            let st_nlink = instance_data
+                .attrs
+                .get("st_nlink")
+                .cloned()
+                .unwrap_or(Value::Int(0));
+            let st_uid = instance_data
+                .attrs
+                .get("st_uid")
+                .cloned()
+                .unwrap_or(Value::Int(0));
+            let st_gid = instance_data
+                .attrs
+                .get("st_gid")
+                .cloned()
+                .unwrap_or(Value::Int(0));
+            let tuple_payload = self.heap.alloc_tuple(vec![
+                Value::Int(st_mode),
+                st_ino,
+                st_dev,
+                st_nlink,
+                st_uid,
+                st_gid,
+                Value::Int(st_size),
+                Value::Float(st_atime),
+                Value::Float(st_mtime),
+                Value::Float(st_ctime),
+            ]);
+            instance_data
+                .attrs
+                .insert(TUPLE_BACKING_STORAGE_ATTR.to_string(), tuple_payload);
         }
 
         Ok(Value::Instance(instance))
@@ -2127,7 +2196,10 @@ impl Vm {
         }
     }
 
-    pub(super) fn path_arg_to_string_and_type(&mut self, value: Value) -> Result<(String, bool), RuntimeError> {
+    pub(super) fn path_arg_to_string_and_type(
+        &mut self,
+        value: Value,
+    ) -> Result<(String, bool), RuntimeError> {
         let normalized = match value {
             Value::Str(_) | Value::Bytes(_) => value,
             other => self.builtin_os_fspath(vec![other], HashMap::new())?,
@@ -2338,7 +2410,9 @@ impl Vm {
                 self.heap.alloc_bytes(tail.into_bytes()),
             ]))
         } else {
-            Ok(self.heap.alloc_tuple(vec![Value::Str(head), Value::Str(tail)]))
+            Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Str(head), Value::Str(tail)]))
         }
     }
 
@@ -2558,7 +2632,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new("relpath() expects path and optional start"));
+            return Err(RuntimeError::new(
+                "relpath() expects path and optional start",
+            ));
         }
 
         let path = self.path_arg_to_string(args.remove(0))?;
@@ -2577,9 +2653,14 @@ impl Vm {
                 _ => return Err(RuntimeError::new("relpath() internal error")),
             };
 
-        let mut path_parts: Vec<&str> = path_abs.split('/').filter(|part| !part.is_empty()).collect();
-        let mut start_parts: Vec<&str> =
-            start_abs.split('/').filter(|part| !part.is_empty()).collect();
+        let mut path_parts: Vec<&str> = path_abs
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect();
+        let mut start_parts: Vec<&str> = start_abs
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect();
 
         let mut common = 0usize;
         let max_common = path_parts.len().min(start_parts.len());
@@ -3295,5 +3376,4 @@ impl Vm {
             .heap
             .alloc_tuple(vec![read_ready, write_ready, exc_ready]))
     }
-
 }

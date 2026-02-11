@@ -85,9 +85,13 @@ impl Vm {
             ));
         }
 
-        let default_ref = default
-            .as_ref()
-            .and_then(|value| if matches!(value, Value::None) { None } else { Some(value) });
+        let default_ref = default.as_ref().and_then(|value| {
+            if matches!(value, Value::None) {
+                None
+            } else {
+                Some(value)
+            }
+        });
         let text = json_serialize_value(self, &args[0], &options, default_ref)?;
         Ok(Value::Str(text))
     }
@@ -103,7 +107,9 @@ impl Vm {
 
         if let Some(strict) = kwargs.remove("strict") {
             if !is_truthy(&strict) {
-                return Err(RuntimeError::new("loads() strict=False is not supported yet"));
+                return Err(RuntimeError::new(
+                    "loads() strict=False is not supported yet",
+                ));
             }
         }
         for key in [
@@ -140,7 +146,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("encode_basestring() expects one string argument"));
+            return Err(RuntimeError::new(
+                "encode_basestring() expects one string argument",
+            ));
         }
         let Value::Str(text) = &args[0] else {
             return Err(RuntimeError::new("encode_basestring() expects str"));
@@ -170,19 +178,31 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("make_encoder() got unexpected keyword arguments"));
+            return Err(RuntimeError::new(
+                "make_encoder() got unexpected keyword arguments",
+            ));
         }
         if args.len() != 9 {
-            return Err(RuntimeError::new("make_encoder() expects 9 positional arguments"));
+            return Err(RuntimeError::new(
+                "make_encoder() expects 9 positional arguments",
+            ));
         }
 
         let key_separator = match &args[4] {
             Value::Str(value) => value.clone(),
-            _ => return Err(RuntimeError::new("make_encoder() key_separator must be str")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "make_encoder() key_separator must be str",
+                ));
+            }
         };
         let item_separator = match &args[5] {
             Value::Str(value) => value.clone(),
-            _ => return Err(RuntimeError::new("make_encoder() item_separator must be str")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "make_encoder() item_separator must be str",
+                ));
+            }
         };
         let ensure_ascii = matches!(
             args[2],
@@ -219,10 +239,7 @@ impl Vm {
                 .globals
                 .insert("default".to_string(), args[1].clone());
         }
-        Ok(self.alloc_builtin_bound_method(
-            BuiltinFunction::JsonMakeEncoderCall,
-            wrapper,
-        ))
+        Ok(self.alloc_builtin_bound_method(BuiltinFunction::JsonMakeEncoderCall, wrapper))
     }
 
     pub(in crate::vm) fn builtin_json_make_encoder_call(
@@ -231,7 +248,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("_iterencode() got unexpected keyword arguments"));
+            return Err(RuntimeError::new(
+                "_iterencode() got unexpected keyword arguments",
+            ));
         }
         if args.len() != 3 {
             return Err(RuntimeError::new(
@@ -289,10 +308,8 @@ impl Vm {
         dumps_kwargs.insert("sort_keys".to_string(), Value::Bool(sort_keys));
         dumps_kwargs.insert(
             "separators".to_string(),
-            self.heap.alloc_tuple(vec![
-                Value::Str(item_separator),
-                Value::Str(key_separator),
-            ]),
+            self.heap
+                .alloc_tuple(vec![Value::Str(item_separator), Value::Str(key_separator)]),
         );
         if let Some(default) = default_callable {
             dumps_kwargs.insert("default".to_string(), default);
@@ -375,14 +392,20 @@ fn json_source_text(value: &Value) -> Result<String, RuntimeError> {
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(bytes) => String::from_utf8(bytes.clone())
                 .map_err(|_| RuntimeError::new("loads() bytes must be valid UTF-8")),
-            _ => Err(RuntimeError::new("loads() expects str, bytes, or bytearray")),
+            _ => Err(RuntimeError::new(
+                "loads() expects str, bytes, or bytearray",
+            )),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
             Object::ByteArray(bytes) => String::from_utf8(bytes.clone())
                 .map_err(|_| RuntimeError::new("loads() bytearray must be valid UTF-8")),
-            _ => Err(RuntimeError::new("loads() expects str, bytes, or bytearray")),
+            _ => Err(RuntimeError::new(
+                "loads() expects str, bytes, or bytearray",
+            )),
         },
-        _ => Err(RuntimeError::new("loads() expects str, bytes, or bytearray")),
+        _ => Err(RuntimeError::new(
+            "loads() expects str, bytes, or bytearray",
+        )),
     }
 }
 
@@ -393,7 +416,7 @@ fn parse_json_separators(value: Value) -> Result<(String, String), RuntimeError>
             _ => {
                 return Err(RuntimeError::new(
                     "dumps() separators must be a 2-item tuple",
-                ))
+                ));
             }
         },
         Value::List(obj) => match &*obj.kind() {
@@ -401,13 +424,13 @@ fn parse_json_separators(value: Value) -> Result<(String, String), RuntimeError>
             _ => {
                 return Err(RuntimeError::new(
                     "dumps() separators must be a 2-item tuple",
-                ))
+                ));
             }
         },
         _ => {
             return Err(RuntimeError::new(
                 "dumps() separators must be a 2-item tuple",
-            ))
+            ));
         }
     };
 
@@ -419,11 +442,19 @@ fn parse_json_separators(value: Value) -> Result<(String, String), RuntimeError>
 
     let item_sep = match &values[0] {
         Value::Str(text) => text.clone(),
-        _ => return Err(RuntimeError::new("dumps() separators items must be strings")),
+        _ => {
+            return Err(RuntimeError::new(
+                "dumps() separators items must be strings",
+            ));
+        }
     };
     let key_sep = match &values[1] {
         Value::Str(text) => text.clone(),
-        _ => return Err(RuntimeError::new("dumps() separators items must be strings")),
+        _ => {
+            return Err(RuntimeError::new(
+                "dumps() separators items must be strings",
+            ));
+        }
     };
     Ok((item_sep, key_sep))
 }
@@ -550,7 +581,7 @@ fn json_serialize_value(
                         _ => {
                             return Err(RuntimeError::new(
                                 "keys must be str, int, float, bool or None, not unsupported type",
-                            ))
+                            ));
                         }
                     }
                 }
@@ -574,7 +605,11 @@ fn json_serialize_value(
         },
         _ => {
             if let Some(default_callable) = default {
-                match vm.call_internal(default_callable.clone(), vec![value.clone()], HashMap::new())? {
+                match vm.call_internal(
+                    default_callable.clone(),
+                    vec![value.clone()],
+                    HashMap::new(),
+                )? {
                     InternalCallOutcome::Value(converted) => {
                         json_serialize_value(vm, &converted, options, default)
                     }
@@ -942,7 +977,10 @@ mod tests {
         let bytes = heap.alloc_bytes(br#"{"ok":1}"#.to_vec());
         let bytearray = heap.alloc_bytearray(br#"{"ok":2}"#.to_vec());
 
-        assert_eq!(json_source_text(&bytes).expect("bytes should decode"), "{\"ok\":1}");
+        assert_eq!(
+            json_source_text(&bytes).expect("bytes should decode"),
+            "{\"ok\":1}"
+        );
         assert_eq!(
             json_source_text(&bytearray).expect("bytearray should decode"),
             "{\"ok\":2}"
@@ -960,12 +998,10 @@ mod tests {
 
     #[test]
     fn parse_json_separators_requires_two_strings() {
-        let ok = parse_json_separators(Value::Tuple(
-            Heap::new().alloc(Object::Tuple(vec![
-                Value::Str(",".to_string()),
-                Value::Str(":".to_string()),
-            ])),
-        ))
+        let ok = parse_json_separators(Value::Tuple(Heap::new().alloc(Object::Tuple(vec![
+            Value::Str(",".to_string()),
+            Value::Str(":".to_string()),
+        ]))))
         .expect("tuple separators should parse");
         assert_eq!(ok, (",".to_string(), ":".to_string()));
 
@@ -1036,8 +1072,7 @@ mod tests {
         let low_only = parse_json_node("\"\\udc00\"").expect_err("unpaired low surrogate");
         assert!(low_only.message.contains("invalid unicode escape"));
 
-        let bad_pair =
-            parse_json_node("\"\\ud800\\u0041\"").expect_err("invalid surrogate pair");
+        let bad_pair = parse_json_node("\"\\ud800\\u0041\"").expect_err("invalid surrogate pair");
         assert!(bad_pair.message.contains("invalid unicode escape"));
     }
 
@@ -1051,7 +1086,8 @@ mod tests {
         for invalid in ["01", "-01", "1.", "1e", "1e+", "-"] {
             let err = parse_json_node(invalid).expect_err("invalid number should fail");
             assert!(
-                err.message.contains("invalid JSON number") || err.message.contains("invalid JSON value"),
+                err.message.contains("invalid JSON number")
+                    || err.message.contains("invalid JSON value"),
                 "unexpected error for {invalid:?}: {}",
                 err.message
             );
@@ -1076,7 +1112,9 @@ mod tests {
             .expect_err("allow_nan=False should reject NaN");
         assert!(nan_err.message.contains("not JSON compliant"));
 
-        let bad_key_dict = vm.heap.alloc_dict(vec![(Value::Int(1), Value::Str("x".to_string()))]);
+        let bad_key_dict = vm
+            .heap
+            .alloc_dict(vec![(Value::Int(1), Value::Str("x".to_string()))]);
         let key_err = vm
             .builtin_json_dumps(vec![bad_key_dict.clone()], HashMap::new())
             .expect_err("non-string key should fail when skipkeys is false");
@@ -1102,8 +1140,10 @@ mod tests {
             ("sort_keys".to_string(), Value::Bool(true)),
             (
                 "separators".to_string(),
-                vm.heap
-                    .alloc_tuple(vec![Value::Str(";".to_string()), Value::Str("=".to_string())]),
+                vm.heap.alloc_tuple(vec![
+                    Value::Str(";".to_string()),
+                    Value::Str("=".to_string()),
+                ]),
             ),
         ]);
         let dumped = vm

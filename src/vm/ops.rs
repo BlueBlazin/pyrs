@@ -16,13 +16,14 @@ fn int_like_to_bigint(value: &Value) -> Option<BigInt> {
         Value::Int(number) => Some(BigInt::from_i64(*number)),
         Value::BigInt(number) => Some((**number).clone()),
         Value::Instance(instance) => match &*instance.kind() {
-            Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_int_storage__")
-            {
-                Some(Value::Bool(flag)) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
-                Some(Value::Int(number)) => Some(BigInt::from_i64(*number)),
-                Some(Value::BigInt(number)) => Some((**number).clone()),
-                _ => None,
-            },
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get("__pyrs_int_storage__") {
+                    Some(Value::Bool(flag)) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
+                    Some(Value::Int(number)) => Some(BigInt::from_i64(*number)),
+                    Some(Value::BigInt(number)) => Some((**number).clone()),
+                    _ => None,
+                }
+            }
             _ => None,
         },
         _ => None,
@@ -35,12 +36,13 @@ fn int_like_to_i64(value: &Value) -> Option<i64> {
         Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
         Value::Int(number) => Some(*number),
         Value::Instance(instance) => match &*instance.kind() {
-            Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_int_storage__")
-            {
-                Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
-                Some(Value::Int(number)) => Some(*number),
-                _ => None,
-            },
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get("__pyrs_int_storage__") {
+                    Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
+                    Some(Value::Int(number)) => Some(*number),
+                    _ => None,
+                }
+            }
             _ => None,
         },
         _ => None,
@@ -241,9 +243,27 @@ pub(super) fn floor_div_values(left: Value, right: Value) -> Result<Value, Runti
     }
 }
 
-pub(super) fn mod_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
+pub(super) fn mod_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let Value::Str(format) = left {
         return string_percent_format(&format, right).map(Value::Str);
+    }
+    if let Value::Bytes(format) = left {
+        let format = match &*format.kind() {
+            Object::Bytes(values) => values.clone(),
+            _ => {
+                return Err(RuntimeError::new("unsupported operand type for %"));
+            }
+        };
+        return bytes_percent_format(&format, right).map(|value| heap.alloc_bytes(value));
+    }
+    if let Value::ByteArray(format) = left {
+        let format = match &*format.kind() {
+            Object::ByteArray(values) => values.clone(),
+            _ => {
+                return Err(RuntimeError::new("unsupported operand type for %"));
+            }
+        };
+        return bytes_percent_format(&format, right).map(|value| heap.alloc_bytes(value));
     }
     if let Some((left, right)) = integer_i64_pair(&left, &right) {
         return Ok(Value::Int(python_mod(left, right)?));
@@ -264,6 +284,99 @@ pub(super) fn mod_values(left: Value, right: Value) -> Result<Value, RuntimeErro
             numeric_as_f64(left),
             numeric_as_f64(right),
         )?)),
+    }
+}
+
+fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeError> {
+    let positional_args = match &right {
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => values.clone(),
+            _ => vec![right.clone()],
+        },
+        _ => vec![right.clone()],
+    };
+    let mut arg_idx = 0usize;
+    let mut idx = 0usize;
+    let mut out = Vec::with_capacity(format.len());
+    while idx < format.len() {
+        if format[idx] != b'%' {
+            out.push(format[idx]);
+            idx += 1;
+            continue;
+        }
+        idx += 1;
+        if idx >= format.len() {
+            return Err(RuntimeError::new("incomplete format"));
+        }
+        if format[idx] == b'%' {
+            out.push(b'%');
+            idx += 1;
+            continue;
+        }
+        while idx < format.len() && b"#0- +".contains(&format[idx]) {
+            idx += 1;
+        }
+        if idx < format.len() && format[idx] == b'*' {
+            if arg_idx >= positional_args.len() {
+                return Err(RuntimeError::new("not enough arguments for format string"));
+            }
+            let _ = value_to_int(positional_args[arg_idx].clone())?;
+            arg_idx += 1;
+            idx += 1;
+        } else {
+            while idx < format.len() && format[idx].is_ascii_digit() {
+                idx += 1;
+            }
+        }
+        if idx < format.len() && format[idx] == b'.' {
+            idx += 1;
+            if idx < format.len() && format[idx] == b'*' {
+                if arg_idx >= positional_args.len() {
+                    return Err(RuntimeError::new("not enough arguments for format string"));
+                }
+                let _ = value_to_int(positional_args[arg_idx].clone())?;
+                arg_idx += 1;
+                idx += 1;
+            } else {
+                while idx < format.len() && format[idx].is_ascii_digit() {
+                    idx += 1;
+                }
+            }
+        }
+        if idx >= format.len() {
+            return Err(RuntimeError::new("incomplete format"));
+        }
+        let conv = format[idx];
+        idx += 1;
+        if arg_idx >= positional_args.len() {
+            return Err(RuntimeError::new("not enough arguments for format string"));
+        }
+        let value = positional_args[arg_idx].clone();
+        arg_idx += 1;
+        match conv {
+            b'b' | b's' => out.extend(value_to_bytes_percent_value(value)?),
+            _ => return Err(RuntimeError::new("unsupported operand type for %")),
+        }
+    }
+    if arg_idx < positional_args.len() {
+        return Err(RuntimeError::new(
+            "not all arguments converted during bytes formatting",
+        ));
+    }
+    Ok(out)
+}
+
+fn value_to_bytes_percent_value(value: Value) -> Result<Vec<u8>, RuntimeError> {
+    match value {
+        Value::Bytes(obj) => match &*obj.kind() {
+            Object::Bytes(bytes) => Ok(bytes.clone()),
+            _ => Err(RuntimeError::new("unsupported operand type for %")),
+        },
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(bytes) => Ok(bytes.clone()),
+            _ => Err(RuntimeError::new("unsupported operand type for %")),
+        },
+        _ => Err(RuntimeError::new("%b requires a bytes-like object")),
     }
 }
 
@@ -1222,17 +1335,19 @@ fn bytes_like_payload(value: &Value) -> Option<Vec<u8>> {
             _ => None,
         },
         Value::Instance(obj) => match &*obj.kind() {
-            Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_bytes_storage__") {
-                Some(Value::Bytes(storage)) => match &*storage.kind() {
-                    Object::Bytes(values) => Some(values.clone()),
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get("__pyrs_bytes_storage__") {
+                    Some(Value::Bytes(storage)) => match &*storage.kind() {
+                        Object::Bytes(values) => Some(values.clone()),
+                        _ => None,
+                    },
+                    Some(Value::ByteArray(storage)) => match &*storage.kind() {
+                        Object::ByteArray(values) => Some(values.clone()),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                Some(Value::ByteArray(storage)) => match &*storage.kind() {
-                    Object::ByteArray(values) => Some(values.clone()),
-                    _ => None,
-                },
-                _ => None,
-            },
+                }
+            }
             _ => None,
         },
         _ => None,
@@ -1243,7 +1358,9 @@ fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() {
         return true;
     }
-    haystack.windows(needle.len()).any(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
@@ -1367,8 +1484,8 @@ mod tests {
         let dict = heap.alloc_dict(vec![(Value::Str("k".to_string()), Value::Int(1))]);
         let needle = heap.alloc_list(vec![Value::Int(1)]);
 
-        let err =
-            compare_in(&needle, &dict).expect_err("unhashable key should fail dictionary membership");
+        let err = compare_in(&needle, &dict)
+            .expect_err("unhashable key should fail dictionary membership");
         assert!(err.message.contains("unhashable type: 'list'"));
     }
 
@@ -1390,16 +1507,17 @@ mod tests {
 
     #[test]
     fn string_percent_c_enforces_range_and_type() {
-        let range_err = mod_values(Value::Str("%c".to_string()), Value::Int(0x110000))
+        let heap = Heap::new();
+        let range_err = mod_values(Value::Str("%c".to_string()), Value::Int(0x110000), &heap)
             .expect_err("out of range codepoint should fail");
         assert!(range_err.message.contains("%c arg not in range"));
 
-        let heap = Heap::new();
         let type_err = mod_values(
             Value::Str("%c".to_string()),
             heap.alloc_list(vec![Value::Int(1)]),
+            &heap,
         )
-            .expect_err("non-int/char argument should fail");
+        .expect_err("non-int/char argument should fail");
         assert!(type_err.message.contains("%c requires int or char"));
     }
 
@@ -1424,8 +1542,9 @@ mod tests {
 
     #[test]
     fn floor_div_and_mod_follow_python_sign_rules() {
+        let heap = Heap::new();
         let quotient = floor_div_values(Value::Int(-7), Value::Int(3)).expect("floor div works");
-        let remainder = mod_values(Value::Int(-7), Value::Int(3)).expect("mod works");
+        let remainder = mod_values(Value::Int(-7), Value::Int(3), &heap).expect("mod works");
         assert_eq!(quotient, Value::Int(-3));
         assert_eq!(remainder, Value::Int(2));
 
@@ -1433,7 +1552,7 @@ mod tests {
             BigInt::from_str_radix("100000000000000000000", 10).unwrap(),
         ));
         let big_q = floor_div_values(big.clone(), Value::Int(7)).expect("big floor div works");
-        let big_r = mod_values(big, Value::Int(7)).expect("big mod works");
+        let big_r = mod_values(big, Value::Int(7), &heap).expect("big mod works");
         assert_eq!(
             big_q,
             Value::BigInt(Box::new(
@@ -1494,7 +1613,10 @@ mod tests {
         );
         let err = ordering_from_cmp_value(Value::Str("nope".to_string()))
             .expect_err("non-int-like cmp value should fail");
-        assert!(err.message.contains("cmp_to_key comparator must return a number"));
+        assert!(
+            err.message
+                .contains("cmp_to_key comparator must return a number")
+        );
     }
 
     #[test]

@@ -117,8 +117,10 @@ impl Vm {
             },
             Value::MemoryView(obj) => match &*obj.kind() {
                 Object::MemoryView(view) => {
-                    Ok(with_bytes_like_source(&view.source, |values| !values.is_empty())
-                        .unwrap_or(true))
+                    Ok(
+                        with_bytes_like_source(&view.source, |values| !values.is_empty())
+                            .unwrap_or(true),
+                    )
                 }
                 _ => Ok(true),
             },
@@ -132,12 +134,15 @@ impl Vm {
             Value::Iterator(_) | Value::Generator(_) | Value::Slice { .. } => Ok(true),
             other => {
                 if let Some(bool_method) = self.lookup_bound_special_method(other, "__bool__")? {
-                    let bool_value = match self.call_internal(bool_method, Vec::new(), HashMap::new())? {
-                        InternalCallOutcome::Value(value) => value,
-                        InternalCallOutcome::CallerExceptionHandled => {
-                            return Err(self.runtime_error_from_active_exception("__bool__() failed"));
-                        }
-                    };
+                    let bool_value =
+                        match self.call_internal(bool_method, Vec::new(), HashMap::new())? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(
+                                    self.runtime_error_from_active_exception("__bool__() failed")
+                                );
+                            }
+                        };
                     return match bool_value {
                         Value::Bool(flag) => Ok(flag),
                         non_bool => Err(RuntimeError::new(format!(
@@ -147,12 +152,15 @@ impl Vm {
                     };
                 }
                 if let Some(len_method) = self.lookup_bound_special_method(other, "__len__")? {
-                    let len_value = match self.call_internal(len_method, Vec::new(), HashMap::new())? {
-                        InternalCallOutcome::Value(value) => value,
-                        InternalCallOutcome::CallerExceptionHandled => {
-                            return Err(self.runtime_error_from_active_exception("__len__() failed"));
-                        }
-                    };
+                    let len_value =
+                        match self.call_internal(len_method, Vec::new(), HashMap::new())? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(
+                                    self.runtime_error_from_active_exception("__len__() failed")
+                                );
+                            }
+                        };
                     return self.truthy_from_len_result(len_value);
                 }
                 Ok(true)
@@ -209,16 +217,15 @@ impl Vm {
             }
         }
         if flush_requested {
-            if let Ok(flush) = self.builtin_getattr(
-                vec![file, Value::Str("flush".to_string())],
-                HashMap::new(),
-            ) {
+            if let Ok(flush) =
+                self.builtin_getattr(vec![file, Value::Str("flush".to_string())], HashMap::new())
+            {
                 match self.call_internal(flush, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(_) => {}
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self.runtime_error_from_active_exception(
-                            "print() flush failed",
-                        ));
+                        return Err(
+                            self.runtime_error_from_active_exception("print() flush failed")
+                        );
                     }
                 }
             }
@@ -264,7 +271,9 @@ impl Vm {
                                 return Err(RuntimeError::new("__repr__ returned non-string"));
                             }
                             InternalCallOutcome::CallerExceptionHandled => {
-                                return Err(self.runtime_error_from_active_exception("repr() failed"));
+                                return Err(
+                                    self.runtime_error_from_active_exception("repr() failed")
+                                );
                             }
                         }
                     }
@@ -511,7 +520,11 @@ impl Vm {
         Ok(module_data.globals.clone())
     }
 
-    pub(super) fn alloc_exec_namespace_module(&self, name: &str, map: HashMap<String, Value>) -> ObjRef {
+    pub(super) fn alloc_exec_namespace_module(
+        &self,
+        name: &str,
+        map: HashMap<String, Value>,
+    ) -> ObjRef {
         let module = match self.heap.alloc_module(ModuleObject::new(name)) {
             Value::Module(obj) => obj,
             _ => unreachable!(),
@@ -804,6 +817,29 @@ impl Vm {
                     return Ok(Value::Int(values.len() as i64));
                 }
             }
+            if let Some(backing_tuple) = self.instance_backing_tuple(instance) {
+                if let Object::Tuple(values) = &*backing_tuple.kind() {
+                    return Ok(Value::Int(values.len() as i64));
+                }
+            }
+            if let Some(backing_str) = self.instance_backing_str(instance) {
+                return Ok(Value::Int(backing_str.chars().count() as i64));
+            }
+            if let Some(backing_dict) = self.instance_backing_dict(instance) {
+                if let Object::Dict(values) = &*backing_dict.kind() {
+                    return Ok(Value::Int(values.len() as i64));
+                }
+            }
+            if let Some(backing_set) = self.instance_backing_set(instance) {
+                if let Object::Set(values) = &*backing_set.kind() {
+                    return Ok(Value::Int(values.len() as i64));
+                }
+            }
+            if let Some(backing_frozenset) = self.instance_backing_frozenset(instance) {
+                if let Object::FrozenSet(values) = &*backing_frozenset.kind() {
+                    return Ok(Value::Int(values.len() as i64));
+                }
+            }
         }
         if let Value::DictKeys(keys_view) = &args[0] {
             if let Object::DictKeysView(view) = &*keys_view.kind() {
@@ -832,9 +868,7 @@ impl Vm {
                 let result = match self.call_internal(method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(value) => value,
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self.runtime_error_from_active_exception(
-                            "len() method raised",
-                        ));
+                        return Err(self.runtime_error_from_active_exception("len() method raised"));
                     }
                 };
                 self.normalize_len_result(result)
@@ -887,9 +921,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new(
-                "namedtuple._make() expects iterable",
-            ));
+            return Err(RuntimeError::new("namedtuple._make() expects iterable"));
         }
         let class = match &args[0] {
             Value::Class(class) => class.clone(),
@@ -1175,6 +1207,37 @@ impl Vm {
             ));
         }
         Ok(Value::Str("surrogateescape".to_string()))
+    }
+
+    pub(super) fn builtin_sys_getrecursionlimit(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "sys.getrecursionlimit() expects no arguments",
+            ));
+        }
+        Ok(Value::Int(self.recursion_limit))
+    }
+
+    pub(super) fn builtin_sys_setrecursionlimit(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "sys.setrecursionlimit() expects one argument",
+            ));
+        }
+        let limit = value_to_int(args[0].clone())?;
+        if limit < 1 {
+            return Err(RuntimeError::new("recursion limit must be greater than 0"));
+        }
+        self.recursion_limit = limit;
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_sys_stream_write(
@@ -2025,12 +2088,11 @@ impl Vm {
                     if self.builtin_is_type_object(*builtin) {
                         Some(Value::Builtin(BuiltinFunction::Type))
                     } else {
-                        self.types_module_class("BuiltinFunctionType").map(Value::Class)
+                        self.types_module_class("BuiltinFunctionType")
+                            .map(Value::Class)
                     }
                 }
-                Value::Dict(dict)
-                    if self.defaultdict_factories.contains_key(&dict.id()) =>
-                {
+                Value::Dict(dict) if self.defaultdict_factories.contains_key(&dict.id()) => {
                     Some(Value::Builtin(BuiltinFunction::CollectionsDefaultDict))
                 }
                 Value::Code(_) => self.types_module_class("CodeType").map(Value::Class),
@@ -2072,9 +2134,7 @@ impl Vm {
                         let mut attrs = HashMap::new();
                         for (key, value) in entries {
                             let Value::Str(name) = key else {
-                                return Err(RuntimeError::new(
-                                    "type() dict keys must be strings",
-                                ));
+                                return Err(RuntimeError::new("type() dict keys must be strings"));
                             };
                             attrs.insert(name.clone(), value.clone());
                         }
@@ -2098,9 +2158,9 @@ impl Vm {
                 class_keywords,
             )? {
                 ClassBuildOutcome::Value(value) => Ok(value),
-                ClassBuildOutcome::ExceptionHandled => Err(
-                    self.runtime_error_from_active_exception("metaclass call failed"),
-                ),
+                ClassBuildOutcome::ExceptionHandled => {
+                    Err(self.runtime_error_from_active_exception("metaclass call failed"))
+                }
             };
         }
         BuiltinFunction::Type.call(&self.heap, args)
@@ -2250,7 +2310,10 @@ impl Vm {
         }
     }
 
-    pub(super) fn dataclass_field_names(&self, target: &Value) -> Result<Vec<String>, RuntimeError> {
+    pub(super) fn dataclass_field_names(
+        &self,
+        target: &Value,
+    ) -> Result<Vec<String>, RuntimeError> {
         let Some(fields) = self.dataclass_fields_value(target) else {
             return Err(RuntimeError::new("target is not a dataclass"));
         };
@@ -2607,7 +2670,9 @@ impl Vm {
         if self.class_has_builtin_complex_base(&class_ref) {
             let complex_value = self.builtin_complex(args, kwargs)?;
             let Value::Complex { .. } = complex_value else {
-                return Err(RuntimeError::new("complex constructor returned non-complex"));
+                return Err(RuntimeError::new(
+                    "complex constructor returned non-complex",
+                ));
             };
             if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data
@@ -2804,9 +2869,8 @@ impl Vm {
             Value::Instance(instance) => {
                 match self.load_attr_instance_default(&instance, &name, false)? {
                     AttrAccessOutcome::Value(value) => Ok(value),
-                    AttrAccessOutcome::ExceptionHandled => Err(
-                        self.runtime_error_from_active_exception("object.__getattribute__() failed"),
-                    ),
+                    AttrAccessOutcome::ExceptionHandled => Err(self
+                        .runtime_error_from_active_exception("object.__getattribute__() failed")),
                 }
             }
             other => self.builtin_getattr(vec![other, Value::Str(name)], HashMap::new()),
@@ -2835,9 +2899,7 @@ impl Vm {
                     AttrMutationOutcome::Done => {}
                     AttrMutationOutcome::ExceptionHandled => {
                         return Err(
-                            self.runtime_error_from_active_exception(
-                                "object.__setattr__() failed",
-                            ),
+                            self.runtime_error_from_active_exception("object.__setattr__() failed")
                         );
                     }
                 }
@@ -2868,9 +2930,7 @@ impl Vm {
                     AttrMutationOutcome::Done => {}
                     AttrMutationOutcome::ExceptionHandled => {
                         return Err(
-                            self.runtime_error_from_active_exception(
-                                "object.__delattr__() failed",
-                            ),
+                            self.runtime_error_from_active_exception("object.__delattr__() failed")
                         );
                     }
                 }
@@ -3090,10 +3150,26 @@ impl Vm {
 
     pub(super) fn builtin_dict_fromkeys(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new("dict.fromkeys() expects 1-2 arguments"));
+        }
+        let mut dict_subclass: Option<ObjRef> = None;
+        if args.len() >= 2 {
+            match args.first().cloned() {
+                Some(Value::Builtin(BuiltinFunction::Dict)) => {
+                    args.remove(0);
+                }
+                Some(Value::Class(class)) if self.class_has_builtin_dict_base(&class) => {
+                    dict_subclass = Some(class);
+                    args.remove(0);
+                }
+                _ => {}
+            }
+        }
+        if args.is_empty() || args.len() > 2 {
             return Err(RuntimeError::new("dict.fromkeys() expects 1-2 arguments"));
         }
         let keys = self.collect_iterable_values(args[0].clone())?;
@@ -3104,6 +3180,18 @@ impl Vm {
         };
         for key in keys {
             dict_set_value_checked(&dict_obj, key, default.clone())?;
+        }
+        if let Some(class) = dict_subclass {
+            let instance = match self.heap.alloc_instance(InstanceObject::new(class)) {
+                Value::Instance(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(DICT_BACKING_STORAGE_ATTR.to_string(), Value::Dict(dict_obj));
+            }
+            return Ok(Value::Instance(instance));
         }
         Ok(Value::Dict(dict_obj))
     }
@@ -3183,7 +3271,11 @@ impl Vm {
                         )));
                     }
                 }
-                _ => return Err(RuntimeError::new("frozenset() expects at most one argument")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "frozenset() expects at most one argument",
+                    ));
+                }
             }
         }
         let values = if args.is_empty() {
@@ -3203,9 +3295,86 @@ impl Vm {
                 _ => self.collect_iterable_values(args.remove(0))?,
             }
         } else {
-            return Err(RuntimeError::new("frozenset() expects at most one argument"));
+            return Err(RuntimeError::new(
+                "frozenset() expects at most one argument",
+            ));
         };
         Ok(self.heap.alloc_frozenset(dedup_hashable_values(values)?))
+    }
+
+    pub(super) fn builtin_set_reduce(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "set.__reduce__() takes exactly one argument",
+            ));
+        }
+        let receiver = args[0].clone();
+        let (constructor, values, state) = match &receiver {
+            Value::Set(set_obj) => {
+                let values = match &*set_obj.kind() {
+                    Object::Set(entries) => entries.to_vec(),
+                    _ => return Err(RuntimeError::new("set.__reduce__() invalid receiver")),
+                };
+                (Value::Builtin(BuiltinFunction::Set), values, Value::None)
+            }
+            Value::FrozenSet(set_obj) => {
+                let values = match &*set_obj.kind() {
+                    Object::FrozenSet(entries) => entries.to_vec(),
+                    _ => return Err(RuntimeError::new("frozenset.__reduce__() invalid receiver")),
+                };
+                (
+                    Value::Builtin(BuiltinFunction::FrozenSet),
+                    values,
+                    Value::None,
+                )
+            }
+            Value::Instance(instance) => {
+                if let Some(set_obj) = self.instance_backing_set(instance) {
+                    let values = match &*set_obj.kind() {
+                        Object::Set(entries) => entries.to_vec(),
+                        _ => return Err(RuntimeError::new("set.__reduce__() invalid receiver")),
+                    };
+                    let constructor = self
+                        .class_of_value(&receiver)
+                        .map(Value::Class)
+                        .unwrap_or(Value::Builtin(BuiltinFunction::Set));
+                    let state = self.builtin_object_getstate(
+                        vec![Value::Instance(instance.clone())],
+                        HashMap::new(),
+                    )?;
+                    (constructor, values, state)
+                } else if let Some(set_obj) = self.instance_backing_frozenset(instance) {
+                    let values = match &*set_obj.kind() {
+                        Object::FrozenSet(entries) => entries.to_vec(),
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "frozenset.__reduce__() invalid receiver",
+                            ));
+                        }
+                    };
+                    let constructor = self
+                        .class_of_value(&receiver)
+                        .map(Value::Class)
+                        .unwrap_or(Value::Builtin(BuiltinFunction::FrozenSet));
+                    let state = self.builtin_object_getstate(
+                        vec![Value::Instance(instance.clone())],
+                        HashMap::new(),
+                    )?;
+                    (constructor, values, state)
+                } else {
+                    return Err(RuntimeError::new("set.__reduce__() invalid receiver"));
+                }
+            }
+            _ => return Err(RuntimeError::new("set.__reduce__() invalid receiver")),
+        };
+        let constructor_args = self.heap.alloc_tuple(vec![self.heap.alloc_list(values)]);
+        Ok(self
+            .heap
+            .alloc_tuple(vec![constructor, constructor_args, state]))
     }
 
     pub(super) fn builtin_min(
@@ -3382,15 +3551,9 @@ impl Vm {
         }
         let pad_len = width - base_len;
         if zero_pad {
-            Ok(format!(
-                "{sign}{prefix}{}{digits}",
-                "0".repeat(pad_len)
-            ))
+            Ok(format!("{sign}{prefix}{}{digits}", "0".repeat(pad_len)))
         } else {
-            Ok(format!(
-                "{}{sign}{prefix}{digits}",
-                " ".repeat(pad_len)
-            ))
+            Ok(format!("{}{sign}{prefix}{digits}", " ".repeat(pad_len)))
         }
     }
 
@@ -3413,7 +3576,9 @@ impl Vm {
         };
 
         let out = match &value {
-            Value::Int(number) => self.format_bigint_with_spec(&BigInt::from_i64(*number), &spec)?,
+            Value::Int(number) => {
+                self.format_bigint_with_spec(&BigInt::from_i64(*number), &spec)?
+            }
             Value::Bool(flag) => {
                 let int_value = if *flag { 1 } else { 0 };
                 self.format_bigint_with_spec(&BigInt::from_i64(int_value), &spec)?
@@ -3445,17 +3610,15 @@ impl Vm {
             | Value::Generator(_)
             | Value::Iterator(_) => {
                 let Some(method) = self.lookup_bound_special_method(&value, "__format__")? else {
-                    return Err(RuntimeError::new(
-                        "type doesn't define __format__ method",
-                    ));
+                    return Err(RuntimeError::new("type doesn't define __format__ method"));
                 };
-                let formatted = match self.call_internal(method, vec![Value::Str(spec)], HashMap::new())?
-                {
-                    InternalCallOutcome::Value(result) => result,
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self.runtime_error_from_active_exception("format() failed"));
-                    }
-                };
+                let formatted =
+                    match self.call_internal(method, vec![Value::Str(spec)], HashMap::new())? {
+                        InternalCallOutcome::Value(result) => result,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(self.runtime_error_from_active_exception("format() failed"));
+                        }
+                    };
                 match formatted {
                     Value::Str(text) => text,
                     _ => {
@@ -3514,7 +3677,9 @@ impl Vm {
             return Err(RuntimeError::new("cannot convert float NaN to integer"));
         }
         if value.is_infinite() {
-            return Err(RuntimeError::new("cannot convert float infinity to integer"));
+            return Err(RuntimeError::new(
+                "cannot convert float infinity to integer",
+            ));
         }
         let rounded = value.round_ties_even();
         let bigint = BigInt::from_f64_integral(rounded)
@@ -3655,15 +3820,15 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         if matches!(key_func, Value::None) {
             let mut compare_error: Option<RuntimeError> = None;
-            values.sort_by(|left, right| {
-                match self.compare_order_with_fallback_ref(left, right) {
+            values.sort_by(
+                |left, right| match self.compare_order_with_fallback_ref(left, right) {
                     Ok(ordering) => ordering,
                     Err(err) => {
                         compare_error = Some(err);
                         Ordering::Equal
                     }
-                }
-            });
+                },
+            );
             if let Some(err) = compare_error {
                 return Err(err);
             }
@@ -3677,20 +3842,17 @@ impl Vm {
         let mut keys = Vec::with_capacity(slots.len());
         for slot in &slots {
             let value = slot.as_ref().expect("slot populated");
-            let key = match self.call_internal(
-                key_func.clone(),
-                vec![value.clone()],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(key) => key,
-                InternalCallOutcome::CallerExceptionHandled => {
-                    *values = slots
-                        .into_iter()
-                        .map(|slot| slot.expect("slot populated"))
-                        .collect();
-                    return Err(RuntimeError::new("key function raised"));
-                }
-            };
+            let key =
+                match self.call_internal(key_func.clone(), vec![value.clone()], HashMap::new())? {
+                    InternalCallOutcome::Value(key) => key,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        *values = slots
+                            .into_iter()
+                            .map(|slot| slot.expect("slot populated"))
+                            .collect();
+                        return Err(RuntimeError::new("key function raised"));
+                    }
+                };
             keys.push(key);
         }
 
@@ -3723,7 +3885,11 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn compare_sort_keys(&mut self, left: Value, right: Value) -> Result<Ordering, RuntimeError> {
+    pub(super) fn compare_sort_keys(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Ordering, RuntimeError> {
         self.compare_sort_keys_ref(&left, &right)
     }
 
@@ -3769,12 +3935,12 @@ impl Vm {
         right: &Value,
     ) -> Result<Option<Ordering>, RuntimeError> {
         match (left, right) {
-            (Value::Tuple(left_obj), Value::Tuple(right_obj)) => {
-                Ok(Some(self.compare_sequence_objects_order(left_obj, right_obj)?))
-            }
-            (Value::List(left_obj), Value::List(right_obj)) => {
-                Ok(Some(self.compare_sequence_objects_order(left_obj, right_obj)?))
-            }
+            (Value::Tuple(left_obj), Value::Tuple(right_obj)) => Ok(Some(
+                self.compare_sequence_objects_order(left_obj, right_obj)?,
+            )),
+            (Value::List(left_obj), Value::List(right_obj)) => Ok(Some(
+                self.compare_sequence_objects_order(left_obj, right_obj)?,
+            )),
             _ => Ok(None),
         }
     }
@@ -3791,9 +3957,7 @@ impl Vm {
                 (Object::List(left), Object::List(right)) => (left.len(), right.len()),
                 (Object::Tuple(left), Object::Tuple(right)) => (left.len(), right.len()),
                 _ => {
-                    return Err(RuntimeError::new(
-                        "unsupported operand type for comparison",
-                    ));
+                    return Err(RuntimeError::new("unsupported operand type for comparison"));
                 }
             }
         };
@@ -3810,9 +3974,7 @@ impl Vm {
                         (left[idx].clone(), right[idx].clone())
                     }
                     _ => {
-                        return Err(RuntimeError::new(
-                            "unsupported operand type for comparison",
-                        ));
+                        return Err(RuntimeError::new("unsupported operand type for comparison"));
                     }
                 }
             };
@@ -3829,31 +3991,36 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Option<Ordering>, RuntimeError> {
-        if let Some(result) = self.call_compare_method_bool(left.clone(), "__lt__", right.clone())?
+        if let Some(result) =
+            self.call_compare_method_bool(left.clone(), "__lt__", right.clone())?
         {
             if result {
                 return Ok(Some(Ordering::Less));
             }
         }
-        if let Some(result) = self.call_compare_method_bool(left.clone(), "__gt__", right.clone())?
+        if let Some(result) =
+            self.call_compare_method_bool(left.clone(), "__gt__", right.clone())?
         {
             if result {
                 return Ok(Some(Ordering::Greater));
             }
         }
-        if let Some(result) = self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
+        if let Some(result) =
+            self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
         {
             if result {
                 return Ok(Some(Ordering::Equal));
             }
         }
-        if let Some(result) = self.call_compare_method_bool(right.clone(), "__gt__", left.clone())?
+        if let Some(result) =
+            self.call_compare_method_bool(right.clone(), "__gt__", left.clone())?
         {
             if result {
                 return Ok(Some(Ordering::Less));
             }
         }
-        if let Some(result) = self.call_compare_method_bool(right.clone(), "__lt__", left.clone())?
+        if let Some(result) =
+            self.call_compare_method_bool(right.clone(), "__lt__", left.clone())?
         {
             if result {
                 return Ok(Some(Ordering::Greater));
@@ -3893,15 +4060,17 @@ impl Vm {
         let result = match self.call_internal(callable, vec![argument], HashMap::new())? {
             InternalCallOutcome::Value(value) => value,
             InternalCallOutcome::CallerExceptionHandled => {
-                return Err(self.runtime_error_from_active_exception(
-                    "comparison method raised",
-                ));
+                return Err(self.runtime_error_from_active_exception("comparison method raised"));
             }
         };
         Ok(Some(self.truthy_from_value(&result)?))
     }
 
-    pub(super) fn compare_lt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_lt_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
         match compare_lt(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "unsupported operand type for comparison" => Ok(
@@ -3943,18 +4112,14 @@ impl Vm {
                 if let Some(contains_method) =
                     self.lookup_bound_special_method(&container, "__contains__")?
                 {
-                    let contains_result = match self.call_internal(
-                        contains_method,
-                        vec![needle],
-                        HashMap::new(),
-                    )? {
-                        InternalCallOutcome::Value(value) => value,
-                        InternalCallOutcome::CallerExceptionHandled => {
-                            return Err(self.runtime_error_from_active_exception(
-                                "__contains__() failed",
-                            ));
-                        }
-                    };
+                    let contains_result =
+                        match self.call_internal(contains_method, vec![needle], HashMap::new())? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(self
+                                    .runtime_error_from_active_exception("__contains__() failed"));
+                            }
+                        };
                     return self.truthy_from_value(&contains_result);
                 }
                 let iterator = self.to_iterator_value(container.clone()).map_err(|_| {
@@ -3980,12 +4145,18 @@ impl Vm {
         };
         match self.call_internal(callable, vec![arg], HashMap::new())? {
             InternalCallOutcome::Value(value) => Ok(Some(value)),
-            InternalCallOutcome::CallerExceptionHandled => Err(self
-                .runtime_error_from_active_exception("binary operator special method raised")),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self
+                    .runtime_error_from_active_exception("binary operator special method raised"))
+            }
         }
     }
 
-    pub(super) fn binary_div_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn binary_div_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
         match div_values(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)
@@ -4008,7 +4179,14 @@ impl Vm {
         }
     }
 
-    pub(super) fn compare_eq_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_eq_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(result) = self.compare_eq_via_bound_method(&left, &right) {
+            return Ok(Value::Bool(result));
+        }
         if let Some(result) = self.compare_eq_via_int_backing(&left, &right) {
             return Ok(Value::Bool(result));
         }
@@ -4050,7 +4228,14 @@ impl Vm {
         Ok(Value::Bool(left == right))
     }
 
-    pub(super) fn compare_ne_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_ne_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(result) = self.compare_eq_via_bound_method(&left, &right) {
+            return Ok(Value::Bool(!result));
+        }
         if let Some(result) = self.compare_eq_via_float_backing(&left, &right) {
             return Ok(Value::Bool(!result));
         }
@@ -4093,6 +4278,31 @@ impl Vm {
         Ok(Value::Bool(!eq))
     }
 
+    pub(super) fn compare_eq_via_bound_method(&self, left: &Value, right: &Value) -> Option<bool> {
+        let (Value::BoundMethod(left_method), Value::BoundMethod(right_method)) = (left, right)
+        else {
+            return None;
+        };
+        let left_kind = left_method.kind();
+        let right_kind = right_method.kind();
+        let (Object::BoundMethod(left_data), Object::BoundMethod(right_data)) =
+            (&*left_kind, &*right_kind)
+        else {
+            return Some(false);
+        };
+        let function_equal = if left_data.function.id() == right_data.function.id() {
+            true
+        } else {
+            match (&*left_data.function.kind(), &*right_data.function.kind()) {
+                (Object::NativeMethod(left_native), Object::NativeMethod(right_native)) => {
+                    left_native.kind == right_native.kind
+                }
+                _ => false,
+            }
+        };
+        Some(function_equal && left_data.receiver.id() == right_data.receiver.id())
+    }
+
     pub(super) fn compare_eq_via_int_backing(&self, left: &Value, right: &Value) -> Option<bool> {
         fn int_like(value: &Value) -> Option<BigInt> {
             match value {
@@ -4133,7 +4343,11 @@ impl Vm {
         Some(left_float == right_float)
     }
 
-    pub(super) fn compare_eq_via_complex_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+    pub(super) fn compare_eq_via_complex_backing(
+        &self,
+        left: &Value,
+        right: &Value,
+    ) -> Option<bool> {
         let complex_like = |value: &Value| -> Option<(f64, f64)> {
             match value {
                 Value::Complex { real, imag } => Some((*real, *imag)),
@@ -4143,7 +4357,10 @@ impl Vm {
         };
         let (left_real, left_imag) = complex_like(left)?;
         let (right_real, right_imag) = complex_like(right)?;
-        Some(left_real.to_bits() == right_real.to_bits() && left_imag.to_bits() == right_imag.to_bits())
+        Some(
+            left_real.to_bits() == right_real.to_bits()
+                && left_imag.to_bits() == right_imag.to_bits(),
+        )
     }
 
     pub(super) fn compare_eq_via_str_backing(&self, left: &Value, right: &Value) -> Option<bool> {
@@ -4221,9 +4438,11 @@ impl Vm {
         if left_id == right_id {
             return Ok(Some(true));
         }
-        if self.list_eq_in_progress.iter().any(|(a, b)| {
-            (*a == left_id && *b == right_id) || (*a == right_id && *b == left_id)
-        }) {
+        if self
+            .list_eq_in_progress
+            .iter()
+            .any(|(a, b)| (*a == left_id && *b == right_id) || (*a == right_id && *b == left_id))
+        {
             return Ok(Some(true));
         }
         self.list_eq_in_progress.push((left_id, right_id));
@@ -4273,30 +4492,36 @@ impl Vm {
         if left_id == right_id {
             return Ok(Some(true));
         }
-        if self.list_eq_in_progress.iter().any(|(a, b)| {
-            (*a == left_id && *b == right_id) || (*a == right_id && *b == left_id)
-        }) {
+        if self
+            .list_eq_in_progress
+            .iter()
+            .any(|(a, b)| (*a == left_id && *b == right_id) || (*a == right_id && *b == left_id))
+        {
             return Ok(Some(true));
         }
         self.list_eq_in_progress.push((left_id, right_id));
         let result = (|| -> Result<Option<bool>, RuntimeError> {
-        if left_values.len() != right_values.len() {
-            return Ok(Some(false));
-        }
-        for (left_item, right_item) in left_values.into_iter().zip(right_values.into_iter()) {
-            match self.compare_eq_runtime(left_item, right_item)? {
-                Value::Bool(true) => {}
-                Value::Bool(false) => return Ok(Some(false)),
-                _ => return Ok(None),
+            if left_values.len() != right_values.len() {
+                return Ok(Some(false));
             }
-        }
-        Ok(Some(true))
+            for (left_item, right_item) in left_values.into_iter().zip(right_values.into_iter()) {
+                match self.compare_eq_runtime(left_item, right_item)? {
+                    Value::Bool(true) => {}
+                    Value::Bool(false) => return Ok(Some(false)),
+                    _ => return Ok(None),
+                }
+            }
+            Ok(Some(true))
         })();
         self.list_eq_in_progress.pop();
         result
     }
 
-    pub(super) fn compare_le_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_le_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
         match compare_le(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "unsupported operand type for comparison" => Ok(
@@ -4306,7 +4531,11 @@ impl Vm {
         }
     }
 
-    pub(super) fn compare_gt_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_gt_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
         match compare_gt(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "unsupported operand type for comparison" => Ok(
@@ -4316,7 +4545,11 @@ impl Vm {
         }
     }
 
-    pub(super) fn compare_ge_runtime(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    pub(super) fn compare_ge_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
         match compare_ge(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "unsupported operand type for comparison" => Ok(
@@ -4490,7 +4723,11 @@ impl Vm {
         }
     }
 
-    pub(super) fn value_is_instance_of(&self, value: &Value, classinfo: &Value) -> Result<bool, RuntimeError> {
+    pub(super) fn value_is_instance_of(
+        &self,
+        value: &Value,
+        classinfo: &Value,
+    ) -> Result<bool, RuntimeError> {
         match classinfo {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(items) => {
@@ -4691,7 +4928,11 @@ impl Vm {
         }
     }
 
-    pub(super) fn matches_builtin_type_marker(&self, value: &Value, builtin: BuiltinFunction) -> bool {
+    pub(super) fn matches_builtin_type_marker(
+        &self,
+        value: &Value,
+        builtin: BuiltinFunction,
+    ) -> bool {
         match builtin {
             BuiltinFunction::Type => {
                 matches!(
@@ -4927,15 +5168,26 @@ impl Vm {
         Ok(self.alloc_builtin_bound_method(BuiltinFunction::WeakRefRef, wrapper))
     }
 
+    pub(super) fn builtin_weakref_proxy(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "weakref helper expects object and optional callback",
+            ));
+        }
+        Ok(args.remove(0))
+    }
+
     pub(super) fn builtin_weakref_finalize(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() < 2 {
-            return Err(RuntimeError::new(
-                "finalize() expects object and callback",
-            ));
+            return Err(RuntimeError::new("finalize() expects object and callback"));
         }
         let object = args.remove(0);
         let callback = args.remove(0);
@@ -4956,14 +5208,18 @@ impl Vm {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
-        let detach =
-            self.alloc_builtin_bound_method(BuiltinFunction::WeakRefFinalizeDetach, finalizer.clone());
+        let detach = self
+            .alloc_builtin_bound_method(BuiltinFunction::WeakRefFinalizeDetach, finalizer.clone());
         if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
             module_data
                 .globals
                 .insert("__pyrs_weakref_finalize__".to_string(), Value::Bool(true));
-            module_data.globals.insert("alive".to_string(), Value::Bool(true));
-            module_data.globals.insert("atexit".to_string(), Value::Bool(true));
+            module_data
+                .globals
+                .insert("alive".to_string(), Value::Bool(true));
+            module_data
+                .globals
+                .insert("atexit".to_string(), Value::Bool(true));
             module_data
                 .globals
                 .insert("target_id".to_string(), Value::Int(target_id as i64));
@@ -5001,7 +5257,9 @@ impl Vm {
         if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
             alive = matches!(module_data.globals.get("alive"), Some(Value::Bool(true)));
             if alive {
-                module_data.globals.insert("alive".to_string(), Value::Bool(false));
+                module_data
+                    .globals
+                    .insert("alive".to_string(), Value::Bool(false));
                 target_id = match module_data.globals.get("target_id") {
                     Some(Value::Int(value)) if *value >= 0 => Some(*value as u64),
                     _ => None,
@@ -5025,7 +5283,11 @@ impl Vm {
         }
         if let Some(id) = target_id {
             self.unregister_weakref_finalizer(id, finalizer.id());
-            if let Some(target) = self.heap.find_object_by_id(id).and_then(value_from_object_ref) {
+            if let Some(target) = self
+                .heap
+                .find_object_by_id(id)
+                .and_then(value_from_object_ref)
+            {
                 obj = target;
             }
         }
@@ -5332,20 +5594,17 @@ impl Vm {
             }
             Value::Complex { real, imag } => match name.as_str() {
                 "__reduce_ex__" | "__reduce__" => {
-                    let wrapper = match self.heap.alloc_module(ModuleObject::new(
-                        "__complex_reduce_ex__".to_string(),
-                    )) {
+                    let wrapper = match self
+                        .heap
+                        .alloc_module(ModuleObject::new("__complex_reduce_ex__".to_string()))
+                    {
                         Value::Module(obj) => obj,
                         _ => unreachable!(),
                     };
                     if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-                        module_data.globals.insert(
-                            "value".to_string(),
-                            Value::Complex {
-                                real,
-                                imag,
-                            },
-                        );
+                        module_data
+                            .globals
+                            .insert("value".to_string(), Value::Complex { real, imag });
                     }
                     Ok(self.alloc_native_bound_method(NativeMethodKind::ComplexReduceEx, wrapper))
                 }
@@ -5378,9 +5637,10 @@ impl Vm {
                     ))
                 }
                 "add_note" => {
-                    let wrapper = match self.heap.alloc_module(ModuleObject::new(
-                        "__exception_add_note__".to_string(),
-                    )) {
+                    let wrapper = match self
+                        .heap
+                        .alloc_module(ModuleObject::new("__exception_add_note__".to_string()))
+                    {
                         Value::Module(obj) => obj,
                         _ => unreachable!(),
                     };
@@ -5389,23 +5649,15 @@ impl Vm {
                             .globals
                             .insert("exception".to_string(), Value::Exception(exception.clone()));
                     }
-                    Ok(self.alloc_native_bound_method(
-                        NativeMethodKind::ExceptionAddNote,
-                        wrapper,
-                    ))
+                    Ok(self.alloc_native_bound_method(NativeMethodKind::ExceptionAddNote, wrapper))
                 }
                 "__notes__" => {
                     if exception.notes.is_empty() {
                         Ok(Value::None)
                     } else {
-                        Ok(self.heap.alloc_list(
-                            exception
-                                .notes
-                                .iter()
-                                .cloned()
-                                .map(Value::Str)
-                                .collect(),
-                        ))
+                        Ok(self
+                            .heap
+                            .alloc_list(exception.notes.iter().cloned().map(Value::Str).collect()))
                     }
                 }
                 "__cause__" => Ok(exception
@@ -5429,14 +5681,9 @@ impl Vm {
                         .collect::<Vec<_>>();
                     Ok(self.heap.alloc_tuple(members))
                 }
-                _ => exception
-                    .attrs
-                    .borrow()
-                    .get(&name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        RuntimeError::new(format!("exception has no attribute '{}'", name))
-                    }),
+                _ => exception.attrs.borrow().get(&name).cloned().ok_or_else(|| {
+                    RuntimeError::new(format!("exception has no attribute '{}'", name))
+                }),
             },
             _ => Err(RuntimeError::new("attribute access unsupported type")),
         };
@@ -5621,10 +5868,11 @@ impl Vm {
                     )
                 })?;
 
-            let class_from_locals = Vm::frame_local_value(frame, "__class__").and_then(|value| match value {
-                Value::Class(class) => Some(class.clone()),
-                _ => None,
-            });
+            let class_from_locals =
+                Vm::frame_local_value(frame, "__class__").and_then(|value| match value {
+                    Value::Class(class) => Some(class.clone()),
+                    _ => None,
+                });
             let class_from_cells =
                 frame_cell_value(frame, "__class__").and_then(|value| match value {
                     Value::Class(class) => Some(class),
@@ -5679,5 +5927,4 @@ impl Vm {
             .heap
             .alloc_super(SuperObject::new(start_class, object_ref, object_type)))
     }
-
 }

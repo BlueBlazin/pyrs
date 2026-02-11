@@ -1,4 +1,5 @@
 use crate::parser::token::{Keyword, Token, TokenKind};
+use crate::parser::unicode_names::lookup_unicode_name;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LexError {
@@ -1061,6 +1062,51 @@ impl<'a> Lexer<'a> {
                 };
                 Ok(Some(ch))
             }
+            Some('N') => {
+                self.advance();
+                if self.peek_char() != Some('{') {
+                    return Ok(Some('N'));
+                }
+                self.advance();
+                let mut name = String::new();
+                loop {
+                    match self.peek_char() {
+                        Some('}') => {
+                            self.advance();
+                            break;
+                        }
+                        Some(ch) => {
+                            self.advance();
+                            name.push(ch);
+                        }
+                        None => {
+                            return Err(LexError::new(
+                                "invalid unicode escape",
+                                start_offset,
+                                start_line,
+                                start_column,
+                            ));
+                        }
+                    }
+                }
+                if name.is_empty() {
+                    return Err(LexError::new(
+                        "invalid unicode escape",
+                        start_offset,
+                        start_line,
+                        start_column,
+                    ));
+                }
+                let Some(ch) = lookup_unicode_name(&name) else {
+                    return Err(LexError::new(
+                        "invalid unicode escape",
+                        start_offset,
+                        start_line,
+                        start_column,
+                    ));
+                };
+                Ok(Some(ch))
+            }
             Some('\n') => {
                 // In non-raw strings, backslash-newline is a line continuation.
                 self.advance();
@@ -1167,5 +1213,30 @@ impl<'a> Lexer<'a> {
             line,
             column,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_named_unicode_escape_in_string_literals() {
+        let mut lexer = Lexer::new("\"\\N{EMPTY SET}\"");
+        let tokens = lexer.tokenize().expect("tokenization should succeed");
+        assert!(
+            tokens
+                .iter()
+                .any(|token| { token.kind == TokenKind::String && token.lexeme == "\u{2205}" })
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_named_unicode_escape() {
+        let mut lexer = Lexer::new("\"\\N{THIS NAME DOES NOT EXIST}\"");
+        let err = lexer
+            .tokenize()
+            .expect_err("unknown unicode name should fail");
+        assert!(err.message.contains("invalid unicode escape"));
     }
 }

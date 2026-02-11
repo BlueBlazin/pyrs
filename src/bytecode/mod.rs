@@ -303,7 +303,10 @@ impl CodeObject {
             .positional_param_cell_indexes
             .get(2)
             .and_then(|idx| *idx);
-        self.is_comprehension = matches!(self.name.as_str(), "<listcomp>" | "<dictcomp>" | "<genexpr>");
+        self.is_comprehension = matches!(
+            self.name.as_str(),
+            "<listcomp>" | "<dictcomp>" | "<genexpr>"
+        );
         if self.kwonly_params.is_empty() && self.vararg.is_none() && self.kwarg.is_none() {
             self.plain_positional_arity = Some(self.posonly_params.len() + self.params.len());
         } else {

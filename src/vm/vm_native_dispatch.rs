@@ -365,14 +365,14 @@ impl Vm {
             }
             NativeMethodKind::DictGetItem => {
                 if args.len() != 1 || !kwargs.is_empty() {
-                    return Err(RuntimeError::new(
-                        "dict.__getitem__() expects one argument",
-                    ));
+                    return Err(RuntimeError::new("dict.__getitem__() expects one argument"));
                 }
                 let key = args.first().cloned().expect("checked len");
                 ensure_hashable(&key)?;
                 if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("dict.__getitem__() receiver must be dict"));
+                    return Err(RuntimeError::new(
+                        "dict.__getitem__() receiver must be dict",
+                    ));
                 }
                 dict_get_value(&receiver, &key)
                     .map(NativeCallResult::Value)
@@ -510,22 +510,28 @@ impl Vm {
                         (values.clone(), args.remove(0))
                     }
                     Object::Module(module_data) => {
-                        let tuple_obj = if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
+                        let tuple_obj = if let Some(Value::Tuple(tuple)) =
+                            module_data.globals.get("value")
+                        {
                             tuple.clone()
                         } else {
                             if args.len() < 2 {
-                                return Err(RuntimeError::new("tuple.count() expects one argument"));
+                                return Err(RuntimeError::new(
+                                    "tuple.count() expects one argument",
+                                ));
                             }
                             match args.remove(0) {
                                 Value::Tuple(tuple) => tuple,
-                                Value::Instance(instance) => self
-                                    .instance_backing_tuple(&instance)
-                                    .ok_or_else(|| {
-                                        RuntimeError::new(
-                                            "tuple.count() receiver must be tuple",
-                                        )
-                                    })?,
-                                _ => return Err(RuntimeError::new("tuple.count() receiver must be tuple")),
+                                Value::Instance(instance) => {
+                                    self.instance_backing_tuple(&instance).ok_or_else(|| {
+                                        RuntimeError::new("tuple.count() receiver must be tuple")
+                                    })?
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "tuple.count() receiver must be tuple",
+                                    ));
+                                }
                             }
                         };
                         if args.len() != 1 {
@@ -620,16 +626,17 @@ impl Vm {
                     };
                     std::mem::take(values)
                 };
-                if let Err(err) = self.sort_values_with_optional_key(&mut working, &key_func, reverse)
+                if let Err(err) =
+                    self.sort_values_with_optional_key(&mut working, &key_func, reverse)
                 {
-                        let mut receiver_kind = receiver.kind_mut();
-                        let Object::List(values) = &mut *receiver_kind else {
-                            return Err(RuntimeError::new("list.sort() receiver must be list"));
-                        };
-                        if values.is_empty() {
-                            *values = working;
-                        }
-                        return Err(err);
+                    let mut receiver_kind = receiver.kind_mut();
+                    let Object::List(values) = &mut *receiver_kind else {
+                        return Err(RuntimeError::new("list.sort() receiver must be list"));
+                    };
+                    if values.is_empty() {
+                        *values = working;
+                    }
+                    return Err(err);
                 }
 
                 let mut receiver_kind = receiver.kind_mut();
@@ -802,13 +809,13 @@ impl Vm {
                         _ => {
                             return Err(RuntimeError::new(format!(
                                 "{method_name}() argument must be str or tuple of str"
-                            )))
+                            )));
                         }
                     },
                     _ => {
                         return Err(RuntimeError::new(format!(
                             "{method_name}() argument must be str or tuple of str"
-                        )))
+                        )));
                     }
                 };
                 Ok(NativeCallResult::Value(Value::Bool(matches)))
@@ -1044,7 +1051,7 @@ impl Vm {
                         _ => {
                             return Err(RuntimeError::new(format!(
                                 "{method_name}() argument must be bytes-like or tuple of bytes-like"
-                            )))
+                            )));
                         }
                     },
                     value => {
@@ -1205,7 +1212,7 @@ impl Vm {
                         Err(_) => {
                             return Err(RuntimeError::new(
                                 "sequence item is not a bytes-like object",
-                            ))
+                            ));
                         }
                     };
                     if idx > 0 && !separator.is_empty() {
@@ -1245,9 +1252,9 @@ impl Vm {
                     Value::Bytes(obj) => obj,
                     _ => unreachable!(),
                 };
-                Ok(NativeCallResult::Value(self.heap.alloc_memoryview_with(
-                    source, itemsize, format,
-                )))
+                Ok(NativeCallResult::Value(
+                    self.heap.alloc_memoryview_with(source, itemsize, format),
+                ))
             }
             NativeMethodKind::MemoryViewCast => {
                 if args.is_empty() || args.len() > 2 {
@@ -1263,18 +1270,14 @@ impl Vm {
                 let format = match &args[0] {
                     Value::Str(value) => value.clone(),
                     _ => {
-                        return Err(RuntimeError::new(
-                            "memoryview.cast() format must be str",
-                        ));
+                        return Err(RuntimeError::new("memoryview.cast() format must be str"));
                     }
                 };
                 let itemsize = match format.as_str() {
                     "B" | "b" | "c" => 1usize,
                     "I" => 4usize,
                     _ => {
-                        return Err(RuntimeError::new(
-                            "memoryview.cast() unsupported format",
-                        ));
+                        return Err(RuntimeError::new("memoryview.cast() unsupported format"));
                     }
                 };
                 let source = match &*receiver.kind() {
@@ -1322,9 +1325,7 @@ impl Vm {
                         values.push(Value::Int(u32::from_ne_bytes(raw) as i64));
                     }
                 } else {
-                    return Err(RuntimeError::new(
-                        "memoryview.tolist() unsupported format",
-                    ));
+                    return Err(RuntimeError::new("memoryview.tolist() unsupported format"));
                 }
                 Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
             }
@@ -1575,8 +1576,7 @@ impl Vm {
                 if first != '_' && !first.is_alphabetic() {
                     return Ok(NativeCallResult::Value(Value::Bool(false)));
                 }
-                let is_identifier =
-                    chars.all(|ch| ch == '_' || ch.is_alphanumeric());
+                let is_identifier = chars.all(|ch| ch == '_' || ch.is_alphanumeric());
                 Ok(NativeCallResult::Value(Value::Bool(is_identifier)))
             }
             NativeMethodKind::StrJoin => {
@@ -1859,9 +1859,11 @@ impl Vm {
                             }
                             match args.remove(0) {
                                 Value::Str(value) => value,
-                                Value::Instance(instance) => self
-                                    .instance_backing_str(&instance)
-                                    .ok_or_else(|| RuntimeError::new("str receiver is invalid"))?,
+                                Value::Instance(instance) => {
+                                    self.instance_backing_str(&instance).ok_or_else(|| {
+                                        RuntimeError::new("str receiver is invalid")
+                                    })?
+                                }
                                 _ => return Err(RuntimeError::new("str receiver is invalid")),
                             }
                         }
@@ -2046,14 +2048,13 @@ impl Vm {
                 for ch in text.chars() {
                     let code = ch as u32 as i64;
                     let mapped = match &table {
-                        Value::Dict(dict_obj) => {
-                            dict_get_value(dict_obj, &Value::Int(code)).or_else(|| {
-                                dict_get_value(dict_obj, &Value::Str(ch.to_string()))
-                            })
-                        }
+                        Value::Dict(dict_obj) => dict_get_value(dict_obj, &Value::Int(code))
+                            .or_else(|| dict_get_value(dict_obj, &Value::Str(ch.to_string()))),
                         _ => match self.getitem_value(table.clone(), Value::Int(code)) {
                             Ok(value) => Some(value),
-                            Err(err) if runtime_error_matches_exception(&err.message, "KeyError") => {
+                            Err(err)
+                                if runtime_error_matches_exception(&err.message, "KeyError") =>
+                            {
                                 None
                             }
                             Err(err) => return Err(err),
@@ -2356,7 +2357,39 @@ impl Vm {
                 else {
                     return Err(RuntimeError::new("exception receiver is invalid"));
                 };
-                exception.notes.push(note);
+                let target_name = exception.name.clone();
+                let target_message = exception.message.clone();
+                exception.notes.push(note.clone());
+                if let Some(frame) = self.frames.last_mut() {
+                    let append_matching_note = |value: &mut Value| {
+                        if let Value::Exception(candidate) = value {
+                            if candidate.name == target_name
+                                && candidate.message == target_message
+                            {
+                                candidate.notes.push(note.clone());
+                            }
+                        }
+                    };
+                    for value in frame.locals.values_mut() {
+                        append_matching_note(value);
+                    }
+                    for value in frame.fast_locals.iter_mut().flatten() {
+                        append_matching_note(value);
+                    }
+                    for value in frame.stack.iter_mut() {
+                        append_matching_note(value);
+                    }
+                    if let Some(active_exception) = frame.active_exception.as_mut() {
+                        append_matching_note(active_exception);
+                    }
+                    if frame.is_module {
+                        if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                            for value in module_data.globals.values_mut() {
+                                append_matching_note(value);
+                            }
+                        }
+                    }
+                }
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DescriptorReduceTypeError => Err(RuntimeError::new(
@@ -2392,11 +2425,8 @@ impl Vm {
                     protocol = value_to_int(protocol_arg.clone())?;
                 }
 
-                let reduced = self.object_reduce_ex_for_value(
-                    value,
-                    protocol,
-                    !explicit_object_base_call,
-                )?;
+                let reduced =
+                    self.object_reduce_ex_for_value(value, protocol, !explicit_object_base_call)?;
                 Ok(NativeCallResult::Value(reduced))
             }
             NativeMethodKind::BoundMethodReduceEx => {
@@ -2564,9 +2594,24 @@ impl Vm {
                 };
                 let mut out = receiver_values.to_vec();
                 for iterable in args {
-                    let other =
-                        dedup_hashable_values(self.collect_iterable_values(iterable)?)?;
+                    let other = dedup_hashable_values(self.collect_iterable_values(iterable)?)?;
                     out.retain(|item| other.contains(item));
+                }
+                if matches!(&*receiver.kind(), Object::FrozenSet(_)) {
+                    Ok(NativeCallResult::Value(self.heap.alloc_frozenset(out)))
+                } else {
+                    Ok(NativeCallResult::Value(self.heap.alloc_set(out)))
+                }
+            }
+            NativeMethodKind::SetDifference => {
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("difference() receiver must be set")),
+                };
+                let mut out = receiver_values.to_vec();
+                for iterable in args {
+                    let other = dedup_hashable_values(self.collect_iterable_values(iterable)?)?;
+                    out.retain(|item| !other.contains(item));
                 }
                 if matches!(&*receiver.kind(), Object::FrozenSet(_)) {
                     Ok(NativeCallResult::Value(self.heap.alloc_frozenset(out)))
@@ -3093,7 +3138,10 @@ impl Vm {
         self.resume_generator(generator, None, None, GeneratorResumeKind::Next)
     }
 
-    pub(super) fn sequence_iterator_via_getitem(&mut self, target: Value) -> Result<Option<Value>, RuntimeError> {
+    pub(super) fn sequence_iterator_via_getitem(
+        &mut self,
+        target: Value,
+    ) -> Result<Option<Value>, RuntimeError> {
         let Some(getitem) = self.lookup_bound_special_method(&target, "__getitem__")? else {
             return Ok(None);
         };
@@ -3134,6 +3182,21 @@ impl Vm {
                 }
                 if let Some(backing_list) = self.instance_backing_list(&instance) {
                     return self.to_iterator_value(Value::List(backing_list));
+                }
+                if let Some(backing_tuple) = self.instance_backing_tuple(&instance) {
+                    return self.to_iterator_value(Value::Tuple(backing_tuple));
+                }
+                if let Some(backing_str) = self.instance_backing_str(&instance) {
+                    return self.to_iterator_value(Value::Str(backing_str));
+                }
+                if let Some(backing_dict) = self.instance_backing_dict(&instance) {
+                    return self.to_iterator_value(Value::Dict(backing_dict));
+                }
+                if let Some(backing_set) = self.instance_backing_set(&instance) {
+                    return self.to_iterator_value(Value::Set(backing_set));
+                }
+                if let Some(backing_frozenset) = self.instance_backing_frozenset(&instance) {
+                    return self.to_iterator_value(Value::FrozenSet(backing_frozenset));
                 }
                 let other = Value::Instance(instance);
                 let maybe_next = self.lookup_bound_special_method(&other, "__next__")?;
@@ -3638,7 +3701,10 @@ impl Vm {
         }
     }
 
-    pub(super) fn iterator_next_value(&mut self, iterator_ref: &ObjRef) -> Result<Option<Value>, RuntimeError> {
+    pub(super) fn iterator_next_value(
+        &mut self,
+        iterator_ref: &ObjRef,
+    ) -> Result<Option<Value>, RuntimeError> {
         enum PendingIteratorStep {
             MapEvaluate {
                 func: Value,
@@ -3754,16 +3820,18 @@ impl Vm {
                 }
                 IteratorKind::MemoryView(view_ref) => {
                     return Ok(match &*view_ref.kind() {
-                        Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                            if state.index >= values.len() {
-                                None
-                            } else {
-                                let value = Value::Int(values[state.index] as i64);
-                                state.index += 1;
-                                Some(value)
-                            }
-                        })
-                        .flatten(),
+                        Object::MemoryView(view) => {
+                            with_bytes_like_source(&view.source, |values| {
+                                if state.index >= values.len() {
+                                    None
+                                } else {
+                                    let value = Value::Int(values[state.index] as i64);
+                                    state.index += 1;
+                                    Some(value)
+                                }
+                            })
+                            .flatten()
+                        }
                         _ => None,
                     });
                 }
@@ -3998,7 +4066,11 @@ impl Vm {
         }
     }
 
-    pub(super) fn set_generator_started(&self, generator: &ObjRef, started: bool) -> Result<(), RuntimeError> {
+    pub(super) fn set_generator_started(
+        &self,
+        generator: &ObjRef,
+        started: bool,
+    ) -> Result<(), RuntimeError> {
         match &mut *generator.kind_mut() {
             Object::Generator(state) => {
                 state.started = started;
@@ -4008,7 +4080,11 @@ impl Vm {
         }
     }
 
-    pub(super) fn set_generator_running(&self, generator: &ObjRef, running: bool) -> Result<(), RuntimeError> {
+    pub(super) fn set_generator_running(
+        &self,
+        generator: &ObjRef,
+        running: bool,
+    ) -> Result<(), RuntimeError> {
         match &mut *generator.kind_mut() {
             Object::Generator(state) => {
                 state.running = running;
@@ -4018,7 +4094,11 @@ impl Vm {
         }
     }
 
-    pub(super) fn set_generator_closed(&self, generator: &ObjRef, closed: bool) -> Result<(), RuntimeError> {
+    pub(super) fn set_generator_closed(
+        &self,
+        generator: &ObjRef,
+        closed: bool,
+    ) -> Result<(), RuntimeError> {
         match &mut *generator.kind_mut() {
             Object::Generator(state) => {
                 state.closed = closed;
@@ -4117,6 +4197,12 @@ impl Vm {
             BuiltinFunction::SysGetFilesystemEncodeErrors => {
                 self.builtin_sys_getfilesystemencodeerrors(args, kwargs)
             }
+            BuiltinFunction::SysGetRecursionLimit => {
+                self.builtin_sys_getrecursionlimit(args, kwargs)
+            }
+            BuiltinFunction::SysSetRecursionLimit => {
+                self.builtin_sys_setrecursionlimit(args, kwargs)
+            }
             BuiltinFunction::SysStdoutWrite => self.builtin_sys_stream_write(args, kwargs, false),
             BuiltinFunction::SysStdoutBufferWrite => {
                 self.builtin_sys_stream_buffer_write(args, kwargs, false)
@@ -4166,6 +4252,7 @@ impl Vm {
             BuiltinFunction::Dict => self.builtin_dict(args, kwargs),
             BuiltinFunction::DictFromKeys => self.builtin_dict_fromkeys(args, kwargs),
             BuiltinFunction::Set => self.builtin_set(args, kwargs),
+            BuiltinFunction::SetReduce => self.builtin_set_reduce(args, kwargs),
             BuiltinFunction::FrozenSet => self.builtin_frozenset(args, kwargs),
             BuiltinFunction::Min => self.builtin_min(args, kwargs),
             BuiltinFunction::Max => self.builtin_max(args, kwargs),
@@ -4176,9 +4263,8 @@ impl Vm {
             BuiltinFunction::All => self.builtin_all(args, kwargs),
             BuiltinFunction::Any => self.builtin_any(args, kwargs),
             BuiltinFunction::Enumerate => self.builtin_enumerate(args, kwargs),
-            BuiltinFunction::WeakRefRef | BuiltinFunction::WeakRefProxy => {
-                self.builtin_weakref_ref(args, kwargs)
-            }
+            BuiltinFunction::WeakRefRef => self.builtin_weakref_ref(args, kwargs),
+            BuiltinFunction::WeakRefProxy => self.builtin_weakref_proxy(args, kwargs),
             BuiltinFunction::WeakRefFinalize => self.builtin_weakref_finalize(args, kwargs),
             BuiltinFunction::WeakRefFinalizeDetach => {
                 self.builtin_weakref_finalize_detach(args, kwargs)
@@ -4398,11 +4484,20 @@ impl Vm {
             }
             BuiltinFunction::PicklePicklerInit => self.builtin_pickle_pickler_init(args, kwargs),
             BuiltinFunction::PicklePicklerDump => self.builtin_pickle_pickler_dump(args, kwargs),
+            BuiltinFunction::PicklePicklerClearMemo => {
+                self.builtin_pickle_pickler_clear_memo(args, kwargs)
+            }
+            BuiltinFunction::PicklePicklerPersistentId => {
+                self.builtin_pickle_pickler_persistent_id(args, kwargs)
+            }
             BuiltinFunction::PickleUnpicklerInit => {
                 self.builtin_pickle_unpickler_init(args, kwargs)
             }
             BuiltinFunction::PickleUnpicklerLoad => {
                 self.builtin_pickle_unpickler_load(args, kwargs)
+            }
+            BuiltinFunction::PickleUnpicklerPersistentLoad => {
+                self.builtin_pickle_unpickler_persistent_load(args, kwargs)
             }
             BuiltinFunction::PickleBufferInit => self.builtin_picklebuffer_init(args, kwargs),
             BuiltinFunction::PickleBufferRaw => self.builtin_picklebuffer_raw(args, kwargs),
@@ -4455,12 +4550,8 @@ impl Vm {
             BuiltinFunction::SreTemplate => self.builtin_sre_template(args, kwargs),
             BuiltinFunction::SreAsciiIsCased => self.builtin_sre_ascii_iscased(args, kwargs),
             BuiltinFunction::SreAsciiToLower => self.builtin_sre_ascii_tolower(args, kwargs),
-            BuiltinFunction::SreUnicodeIsCased => {
-                self.builtin_sre_unicode_iscased(args, kwargs)
-            }
-            BuiltinFunction::SreUnicodeToLower => {
-                self.builtin_sre_unicode_tolower(args, kwargs)
-            }
+            BuiltinFunction::SreUnicodeIsCased => self.builtin_sre_unicode_iscased(args, kwargs),
+            BuiltinFunction::SreUnicodeToLower => self.builtin_sre_unicode_tolower(args, kwargs),
             BuiltinFunction::RePatternFindAll => self.builtin_re_pattern_findall(args, kwargs),
             BuiltinFunction::RePatternFindIter => self.builtin_re_pattern_finditer(args, kwargs),
             BuiltinFunction::OperatorAdd => self.builtin_operator_add(args, kwargs),
@@ -4598,6 +4689,9 @@ impl Vm {
             BuiltinFunction::TypesNewClass => self.builtin_types_new_class(args, kwargs),
             BuiltinFunction::EnumConvert => self.builtin_enum_convert(args, kwargs),
             BuiltinFunction::TypeAnnotationsGet => self.builtin_type_annotations_get(args, kwargs),
+            BuiltinFunction::TestInternalCapiGetRecursionDepth => {
+                self.builtin_testinternalcapi_get_recursion_depth(args, kwargs)
+            }
             BuiltinFunction::DataclassesField => self.builtin_dataclasses_field(args, kwargs),
             BuiltinFunction::DataclassesIsDataclass => {
                 self.builtin_dataclasses_is_dataclass(args, kwargs)
@@ -4635,6 +4729,14 @@ impl Vm {
             BuiltinFunction::IoFileReadable => self.builtin_io_file_readable(args, kwargs),
             BuiltinFunction::IoFileWritable => self.builtin_io_file_writable(args, kwargs),
             BuiltinFunction::IoFileSeekable => self.builtin_io_file_seekable(args, kwargs),
+            BuiltinFunction::IoBufferedInit => self.builtin_io_buffered_init(args, kwargs),
+            BuiltinFunction::IoBufferedRead => self.builtin_io_buffered_read(args, kwargs),
+            BuiltinFunction::IoBufferedReadLine => {
+                self.builtin_io_buffered_readline(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedWrite => self.builtin_io_buffered_write(args, kwargs),
+            BuiltinFunction::IoBufferedSeek => self.builtin_io_buffered_seek(args, kwargs),
+            BuiltinFunction::IoBufferedTell => self.builtin_io_buffered_tell(args, kwargs),
             BuiltinFunction::IoBaseIter => self.builtin_iobase_iter(args, kwargs),
             BuiltinFunction::IoBaseNext => self.builtin_iobase_next(args, kwargs),
             BuiltinFunction::StringIOInit => self.builtin_stringio_init(args, kwargs),

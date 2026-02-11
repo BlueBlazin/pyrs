@@ -42,12 +42,14 @@ const PICKLER_PROTOCOL_ATTR: &str = "__pyrs_pickle_protocol__";
 const PICKLER_FIX_IMPORTS_ATTR: &str = "__pyrs_pickle_fix_imports__";
 const PICKLER_BUFFER_CALLBACK_ATTR: &str = "__pyrs_pickle_buffer_callback__";
 const PICKLER_FALLBACK_ATTR: &str = "__pyrs_pickle_fallback__";
+const PICKLER_BUSY_ATTR: &str = "__pyrs_pickle_busy__";
 const UNPICKLER_FILE_ATTR: &str = "__pyrs_unpickle_file__";
 const UNPICKLER_FIX_IMPORTS_ATTR: &str = "__pyrs_unpickle_fix_imports__";
 const UNPICKLER_ENCODING_ATTR: &str = "__pyrs_unpickle_encoding__";
 const UNPICKLER_ERRORS_ATTR: &str = "__pyrs_unpickle_errors__";
 const UNPICKLER_BUFFERS_ATTR: &str = "__pyrs_unpickle_buffers__";
 const UNPICKLER_FALLBACK_ATTR: &str = "__pyrs_unpickle_fallback__";
+const UNPICKLER_BUSY_ATTR: &str = "__pyrs_unpickle_busy__";
 
 #[derive(Default)]
 struct FastPickleEncoder {
@@ -275,10 +277,7 @@ impl Vm {
         name: &str,
         default: bool,
     ) -> bool {
-        kwargs
-            .get(name)
-            .map(is_truthy)
-            .unwrap_or(default)
+        kwargs.get(name).map(is_truthy).unwrap_or(default)
     }
 
     fn pickle_extract_protocol(
@@ -453,11 +452,7 @@ impl Vm {
         result
     }
 
-    fn fast_pickle_encode_chunks(
-        &self,
-        value: &Value,
-        protocol: i64,
-    ) -> Option<Vec<Vec<u8>>> {
+    fn fast_pickle_encode_chunks(&self, value: &Value, protocol: i64) -> Option<Vec<Vec<u8>>> {
         if !(PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol) {
             return None;
         }
@@ -662,10 +657,8 @@ impl Vm {
         file: Value,
         chunks: Vec<Vec<u8>>,
     ) -> Result<(), RuntimeError> {
-        let write_method = self.builtin_getattr(
-            vec![file, Value::Str("write".to_string())],
-            HashMap::new(),
-        )?;
+        let write_method =
+            self.builtin_getattr(vec![file, Value::Str("write".to_string())], HashMap::new())?;
         for chunk in chunks {
             let payload = self.heap.alloc_bytes(chunk);
             match self.call_internal(write_method.clone(), vec![payload], HashMap::new())? {
@@ -871,6 +864,13 @@ impl Vm {
         instance_data.attrs.get(name).cloned()
     }
 
+    fn pickle_instance_attr_is_true(instance: &ObjRef, name: &str) -> bool {
+        matches!(
+            Self::pickle_get_instance_attr(instance, name),
+            Some(Value::Bool(true))
+        )
+    }
+
     fn pickle_get_pickler_dispatch_table(&mut self, instance: &ObjRef) -> Option<Value> {
         let instance_value = Value::Instance(instance.clone());
         let has_dispatch_table = self
@@ -1060,13 +1060,13 @@ impl Vm {
                 _ => {
                     return Err(RuntimeError::new(
                         "ValueError: operation forbidden on released PickleBuffer object",
-                    ))
+                    ));
                 }
             },
             _ => {
                 return Err(RuntimeError::new(
                     "ValueError: operation forbidden on released PickleBuffer object",
-                ))
+                ));
             }
         };
         Ok(self.heap.alloc_memoryview(source_obj))
@@ -1084,7 +1084,9 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "PickleBuffer.release")?;
         if !args.is_empty() {
-            return Err(RuntimeError::new("PickleBuffer.release() expects no arguments"));
+            return Err(RuntimeError::new(
+                "PickleBuffer.release() expects no arguments",
+            ));
         }
         {
             let mut instance_kind = instance.kind_mut();
@@ -1129,7 +1131,7 @@ impl Vm {
                 return Err(RuntimeError::new(format!(
                     "AttributeError: module '_pickle' has no attribute '{}'",
                     attr_name
-                )))
+                )));
             }
         };
 
@@ -1167,7 +1169,10 @@ impl Vm {
         }
         let protocol = self.pickle_extract_protocol(&args, &kwargs, 2)?;
         let fix_imports = Self::pickle_extract_bool_kwarg(&kwargs, "fix_imports", true);
-        let buffer_callback = kwargs.get("buffer_callback").cloned().unwrap_or(Value::None);
+        let buffer_callback = kwargs
+            .get("buffer_callback")
+            .cloned()
+            .unwrap_or(Value::None);
         if fix_imports
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
@@ -1207,7 +1212,10 @@ impl Vm {
         }
         let protocol = self.pickle_extract_protocol(&args, &kwargs, 1)?;
         let fix_imports = Self::pickle_extract_bool_kwarg(&kwargs, "fix_imports", true);
-        let buffer_callback = kwargs.get("buffer_callback").cloned().unwrap_or(Value::None);
+        let buffer_callback = kwargs
+            .get("buffer_callback")
+            .cloned()
+            .unwrap_or(Value::None);
         if fix_imports
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
@@ -1253,7 +1261,9 @@ impl Vm {
             && kwargs
                 .get("errors")
                 .is_none_or(|value| matches!(value, Value::Str(name) if name == "strict"))
-            && kwargs.get("buffers").is_none_or(|value| matches!(value, Value::None))
+            && kwargs
+                .get("buffers")
+                .is_none_or(|value| matches!(value, Value::None))
         {
             if let Some(bytes) = self.pickle_extract_bytes_like(&args[0]) {
                 if let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
@@ -1292,7 +1302,9 @@ impl Vm {
             && kwargs
                 .get("errors")
                 .is_none_or(|value| matches!(value, Value::Str(name) if name == "strict"))
-            && kwargs.get("buffers").is_none_or(|value| matches!(value, Value::None))
+            && kwargs
+                .get("buffers")
+                .is_none_or(|value| matches!(value, Value::None))
         {
             let file = args[0].clone();
             let tell_method = self.builtin_getattr(
@@ -1326,12 +1338,7 @@ impl Vm {
                 let _ = self.call_internal(seek_method, vec![start], HashMap::new());
             }
         }
-        self.pickle_call_pure_symbol(
-            "_load",
-            raw_args,
-            raw_kwargs,
-            "pickle load fallback failed",
-        )
+        self.pickle_call_pure_symbol("_load", raw_args, raw_kwargs, "pickle load fallback failed")
     }
 
     fn pickle_pickler_build_fallback(&mut self, instance: &ObjRef) -> Result<Value, RuntimeError> {
@@ -1350,14 +1357,19 @@ impl Vm {
                 return Ok(existing);
             }
         }
-        let file = Self::pickle_get_instance_attr(instance, PICKLER_FILE_ATTR)
-            .ok_or_else(|| RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__"))?;
-        let protocol = Self::pickle_get_instance_attr(instance, PICKLER_PROTOCOL_ATTR)
-            .ok_or_else(|| RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__"))?;
-        let fix_imports =
-            Self::pickle_get_instance_attr(instance, PICKLER_FIX_IMPORTS_ATTR).unwrap_or(Value::Bool(true));
+        let file =
+            Self::pickle_get_instance_attr(instance, PICKLER_FILE_ATTR).ok_or_else(|| {
+                RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__")
+            })?;
+        let protocol =
+            Self::pickle_get_instance_attr(instance, PICKLER_PROTOCOL_ATTR).ok_or_else(|| {
+                RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__")
+            })?;
+        let fix_imports = Self::pickle_get_instance_attr(instance, PICKLER_FIX_IMPORTS_ATTR)
+            .unwrap_or(Value::Bool(true));
         let buffer_callback =
-            Self::pickle_get_instance_attr(instance, PICKLER_BUFFER_CALLBACK_ATTR).unwrap_or(Value::None);
+            Self::pickle_get_instance_attr(instance, PICKLER_BUFFER_CALLBACK_ATTR)
+                .unwrap_or(Value::None);
         let pickler_class = self.pickle_resolve_pure_symbol("_Pickler")?;
         let mut kwargs = HashMap::new();
         kwargs.insert("fix_imports".to_string(), fix_imports);
@@ -1391,16 +1403,18 @@ impl Vm {
                 return Ok(existing);
             }
         }
-        let file = Self::pickle_get_instance_attr(instance, UNPICKLER_FILE_ATTR)
-            .ok_or_else(|| RuntimeError::new("Unpickler.__init__() was not called by Unpickler.__init__"))?;
-        let fix_imports =
-            Self::pickle_get_instance_attr(instance, UNPICKLER_FIX_IMPORTS_ATTR).unwrap_or(Value::Bool(true));
+        let file =
+            Self::pickle_get_instance_attr(instance, UNPICKLER_FILE_ATTR).ok_or_else(|| {
+                RuntimeError::new("Unpickler.__init__() was not called by Unpickler.__init__")
+            })?;
+        let fix_imports = Self::pickle_get_instance_attr(instance, UNPICKLER_FIX_IMPORTS_ATTR)
+            .unwrap_or(Value::Bool(true));
         let encoding = Self::pickle_get_instance_attr(instance, UNPICKLER_ENCODING_ATTR)
             .unwrap_or_else(|| Value::Str("ASCII".to_string()));
         let errors = Self::pickle_get_instance_attr(instance, UNPICKLER_ERRORS_ATTR)
             .unwrap_or_else(|| Value::Str("strict".to_string()));
-        let buffers = Self::pickle_get_instance_attr(instance, UNPICKLER_BUFFERS_ATTR)
-            .unwrap_or(Value::None);
+        let buffers =
+            Self::pickle_get_instance_attr(instance, UNPICKLER_BUFFERS_ATTR).unwrap_or(Value::None);
         let unpickler_class = self.pickle_resolve_pure_symbol("_Unpickler")?;
         let mut kwargs = HashMap::new();
         kwargs.insert("fix_imports".to_string(), fix_imports);
@@ -1417,18 +1431,95 @@ impl Vm {
         Ok(pure)
     }
 
+    fn pickle_sync_fallback_instance_attr(
+        &mut self,
+        instance: &ObjRef,
+        fallback: Value,
+        attr: &str,
+    ) -> Result<(), RuntimeError> {
+        let resolved = self.builtin_getattr(
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str(attr.to_string()),
+            ],
+            HashMap::new(),
+        );
+        if let Ok(value) = resolved {
+            self.builtin_setattr(
+                vec![fallback, Value::Str(attr.to_string()), value],
+                HashMap::new(),
+            )?;
+            return Ok(());
+        }
+        let _ = self.builtin_delattr(vec![fallback, Value::Str(attr.to_string())], HashMap::new());
+        Ok(())
+    }
+
+    fn pickle_clear_fallback_instance_attr(&mut self, fallback: Value, attr: &str) {
+        let _ = self.builtin_delattr(vec![fallback, Value::Str(attr.to_string())], HashMap::new());
+    }
+
+    fn pickle_rewrite_active_exception(&mut self, name: &str, message: &str) {
+        if let Some(frame) = self.frames.last_mut() {
+            if let Some(Value::Exception(exception)) = frame.active_exception.as_mut() {
+                exception.name = name.to_string();
+                exception.message = Some(message.to_string());
+            }
+        }
+    }
+
+    fn pickle_remap_c_pickler_dump_error(&mut self, err: &RuntimeError) -> Option<String> {
+        let message = err.message.as_str();
+        if message.contains("list extend expects iterable")
+            || message.contains("Value after * must be an iterable")
+            || message.contains("Value after * must be an iterable, not ")
+        {
+            return Some("second argument to __newobj_ex__() must be a tuple, not int".to_string());
+        }
+        if message.contains("call kwargs must be dict")
+            || message.contains("after ** must be a mapping")
+            || message.contains("keyword argument after ** must be a mapping")
+        {
+            return Some("third argument to __newobj_ex__() must be a dict, not list".to_string());
+        }
+        None
+    }
+
     pub(in crate::vm) fn builtin_pickle_pickler_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         let instance = self.take_bound_instance_arg(&mut args, "Pickler.__init__")?;
+        if Self::pickle_instance_attr_is_true(&instance, PICKLER_BUSY_ATTR) {
+            return Err(RuntimeError::new(
+                "RuntimeError: reentrant call inside Pickler.__init__",
+            ));
+        }
         if args.is_empty() {
             return Err(RuntimeError::new(
                 "Pickler.__init__() missing required argument 'file'",
             ));
         }
         let file = args.remove(0);
+        let write_method = self.builtin_getattr(
+            vec![file.clone(), Value::Str("write".to_string())],
+            HashMap::new(),
+        );
+        let write_method = match write_method {
+            Ok(method) => method,
+            Err(err) if runtime_error_matches_exception(&err.message, "AttributeError") => {
+                return Err(RuntimeError::new(
+                    "TypeError: file must have a 'write' attribute",
+                ));
+            }
+            Err(err) => return Err(err),
+        };
+        if !self.is_callable_value(&write_method) {
+            return Err(RuntimeError::new(
+                "TypeError: file must have a 'write' attribute",
+            ));
+        }
         let protocol = if let Some(value) = kwargs.remove("protocol") {
             value
         } else if !args.is_empty() {
@@ -1436,24 +1527,20 @@ impl Vm {
         } else {
             Value::Int(PICKLE_DEFAULT_PROTOCOL)
         };
-        let fix_imports = kwargs
-            .remove("fix_imports")
-            .unwrap_or(Value::Bool(true));
-        let buffer_callback = kwargs
-            .remove("buffer_callback")
-            .unwrap_or(Value::None);
+        let fix_imports = kwargs.remove("fix_imports").unwrap_or(Value::Bool(true));
+        let buffer_callback = kwargs.remove("buffer_callback").unwrap_or(Value::None);
         if !args.is_empty() || !kwargs.is_empty() {
-            return Err(RuntimeError::new("Pickler.__init__() received unexpected arguments"));
+            return Err(RuntimeError::new(
+                "Pickler.__init__() received unexpected arguments",
+            ));
         }
         Self::pickle_store_instance_attr(&instance, PICKLER_FILE_ATTR, file)?;
         Self::pickle_store_instance_attr(&instance, PICKLER_PROTOCOL_ATTR, protocol)?;
         Self::pickle_store_instance_attr(&instance, PICKLER_FIX_IMPORTS_ATTR, fix_imports)?;
-        Self::pickle_store_instance_attr(
-            &instance,
-            PICKLER_BUFFER_CALLBACK_ATTR,
-            buffer_callback,
-        )?;
+        Self::pickle_store_instance_attr(&instance, PICKLER_BUFFER_CALLBACK_ATTR, buffer_callback)?;
         Self::pickle_store_instance_attr(&instance, PICKLER_FALLBACK_ATTR, Value::None)?;
+        Self::pickle_store_instance_attr(&instance, "memo", self.heap.alloc_dict(Vec::new()))?;
+        Self::pickle_store_instance_attr(&instance, PICKLER_BUSY_ATTR, Value::Bool(false))?;
         Ok(Value::None)
     }
 
@@ -1463,52 +1550,124 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("Pickler.dump() takes no keyword arguments"));
+            return Err(RuntimeError::new(
+                "Pickler.dump() takes no keyword arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Pickler.dump")?;
         if args.len() != 1 {
             return Err(RuntimeError::new("Pickler.dump() expects one argument"));
         }
-        let file = Self::pickle_get_instance_attr(&instance, PICKLER_FILE_ATTR)
-            .ok_or_else(|| RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__"))?;
-        let protocol = Self::pickle_get_instance_attr(&instance, PICKLER_PROTOCOL_ATTR)
-            .ok_or_else(|| RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__"))?;
-        let protocol = self.pickle_protocol_from_value(protocol)?;
-        let fix_imports = Self::pickle_extract_bool_kwarg(
-            &HashMap::from([(
-                "fix_imports".to_string(),
-                Self::pickle_get_instance_attr(&instance, PICKLER_FIX_IMPORTS_ATTR)
-                    .unwrap_or(Value::Bool(true)),
-            )]),
-            "fix_imports",
-            true,
-        );
-        let buffer_callback =
-            Self::pickle_get_instance_attr(&instance, PICKLER_BUFFER_CALLBACK_ATTR).unwrap_or(Value::None);
-        let has_dispatch_table = self.pickle_get_pickler_dispatch_table(&instance).is_some();
-        if fix_imports
-            && matches!(buffer_callback, Value::None)
-            && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
-            && !has_dispatch_table
-            && Self::fast_pickle_graph_is_alias_free(&args[0])
-            && Self::fast_pickle_graph_is_small_payload(&args[0])
+        if Self::pickle_instance_attr_is_true(&instance, PICKLER_BUSY_ATTR) {
+            return Err(RuntimeError::new(
+                "RuntimeError: reentrant call inside Pickler.dump",
+            ));
+        }
+        let _file =
+            Self::pickle_get_instance_attr(&instance, PICKLER_FILE_ATTR).ok_or_else(|| {
+                RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__")
+            })?;
+        Self::pickle_store_instance_attr(&instance, PICKLER_BUSY_ATTR, Value::Bool(true))?;
+        let result = (|| {
+            let fallback = self.pickle_pickler_build_fallback(&instance)?;
+            if let Some(memo) = Self::pickle_get_instance_attr(&instance, "memo") {
+                self.builtin_setattr(
+                    vec![fallback.clone(), Value::Str("memo".to_string()), memo],
+                    HashMap::new(),
+                )?;
+            }
+            self.pickle_sync_fallback_instance_attr(&instance, fallback.clone(), "persistent_id")?;
+            self.pickle_sync_fallback_instance_attr(
+                &instance,
+                fallback.clone(),
+                "reducer_override",
+            )?;
+            let dump_method = self.builtin_getattr(
+                vec![fallback.clone(), Value::Str("dump".to_string())],
+                HashMap::new(),
+            )?;
+            let dump_arg = args.remove(0);
+            let outcome = self.call_internal(dump_method, vec![dump_arg], HashMap::new());
+            if let Some(cached_fallback) =
+                Self::pickle_get_instance_attr(&instance, PICKLER_FALLBACK_ATTR)
+                    .filter(|value| !matches!(value, Value::None))
+            {
+                self.pickle_clear_fallback_instance_attr(cached_fallback.clone(), "persistent_id");
+                self.pickle_clear_fallback_instance_attr(cached_fallback, "reducer_override");
+            }
+            if let Ok(memo) = self.builtin_getattr(
+                vec![fallback, Value::Str("memo".to_string())],
+                HashMap::new(),
+            ) {
+                let _ = Self::pickle_store_instance_attr(&instance, "memo", memo);
+            }
+            if let Err(err) = &outcome {
+                if let Some(remapped) = self.pickle_remap_c_pickler_dump_error(err) {
+                    self.pickle_rewrite_active_exception("PicklingError", &remapped);
+                    return Err(RuntimeError::new(format!("PicklingError: {remapped}")));
+                }
+            }
+            match outcome? {
+                InternalCallOutcome::Value(value) => Ok(value),
+                InternalCallOutcome::CallerExceptionHandled => Ok(Value::None),
+            }
+        })();
+        let _ = Self::pickle_store_instance_attr(&instance, PICKLER_BUSY_ATTR, Value::Bool(false));
+        result
+    }
+
+    pub(in crate::vm) fn builtin_pickle_pickler_clear_memo(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "Pickler.clear_memo() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Pickler.clear_memo")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new("Pickler.clear_memo() expects no arguments"));
+        }
+        let _file =
+            Self::pickle_get_instance_attr(&instance, PICKLER_FILE_ATTR).ok_or_else(|| {
+                RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__")
+            })?;
+        if let Some(fallback) = Self::pickle_get_instance_attr(&instance, PICKLER_FALLBACK_ATTR)
+            .filter(|value| !matches!(value, Value::None))
         {
-            if let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
-                self.pickle_write_chunks_to_file(file, chunks)?;
-                return Ok(Value::None);
+            let clear_method = self.builtin_getattr(
+                vec![fallback.clone(), Value::Str("clear_memo".to_string())],
+                HashMap::new(),
+            )?;
+            let _ = self.call_internal(clear_method, Vec::new(), HashMap::new())?;
+            if let Ok(memo) =
+                self.builtin_getattr(vec![fallback, Value::Str("memo".to_string())], HashMap::new())
+            {
+                let _ = Self::pickle_store_instance_attr(&instance, "memo", memo);
             }
         }
-        let fallback = self.pickle_pickler_build_fallback(&instance)?;
-        let dump_method = self.builtin_getattr(
-            vec![fallback, Value::Str("dump".to_string())],
-            HashMap::new(),
-        )?;
-        match self.call_internal(dump_method, vec![args.remove(0)], HashMap::new())? {
-            InternalCallOutcome::Value(value) => Ok(value),
-            InternalCallOutcome::CallerExceptionHandled => {
-                Err(RuntimeError::new("Pickler.dump() fallback failed"))
-            }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_pickle_pickler_persistent_id(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "Pickler.persistent_id() takes no keyword arguments",
+            ));
         }
+        let _instance = self.take_bound_instance_arg(&mut args, "Pickler.persistent_id")?;
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "Pickler.persistent_id() expects one argument",
+            ));
+        }
+        Ok(Value::None)
     }
 
     pub(in crate::vm) fn builtin_pickle_unpickler_init(
@@ -1517,15 +1676,33 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         let instance = self.take_bound_instance_arg(&mut args, "Unpickler.__init__")?;
+        if Self::pickle_instance_attr_is_true(&instance, UNPICKLER_BUSY_ATTR) {
+            return Err(RuntimeError::new(
+                "RuntimeError: reentrant call inside Unpickler.__init__",
+            ));
+        }
         if args.is_empty() {
             return Err(RuntimeError::new(
                 "Unpickler.__init__() missing required argument 'file'",
             ));
         }
         let file = args.remove(0);
-        let fix_imports = kwargs
-            .remove("fix_imports")
-            .unwrap_or(Value::Bool(true));
+        for attr in ["readline", "read"] {
+            let method = self.builtin_getattr(
+                vec![file.clone(), Value::Str(attr.to_string())],
+                HashMap::new(),
+            );
+            let method = match method {
+                Ok(method) => method,
+                Err(err) => return Err(err),
+            };
+            if !self.is_callable_value(&method) {
+                return Err(RuntimeError::new(
+                    "TypeError: file must have 'read' and 'readline' attributes",
+                ));
+            }
+        }
+        let fix_imports = kwargs.remove("fix_imports").unwrap_or(Value::Bool(true));
         let encoding = kwargs
             .remove("encoding")
             .unwrap_or_else(|| Value::Str("ASCII".to_string()));
@@ -1544,6 +1721,8 @@ impl Vm {
         Self::pickle_store_instance_attr(&instance, UNPICKLER_ERRORS_ATTR, errors)?;
         Self::pickle_store_instance_attr(&instance, UNPICKLER_BUFFERS_ATTR, buffers)?;
         Self::pickle_store_instance_attr(&instance, UNPICKLER_FALLBACK_ATTR, Value::None)?;
+        Self::pickle_store_instance_attr(&instance, "memo", self.heap.alloc_dict(Vec::new()))?;
+        Self::pickle_store_instance_attr(&instance, UNPICKLER_BUSY_ATTR, Value::Bool(false))?;
         Ok(Value::None)
     }
 
@@ -1553,62 +1732,85 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("Unpickler.load() takes no keyword arguments"));
+            return Err(RuntimeError::new(
+                "Unpickler.load() takes no keyword arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Unpickler.load")?;
         if !args.is_empty() {
             return Err(RuntimeError::new("Unpickler.load() expects no arguments"));
         }
-        let file = Self::pickle_get_instance_attr(&instance, UNPICKLER_FILE_ATTR)
-            .ok_or_else(|| RuntimeError::new("Unpickler.__init__() was not called by Unpickler.__init__"))?;
-        let fix_imports = Self::pickle_extract_bool_kwarg(
-            &HashMap::from([(
-                "fix_imports".to_string(),
-                Self::pickle_get_instance_attr(&instance, UNPICKLER_FIX_IMPORTS_ATTR)
-                    .unwrap_or(Value::Bool(true)),
-            )]),
-            "fix_imports",
-            true,
+        if Self::pickle_instance_attr_is_true(&instance, UNPICKLER_BUSY_ATTR) {
+            return Err(RuntimeError::new(
+                "RuntimeError: reentrant call inside Unpickler.load",
+            ));
+        }
+        let file =
+            Self::pickle_get_instance_attr(&instance, UNPICKLER_FILE_ATTR).ok_or_else(|| {
+                RuntimeError::new("Unpickler.__init__() was not called by Unpickler.__init__")
+            })?;
+        let _ = (
+            file,
+            Self::pickle_get_instance_attr(&instance, UNPICKLER_FIX_IMPORTS_ATTR),
+            Self::pickle_get_instance_attr(&instance, UNPICKLER_ENCODING_ATTR),
+            Self::pickle_get_instance_attr(&instance, UNPICKLER_ERRORS_ATTR),
+            Self::pickle_get_instance_attr(&instance, UNPICKLER_BUFFERS_ATTR),
         );
-        let encoding = Self::pickle_get_instance_attr(&instance, UNPICKLER_ENCODING_ATTR)
-            .unwrap_or_else(|| Value::Str("ASCII".to_string()));
-        let errors = Self::pickle_get_instance_attr(&instance, UNPICKLER_ERRORS_ATTR)
-            .unwrap_or_else(|| Value::Str("strict".to_string()));
-        let buffers = Self::pickle_get_instance_attr(&instance, UNPICKLER_BUFFERS_ATTR)
-            .unwrap_or(Value::None);
-        if fix_imports
-            && matches!(encoding, Value::Str(ref text) if text == "ASCII")
-            && matches!(errors, Value::Str(ref text) if text == "strict")
-            && matches!(buffers, Value::None)
-        {
-            let read_method = self.builtin_getattr(
-                vec![file.clone(), Value::Str("read".to_string())],
+        Self::pickle_store_instance_attr(&instance, UNPICKLER_BUSY_ATTR, Value::Bool(true))?;
+        let result = (|| {
+            let fallback = self.pickle_unpickler_build_fallback(&instance)?;
+            if let Some(memo) = Self::pickle_get_instance_attr(&instance, "memo") {
+                self.builtin_setattr(
+                    vec![fallback.clone(), Value::Str("memo".to_string()), memo],
+                    HashMap::new(),
+                )?;
+            }
+            self.pickle_sync_fallback_instance_attr(&instance, fallback.clone(), "persistent_load")?;
+            let load_method = self.builtin_getattr(
+                vec![fallback, Value::Str("load".to_string())],
                 HashMap::new(),
-            );
-            if let Ok(read_method) = read_method {
-                let bytes_value =
-                    match self.call_internal(read_method, Vec::new(), HashMap::new())? {
-                        InternalCallOutcome::Value(value) => value,
-                        InternalCallOutcome::CallerExceptionHandled => Value::None,
-                    };
-                if let Some(bytes) = self.pickle_extract_bytes_like(&bytes_value) {
-                    if let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
-                        return Ok(value);
-                    }
+            )?;
+            let outcome = self.call_internal(load_method, Vec::new(), HashMap::new());
+            if let Some(cached_fallback) =
+                Self::pickle_get_instance_attr(&instance, UNPICKLER_FALLBACK_ATTR)
+                    .filter(|value| !matches!(value, Value::None))
+            {
+                self.pickle_clear_fallback_instance_attr(cached_fallback.clone(), "persistent_load");
+                if let Ok(memo) = self.builtin_getattr(
+                    vec![cached_fallback, Value::Str("memo".to_string())],
+                    HashMap::new(),
+                ) {
+                    let _ = Self::pickle_store_instance_attr(&instance, "memo", memo);
                 }
             }
-        }
-        let fallback = self.pickle_unpickler_build_fallback(&instance)?;
-        let load_method = self.builtin_getattr(
-            vec![fallback, Value::Str("load".to_string())],
-            HashMap::new(),
-        )?;
-        match self.call_internal(load_method, Vec::new(), HashMap::new())? {
-            InternalCallOutcome::Value(value) => Ok(value),
-            InternalCallOutcome::CallerExceptionHandled => {
-                Err(RuntimeError::new("Unpickler.load() fallback failed"))
+            match outcome? {
+                InternalCallOutcome::Value(value) => Ok(value),
+                InternalCallOutcome::CallerExceptionHandled => Ok(Value::None),
             }
+        })();
+        let _ = Self::pickle_store_instance_attr(&instance, UNPICKLER_BUSY_ATTR, Value::Bool(false));
+        result
+    }
+
+    pub(in crate::vm) fn builtin_pickle_unpickler_persistent_load(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "Unpickler.persistent_load() takes no keyword arguments",
+            ));
         }
+        let _instance = self.take_bound_instance_arg(&mut args, "Unpickler.persistent_load")?;
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "Unpickler.persistent_load() expects one argument",
+            ));
+        }
+        Err(RuntimeError::new(
+            "UnpicklingError: unsupported persistent id encountered",
+        ))
     }
 
     pub(in crate::vm) fn builtin_copyreg_newobj(
@@ -1715,7 +1917,11 @@ impl Vm {
             .get("object")
             .is_some_and(|object_type| *object_type == base);
 
-        let new_target = if base_is_object { class_value.clone() } else { base };
+        let new_target = if base_is_object {
+            class_value.clone()
+        } else {
+            base
+        };
         let new_method = self.builtin_getattr(
             vec![new_target, Value::Str("__new__".to_string())],
             HashMap::new(),
@@ -1745,8 +1951,7 @@ impl Vm {
             return Ok(None);
         };
 
-        if let Some(getnewargs_ex) = self.lookup_bound_special_method(value, "__getnewargs_ex__")?
-        {
+        if let Some(getnewargs_ex) = self.lookup_bound_special_method(value, "__getnewargs_ex__")? {
             let payload = match self.call_internal(getnewargs_ex, Vec::new(), HashMap::new())? {
                 InternalCallOutcome::Value(value) => value,
                 InternalCallOutcome::CallerExceptionHandled => {
@@ -1775,7 +1980,7 @@ impl Vm {
                 _ => {
                     return Err(RuntimeError::new(
                         "__getnewargs_ex__ should return (tuple, dict)",
-                    ))
+                    ));
                 }
             };
 
@@ -1784,7 +1989,7 @@ impl Vm {
                 _ => {
                     return Err(RuntimeError::new(
                         "__getnewargs_ex__ should return (tuple, dict)",
-                    ))
+                    ));
                 }
             };
             let kwargs_entries = match &*kwargs_dict.kind() {
@@ -1792,7 +1997,7 @@ impl Vm {
                 _ => {
                     return Err(RuntimeError::new(
                         "__getnewargs_ex__ should return (tuple, dict)",
-                    ))
+                    ));
                 }
             };
 
@@ -1816,7 +2021,8 @@ impl Vm {
                     "__getnewargs_ex__ kwargs require protocol >= 4",
                 ));
             }
-            let mut constructor_args = Vec::with_capacity(1 + tuple_values.len() + kwargs_entries.len());
+            let mut constructor_args =
+                Vec::with_capacity(1 + tuple_values.len() + kwargs_entries.len());
             constructor_args.push(class_obj);
             constructor_args.extend(tuple_values);
             for (key, value) in kwargs_entries {
@@ -2060,8 +2266,6 @@ impl Vm {
             || self.instance_backing_tuple(instance).is_some()
             || self.instance_backing_list(instance).is_some()
             || self.instance_backing_dict(instance).is_some()
-            || self.instance_backing_set(instance).is_some()
-            || self.instance_backing_frozenset(instance).is_some()
         {
             return Ok(None);
         }
@@ -2094,7 +2298,9 @@ impl Vm {
             }
             return Ok(Some(reduced));
         }
-        Err(RuntimeError::new("__reduce__ must return a string or tuple"))
+        Err(RuntimeError::new(
+            "__reduce__ must return a string or tuple",
+        ))
     }
 
     pub(in crate::vm) fn builtin_object_getstate(
@@ -2141,32 +2347,25 @@ impl Vm {
                 "object.__setstate__() requires an instance receiver",
             ));
         };
-        let apply_state_dict =
-            |instance: &ObjRef, state: &ObjRef| -> Result<(), RuntimeError> {
-                let entries: Vec<(Value, Value)> = match &*state.kind() {
-                    Object::Dict(entries) => entries.iter().cloned().collect(),
-                    _ => {
-                        return Err(RuntimeError::new(
-                            "state dictionary must be a dict object",
-                        ))
-                    }
-                };
-                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                    for (key, value) in entries {
-                        let Value::Str(name) = key else {
-                            return Err(RuntimeError::new(
-                                "state dictionary keys must be strings",
-                            ));
-                        };
-                        instance_data.attrs.insert(name, value);
-                    }
-                    Ok(())
-                } else {
-                    Err(RuntimeError::new(
-                        "object.__setstate__() requires an instance receiver",
-                    ))
-                }
+        let apply_state_dict = |instance: &ObjRef, state: &ObjRef| -> Result<(), RuntimeError> {
+            let entries: Vec<(Value, Value)> = match &*state.kind() {
+                Object::Dict(entries) => entries.iter().cloned().collect(),
+                _ => return Err(RuntimeError::new("state dictionary must be a dict object")),
             };
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                for (key, value) in entries {
+                    let Value::Str(name) = key else {
+                        return Err(RuntimeError::new("state dictionary keys must be strings"));
+                    };
+                    instance_data.attrs.insert(name, value);
+                }
+                Ok(())
+            } else {
+                Err(RuntimeError::new(
+                    "object.__setstate__() requires an instance receiver",
+                ))
+            }
+        };
 
         match &args[1] {
             Value::None => Ok(Value::None),
@@ -2224,28 +2423,51 @@ impl Vm {
             | Value::Str(_)
             | Value::Bytes(_)
             | Value::List(_)
-            | Value::Tuple(_)
-            | Value::Set(_)
-            | Value::FrozenSet(_) => {
+            | Value::Tuple(_) => {
+                let constructor =
+                    self.class_of_value(value)
+                        .map(Value::Class)
+                        .unwrap_or_else(|| match value {
+                            Value::Bool(_) => Value::Builtin(BuiltinFunction::Bool),
+                            Value::Int(_) | Value::BigInt(_) => {
+                                Value::Builtin(BuiltinFunction::Int)
+                            }
+                            Value::Float(_) => Value::Builtin(BuiltinFunction::Float),
+                            Value::Complex { .. } => Value::Builtin(BuiltinFunction::Complex),
+                            Value::Str(_) => Value::Builtin(BuiltinFunction::Str),
+                            Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
+                            Value::List(_) => Value::Builtin(BuiltinFunction::List),
+                            Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
+                            _ => Value::Builtin(BuiltinFunction::ObjectNew),
+                        });
+                (constructor, self.heap.alloc_tuple(vec![value.clone()]))
+            }
+            Value::Set(set_obj) => {
                 let constructor = self
                     .class_of_value(value)
                     .map(Value::Class)
-                    .unwrap_or_else(|| match value {
-                        Value::Bool(_) => Value::Builtin(BuiltinFunction::Bool),
-                        Value::Int(_) | Value::BigInt(_) => Value::Builtin(BuiltinFunction::Int),
-                        Value::Float(_) => Value::Builtin(BuiltinFunction::Float),
-                        Value::Complex { .. } => Value::Builtin(BuiltinFunction::Complex),
-                        Value::Str(_) => Value::Builtin(BuiltinFunction::Str),
-                        Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
-                        Value::List(_) => Value::Builtin(BuiltinFunction::List),
-                        Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
-                        Value::Set(_) => Value::Builtin(BuiltinFunction::Set),
-                        Value::FrozenSet(_) => Value::Builtin(BuiltinFunction::FrozenSet),
-                        _ => Value::Builtin(BuiltinFunction::ObjectNew),
-                    });
+                    .unwrap_or(Value::Builtin(BuiltinFunction::Set));
+                let entries = match &*set_obj.kind() {
+                    Object::Set(entries) => entries.to_vec(),
+                    _ => Vec::new(),
+                };
                 (
                     constructor,
-                    self.heap.alloc_tuple(vec![value.clone()]),
+                    self.heap.alloc_tuple(vec![self.heap.alloc_list(entries)]),
+                )
+            }
+            Value::FrozenSet(set_obj) => {
+                let constructor = self
+                    .class_of_value(value)
+                    .map(Value::Class)
+                    .unwrap_or(Value::Builtin(BuiltinFunction::FrozenSet));
+                let entries = match &*set_obj.kind() {
+                    Object::FrozenSet(entries) => entries.to_vec(),
+                    _ => Vec::new(),
+                };
+                (
+                    constructor,
+                    self.heap.alloc_tuple(vec![self.heap.alloc_list(entries)]),
                 )
             }
             Value::Exception(exception) => {
@@ -2265,7 +2487,9 @@ impl Vm {
             }
             Value::ByteArray(obj) => {
                 let payload = match &*obj.kind() {
-                    Object::ByteArray(values) => values.iter().map(|value| *value as char).collect(),
+                    Object::ByteArray(values) => {
+                        values.iter().map(|value| *value as char).collect()
+                    }
                     _ => String::new(),
                 };
                 let constructor = self
@@ -2280,12 +2504,7 @@ impl Vm {
             }
             Value::Iterator(obj) => match &*obj.kind() {
                 Object::Iterator(IteratorObject {
-                    kind:
-                        IteratorKind::Map {
-                            func,
-                            sources,
-                            ..
-                        },
+                    kind: IteratorKind::Map { func, sources, .. },
                     ..
                 }) => {
                     let mut args = Vec::with_capacity(1 + sources.len());
@@ -2361,6 +2580,39 @@ impl Vm {
             }
         }
 
+        // Match CPython's object.__reduce_ex__ behavior for protocol 0/1:
+        // delegate instance reduction to copyreg._reduce_ex (Objects/typeobject.c::_common_reduce).
+        // This preserves legacy getattr/__dict__/__slots__ probing semantics.
+        if protocol < 2 {
+            if let Value::Instance(instance) = &value {
+                let has_builtin_backing = self.instance_backing_int(instance).is_some()
+                    || self.instance_backing_float(instance).is_some()
+                    || self.instance_backing_complex(instance).is_some()
+                    || self.instance_backing_str(instance).is_some()
+                    || self.instance_backing_tuple(instance).is_some()
+                    || self.instance_backing_list(instance).is_some()
+                    || self.instance_backing_dict(instance).is_some()
+                    || self.instance_backing_set(instance).is_some()
+                    || self.instance_backing_frozenset(instance).is_some();
+                if !has_builtin_backing {
+                    if let Ok(reduce_ex) = self.pickle_copyreg_callable("_reduce_ex") {
+                        return match self.call_internal(
+                            reduce_ex,
+                            vec![value.clone(), Value::Int(protocol)],
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(result) => Ok(result),
+                            InternalCallOutcome::CallerExceptionHandled => Err(
+                                self.runtime_error_from_active_exception(
+                                    "object.__reduce_ex__() failed",
+                                ),
+                            ),
+                        };
+                    }
+                }
+            }
+        }
+
         let (constructor, constructor_args) = if protocol < 2 {
             if let Value::Instance(instance) = &value {
                 if let Object::Instance(instance_data) = &*instance.kind() {
@@ -2409,24 +2661,23 @@ impl Vm {
 
         if let Value::Instance(instance) = &value {
             let list_iter = if let Some(list_backing) = self.instance_backing_list(instance) {
-                Some(
-                    self.call_builtin(
-                        BuiltinFunction::Iter,
-                        vec![Value::List(list_backing)],
-                        HashMap::new(),
-                    )?,
-                )
+                Some(self.call_builtin(
+                    BuiltinFunction::Iter,
+                    vec![Value::List(list_backing)],
+                    HashMap::new(),
+                )?)
             } else {
                 None
             };
             let dict_iter = if let Some(dict_backing) = self.instance_backing_dict(instance) {
                 let items_method = self.load_attr_dict_method(dict_backing, "items")?;
-                let items_value = match self.call_internal(items_method, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(value) => value,
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("dict.items() failed"));
-                    }
-                };
+                let items_value =
+                    match self.call_internal(items_method, Vec::new(), HashMap::new())? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("dict.items() failed"));
+                        }
+                    };
                 Some(self.call_builtin(BuiltinFunction::Iter, vec![items_value], HashMap::new())?)
             } else {
                 None
@@ -2496,11 +2747,7 @@ mod tests {
         values.clone()
     }
 
-    fn alloc_instance_with_attrs(
-        vm: &mut Vm,
-        class_name: &str,
-        attrs: &[(&str, Value)],
-    ) -> Value {
+    fn alloc_instance_with_attrs(vm: &mut Vm, class_name: &str, attrs: &[(&str, Value)]) -> Value {
         let class = match vm
             .heap
             .alloc_class(ClassObject::new(class_name.to_string(), Vec::new()))
@@ -2542,8 +2789,14 @@ mod tests {
         let Object::Dict(entries) = &*kind else {
             panic!("expected dict object");
         };
-        assert_eq!(entries.find(&Value::Str("x".to_string())), Some(&Value::Int(4)));
-        assert_eq!(entries.find(&Value::Str("y".to_string())), Some(&Value::Int(9)));
+        assert_eq!(
+            entries.find(&Value::Str("x".to_string())),
+            Some(&Value::Int(4))
+        );
+        assert_eq!(
+            entries.find(&Value::Str("y".to_string())),
+            Some(&Value::Int(9))
+        );
     }
 
     #[test]
@@ -2585,8 +2838,7 @@ mod tests {
             eprintln!("skipping legacy protocol reduce_ex unit test (copyreg unavailable)");
             return;
         }
-        let instance =
-            alloc_instance_with_attrs(&mut vm, "NeedsArgs", &[("a", Value::Int(1))]);
+        let instance = alloc_instance_with_attrs(&mut vm, "NeedsArgs", &[("a", Value::Int(1))]);
         let class_obj = vm
             .class_of_value(&instance)
             .map(Value::Class)
@@ -2617,8 +2869,7 @@ mod tests {
             eprintln!("skipping protocol-2 reduce_ex unit test (copyreg unavailable)");
             return;
         }
-        let instance =
-            alloc_instance_with_attrs(&mut vm, "NeedsArgs", &[("a", Value::Int(1))]);
+        let instance = alloc_instance_with_attrs(&mut vm, "NeedsArgs", &[("a", Value::Int(1))]);
         let class_obj = vm
             .class_of_value(&instance)
             .map(Value::Class)
@@ -2681,7 +2932,11 @@ mod tests {
         let dialect_err = vm
             .builtin_object_reduce_ex(vec![dialect, Value::Int(4)], HashMap::new())
             .expect_err("dialect pickling should fail");
-        assert!(dialect_err.message.contains("cannot pickle 'Dialect' instances"));
+        assert!(
+            dialect_err
+                .message
+                .contains("cannot pickle 'Dialect' instances")
+        );
     }
 
     #[test]
@@ -2724,7 +2979,10 @@ mod tests {
 
         let pickler_attr = vm
             .builtin_getattr(
-                vec![Value::Module(c_pickle.clone()), Value::Str("Pickler".to_string())],
+                vec![
+                    Value::Module(c_pickle.clone()),
+                    Value::Str("Pickler".to_string()),
+                ],
                 HashMap::new(),
             )
             .expect("_pickle.Pickler should resolve");
@@ -2747,7 +3005,10 @@ mod tests {
             .expect("_pickle.dumps should resolve");
         let expected_dumps = vm
             .builtin_getattr(
-                vec![Value::Module(pickle_module), Value::Str("_dumps".to_string())],
+                vec![
+                    Value::Module(pickle_module),
+                    Value::Str("_dumps".to_string()),
+                ],
                 HashMap::new(),
             )
             .expect("pickle._dumps should resolve");

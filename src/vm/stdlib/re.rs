@@ -124,8 +124,17 @@ impl Vm {
     fn re_match_snapshot(
         &self,
         receiver: &ObjRef,
-    ) -> Result<(Value, i64, i64, Vec<Value>, Vec<Option<(i64, i64)>>, Option<ObjRef>), RuntimeError>
-    {
+    ) -> Result<
+        (
+            Value,
+            i64,
+            i64,
+            Vec<Value>,
+            Vec<Option<(i64, i64)>>,
+            Option<ObjRef>,
+        ),
+        RuntimeError,
+    > {
         let Object::Module(module_data) = &*receiver.kind() else {
             return Err(RuntimeError::new("re match receiver is invalid"));
         };
@@ -222,12 +231,12 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if index == 0 {
             return match source {
-                Value::Str(text) => Ok(Value::Str(
-                    text[start as usize..end as usize].to_string(),
-                )),
+                Value::Str(text) => Ok(Value::Str(text[start as usize..end as usize].to_string())),
                 Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                     let bytes = bytes_like_from_value(source.clone())?;
-                    Ok(self.heap.alloc_bytes(bytes[start as usize..end as usize].to_vec()))
+                    Ok(self
+                        .heap
+                        .alloc_bytes(bytes[start as usize..end as usize].to_vec()))
                 }
                 _ => Err(RuntimeError::new("re match receiver is invalid")),
             };
@@ -246,7 +255,8 @@ impl Vm {
             return self.re_match_group_value(&source, start, end, &groups, 0);
         }
         if args.len() == 1 {
-            let index = self.re_match_group_number(args.first().cloned(), groupindex.as_ref(), max_group)?;
+            let index =
+                self.re_match_group_number(args.first().cloned(), groupindex.as_ref(), max_group)?;
             return self.re_match_group_value(&source, start, end, &groups, index);
         }
         let mut out = Vec::with_capacity(args.len());
@@ -265,11 +275,18 @@ impl Vm {
         if args.len() > 1 {
             return Err(RuntimeError::new("groups() expects at most one argument"));
         }
-        let (_source, _start, _end, groups, _spans, _groupindex) = self.re_match_snapshot(receiver)?;
+        let (_source, _start, _end, groups, _spans, _groupindex) =
+            self.re_match_snapshot(receiver)?;
         let default = args.into_iter().next().unwrap_or(Value::None);
         let values = groups
             .into_iter()
-            .map(|value| if value == Value::None { default.clone() } else { value })
+            .map(|value| {
+                if value == Value::None {
+                    default.clone()
+                } else {
+                    value
+                }
+            })
             .collect::<Vec<_>>();
         Ok(self.heap.alloc_tuple(values))
     }
@@ -280,9 +297,12 @@ impl Vm {
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() > 1 {
-            return Err(RuntimeError::new("groupdict() expects at most one argument"));
+            return Err(RuntimeError::new(
+                "groupdict() expects at most one argument",
+            ));
         }
-        let (_source, _start, _end, groups, _spans, groupindex) = self.re_match_snapshot(receiver)?;
+        let (_source, _start, _end, groups, _spans, groupindex) =
+            self.re_match_snapshot(receiver)?;
         let default = args.into_iter().next().unwrap_or(Value::None);
         let Some(mapping) = groupindex else {
             return Ok(self.heap.alloc_dict(Vec::new()));
@@ -320,7 +340,8 @@ impl Vm {
             return Err(RuntimeError::new("start() expects at most one argument"));
         }
         let (_source, start, _end, groups, spans, groupindex) = self.re_match_snapshot(receiver)?;
-        let index = self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
+        let index =
+            self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
         if index == 0 {
             return Ok(Value::Int(start));
         }
@@ -336,7 +357,8 @@ impl Vm {
             return Err(RuntimeError::new("end() expects at most one argument"));
         }
         let (_source, _start, end, groups, spans, groupindex) = self.re_match_snapshot(receiver)?;
-        let index = self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
+        let index =
+            self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
         if index == 0 {
             return Ok(Value::Int(end));
         }
@@ -352,15 +374,17 @@ impl Vm {
             return Err(RuntimeError::new("span() expects at most one argument"));
         }
         let (_source, start, end, groups, spans, groupindex) = self.re_match_snapshot(receiver)?;
-        let index = self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
+        let index =
+            self.re_match_group_number(args.into_iter().next(), groupindex.as_ref(), groups.len())?;
         if index == 0 {
-            return Ok(self.heap.alloc_tuple(vec![Value::Int(start), Value::Int(end)]));
+            return Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Int(start), Value::Int(end)]));
         }
         let (group_start, group_end) = spans[index - 1].unwrap_or((-1, -1));
-        Ok(self.heap.alloc_tuple(vec![
-            Value::Int(group_start),
-            Value::Int(group_end),
-        ]))
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Int(group_start), Value::Int(group_end)]))
     }
 
     pub(in crate::vm) fn builtin_re_search(
@@ -507,7 +531,9 @@ impl Vm {
         let compiled = self.builtin_re_compile(vec![pattern, Value::Int(flags)], HashMap::new())?;
         if let Value::Module(compiled_obj) = &compiled {
             if let Object::Module(module_data) = &mut *compiled_obj.kind_mut() {
-                module_data.globals.insert("flags".to_string(), Value::Int(flags));
+                module_data
+                    .globals
+                    .insert("flags".to_string(), Value::Int(flags));
                 module_data
                     .globals
                     .insert("groups".to_string(), Value::Int(groups.max(0)));
@@ -562,9 +588,8 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         let code = parse_sre_char_arg(args, kwargs, "_sre.ascii_iscased")?;
-        let is_ascii_letter =
-            (b'a' as u32..=b'z' as u32).contains(&code)
-                || (b'A' as u32..=b'Z' as u32).contains(&code);
+        let is_ascii_letter = (b'a' as u32..=b'z' as u32).contains(&code)
+            || (b'A' as u32..=b'Z' as u32).contains(&code);
         Ok(Value::Bool(is_ascii_letter))
     }
 
@@ -589,7 +614,10 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let code = parse_sre_char_arg(args, kwargs, "_sre.unicode_iscased")?;
         let ch = char::from_u32(code).ok_or_else(|| RuntimeError::new("invalid character code"))?;
-        Ok(Value::Bool(ch != ch.to_lowercase().next().unwrap_or(ch) || ch != ch.to_uppercase().next().unwrap_or(ch)))
+        Ok(Value::Bool(
+            ch != ch.to_lowercase().next().unwrap_or(ch)
+                || ch != ch.to_uppercase().next().unwrap_or(ch),
+        ))
     }
 
     pub(in crate::vm) fn builtin_sre_unicode_tolower(
@@ -871,7 +899,11 @@ impl Vm {
                     }
                     let absolute_start = detail.start;
                     let absolute_end = detail.end;
-                    out.push(self.alloc_re_match_value(source.clone(), detail, groupindex.clone())?);
+                    out.push(self.alloc_re_match_value(
+                        source.clone(),
+                        detail,
+                        groupindex.clone(),
+                    )?);
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
                             break;
@@ -929,7 +961,11 @@ impl Vm {
                     }
                     let absolute_start = detail.start;
                     let absolute_end = detail.end;
-                    out.push(self.alloc_re_match_value(source.clone(), detail, groupindex.clone())?);
+                    out.push(self.alloc_re_match_value(
+                        source.clone(),
+                        detail,
+                        groupindex.clone(),
+                    )?);
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
                             break;
@@ -987,9 +1023,12 @@ fn parse_sre_char_arg(
     fn_name: &str,
 ) -> Result<u32, RuntimeError> {
     if !kwargs.is_empty() || args.len() != 1 {
-        return Err(RuntimeError::new(format!("{fn_name}() expects one integer argument")));
+        return Err(RuntimeError::new(format!(
+            "{fn_name}() expects one integer argument"
+        )));
     }
-    let value = value_to_int(args[0].clone()).map_err(|_| RuntimeError::new("an integer is required"))?;
+    let value =
+        value_to_int(args[0].clone()).map_err(|_| RuntimeError::new("an integer is required"))?;
     if !(0..=0x10ffff).contains(&value) {
         return Err(RuntimeError::new("character code out of range"));
     }
@@ -1093,7 +1132,8 @@ fn csv_sniffer_pattern_findall(pattern: &str, text: &str) -> Option<(usize, Vec<
                 }
                 let mut close = quote_idx + 1;
                 while close < chars.len() {
-                    if chars[close] == quote && (close + 1 == chars.len() || chars[close + 1] == '\n')
+                    if chars[close] == quote
+                        && (close + 1 == chars.len() || chars[close + 1] == '\n')
                     {
                         out.push(vec![delim.to_string(), space.clone(), quote.to_string()]);
                         break;
@@ -1115,7 +1155,8 @@ fn csv_sniffer_pattern_findall(pattern: &str, text: &str) -> Option<(usize, Vec<
                 }
                 let mut close = start + 1;
                 while close < chars.len() {
-                    if chars[close] == quote && (close + 1 == chars.len() || chars[close + 1] == '\n')
+                    if chars[close] == quote
+                        && (close + 1 == chars.len() || chars[close + 1] == '\n')
                     {
                         out.push(vec![quote.to_string()]);
                         break;
@@ -1177,7 +1218,10 @@ mod tests {
         let mut vm = Vm::new();
         let matched = vm
             .builtin_re_match_mode(
-                vec![Value::Str("(a)(b+)?".to_string()), Value::Str("a".to_string())],
+                vec![
+                    Value::Str("(a)(b+)?".to_string()),
+                    Value::Str("a".to_string()),
+                ],
                 HashMap::new(),
                 ReMode::Match,
             )
@@ -1215,7 +1259,10 @@ mod tests {
         let mut vm = Vm::new();
         let matched = vm
             .builtin_re_match_mode(
-                vec![Value::Str("(a)(b+)?".to_string()), Value::Str("a".to_string())],
+                vec![
+                    Value::Str("(a)(b+)?".to_string()),
+                    Value::Str("a".to_string()),
+                ],
                 HashMap::new(),
                 ReMode::Match,
             )
@@ -1268,7 +1315,10 @@ mod tests {
             panic!("groupdict() must return dict object");
         };
         let entries = entries.to_vec();
-        assert!(entries.contains(&(Value::Str("pkg".to_string()), Value::Str("tempfile".to_string()))));
+        assert!(entries.contains(&(
+            Value::Str("pkg".to_string()),
+            Value::Str("tempfile".to_string())
+        )));
         assert!(entries.contains(&(Value::Str("cln".to_string()), Value::None)));
         assert!(entries.contains(&(Value::Str("obj".to_string()), Value::None)));
     }
@@ -1300,9 +1350,18 @@ mod tests {
             panic!("groupdict() must return dict object");
         };
         let entries = entries.to_vec();
-        assert!(entries.contains(&(Value::Str("pkg".to_string()), Value::Str("pkg.mod".to_string()))));
-        assert!(entries.contains(&(Value::Str("cln".to_string()), Value::Str(":attr.child".to_string()))));
-        assert!(entries.contains(&(Value::Str("obj".to_string()), Value::Str("attr.child".to_string()))));
+        assert!(entries.contains(&(
+            Value::Str("pkg".to_string()),
+            Value::Str("pkg.mod".to_string())
+        )));
+        assert!(entries.contains(&(
+            Value::Str("cln".to_string()),
+            Value::Str(":attr.child".to_string())
+        )));
+        assert!(entries.contains(&(
+            Value::Str("obj".to_string()),
+            Value::Str("attr.child".to_string())
+        )));
     }
 
     #[test]
@@ -1387,7 +1446,8 @@ mod tests {
                     vm.heap.alloc_list(vec![Value::Int(1), Value::Int(2)]),
                     Value::Int(1),
                     groupindex.clone(),
-                    vm.heap.alloc_tuple(vec![Value::None, Value::Str("name".to_string())]),
+                    vm.heap
+                        .alloc_tuple(vec![Value::None, Value::Str("name".to_string())]),
                 ],
                 HashMap::new(),
             )

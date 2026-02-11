@@ -467,7 +467,9 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::PickleBufferRelease),
             );
         }
-        let pickler_class = match self.heap.alloc_class(ClassObject::new("Pickler".to_string(), Vec::new()))
+        let pickler_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Pickler".to_string(), Vec::new()))
         {
             Value::Class(class) => class,
             _ => unreachable!(),
@@ -480,15 +482,26 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::PicklePicklerInit),
             );
-            class_data
-                .attrs
-                .insert("dump".to_string(), Value::Builtin(BuiltinFunction::PicklePicklerDump));
+            class_data.attrs.insert(
+                "dump".to_string(),
+                Value::Builtin(BuiltinFunction::PicklePicklerDump),
+            );
+            class_data.attrs.insert(
+                "clear_memo".to_string(),
+                Value::Builtin(BuiltinFunction::PicklePicklerClearMemo),
+            );
+            class_data.attrs.insert(
+                "persistent_id".to_string(),
+                Value::Builtin(BuiltinFunction::PicklePicklerPersistentId),
+            );
         }
-        let unpickler_class =
-            match self.heap.alloc_class(ClassObject::new("Unpickler".to_string(), Vec::new())) {
-                Value::Class(class) => class,
-                _ => unreachable!(),
-            };
+        let unpickler_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Unpickler".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
         if let Object::Class(class_data) = &mut *unpickler_class.kind_mut() {
             class_data
                 .attrs
@@ -500,6 +513,10 @@ impl Vm {
             class_data.attrs.insert(
                 "load".to_string(),
                 Value::Builtin(BuiltinFunction::PickleUnpicklerLoad),
+            );
+            class_data.attrs.insert(
+                "persistent_load".to_string(),
+                Value::Builtin(BuiltinFunction::PickleUnpicklerPersistentLoad),
             );
         }
         self.install_builtin_module(
@@ -515,7 +532,10 @@ impl Vm {
                 ("Pickler", Value::Class(pickler_class)),
                 ("Unpickler", Value::Class(unpickler_class)),
                 ("PickleBuffer", Value::Class(pickle_buffer_class)),
-                ("PickleError", Value::ExceptionType("PickleError".to_string())),
+                (
+                    "PickleError",
+                    Value::ExceptionType("PickleError".to_string()),
+                ),
                 (
                     "PicklingError",
                     Value::ExceptionType("PicklingError".to_string()),
@@ -1436,12 +1456,10 @@ impl Vm {
                     "__repr__".to_string(),
                     Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
                 );
-                class_data
-                    .attrs
-                    .insert(
-                        "__str__".to_string(),
-                        Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
-                    );
+                class_data.attrs.insert(
+                    "__str__".to_string(),
+                    Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
+                );
             }
         }
         self.install_builtin_module(
@@ -2377,6 +2395,30 @@ impl Vm {
                     if let Value::Class(class_ref) = &class {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedInit),
+                            );
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedTell),
+                            );
                         }
                     }
                     ("BufferedReader", class)
@@ -2388,6 +2430,30 @@ impl Vm {
                     if let Value::Class(class_ref) = &class {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedInit),
+                            );
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedTell),
+                            );
                         }
                     }
                     ("BufferedWriter", class)
@@ -2399,6 +2465,30 @@ impl Vm {
                     if let Value::Class(class_ref) = &class {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedInit),
+                            );
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedTell),
+                            );
                         }
                     }
                     ("BufferedRandom", class)
@@ -2678,6 +2768,30 @@ impl Vm {
                     if let Value::Class(class_ref) = &class {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedInit),
+                            );
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedTell),
+                            );
                         }
                     }
                     ("BufferedReader", class)
@@ -2689,6 +2803,30 @@ impl Vm {
                     if let Value::Class(class_ref) = &class {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedInit),
+                            );
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedTell),
+                            );
                         }
                     }
                     ("BufferedWriter", class)
@@ -2700,6 +2838,30 @@ impl Vm {
                     if let Value::Class(class_ref) = &class {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
+                            class_data.attrs.insert(
+                                "__init__".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedInit),
+                            );
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead),
+                            );
+                            class_data.attrs.insert(
+                                "readline".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                            );
+                            class_data.attrs.insert(
+                                "write".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                            );
+                            class_data.attrs.insert(
+                                "seek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                            );
+                            class_data.attrs.insert(
+                                "tell".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedTell),
+                            );
                         }
                     }
                     ("BufferedRandom", class)
@@ -3393,7 +3555,8 @@ impl Vm {
     pub(super) fn has_cpython_pure_module_on_module_path(&self, module_name: &str) -> bool {
         let rel = module_name.replace('.', "/");
         self.module_paths.iter().any(|root| {
-            root.join(format!("{rel}.py")).is_file() || root.join(&rel).join("__init__.py").is_file()
+            root.join(format!("{rel}.py")).is_file()
+                || root.join(&rel).join("__init__.py").is_file()
         })
     }
 
@@ -3405,11 +3568,13 @@ impl Vm {
         let Some(shim_root) = Self::local_shim_root() else {
             return false;
         };
-        shim_root.join(format!("{rel}.py")).is_file() || shim_root.join(rel).join("__init__.py").is_file()
+        shim_root.join(format!("{rel}.py")).is_file()
+            || shim_root.join(rel).join("__init__.py").is_file()
     }
 
     pub(super) fn has_preferred_filesystem_module(&self, module_name: &str) -> bool {
-        self.has_cpython_pure_module_on_module_path(module_name) || self.has_local_shim_module(module_name)
+        self.has_cpython_pure_module_on_module_path(module_name)
+            || self.has_local_shim_module(module_name)
     }
 
     pub(super) fn maybe_prefer_cpython_pure_stdlib_modules(&mut self) {
@@ -4182,11 +4347,7 @@ impl Vm {
             } else {
                 self.ensure_module(&child_name)
             };
-            self.upsert_module_global(
-                &current_module,
-                part,
-                Value::Module(child_module.clone()),
-            );
+            self.upsert_module_global(&current_module, part, Value::Module(child_module.clone()));
             current_module = child_module;
             current_name = child_name;
         }
@@ -4470,7 +4631,11 @@ impl Vm {
         )
     }
 
-    pub(super) fn resolve_import_name(&self, requested: &str, level: usize) -> Result<String, RuntimeError> {
+    pub(super) fn resolve_import_name(
+        &self,
+        requested: &str,
+        level: usize,
+    ) -> Result<String, RuntimeError> {
         if level == 0 {
             return Ok(requested.to_string());
         }
@@ -4515,5 +4680,4 @@ impl Vm {
         }
         Ok(resolved)
     }
-
 }

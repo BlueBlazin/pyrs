@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use pyrs::{compiler, parser, vm::Vm};
 
@@ -139,7 +139,8 @@ fn pyrs_bin() -> Option<PathBuf> {
     if let Ok(mode) = std::env::var("PYRS_SUBPROCESS_BIN_MODE") {
         let mode = mode.trim().to_ascii_lowercase();
         if matches!(mode.as_str(), "debug" | "release") {
-            let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("target/{mode}/pyrs"));
+            let candidate =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("target/{mode}/pyrs"));
             if candidate.is_file() {
                 return Some(candidate);
             }
@@ -192,6 +193,7 @@ fn strict_subprocess_bin() -> Option<PathBuf> {
     }
 
     // Default strict behavior: prefer release subprocesses for long-running stdlib suites.
+    // If debug is newer than release, prefer debug to avoid stale binary mismatches.
     let prefer_release = std::env::var("PYRS_STRICT_PREFER_RELEASE")
         .ok()
         .map(|value| {
@@ -200,14 +202,32 @@ fn strict_subprocess_bin() -> Option<PathBuf> {
         })
         .unwrap_or(true);
 
+    let debug = pyrs_bin();
     if prefer_release {
         let release = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/pyrs");
         if release.is_file() {
-            return Some(release);
+            match debug.as_ref() {
+                Some(debug_bin) if is_older_file(&release, debug_bin) => {}
+                _ => return Some(release),
+            }
         }
     }
 
-    pyrs_bin()
+    debug
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
+}
+
+fn is_older_file(candidate: &Path, reference: &Path) -> bool {
+    let Some(candidate_time) = file_mtime(candidate) else {
+        return false;
+    };
+    let Some(reference_time) = file_mtime(reference) else {
+        return false;
+    };
+    candidate_time < reference_time
 }
 
 fn strict_unittest_timeout() -> Duration {
@@ -372,13 +392,7 @@ fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
         };
 
         let start = Instant::now();
-        let result = run_entry(
-            &lib,
-            entry,
-            mode,
-            strict_bin.as_deref(),
-            entry_timeout,
-        );
+        let result = run_entry(&lib, entry, mode, strict_bin.as_deref(), entry_timeout);
         let elapsed = start.elapsed();
         if timing_trace {
             let tag = if is_allowlisted {
@@ -531,7 +545,9 @@ fn runs_cpython_strict_stdlib_suite() {
 #[test]
 fn runs_cpython_deferred_pickle_suite() {
     if !deferred_pickle_enabled() {
-        eprintln!("skipping deferred pickle strict suite (set PYRS_RUN_DEFERRED_PICKLE=1 to enable)");
+        eprintln!(
+            "skipping deferred pickle strict suite (set PYRS_RUN_DEFERRED_PICKLE=1 to enable)"
+        );
         return;
     }
     let handle = std::thread::Builder::new()

@@ -202,8 +202,7 @@ fn load_global_cache_invalidates_after_store_global() {
 
 #[test]
 fn load_global_cache_invalidates_after_module_attr_store() {
-    let source =
-        "import __main__ as m\nx = 1\ndef f():\n    return x\na = f()\nm.x = 3\nb = f()";
+    let source = "import __main__ as m\nx = 1\ndef f():\n    return x\na = f()\nm.x = 3\nb = f()";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3217,6 +3216,63 @@ ok = (len(r) == 5 and r[1][0] is MyDict and item[0] == 1 and (item[1] is d))
 }
 
 #[test]
+fn pickle_set_and_frozenset_subclass_reduce_ex_use_list_constructor_args() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping set/frozenset reduce_ex shape test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"from test.picklecommon import MySet, MyFrozenSet
+s = MySet([1]); s.foo = 42
+f = MyFrozenSet([1]); f.foo = 42
+sr = s.__reduce_ex__(0)
+fr = f.__reduce_ex__(2)
+set_r = set([1]).__reduce_ex__(0)
+fset_r = frozenset([1]).__reduce_ex__(0)
+ok = (
+    sr[0] is MySet and isinstance(sr[1], tuple) and len(sr[1]) == 1 and
+    isinstance(sr[1][0], list) and sorted(sr[1][0]) == [1] and sr[2] == {'foo': 42} and
+    fr[0] is MyFrozenSet and isinstance(fr[1], tuple) and len(fr[1]) == 1 and
+    isinstance(fr[1][0], list) and sorted(fr[1][0]) == [1] and fr[2] == {'foo': 42} and
+    isinstance(set_r[1][0], list) and sorted(set_r[1][0]) == [1] and
+    isinstance(fset_r[1][0], list) and sorted(fset_r[1][0]) == [1]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_recursive_frozenset_subclass_roundtrips_across_protocols() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping recursive frozenset-subclass pickle test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = r#"import pickle
+class Holder: pass
+class FrozenSetSubclass(frozenset): pass
+holder = Holder()
+holder.attr = FrozenSetSubclass([holder])
+collection = holder.attr
+ok = True
+for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+    value = pickle.loads(pickle.dumps(collection, proto))
+    ok = ok and isinstance(value, FrozenSetSubclass) and len(value) == 1 and (list(value)[0].attr is value)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn class_new_returning_non_instance_skips_init() {
     let source = r#"class Factory:
     def __new__(cls, value):
@@ -3742,7 +3798,8 @@ fn executes_try_except_finally_on_return_statement() {
 
 #[test]
 fn executes_finally_return_overrides_try_return() {
-    let source = "def f():\n    try:\n        return 1\n    finally:\n        return 2\nresult = f()\n";
+    let source =
+        "def f():\n    try:\n        return 1\n    finally:\n        return 2\nresult = f()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4074,7 +4131,8 @@ fn getattr_default_swallows_attribute_error_from_getattr() {
 
 #[test]
 fn getattr_default_handles_generator_missing_call_attr() {
-    let source = "def gen():\n    yield 1\ng = gen()\nok = (getattr(g, '__call__', None) is None)\n";
+    let source =
+        "def gen():\n    yield 1\ng = gen()\nok = (getattr(g, '__call__', None) is None)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -5567,8 +5625,7 @@ fn executes_range_variants() {
 
 #[test]
 fn executes_range_with_keywords() {
-    let source =
-        "a = list(range(stop=3))\nb = list(range(start=1, stop=4))\nc = list(range(start=1, stop=6, step=2))\n";
+    let source = "a = list(range(stop=3))\nb = list(range(start=1, stop=4))\nc = list(range(start=1, stop=6, step=2))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -7446,7 +7503,8 @@ fn executes_thread_start_new_thread_baseline() {
 
 #[test]
 fn executes_thread_count_baseline() {
-    let source = "import _thread\nok = isinstance(_thread._count(), int) and _thread._count() >= 1\n";
+    let source =
+        "import _thread\nok = isinstance(_thread._count(), int) and _thread._count() >= 1\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -7524,7 +7582,9 @@ fn unittest_failed_test_keeps_active_exception_context() {
             assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
         })
         .expect("spawn unittest regression thread");
-    handle.join().expect("unittest regression thread should complete");
+    handle
+        .join()
+        .expect("unittest regression thread should complete");
 }
 
 #[test]
@@ -8628,8 +8688,7 @@ ok = caught
 
 #[test]
 fn subprocess_args_from_interpreter_flags_returns_list() {
-    let source =
-        "import subprocess\nflags = subprocess._args_from_interpreter_flags()\nok = isinstance(flags, list)\n";
+    let source = "import subprocess\nflags = subprocess._args_from_interpreter_flags()\nok = isinstance(flags, list)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

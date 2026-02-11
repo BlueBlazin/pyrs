@@ -83,11 +83,12 @@ impl FunctionObject {
     }
 
     pub fn refresh_plain_positional_call_arity(&mut self) {
-        self.plain_positional_call_arity = if self.defaults.is_empty() && self.kwonly_defaults.is_empty() {
-            self.code.plain_positional_arity
-        } else {
-            None
-        };
+        self.plain_positional_call_arity =
+            if self.defaults.is_empty() && self.kwonly_defaults.is_empty() {
+                self.code.plain_positional_arity
+            } else {
+                None
+            };
         self.touch_call_cache_epoch();
     }
 
@@ -281,6 +282,7 @@ pub enum NativeMethodKind {
     SetUpdate,
     SetUnion,
     SetIntersection,
+    SetDifference,
     SetIsSuperset,
     SetIsSubset,
     SetIsDisjoint,
@@ -773,8 +775,8 @@ impl SetObject {
     fn find_index(&self, value: &Value) -> Option<usize> {
         if let Some(hash) = value_lookup_hash(value) {
             if let Some(bucket) = self.index.get(&hash) {
-                if let Some(index) = bucket
-                    .find_index_with(|index| value_key_equal(&self.values[index], value))
+                if let Some(index) =
+                    bucket.find_index_with(|index| value_key_equal(&self.values[index], value))
                 {
                     return Some(index);
                 }
@@ -1664,10 +1666,7 @@ pub enum Value {
     Int(i64),
     BigInt(Box<BigInt>),
     Float(f64),
-    Complex {
-        real: f64,
-        imag: f64,
-    },
+    Complex { real: f64, imag: f64 },
     Str(String),
     List(ObjRef),
     Tuple(ObjRef),
@@ -1906,7 +1905,8 @@ impl PartialEq for Value {
             | (Value::BoundMethod(a), Value::BoundMethod(b))
             | (Value::Cell(a), Value::Cell(b)) => a.id() == b.id(),
             (Value::Instance(a), Value::Instance(b)) => {
-                if let (Some(left), Some(right)) = (instance_bytes_storage(a), instance_bytes_storage(b))
+                if let (Some(left), Some(right)) =
+                    (instance_bytes_storage(a), instance_bytes_storage(b))
                 {
                     left == right
                 } else {
@@ -1925,7 +1925,9 @@ impl PartialEq for Value {
             }
             (Value::Instance(instance), Value::Bytes(obj))
             | (Value::Bytes(obj), Value::Instance(instance)) => {
-                if let (Some(left), Some(right)) = (instance_bytes_storage(instance), bytes_payload(obj)) {
+                if let (Some(left), Some(right)) =
+                    (instance_bytes_storage(instance), bytes_payload(obj))
+                {
                     left == right
                 } else {
                     false
@@ -1997,6 +1999,7 @@ pub enum BuiltinFunction {
     Dict,
     DictFromKeys,
     Set,
+    SetReduce,
     FrozenSet,
     Bytes,
     ByteArray,
@@ -2053,6 +2056,8 @@ pub enum BuiltinFunction {
     SysExit,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
+    SysGetRecursionLimit,
+    SysSetRecursionLimit,
     SysStdoutWrite,
     SysStdoutBufferWrite,
     SysStdoutFlush,
@@ -2228,8 +2233,11 @@ pub enum BuiltinFunction {
     PickleModuleGetAttr,
     PicklePicklerInit,
     PicklePicklerDump,
+    PicklePicklerClearMemo,
+    PicklePicklerPersistentId,
     PickleUnpicklerInit,
     PickleUnpicklerLoad,
+    PickleUnpicklerPersistentLoad,
     PickleBufferInit,
     PickleBufferRaw,
     PickleBufferRelease,
@@ -2401,6 +2409,7 @@ pub enum BuiltinFunction {
     TypesNewClass,
     EnumConvert,
     TypeAnnotationsGet,
+    TestInternalCapiGetRecursionDepth,
     DataclassesField,
     DataclassesIsDataclass,
     DataclassesFields,
@@ -2432,6 +2441,12 @@ pub enum BuiltinFunction {
     IoFileReadable,
     IoFileWritable,
     IoFileSeekable,
+    IoBufferedInit,
+    IoBufferedRead,
+    IoBufferedReadLine,
+    IoBufferedWrite,
+    IoBufferedSeek,
+    IoBufferedTell,
     IoBaseIter,
     IoBaseNext,
     StringIOInit,
@@ -2618,7 +2633,7 @@ impl BuiltinFunction {
                         Value::Str(_) => {
                             return Err(RuntimeError::new(
                                 "format() with non-empty spec is not available in runtime-only call path",
-                            ))
+                            ));
                         }
                         _ => return Err(RuntimeError::new("format() argument 2 must be str")),
                     }
@@ -2657,6 +2672,12 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOWriteLines
             | BuiltinFunction::BytesIOTruncate
             | BuiltinFunction::IoFileDetach
+            | BuiltinFunction::IoBufferedInit
+            | BuiltinFunction::IoBufferedRead
+            | BuiltinFunction::IoBufferedReadLine
+            | BuiltinFunction::IoBufferedWrite
+            | BuiltinFunction::IoBufferedSeek
+            | BuiltinFunction::IoBufferedTell
             | BuiltinFunction::RePatternFindAll
             | BuiltinFunction::RePatternFindIter
             | BuiltinFunction::SreCompile
@@ -2682,8 +2703,11 @@ impl BuiltinFunction {
             | BuiltinFunction::PickleModuleGetAttr
             | BuiltinFunction::PicklePicklerInit
             | BuiltinFunction::PicklePicklerDump
+            | BuiltinFunction::PicklePicklerClearMemo
+            | BuiltinFunction::PicklePicklerPersistentId
             | BuiltinFunction::PickleUnpicklerInit
             | BuiltinFunction::PickleUnpicklerLoad
+            | BuiltinFunction::PickleUnpicklerPersistentLoad
             | BuiltinFunction::PickleBufferInit
             | BuiltinFunction::PickleBufferRaw
             | BuiltinFunction::PickleBufferRelease
@@ -3252,12 +3276,14 @@ impl BuiltinFunction {
                         _ => Err(RuntimeError::new("list() unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
-                        Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                            Ok(heap.alloc_list(
-                                values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
-                            ))
-                        })
-                        .unwrap_or_else(|| Err(RuntimeError::new("list() unsupported type"))),
+                        Object::MemoryView(view) => {
+                            with_bytes_like_source(&view.source, |values| {
+                                Ok(heap.alloc_list(
+                                    values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                                ))
+                            })
+                            .unwrap_or_else(|| Err(RuntimeError::new("list() unsupported type")))
+                        }
                         _ => Err(RuntimeError::new("list() unsupported type")),
                     },
                     _ => Err(RuntimeError::new("list() unsupported type")),
@@ -3328,12 +3354,14 @@ impl BuiltinFunction {
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
-                        Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                            Ok(heap.alloc_tuple(
-                                values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
-                            ))
-                        })
-                        .unwrap_or_else(|| Err(RuntimeError::new("tuple() unsupported type"))),
+                        Object::MemoryView(view) => {
+                            with_bytes_like_source(&view.source, |values| {
+                                Ok(heap.alloc_tuple(
+                                    values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                                ))
+                            })
+                            .unwrap_or_else(|| Err(RuntimeError::new("tuple() unsupported type")))
+                        }
                         _ => Err(RuntimeError::new("tuple() unsupported type")),
                     },
                     _ => Err(RuntimeError::new("tuple() unsupported type")),
@@ -3471,35 +3499,78 @@ impl BuiltinFunction {
                     Value::Bytes(obj) | Value::ByteArray(obj) => obj.clone(),
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => view.source.clone(),
-                        _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "memoryview() expects bytes-like object",
+                            ));
+                        }
                     },
                     Value::Instance(obj) => match &*obj.kind() {
                         Object::Instance(instance_data) => {
-                            if matches!(
+                            let is_picklebuffer = matches!(
                                 &*instance_data.class.kind(),
                                 Object::Class(class_data)
                                     if class_data.name == "PickleBuffer"
-                                        && matches!(
-                                            instance_data.attrs.get("__pyrs_picklebuffer_released__"),
-                                            Some(Value::Bool(true))
-                                        )
-                            ) {
+                            );
+                            if is_picklebuffer
+                                && matches!(
+                                    instance_data.attrs.get("__pyrs_picklebuffer_released__"),
+                                    Some(Value::Bool(true))
+                                )
+                            {
                                 return Err(RuntimeError::new(
                                     "ValueError: operation forbidden on released PickleBuffer object",
                                 ));
                             }
-                            match instance_data.attrs.get("__pyrs_bytes_storage__") {
-                                Some(Value::Bytes(_)) | Some(Value::ByteArray(_)) => {
-                                    obj.clone()
-                                }
-                                _ => {
+                            if is_picklebuffer {
+                                if let Some(source) = instance_data
+                                    .attrs
+                                    .get("__pyrs_picklebuffer_source__")
+                                    .or_else(|| instance_data.attrs.get("__pyrs_bytes_storage__"))
+                                {
+                                    match source {
+                                        Value::Bytes(source)
+                                        | Value::ByteArray(source)
+                                        | Value::Instance(source) => source.clone(),
+                                        Value::MemoryView(view) => match &*view.kind() {
+                                            Object::MemoryView(view_data) => {
+                                                view_data.source.clone()
+                                            }
+                                            _ => {
+                                                return Err(RuntimeError::new(
+                                                    "memoryview() expects bytes-like object",
+                                                ));
+                                            }
+                                        },
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "memoryview() expects bytes-like object",
+                                            ));
+                                        }
+                                    }
+                                } else {
                                     return Err(RuntimeError::new(
                                         "memoryview() expects bytes-like object",
-                                    ))
+                                    ));
+                                }
+                            } else {
+                                match instance_data.attrs.get("__pyrs_bytes_storage__") {
+                                    Some(Value::Bytes(_)) | Some(Value::ByteArray(_)) => {
+                                        obj.clone()
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "memoryview() expects bytes-like object",
+                                        ));
+                                    }
                                 }
                             }
                         }
-                        _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "memoryview() expects bytes-like object",
+                            ));
+                        }
                     },
                     _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
                 };
@@ -4176,29 +4247,31 @@ impl BuiltinFunction {
                     }
                 };
                 let fields = match &*class.kind() {
-                    Object::Class(class_data) => match class_data.attrs.get("__pyrs_namedtuple_fields__") {
-                        Some(Value::Tuple(fields_obj)) => match &*fields_obj.kind() {
-                            Object::Tuple(values) => values
-                                .iter()
-                                .map(|value| match value {
-                                    Value::Str(name) => Some(name.clone()),
-                                    _ => None,
-                                })
-                                .collect::<Option<Vec<_>>>(),
+                    Object::Class(class_data) => {
+                        match class_data.attrs.get("__pyrs_namedtuple_fields__") {
+                            Some(Value::Tuple(fields_obj)) => match &*fields_obj.kind() {
+                                Object::Tuple(values) => values
+                                    .iter()
+                                    .map(|value| match value {
+                                        Value::Str(name) => Some(name.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Option<Vec<_>>>(),
+                                _ => None,
+                            },
+                            Some(Value::List(fields_obj)) => match &*fields_obj.kind() {
+                                Object::List(values) => values
+                                    .iter()
+                                    .map(|value| match value {
+                                        Value::Str(name) => Some(name.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Option<Vec<_>>>(),
+                                _ => None,
+                            },
                             _ => None,
-                        },
-                        Some(Value::List(fields_obj)) => match &*fields_obj.kind() {
-                            Object::List(values) => values
-                                .iter()
-                                .map(|value| match value {
-                                    Value::Str(name) => Some(name.clone()),
-                                    _ => None,
-                                })
-                                .collect::<Option<Vec<_>>>(),
-                            _ => None,
-                        },
-                        _ => None,
-                    },
+                        }
+                    }
                     _ => None,
                 }
                 .ok_or_else(|| RuntimeError::new("namedtuple._make() requires namedtuple class"))?;
@@ -4320,9 +4393,7 @@ impl BuiltinFunction {
             }
             BuiltinFunction::WeakRefFinalize => {
                 if args.len() < 2 {
-                    return Err(RuntimeError::new(
-                        "finalize() expects object and callback",
-                    ));
+                    return Err(RuntimeError::new("finalize() expects object and callback"));
                 }
                 let object = args[0].clone();
                 let callback = args[1].clone();
@@ -4338,7 +4409,9 @@ impl BuiltinFunction {
                     module_data
                         .globals
                         .insert("__pyrs_weakref_finalize__".to_string(), Value::Bool(true));
-                    module_data.globals.insert("alive".to_string(), Value::Bool(true));
+                    module_data
+                        .globals
+                        .insert("alive".to_string(), Value::Bool(true));
                     module_data.globals.insert("_obj".to_string(), object);
                     module_data.globals.insert("_func".to_string(), callback);
                     module_data
@@ -4348,10 +4421,9 @@ impl BuiltinFunction {
                         .globals
                         .insert("_kwargs".to_string(), callback_kwargs);
                 }
-                let native =
-                    heap.alloc_native_method(NativeMethodObject::new(NativeMethodKind::Builtin(
-                        BuiltinFunction::WeakRefFinalizeDetach,
-                    )));
+                let native = heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::Builtin(BuiltinFunction::WeakRefFinalizeDetach),
+                ));
                 let detach = heap.alloc_bound_method(BoundMethod::new(native, finalizer.clone()));
                 if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
                     module_data.globals.insert("detach".to_string(), detach);
@@ -4374,7 +4446,9 @@ impl BuiltinFunction {
                 if let Object::Module(module_data) = &mut *finalizer.kind_mut() {
                     alive = matches!(module_data.globals.get("alive"), Some(Value::Bool(true)));
                     if alive {
-                        module_data.globals.insert("alive".to_string(), Value::Bool(false));
+                        module_data
+                            .globals
+                            .insert("alive".to_string(), Value::Bool(false));
                         obj = module_data
                             .globals
                             .insert("_obj".to_string(), Value::None)
@@ -4551,6 +4625,8 @@ impl BuiltinFunction {
             | BuiltinFunction::SysExit
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
+            | BuiltinFunction::SysGetRecursionLimit
+            | BuiltinFunction::SysSetRecursionLimit
             | BuiltinFunction::SysStdoutWrite
             | BuiltinFunction::SysStdoutBufferWrite
             | BuiltinFunction::SysStdoutFlush
@@ -4798,6 +4874,7 @@ impl BuiltinFunction {
             | BuiltinFunction::TypesNewClass
             | BuiltinFunction::EnumConvert
             | BuiltinFunction::TypeAnnotationsGet
+            | BuiltinFunction::TestInternalCapiGetRecursionDepth
             | BuiltinFunction::DataclassesField
             | BuiltinFunction::DataclassesIsDataclass
             | BuiltinFunction::DataclassesFields
@@ -4923,6 +5000,7 @@ impl BuiltinFunction {
             | BuiltinFunction::ObjectSetState
             | BuiltinFunction::ObjectReduce
             | BuiltinFunction::ObjectReduceEx
+            | BuiltinFunction::SetReduce
             | BuiltinFunction::StringFormatterParser
             | BuiltinFunction::StringFormatterFieldNameSplit => {
                 Err(RuntimeError::new("builtin requires VM context"))
@@ -5548,8 +5626,10 @@ fn value_to_bytes_with_encoding(
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| values.to_vec())
-                .ok_or_else(|| RuntimeError::new("bytes() unsupported type")),
+            Object::MemoryView(view) => {
+                with_bytes_like_source(&view.source, |values| values.to_vec())
+                    .ok_or_else(|| RuntimeError::new("bytes() unsupported type"))
+            }
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
         other => {
@@ -5569,17 +5649,19 @@ fn value_to_bytes_with_encoding(
 fn with_bytes_like_source<R>(source: &ObjRef, map: impl FnOnce(&[u8]) -> R) -> Option<R> {
     match &*source.kind() {
         Object::Bytes(values) | Object::ByteArray(values) => Some(map(values)),
-        Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_bytes_storage__") {
-            Some(Value::Bytes(storage)) => match &*storage.kind() {
-                Object::Bytes(values) => Some(map(values)),
+        Object::Instance(instance_data) => {
+            match instance_data.attrs.get("__pyrs_bytes_storage__") {
+                Some(Value::Bytes(storage)) => match &*storage.kind() {
+                    Object::Bytes(values) => Some(map(values)),
+                    _ => None,
+                },
+                Some(Value::ByteArray(storage)) => match &*storage.kind() {
+                    Object::ByteArray(values) => Some(map(values)),
+                    _ => None,
+                },
                 _ => None,
-            },
-            Some(Value::ByteArray(storage)) => match &*storage.kind() {
-                Object::ByteArray(values) => Some(map(values)),
-                _ => None,
-            },
-            _ => None,
-        },
+            }
+        }
         _ => None,
     }
 }
@@ -5780,7 +5862,14 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
             Object::Generator(_) => Value::Str("generator".to_string()),
             _ => Value::Str("generator".to_string()),
         },
-        Value::Module(_) => Value::Builtin(BuiltinFunction::TypesModuleType),
+        Value::Module(obj) => match &*obj.kind() {
+            Object::Module(module_data) => match module_data.name.as_str() {
+                "__staticmethod__" => Value::Builtin(BuiltinFunction::StaticMethod),
+                "__classmethod__" => Value::Builtin(BuiltinFunction::ClassMethod),
+                _ => Value::Builtin(BuiltinFunction::TypesModuleType),
+            },
+            _ => Value::Builtin(BuiltinFunction::TypesModuleType),
+        },
         Value::Class(_) => Value::Builtin(BuiltinFunction::Type),
         Value::Instance(instance) => match &*instance.kind() {
             Object::Instance(obj) => Value::Class(obj.class.clone()),
@@ -5817,7 +5906,11 @@ fn format_float(value: f64) -> String {
 }
 
 fn format_complex_component(value: f64) -> String {
-    if value.is_finite() && value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+    if value.is_finite()
+        && value.fract() == 0.0
+        && value >= i64::MIN as f64
+        && value <= i64::MAX as f64
+    {
         return (value as i64).to_string();
     }
     format_float(value)
@@ -6011,9 +6104,7 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method dict.setdefault>".to_string()
                     }
                     NativeMethodKind::DictGet => "<bound method dict.get>".to_string(),
-                    NativeMethodKind::DictGetItem => {
-                        "<bound method dict.__getitem__>".to_string()
-                    }
+                    NativeMethodKind::DictGetItem => "<bound method dict.__getitem__>".to_string(),
                     NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
                     NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
                     NativeMethodKind::ListAppend => "<bound method list.append>".to_string(),
@@ -6042,9 +6133,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::BytesStartsWith => {
                         "<bound method bytes.startswith>".to_string()
                     }
-                    NativeMethodKind::BytesEndsWith => {
-                        "<bound method bytes.endswith>".to_string()
-                    }
+                    NativeMethodKind::BytesEndsWith => "<bound method bytes.endswith>".to_string(),
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
                     NativeMethodKind::BytesTranslate => {
                         "<bound method bytes.translate>".to_string()
@@ -6092,17 +6181,13 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrRPartition => "<bound method str.rpartition>".to_string(),
                     NativeMethodKind::StrCount => "<bound method str.count>".to_string(),
                     NativeMethodKind::StrFind => "<bound method str.find>".to_string(),
-                    NativeMethodKind::StrTranslate => {
-                        "<bound method str.translate>".to_string()
-                    }
+                    NativeMethodKind::StrTranslate => "<bound method str.translate>".to_string(),
                     NativeMethodKind::StrIndex => "<bound method str.index>".to_string(),
                     NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
                     NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
                     NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
                     NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),
-                    NativeMethodKind::StrExpandTabs => {
-                        "<bound method str.expandtabs>".to_string()
-                    }
+                    NativeMethodKind::StrExpandTabs => "<bound method str.expandtabs>".to_string(),
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
@@ -6111,6 +6196,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::SetIntersection => {
                         "<bound method set.intersection>".to_string()
                     }
+                    NativeMethodKind::SetDifference => "<bound method set.difference>".to_string(),
                     NativeMethodKind::SetIsSuperset => "<bound method set.issuperset>".to_string(),
                     NativeMethodKind::SetIsSubset => "<bound method set.issubset>".to_string(),
                     NativeMethodKind::SetIsDisjoint => "<bound method set.isdisjoint>".to_string(),
@@ -6389,8 +6475,9 @@ fn is_truthy_value(value: &Value) -> bool {
             _ => true,
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| !values.is_empty())
-                .unwrap_or(true),
+            Object::MemoryView(view) => {
+                with_bytes_like_source(&view.source, |values| !values.is_empty()).unwrap_or(true)
+            }
             _ => true,
         },
         Value::Iterator(_) => true,
@@ -6580,18 +6667,27 @@ mod tests {
             (Value::Str("c".to_string()), Value::Int(3)),
         ]);
         let removed = dict.remove_key(&Value::Str("b".to_string()));
+        assert_eq!(removed, Some((Value::Str("b".to_string()), Value::Int(2))));
         assert_eq!(
-            removed,
-            Some((Value::Str("b".to_string()), Value::Int(2)))
+            dict.find(&Value::Str("a".to_string())),
+            Some(&Value::Int(1))
         );
-        assert_eq!(dict.find(&Value::Str("a".to_string())), Some(&Value::Int(1)));
-        assert_eq!(dict.find(&Value::Str("c".to_string())), Some(&Value::Int(3)));
+        assert_eq!(
+            dict.find(&Value::Str("c".to_string())),
+            Some(&Value::Int(3))
+        );
         assert!(!dict.contains_key(&Value::Str("b".to_string())));
 
         dict.insert(Value::Str("d".to_string()), Value::Int(4));
         dict.insert(Value::Str("a".to_string()), Value::Int(10));
-        assert_eq!(dict.find(&Value::Str("d".to_string())), Some(&Value::Int(4)));
-        assert_eq!(dict.find(&Value::Str("a".to_string())), Some(&Value::Int(10)));
+        assert_eq!(
+            dict.find(&Value::Str("d".to_string())),
+            Some(&Value::Int(4))
+        );
+        assert_eq!(
+            dict.find(&Value::Str("a".to_string())),
+            Some(&Value::Int(10))
+        );
     }
 
     #[test]

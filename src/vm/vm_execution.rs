@@ -224,9 +224,7 @@ impl Vm {
                         && frame.globals_fallback.is_none()
                         && frame.module_locals_dict.is_none();
                     if cacheable {
-                        if let Some(Some(cached)) =
-                            frame.load_global_inline_cache.get(site_index)
-                        {
+                        if let Some(Some(cached)) = frame.load_global_inline_cache.get(site_index) {
                             if cached.globals_module_id == globals_module_id
                                 && cached.globals_version == globals_version
                                 && cached.builtins_version == self.builtins_version
@@ -268,8 +266,7 @@ impl Vm {
                 };
                 if cacheable && !cache_hit {
                     if let Some(frame) = self.frames.last_mut() {
-                        if let Some(slot) = frame.load_global_inline_cache.get_mut(site_index)
-                        {
+                        if let Some(slot) = frame.load_global_inline_cache.get_mut(site_index) {
                             *slot = Some(LoadGlobalSiteCacheEntry {
                                 globals_module_id,
                                 globals_version,
@@ -455,16 +452,12 @@ impl Vm {
                                             if const_idx < frame.code.constants.len() {
                                                 if let (Some(left_int), Some(right_int)) = (
                                                     left_int,
-                                                    value_to_i64(
-                                                        &frame.code.constants[const_idx],
-                                                    ),
+                                                    value_to_i64(&frame.code.constants[const_idx]),
                                                 ) {
-                                                    cache_to_store = Some(
-                                                        LoadFastSiteCacheEntry {
-                                                            compare_rhs_int: right_int,
-                                                            jump_target: target as usize,
-                                                        },
-                                                    );
+                                                    cache_to_store = Some(LoadFastSiteCacheEntry {
+                                                        compare_rhs_int: right_int,
+                                                        jump_target: target as usize,
+                                                    });
                                                     Some((left_int < right_int, target as usize))
                                                 } else {
                                                     mark_plain = true;
@@ -492,7 +485,8 @@ impl Vm {
                         };
                         if let Some(cache) = cache_to_store {
                             if let Some(frame) = self.frames.last_mut() {
-                                if let Some(slot) = frame.load_fast_inline_cache.get_mut(site_index) {
+                                if let Some(slot) = frame.load_fast_inline_cache.get_mut(site_index)
+                                {
                                     *slot = Some(cache);
                                 }
                             }
@@ -520,9 +514,7 @@ impl Vm {
                         let frame = self.frames.last_mut().expect("frame exists");
                         if idx < frame.fast_locals.len() {
                             if let Some(value) = &frame.fast_locals[idx] {
-                                frame
-                                    .stack
-                                    .push(Self::clone_fast_local_stack_value(value));
+                                frame.stack.push(Self::clone_fast_local_stack_value(value));
                                 true
                             } else {
                                 false
@@ -546,9 +538,7 @@ impl Vm {
                         let frame = self.frames.last_mut().expect("frame exists");
                         if idx < frame.fast_locals.len() {
                             if let Some(value) = &frame.fast_locals[idx] {
-                                frame
-                                    .stack
-                                    .push(Self::clone_fast_local_stack_value(value));
+                                frame.stack.push(Self::clone_fast_local_stack_value(value));
                                 true
                             } else {
                                 false
@@ -699,15 +689,12 @@ impl Vm {
                                         if let (Some(local_idx), Some(const_idx)) =
                                             (cached.fused_local_idx, cached.fused_const_idx)
                                         {
-                                            fused_candidate = Some((
-                                                local_idx as usize,
-                                                const_idx as usize,
-                                            ));
+                                            fused_candidate =
+                                                Some((local_idx as usize, const_idx as usize));
                                         }
                                         fused_direct_one_arg_no_cells =
                                             cached.fused_direct_one_arg_no_cells;
-                                        fused_const_small_int =
-                                            cached.fused_const_small_int;
+                                        fused_const_small_int = cached.fused_const_small_int;
                                         if let Some(func) = cached.fused_direct_func.as_ref() {
                                             fused_direct_cached_func = Some(func.clone());
                                             fused_direct_cached_epoch =
@@ -764,8 +751,7 @@ impl Vm {
                         caller.ip += 3;
                     }
                     self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
-                        &func_obj,
-                        arg,
+                        &func_obj, arg,
                     )?;
                     return Ok(None);
                 }
@@ -791,22 +777,19 @@ impl Vm {
                                 fused_direct_cached_func = None;
                                 fused_direct_cached_epoch = 0;
                             }
-                            fused_const_small_int =
-                                fused_candidate.and_then(|(_, const_idx)| {
-                                    self.frames
-                                        .last()
-                                        .and_then(|frame| frame.code.constants.get(const_idx))
-                                        .and_then(|constant| match constant {
-                                            Value::Int(integer) => Some(*integer),
-                                            Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
-                                            _ => None,
-                                        })
-                                });
+                            fused_const_small_int = fused_candidate.and_then(|(_, const_idx)| {
+                                self.frames
+                                    .last()
+                                    .and_then(|frame| frame.code.constants.get(const_idx))
+                                    .and_then(|constant| match constant {
+                                        Value::Int(integer) => Some(*integer),
+                                        Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
+                                        _ => None,
+                                    })
+                            });
                         }
                         if let Some(frame) = self.frames.last_mut() {
-                            if let Some(slot) =
-                                frame.load_global_inline_cache.get_mut(site_index)
-                            {
+                            if let Some(slot) = frame.load_global_inline_cache.get_mut(site_index) {
                                 *slot = Some(LoadGlobalSiteCacheEntry {
                                     globals_module_id,
                                     globals_version,
@@ -836,9 +819,7 @@ impl Vm {
                         self.resolve_load_global_value(idx)?;
                     if cacheable {
                         if let Some(frame) = self.frames.last_mut() {
-                            if let Some(slot) =
-                                frame.load_global_inline_cache.get_mut(site_index)
-                            {
+                            if let Some(slot) = frame.load_global_inline_cache.get_mut(site_index) {
                                 *slot = Some(LoadGlobalSiteCacheEntry {
                                     globals_module_id,
                                     globals_version,
@@ -869,9 +850,7 @@ impl Vm {
                                         .and_then(Option::as_ref)
                                         .and_then(|value| match value {
                                             Value::Int(integer) => Some(*integer),
-                                            Value::Bool(flag) => {
-                                                Some(if *flag { 1 } else { 0 })
-                                            }
+                                            Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
                                             _ => None,
                                         })
                                 };
@@ -885,9 +864,7 @@ impl Vm {
                                         )?,
                                     }
                                 } else {
-                                    self.fused_fast_local_sub_small_int_arg(
-                                        local_idx, right_int,
-                                    )?
+                                    self.fused_fast_local_sub_small_int_arg(local_idx, right_int)?
                                 }
                             } else {
                                 self.fused_fast_local_sub_const_arg(local_idx, const_idx)?
@@ -948,44 +925,31 @@ impl Vm {
                     self.load_dunder_class_attr(&value)?
                 } else {
                     match value {
-                        Value::Module(module) => {
-                            self.load_attr_module(&module, &attr_name)?
-                        }
-                        Value::Class(class) => {
-                            match self.load_attr_class(&class, &attr_name)? {
-                                AttrAccessOutcome::Value(attr) => attr,
-                                AttrAccessOutcome::ExceptionHandled => {
-                                    return Err(self.runtime_error_from_active_exception(
-                                        "attribute access failed",
-                                    ))
-                                }
+                        Value::Module(module) => self.load_attr_module(&module, &attr_name)?,
+                        Value::Class(class) => match self.load_attr_class(&class, &attr_name)? {
+                            AttrAccessOutcome::Value(attr) => attr,
+                            AttrAccessOutcome::ExceptionHandled => {
+                                return Err(self.runtime_error_from_active_exception(
+                                    "attribute access failed",
+                                ));
                             }
-                        }
+                        },
                         Value::Instance(instance) => {
-                            if let Some(cached_attr) = self
-                                .try_load_attr_instance_site_cache(
-                                    site_index,
-                                    &instance,
-                                    &attr_name,
-                                )?
-                            {
+                            if let Some(cached_attr) = self.try_load_attr_instance_site_cache(
+                                site_index, &instance, &attr_name,
+                            )? {
                                 cached_attr
                             } else {
-                                let loaded = match self.load_attr_instance(
-                                    &instance,
-                                    &attr_name,
-                                )? {
+                                let loaded = match self.load_attr_instance(&instance, &attr_name)? {
                                     AttrAccessOutcome::Value(attr) => attr,
                                     AttrAccessOutcome::ExceptionHandled => {
                                         return Err(self.runtime_error_from_active_exception(
                                             "attribute access failed",
-                                        ))
+                                        ));
                                     }
                                 };
                                 self.update_load_attr_instance_site_cache(
-                                    site_index,
-                                    &instance,
-                                    &attr_name,
+                                    site_index, &instance, &attr_name,
                                 );
                                 loaded
                             }
@@ -996,13 +960,11 @@ impl Vm {
                                 AttrAccessOutcome::ExceptionHandled => {
                                     return Err(self.runtime_error_from_active_exception(
                                         "attribute access failed",
-                                    ))
+                                    ));
                                 }
                             }
                         }
-                        Value::List(list) => {
-                            self.load_attr_list_method(list, &attr_name)?
-                        }
+                        Value::List(list) => self.load_attr_list_method(list, &attr_name)?,
                         Value::Int(value) => {
                             self.load_attr_int_method(Value::Int(value), &attr_name)?
                         }
@@ -1014,20 +976,16 @@ impl Vm {
                         }
                         Value::Complex { real, imag } => match attr_name.as_str() {
                             "__reduce_ex__" | "__reduce__" => {
-                                let wrapper =
-                                    match self.heap.alloc_module(ModuleObject::new(
-                                        "__complex_reduce_ex__".to_string(),
-                                    )) {
-                                        Value::Module(obj) => obj,
-                                        _ => unreachable!(),
-                                    };
-                                if let Object::Module(module_data) =
-                                    &mut *wrapper.kind_mut()
-                                {
-                                    module_data.globals.insert(
-                                        "value".to_string(),
-                                        Value::Complex { real, imag },
-                                    );
+                                let wrapper = match self.heap.alloc_module(ModuleObject::new(
+                                    "__complex_reduce_ex__".to_string(),
+                                )) {
+                                    Value::Module(obj) => obj,
+                                    _ => unreachable!(),
+                                };
+                                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                                    module_data
+                                        .globals
+                                        .insert("value".to_string(), Value::Complex { real, imag });
                                 }
                                 self.alloc_native_bound_method(
                                     NativeMethodKind::ComplexReduceEx,
@@ -1047,40 +1005,26 @@ impl Vm {
                         Value::Bytes(obj) => {
                             let is_bytes = matches!(&*obj.kind(), Object::Bytes(_));
                             if !is_bytes {
-                                return Err(RuntimeError::new(
-                                    "attribute access unsupported type",
-                                ));
+                                return Err(RuntimeError::new("attribute access unsupported type"));
                             }
                             self.load_attr_bytes_method(Value::Bytes(obj), &attr_name)?
                         }
                         Value::ByteArray(obj) => {
                             let is_bytearray = matches!(&*obj.kind(), Object::ByteArray(_));
                             if !is_bytearray {
-                                return Err(RuntimeError::new(
-                                    "attribute access unsupported type",
-                                ));
+                                return Err(RuntimeError::new("attribute access unsupported type"));
                             }
                             self.load_attr_bytes_method(Value::ByteArray(obj), &attr_name)?
                         }
                         Value::Iterator(iterator) => {
                             self.load_attr_iterator(iterator, &attr_name)?
                         }
-                        Value::MemoryView(view) => {
-                            self.load_attr_memoryview(view, &attr_name)?
-                        }
+                        Value::MemoryView(view) => self.load_attr_memoryview(view, &attr_name)?,
                         Value::Set(set) => self.load_attr_set_method(set, &attr_name)?,
-                        Value::FrozenSet(set) => {
-                            self.load_attr_set_method(set, &attr_name)?
-                        }
-                        Value::Dict(dict) => {
-                            self.load_attr_dict_method(dict, &attr_name)?
-                        }
-                        Value::Builtin(builtin) => {
-                            self.load_attr_builtin(builtin, &attr_name)?
-                        }
-                        Value::Function(func) => {
-                            self.load_attr_function(&func, &attr_name)?
-                        }
+                        Value::FrozenSet(set) => self.load_attr_set_method(set, &attr_name)?,
+                        Value::Dict(dict) => self.load_attr_dict_method(dict, &attr_name)?,
+                        Value::Builtin(builtin) => self.load_attr_builtin(builtin, &attr_name)?,
+                        Value::Function(func) => self.load_attr_function(&func, &attr_name)?,
                         Value::BoundMethod(method) => {
                             self.load_attr_bound_method(&method, &attr_name)?
                         }
@@ -1137,28 +1081,22 @@ impl Vm {
                                     ));
                                 }
                             };
-                            let native = self
-                                .heap
-                                .alloc_native_method(NativeMethodObject::new(kind));
+                            let native =
+                                self.heap.alloc_native_method(NativeMethodObject::new(kind));
                             let bound = BoundMethod::new(native, generator);
                             self.heap.alloc_bound_method(bound)
                         }
                         Value::Exception(exception) => match attr_name.as_str() {
                             "__reduce_ex__" | "__reduce__" => self
-                                .alloc_reduce_ex_bound_method(Value::Exception(
-                                    exception.clone(),
-                                )),
+                                .alloc_reduce_ex_bound_method(Value::Exception(exception.clone())),
                             "with_traceback" => {
-                                let wrapper =
-                                    match self.heap.alloc_module(ModuleObject::new(
-                                        "__exception_with_traceback__".to_string(),
-                                    )) {
-                                        Value::Module(obj) => obj,
-                                        _ => unreachable!(),
-                                    };
-                                if let Object::Module(module_data) =
-                                    &mut *wrapper.kind_mut()
-                                {
+                                let wrapper = match self.heap.alloc_module(ModuleObject::new(
+                                    "__exception_with_traceback__".to_string(),
+                                )) {
+                                    Value::Module(obj) => obj,
+                                    _ => unreachable!(),
+                                };
+                                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
                                     module_data.globals.insert(
                                         "exception".to_string(),
                                         Value::Exception(exception.clone()),
@@ -1170,16 +1108,13 @@ impl Vm {
                                 )
                             }
                             "add_note" => {
-                                let wrapper =
-                                    match self.heap.alloc_module(ModuleObject::new(
-                                        "__exception_add_note__".to_string(),
-                                    )) {
-                                        Value::Module(obj) => obj,
-                                        _ => unreachable!(),
-                                    };
-                                if let Object::Module(module_data) =
-                                    &mut *wrapper.kind_mut()
-                                {
+                                let wrapper = match self.heap.alloc_module(ModuleObject::new(
+                                    "__exception_add_note__".to_string(),
+                                )) {
+                                    Value::Module(obj) => obj,
+                                    _ => unreachable!(),
+                                };
+                                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
                                     module_data.globals.insert(
                                         "exception".to_string(),
                                         Value::Exception(exception.clone()),
@@ -1196,12 +1131,7 @@ impl Vm {
                                     Value::None
                                 } else {
                                     self.heap.alloc_list(
-                                        exception
-                                            .notes
-                                            .iter()
-                                            .cloned()
-                                            .map(Value::Str)
-                                            .collect(),
+                                        exception.notes.iter().cloned().map(Value::Str).collect(),
                                     )
                                 }
                             }
@@ -1213,14 +1143,10 @@ impl Vm {
                             "__context__" => exception
                                 .context
                                 .as_ref()
-                                .map(|context| {
-                                    Value::Exception(Box::new((**context).clone()))
-                                })
+                                .map(|context| Value::Exception(Box::new((**context).clone())))
                                 .unwrap_or(Value::None),
                             "__traceback__" => Value::None,
-                            "__suppress_context__" => {
-                                Value::Bool(exception.suppress_context)
-                            }
+                            "__suppress_context__" => Value::Bool(exception.suppress_context),
                             "exceptions" => {
                                 let members = exception
                                     .exceptions
@@ -1247,16 +1173,15 @@ impl Vm {
                             self.load_attr_exception_type(&name, &attr_name)?
                         }
                         _ => {
-                            return Err(RuntimeError::new(
-                                "attribute access unsupported type",
-                            ));
+                            return Err(RuntimeError::new("attribute access unsupported type"));
                         }
                     }
                 };
                 if push_null {
-                    let frame = self.frames.get_mut(caller_idx).ok_or_else(|| {
-                        RuntimeError::new("attribute caller frame missing")
-                    })?;
+                    let frame = self
+                        .frames
+                        .get_mut(caller_idx)
+                        .ok_or_else(|| RuntimeError::new("attribute caller frame missing"))?;
                     frame.stack.push(Value::None);
                 }
                 let frame = self
@@ -1294,16 +1219,13 @@ impl Vm {
                         .clone()
                 };
                 let mut removed = false;
-                let module_slot_idx = self
-                    .frames
-                    .last()
-                    .and_then(|frame| {
-                        if frame.is_module {
-                            frame.code.name_to_index.get(&name).copied()
-                        } else {
-                            None
-                        }
-                    });
+                let module_slot_idx = self.frames.last().and_then(|frame| {
+                    if frame.is_module {
+                        frame.code.name_to_index.get(&name).copied()
+                    } else {
+                        None
+                    }
+                });
                 let mut touched_module_version: Option<(u64, u64)> = None;
                 if let Some(frame) = self.frames.last_mut() {
                     if !frame.is_module {
@@ -1320,8 +1242,29 @@ impl Vm {
                     }
                     if !removed {
                         if let Some(dict) = frame.module_locals_dict.clone() {
-                            removed =
-                                dict_remove_value(&dict, &Value::Str(name.clone())).is_some();
+                            removed = dict_remove_value(&dict, &Value::Str(name.clone())).is_some();
+                        }
+                    }
+                    if !removed {
+                        let deref_idx = frame
+                            .code
+                            .cellvars
+                            .iter()
+                            .position(|cell| cell == &name)
+                            .or_else(|| {
+                                frame
+                                    .code
+                                    .freevars
+                                    .iter()
+                                    .position(|free| free == &name)
+                                    .map(|idx| frame.code.cellvars.len() + idx)
+                            });
+                        if let Some(idx) = deref_idx {
+                            if let Some(cell) = frame.cells.get(idx).cloned() {
+                                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                                    removed = cell_data.value.take().is_some();
+                                }
+                            }
                         }
                     }
                     if !removed {
@@ -1343,10 +1286,7 @@ impl Vm {
                     }
                 }
                 if !removed {
-                    return Err(RuntimeError::new(format!(
-                        "name '{}' is not defined",
-                        name
-                    )));
+                    return Err(RuntimeError::new(format!("name '{}' is not defined", name)));
                 }
                 if let Some((module_id, version)) = touched_module_version {
                     self.propagate_module_globals_version(module_id, version);
@@ -1416,7 +1356,7 @@ impl Vm {
                             AttrMutationOutcome::ExceptionHandled => {
                                 return Err(self.runtime_error_from_active_exception(
                                     "attribute assignment failed",
-                                ))
+                                ));
                             }
                         }
                     }
@@ -1426,16 +1366,12 @@ impl Vm {
                         }
                         self.touch_class_attr_version(&class);
                     }
-                    Value::Function(func) => {
-                        self.store_attr_function(&func, attr_name, value)?
-                    }
+                    Value::Function(func) => self.store_attr_function(&func, attr_name, value)?,
                     Value::Exception(mut exception) => {
                         self.store_attr_exception(&mut exception, &attr_name, value)?
                     }
                     _ => {
-                        return Err(RuntimeError::new(
-                            "attribute assignment unsupported type",
-                        ));
+                        return Err(RuntimeError::new("attribute assignment unsupported type"));
                     }
                 }
             }
@@ -1465,7 +1401,7 @@ impl Vm {
                             AttrMutationOutcome::ExceptionHandled => {
                                 return Err(self.runtime_error_from_active_exception(
                                     "attribute assignment failed",
-                                ))
+                                ));
                             }
                         }
                     }
@@ -1475,16 +1411,12 @@ impl Vm {
                         }
                         self.touch_class_attr_version(&class);
                     }
-                    Value::Function(func) => {
-                        self.store_attr_function(&func, attr_name, value)?
-                    }
+                    Value::Function(func) => self.store_attr_function(&func, attr_name, value)?,
                     Value::Exception(mut exception) => {
                         self.store_attr_exception(&mut exception, &attr_name, value)?
                     }
                     _ => {
-                        return Err(RuntimeError::new(
-                            "attribute assignment unsupported type",
-                        ));
+                        return Err(RuntimeError::new("attribute assignment unsupported type"));
                     }
                 }
             }
@@ -1535,7 +1467,7 @@ impl Vm {
                             AttrMutationOutcome::ExceptionHandled => {
                                 return Err(self.runtime_error_from_active_exception(
                                     "attribute deletion failed",
-                                ))
+                                ));
                             }
                         }
                     }
@@ -1546,9 +1478,7 @@ impl Vm {
                         self.delete_attr_exception(&exception, &attr_name)?;
                     }
                     _ => {
-                        return Err(RuntimeError::new(
-                            "attribute deletion unsupported type",
-                        ));
+                        return Err(RuntimeError::new("attribute deletion unsupported type"));
                     }
                 }
                 if let Some((module_id, version)) = touched_module_version {
@@ -1640,9 +1570,10 @@ impl Vm {
                     if idx >= frame.code.constants.len() {
                         return Err(RuntimeError::new("constant index out of range"));
                     }
-                    let left = frame.stack.pop().ok_or_else(|| {
-                        RuntimeError::new("stack underflow (BinarySubConst lhs)")
-                    })?;
+                    let left = frame
+                        .stack
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("stack underflow (BinarySubConst lhs)"))?;
                     let (right_int, right_value) = match &frame.code.constants[idx] {
                         Value::Int(value) => (Some(*value), None),
                         Value::Bool(flag) => (Some(if *flag { 1 } else { 0 }), None),
@@ -1696,7 +1627,7 @@ impl Vm {
             Opcode::BinaryMod => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                self.push_value(mod_values(left, right)?);
+                self.push_value(mod_values(left, right, &self.heap)?);
             }
             Opcode::BinaryLShift => {
                 let right = self.pop_value()?;
@@ -1798,9 +1729,10 @@ impl Vm {
                     if idx >= frame.code.constants.len() {
                         return Err(RuntimeError::new("constant index out of range"));
                     }
-                    let left = frame.stack.pop().ok_or_else(|| {
-                        RuntimeError::new("stack underflow (CompareLtConst lhs)")
-                    })?;
+                    let left = frame
+                        .stack
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("stack underflow (CompareLtConst lhs)"))?;
                     let (right_int, right_value) = match &frame.code.constants[idx] {
                         Value::Int(value) => (Some(*value), None),
                         Value::Bool(flag) => (Some(if *flag { 1 } else { 0 }), None),
@@ -1957,8 +1889,16 @@ impl Vm {
                         .collect_iterable_values(other)
                         .map_err(|_| RuntimeError::new("unpack expects iterable"))?,
                 };
-                if items.len() != count {
-                    return Err(RuntimeError::new("unpack length mismatch"));
+                if items.len() < count {
+                    return Err(RuntimeError::new(format!(
+                        "not enough values to unpack (expected {count}, got {})",
+                        items.len()
+                    )));
+                }
+                if items.len() > count {
+                    return Err(RuntimeError::new(format!(
+                        "too many values to unpack (expected {count})"
+                    )));
                 }
                 for item in items {
                     self.push_value(item);
@@ -1985,7 +1925,11 @@ impl Vm {
                         .map_err(|_| RuntimeError::new("unpack expects iterable"))?,
                 };
                 if items.len() < before + after {
-                    return Err(RuntimeError::new("unpack length mismatch"));
+                    return Err(RuntimeError::new(format!(
+                        "not enough values to unpack (expected at least {}, got {})",
+                        before + after,
+                        items.len()
+                    )));
                 }
                 let trailing = items.split_off(items.len() - after);
                 let middle = items.split_off(before);
@@ -2015,9 +1959,9 @@ impl Vm {
                 let list = self.pop_value()?;
                 match list {
                     Value::List(obj) => {
-                        let extra = self.collect_iterable_values(other).map_err(|_| {
-                            RuntimeError::new("list extend expects iterable")
-                        })?;
+                        let extra = self
+                            .collect_iterable_values(other)
+                            .map_err(|_| RuntimeError::new("list extend expects iterable"))?;
                         if let Object::List(values) = &mut *obj.kind_mut() {
                             values.extend(extra);
                         }
@@ -2065,9 +2009,7 @@ impl Vm {
                 let lower = value_to_optional_index(lower)?;
                 let upper = value_to_optional_index(upper)?;
                 let step = value_to_optional_index(step)?;
-                self.push_value(Value::Slice(Box::new(SliceValue::new(
-                    lower, upper, step,
-                ))));
+                self.push_value(Value::Slice(Box::new(SliceValue::new(lower, upper, step))));
             }
             Opcode::Subscript => {
                 let index = self.pop_value()?;
@@ -2085,22 +2027,17 @@ impl Vm {
                             let lower = slice.lower;
                             let upper = slice.upper;
                             let step = slice.step;
-                            let replacement =
-                                self.collect_iterable_values(value).map_err(|_| {
-                                    RuntimeError::new("can only assign an iterable")
-                                })?;
+                            let replacement = self
+                                .collect_iterable_values(value)
+                                .map_err(|_| RuntimeError::new("can only assign an iterable"))?;
                             if let Object::List(values) = &mut *obj.kind_mut() {
                                 let step_value = step.unwrap_or(1);
                                 if step_value == 1 {
-                                    let (start, stop) = slice_bounds_for_step_one(
-                                        values.len(),
-                                        lower,
-                                        upper,
-                                    );
+                                    let (start, stop) =
+                                        slice_bounds_for_step_one(values.len(), lower, upper);
                                     values.splice(start..stop, replacement);
                                 } else {
-                                    let indices =
-                                        slice_indices(values.len(), lower, upper, step)?;
+                                    let indices = slice_indices(values.len(), lower, upper, step)?;
                                     if indices.len() != replacement.len() {
                                         return Err(RuntimeError::new(format!(
                                             "attempt to assign sequence of size {} to extended slice of size {}",
@@ -2108,8 +2045,7 @@ impl Vm {
                                             indices.len()
                                         )));
                                     }
-                                    for (idx, item) in indices.into_iter().zip(replacement)
-                                    {
+                                    for (idx, item) in indices.into_iter().zip(replacement) {
                                         values[idx] = item;
                                     }
                                 }
@@ -2123,9 +2059,7 @@ impl Vm {
                                     idx += values.len() as isize;
                                 }
                                 if idx < 0 || idx as usize >= values.len() {
-                                    return Err(RuntimeError::new(
-                                        "list index out of range",
-                                    ));
+                                    return Err(RuntimeError::new("list index out of range"));
                                 }
                                 values[idx as usize] = value;
                             }
@@ -2141,15 +2075,11 @@ impl Vm {
                             if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                 let step_value = step.unwrap_or(1);
                                 if step_value == 1 {
-                                    let (start, stop) = slice_bounds_for_step_one(
-                                        values.len(),
-                                        lower,
-                                        upper,
-                                    );
+                                    let (start, stop) =
+                                        slice_bounds_for_step_one(values.len(), lower, upper);
                                     values.splice(start..stop, replacement);
                                 } else {
-                                    let indices =
-                                        slice_indices(values.len(), lower, upper, step)?;
+                                    let indices = slice_indices(values.len(), lower, upper, step)?;
                                     if indices.len() != replacement.len() {
                                         return Err(RuntimeError::new(format!(
                                             "attempt to assign sequence of size {} to extended slice of size {}",
@@ -2157,8 +2087,7 @@ impl Vm {
                                             indices.len()
                                         )));
                                     }
-                                    for (idx, item) in indices.into_iter().zip(replacement)
-                                    {
+                                    for (idx, item) in indices.into_iter().zip(replacement) {
                                         values[idx] = item;
                                     }
                                 }
@@ -2176,9 +2105,7 @@ impl Vm {
                                 }
                                 let byte = value_to_int(value)?;
                                 if !(0..=255).contains(&byte) {
-                                    return Err(RuntimeError::new(
-                                        "byte must be in range(0, 256)",
-                                    ));
+                                    return Err(RuntimeError::new("byte must be in range(0, 256)"));
                                 }
                                 values[idx as usize] = byte as u8;
                             }
@@ -2188,13 +2115,11 @@ impl Vm {
                     Value::Instance(instance) => match index {
                         Value::Slice(_) => {
                             if self.instance_backing_dict(&instance).is_some() {
-                                return Err(RuntimeError::new(
-                                    "slicing unsupported for dict",
-                                ));
+                                return Err(RuntimeError::new("slicing unsupported for dict"));
                             }
                             let target_value = Value::Instance(instance.clone());
-                            if let Some(setitem) = self
-                                .lookup_bound_special_method(&target_value, "__setitem__")?
+                            if let Some(setitem) =
+                                self.lookup_bound_special_method(&target_value, "__setitem__")?
                             {
                                 match self.call_internal(
                                     setitem,
@@ -2208,23 +2133,17 @@ impl Vm {
                                 }
                                 self.push_value(target_value);
                             } else {
-                                return Err(RuntimeError::new(
-                                    "slice assignment not supported",
-                                ));
+                                return Err(RuntimeError::new("slice assignment not supported"));
                             }
                         }
                         index => {
-                            if let Some(backing_dict) = self.instance_backing_dict(&instance)
-                            {
+                            if let Some(backing_dict) = self.instance_backing_dict(&instance) {
                                 dict_set_value_checked(&backing_dict, index, value)?;
                                 self.push_value(Value::Instance(instance));
                             } else {
                                 let target_value = Value::Instance(instance.clone());
-                                if let Some(setitem) = self
-                                    .lookup_bound_special_method(
-                                        &target_value,
-                                        "__setitem__",
-                                    )?
+                                if let Some(setitem) =
+                                    self.lookup_bound_special_method(&target_value, "__setitem__")?
                                 {
                                     match self.call_internal(
                                         setitem,
@@ -2247,9 +2166,7 @@ impl Vm {
                     },
                     target => match index {
                         Value::Slice(_) => {
-                            return Err(RuntimeError::new(
-                                "slice assignment not supported",
-                            ));
+                            return Err(RuntimeError::new("slice assignment not supported"));
                         }
                         index => match target {
                             Value::Dict(obj) => {
@@ -2272,9 +2189,7 @@ impl Vm {
                                             idx += values.len() as isize;
                                         }
                                         if idx < 0 || idx as usize >= values.len() {
-                                            return Err(RuntimeError::new(
-                                                "index out of range",
-                                            ));
+                                            return Err(RuntimeError::new("index out of range"));
                                         }
                                         let byte = value_to_int(value)?;
                                         if !(0..=255).contains(&byte) {
@@ -2355,9 +2270,7 @@ impl Vm {
                                     idx += values.len() as isize;
                                 }
                                 if idx < 0 || idx as usize >= values.len() {
-                                    return Err(RuntimeError::new(
-                                        "list index out of range",
-                                    ));
+                                    return Err(RuntimeError::new("list index out of range"));
                                 }
                                 values.remove(idx as usize);
                             }
@@ -2400,43 +2313,33 @@ impl Vm {
                     Value::Instance(instance) => match index {
                         Value::Slice(_) => {
                             if self.instance_backing_dict(&instance).is_some() {
-                                return Err(RuntimeError::new(
-                                    "slice deletion not supported",
-                                ));
+                                return Err(RuntimeError::new("slice deletion not supported"));
                             }
                             let target_value = Value::Instance(instance.clone());
-                            if let Some(delitem) = self
-                                .lookup_bound_special_method(&target_value, "__delitem__")?
+                            if let Some(delitem) =
+                                self.lookup_bound_special_method(&target_value, "__delitem__")?
                             {
-                                match self.call_internal(
-                                    delitem,
-                                    vec![index],
-                                    HashMap::new(),
-                                )? {
+                                match self.call_internal(delitem, vec![index], HashMap::new())? {
                                     InternalCallOutcome::Value(_) => {}
                                     InternalCallOutcome::CallerExceptionHandled => {
                                         return Ok(None);
                                     }
                                 }
                             } else {
-                                return Err(RuntimeError::new(
-                                    "slice deletion not supported",
-                                ));
+                                return Err(RuntimeError::new("slice deletion not supported"));
                             }
                         }
                         index => {
-                            if let Some(backing_dict) = self.instance_backing_dict(&instance)
-                            {
+                            if let Some(backing_dict) = self.instance_backing_dict(&instance) {
                                 ensure_hashable(&index)?;
                                 if dict_remove_value(&backing_dict, &index).is_none() {
                                     return Err(RuntimeError::new("key not found"));
                                 }
                             } else {
                                 let target_value = Value::Instance(instance.clone());
-                                if let Some(delitem) = self.lookup_bound_special_method(
-                                    &target_value,
-                                    "__delitem__",
-                                )? {
+                                if let Some(delitem) =
+                                    self.lookup_bound_special_method(&target_value, "__delitem__")?
+                                {
                                     match self.call_internal(
                                         delitem,
                                         vec![index],
@@ -2467,8 +2370,8 @@ impl Vm {
                                 }
                             }
                             _ => {
-                                if let Some(delitem) = self
-                                    .lookup_bound_special_method(&target, "__delitem__")?
+                                if let Some(delitem) =
+                                    self.lookup_bound_special_method(&target, "__delitem__")?
                                 {
                                     match self.call_internal(
                                         delitem,
@@ -2495,13 +2398,15 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing function argument"))?
                     as usize;
-                let value =
-                    {
-                        let frame = self.frames.last().expect("frame exists");
-                        frame.code.constants.get(idx).cloned().ok_or_else(|| {
-                            RuntimeError::new("constant index out of range")
-                        })?
-                    };
+                let value = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame
+                        .code
+                        .constants
+                        .get(idx)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                };
                 let code = match value {
                     Value::Code(code) => code,
                     _ => {
@@ -2543,15 +2448,11 @@ impl Vm {
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => values.clone(),
                         _ => {
-                            return Err(RuntimeError::new(
-                                "expected defaults tuple for function",
-                            ));
+                            return Err(RuntimeError::new("expected defaults tuple for function"));
                         }
                     },
                     _ => {
-                        return Err(RuntimeError::new(
-                            "expected defaults tuple for function",
-                        ));
+                        return Err(RuntimeError::new("expected defaults tuple for function"));
                     }
                 };
                 let module = {
@@ -2562,14 +2463,8 @@ impl Vm {
                         frame.function_globals.clone()
                     }
                 };
-                let func = FunctionObject::new(
-                    code,
-                    module,
-                    defaults,
-                    kwonly_defaults,
-                    Vec::new(),
-                    None,
-                );
+                let func =
+                    FunctionObject::new(code, module, defaults, kwonly_defaults, Vec::new(), None);
                 self.push_value(self.heap.alloc_function(func));
             }
             Opcode::BuildClass => {
@@ -2577,19 +2472,19 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing class code argument"))?
                     as usize;
-                let value =
-                    {
-                        let frame = self.frames.last().expect("frame exists");
-                        frame.code.constants.get(idx).cloned().ok_or_else(|| {
-                            RuntimeError::new("constant index out of range")
-                        })?
-                    };
+                let value = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame
+                        .code
+                        .constants
+                        .get(idx)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                };
                 let code = match value {
                     Value::Code(code) => code,
                     _ => {
-                        return Err(RuntimeError::new(
-                            "expected code object for class body",
-                        ));
+                        return Err(RuntimeError::new("expected code object for class body"));
                     }
                 };
                 let top = self.pop_value()?;
@@ -2691,8 +2586,7 @@ impl Vm {
                     .unwrap_or_else(|| (self.main_module.clone(), None));
                 let class_closure = self.capture_closure_cells_for_code(&code)?;
                 let cells = self.build_cells(&code, class_closure);
-                let mut frame =
-                    self.acquire_frame(code, class_module, true, false, cells, None);
+                let mut frame = self.acquire_frame(code, class_module, true, false, cells, None);
                 frame.function_globals = outer_globals.clone();
                 frame.globals_fallback = Some(outer_globals);
                 frame.locals_fallback = outer_locals;
@@ -2722,14 +2616,8 @@ impl Vm {
                         frame.function_globals.clone()
                     }
                 };
-                let func = FunctionObject::new(
-                    code,
-                    module,
-                    Vec::new(),
-                    HashMap::new(),
-                    Vec::new(),
-                    None,
-                );
+                let func =
+                    FunctionObject::new(code, module, Vec::new(), HashMap::new(), Vec::new(), None);
                 self.push_value(self.heap.alloc_function(func));
             }
             Opcode::SetFunctionAttribute => {
@@ -2748,9 +2636,7 @@ impl Vm {
                             Value::Tuple(obj) => match &*obj.kind() {
                                 Object::Tuple(values) => values.clone(),
                                 _ => {
-                                    return Err(RuntimeError::new(
-                                        "defaults must be tuple",
-                                    ));
+                                    return Err(RuntimeError::new("defaults must be tuple"));
                                 }
                             },
                             _ => return Err(RuntimeError::new("defaults must be tuple")),
@@ -2779,15 +2665,11 @@ impl Vm {
                                     map
                                 }
                                 _ => {
-                                    return Err(RuntimeError::new(
-                                        "kwonly defaults must be dict",
-                                    ));
+                                    return Err(RuntimeError::new("kwonly defaults must be dict"));
                                 }
                             },
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "kwonly defaults must be dict",
-                                ));
+                                return Err(RuntimeError::new("kwonly defaults must be dict"));
                             }
                         };
                         if let Object::Function(func_data) = &mut *func.kind_mut() {
@@ -2846,10 +2728,9 @@ impl Vm {
                 if argc == 0 {
                     let func = {
                         let frame = self.frames.last_mut().expect("frame exists");
-                        frame
-                            .stack
-                            .pop()
-                            .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction func)"))?
+                        frame.stack.pop().ok_or_else(|| {
+                            RuntimeError::new("stack underflow (CallFunction func)")
+                        })?
                     };
                     match func {
                         Value::Function(func_obj) => {
@@ -2863,8 +2744,7 @@ impl Vm {
                             self.push_bound_method_call_zero_args_from_obj(&method_obj)?;
                         }
                         Value::Builtin(builtin) => {
-                            if let Some(result) =
-                                self.try_fast_builtin_zero_arg_no_kwargs(builtin)
+                            if let Some(result) = self.try_fast_builtin_zero_arg_no_kwargs(builtin)
                             {
                                 self.push_value(result);
                             } else {
@@ -2875,11 +2755,8 @@ impl Vm {
                                     .get(caller_idx)
                                     .map(|frame| frame.ip)
                                     .unwrap_or(0);
-                                let call_result = self.call_builtin(
-                                    builtin,
-                                    Vec::new(),
-                                    HashMap::new(),
-                                );
+                                let call_result =
+                                    self.call_builtin(builtin, Vec::new(), HashMap::new());
                                 self.finalize_builtin_opcode_call(
                                     caller_depth,
                                     caller_ip,
@@ -2891,18 +2768,16 @@ impl Vm {
                     }
                 } else if argc == 1 {
                     let site_index = self.current_site_index();
-                    let quickened_one_arg = self
-                        .is_quickened_site(site_index, QuickenedSiteKind::CallFunctionOneArg);
+                    let quickened_one_arg =
+                        self.is_quickened_site(site_index, QuickenedSiteKind::CallFunctionOneArg);
                     let (func, arg0) = {
                         let frame = self.frames.last_mut().expect("frame exists");
-                        let arg0 = frame
-                            .stack
-                            .pop()
-                            .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction arg0)"))?;
-                        let func = frame
-                            .stack
-                            .pop()
-                            .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction func)"))?;
+                        let arg0 = frame.stack.pop().ok_or_else(|| {
+                            RuntimeError::new("stack underflow (CallFunction arg0)")
+                        })?;
+                        let func = frame.stack.pop().ok_or_else(|| {
+                            RuntimeError::new("stack underflow (CallFunction func)")
+                        })?;
                         (func, arg0)
                     };
                     match func {
@@ -2919,10 +2794,7 @@ impl Vm {
                             if quickened_one_arg {
                                 self.clear_quickened_site(site_index);
                             }
-                            self.push_bound_method_call_one_arg_from_obj(
-                                &method_obj,
-                                arg0,
-                            )?;
+                            self.push_bound_method_call_one_arg_from_obj(&method_obj, arg0)?;
                         }
                         Value::Builtin(builtin) => {
                             if quickened_one_arg {
@@ -2940,11 +2812,8 @@ impl Vm {
                                     .get(caller_idx)
                                     .map(|frame| frame.ip)
                                     .unwrap_or(0);
-                                let call_result = self.call_builtin(
-                                    builtin,
-                                    vec![arg0],
-                                    HashMap::new(),
-                                );
+                                let call_result =
+                                    self.call_builtin(builtin, vec![arg0], HashMap::new());
                                 self.finalize_builtin_opcode_call(
                                     caller_depth,
                                     caller_ip,
@@ -2978,11 +2847,7 @@ impl Vm {
                             self.push_function_call_two_args_from_obj(&func_obj, arg0, arg1)?;
                         }
                         Value::BoundMethod(method_obj) => {
-                            self.push_bound_method_call_two_args_from_obj(
-                                &method_obj,
-                                arg0,
-                                arg1,
-                            )?;
+                            self.push_bound_method_call_two_args_from_obj(&method_obj, arg0, arg1)?;
                         }
                         other => self.dispatch_call_no_kwargs(other, vec![arg0, arg1])?,
                     }
@@ -3017,9 +2882,7 @@ impl Vm {
                                 arg2,
                             )?;
                         }
-                        other => {
-                            self.dispatch_call_no_kwargs(other, vec![arg0, arg1, arg2])?
-                        }
+                        other => self.dispatch_call_no_kwargs(other, vec![arg0, arg1, arg2])?,
                     }
                 } else {
                     let mut args = Vec::with_capacity(argc);
@@ -3032,27 +2895,23 @@ impl Vm {
                 }
             }
             Opcode::CallFunction1 => {
-                let (func, arg0) = {
-                    let frame = self.frames.last_mut().expect("frame exists");
-                    let arg0 = frame
-                        .stack
-                        .pop()
-                        .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction1 arg0)"))?;
-                    let func = frame
-                        .stack
-                        .pop()
-                        .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction1 func)"))?;
-                    (func, arg0)
-                };
+                let (func, arg0) =
+                    {
+                        let frame = self.frames.last_mut().expect("frame exists");
+                        let arg0 = frame.stack.pop().ok_or_else(|| {
+                            RuntimeError::new("stack underflow (CallFunction1 arg0)")
+                        })?;
+                        let func = frame.stack.pop().ok_or_else(|| {
+                            RuntimeError::new("stack underflow (CallFunction1 func)")
+                        })?;
+                        (func, arg0)
+                    };
                 match func {
                     Value::Function(func_obj) => {
                         self.push_function_call_one_arg_from_obj(&func_obj, arg0)?;
                     }
                     Value::BoundMethod(method_obj) => {
-                        self.push_bound_method_call_one_arg_from_obj(
-                            &method_obj,
-                            arg0,
-                        )?;
+                        self.push_bound_method_call_one_arg_from_obj(&method_obj, arg0)?;
                     }
                     Value::Builtin(builtin) => {
                         if let Some(result) =
@@ -3067,11 +2926,8 @@ impl Vm {
                                 .get(caller_idx)
                                 .map(|frame| frame.ip)
                                 .unwrap_or(0);
-                            let call_result = self.call_builtin(
-                                builtin,
-                                vec![arg0],
-                                HashMap::new(),
-                            );
+                            let call_result =
+                                self.call_builtin(builtin, vec![arg0], HashMap::new());
                             self.finalize_builtin_opcode_call(
                                 caller_depth,
                                 caller_ip,
@@ -3079,9 +2935,7 @@ impl Vm {
                             )?;
                         }
                     }
-                    other => {
-                        self.dispatch_call_no_kwargs(other, vec![arg0])?
-                    }
+                    other => self.dispatch_call_no_kwargs(other, vec![arg0])?,
                 }
             }
             Opcode::CallCpython => {
@@ -3090,18 +2944,20 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::new("missing call argument"))?;
                 let pos_count = (arg & 0xFFFF) as usize;
                 let kw_idx = (arg >> 16) as u16;
-                let kw_names = if kw_idx == u16::MAX {
-                    None
-                } else {
-                    let idx = kw_idx as usize;
-                    let value = {
-                        let frame = self.frames.last().expect("frame exists");
-                        frame.code.constants.get(idx).cloned().ok_or_else(|| {
-                            RuntimeError::new("constant index out of range")
-                        })?
+                let kw_names =
+                    if kw_idx == u16::MAX {
+                        None
+                    } else {
+                        let idx = kw_idx as usize;
+                        let value =
+                            {
+                                let frame = self.frames.last().expect("frame exists");
+                                frame.code.constants.get(idx).cloned().ok_or_else(|| {
+                                    RuntimeError::new("constant index out of range")
+                                })?
+                            };
+                        Some(value)
                     };
-                    Some(value)
-                };
 
                 let kw_names = if let Some(value) = kw_names {
                     match value {
@@ -3121,16 +2977,12 @@ impl Vm {
                                 Some(names)
                             }
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "kw_names must be tuple of strings",
-                                ));
+                                return Err(RuntimeError::new("kw_names must be tuple of strings"));
                             }
                         },
                         Value::None => None,
                         _ => {
-                            return Err(RuntimeError::new(
-                                "kw_names must be tuple of strings",
-                            ));
+                            return Err(RuntimeError::new("kw_names must be tuple of strings"));
                         }
                     }
                 } else {
@@ -3172,8 +3024,7 @@ impl Vm {
 
                 let mut fast_dispatched = false;
                 if kwargs.is_empty() {
-                    fast_dispatched =
-                        self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
+                    fast_dispatched = self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
                 }
                 if !fast_dispatched {
                     match func {
@@ -3191,10 +3042,8 @@ impl Vm {
                             };
                             match &*method_data.function.kind() {
                                 Object::Function(_) => {
-                                    let mut bound_args =
-                                        Vec::with_capacity(args.len() + 1);
-                                    bound_args
-                                        .push(self.receiver_value(&method_data.receiver)?);
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
                                     bound_args.extend(args);
                                     self.push_function_call_from_obj(
                                         &method_data.function,
@@ -3230,8 +3079,7 @@ impl Vm {
                             }
                         }
                         Value::Class(class) => {
-                            match self.call_internal(Value::Class(class), args, kwargs)?
-                            {
+                            match self.call_internal(Value::Class(class), args, kwargs)? {
                                 InternalCallOutcome::Value(value) => self.push_value(value),
                                 InternalCallOutcome::CallerExceptionHandled => {}
                             }
@@ -3270,15 +3118,10 @@ impl Vm {
                             }
                         }
                         Value::ExceptionType(name) => {
-                            let value =
-                                self.instantiate_exception_type(&name, &args, &kwargs)?;
+                            let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                             self.push_value(value);
                         }
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "attempted to call non-function",
-                            ))
-                        }
+                        _ => return Err(RuntimeError::new("attempted to call non-function")),
                     }
                 }
             }
@@ -3296,9 +3139,7 @@ impl Vm {
                                 match value {
                                     Value::Str(name) => names.push(name.clone()),
                                     _ => {
-                                        return Err(RuntimeError::new(
-                                            "kw names must be strings",
-                                        ));
+                                        return Err(RuntimeError::new("kw names must be strings"));
                                     }
                                 }
                             }
@@ -3340,8 +3181,7 @@ impl Vm {
                 }
                 let mut fast_dispatched = false;
                 if kwargs.is_empty() {
-                    fast_dispatched =
-                        self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
+                    fast_dispatched = self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
                 }
                 if !fast_dispatched {
                     match func {
@@ -3359,10 +3199,8 @@ impl Vm {
                             };
                             match &*method_data.function.kind() {
                                 Object::Function(_) => {
-                                    let mut bound_args =
-                                        Vec::with_capacity(args.len() + 1);
-                                    bound_args
-                                        .push(self.receiver_value(&method_data.receiver)?);
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
                                     bound_args.extend(args);
                                     self.push_function_call_from_obj(
                                         &method_data.function,
@@ -3398,8 +3236,7 @@ impl Vm {
                             }
                         }
                         Value::Class(class) => {
-                            match self.call_internal(Value::Class(class), args, kwargs)?
-                            {
+                            match self.call_internal(Value::Class(class), args, kwargs)? {
                                 InternalCallOutcome::Value(value) => self.push_value(value),
                                 InternalCallOutcome::CallerExceptionHandled => {}
                             }
@@ -3438,15 +3275,10 @@ impl Vm {
                             }
                         }
                         Value::ExceptionType(name) => {
-                            let value =
-                                self.instantiate_exception_type(&name, &args, &kwargs)?;
+                            let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                             self.push_value(value);
                         }
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "attempted to call non-function",
-                            ))
-                        }
+                        _ => return Err(RuntimeError::new("attempted to call non-function")),
                     }
                 }
             }
@@ -3477,8 +3309,7 @@ impl Vm {
                 let mut args = args;
                 let mut fast_dispatched = false;
                 if kwargs.is_empty() {
-                    fast_dispatched =
-                        self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
+                    fast_dispatched = self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
                 }
                 if !fast_dispatched {
                     match func {
@@ -3496,10 +3327,8 @@ impl Vm {
                             };
                             match &*method_data.function.kind() {
                                 Object::Function(_) => {
-                                    let mut bound_args =
-                                        Vec::with_capacity(args.len() + 1);
-                                    bound_args
-                                        .push(self.receiver_value(&method_data.receiver)?);
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
                                     bound_args.extend(args);
                                     self.push_function_call_from_obj(
                                         &method_data.function,
@@ -3535,8 +3364,7 @@ impl Vm {
                             }
                         }
                         Value::Class(class) => {
-                            match self.call_internal(Value::Class(class), args, kwargs)?
-                            {
+                            match self.call_internal(Value::Class(class), args, kwargs)? {
                                 InternalCallOutcome::Value(value) => self.push_value(value),
                                 InternalCallOutcome::CallerExceptionHandled => {}
                             }
@@ -3569,15 +3397,10 @@ impl Vm {
                             }
                         }
                         Value::ExceptionType(name) => {
-                            let value =
-                                self.instantiate_exception_type(&name, &args, &kwargs)?;
+                            let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                             self.push_value(value);
                         }
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "attempted to call non-function",
-                            ))
-                        }
+                        _ => return Err(RuntimeError::new("attempted to call non-function")),
                     }
                 }
             }
@@ -3599,9 +3422,7 @@ impl Vm {
                                     }
                                 };
                                 if map.contains_key(&key) {
-                                    return Err(RuntimeError::new(
-                                        "duplicate keyword argument",
-                                    ));
+                                    return Err(RuntimeError::new("duplicate keyword argument"));
                                 }
                                 map.insert(key, value.clone());
                             }
@@ -3627,16 +3448,13 @@ impl Vm {
                         let method_data = match &*method.kind() {
                             Object::BoundMethod(data) => data.clone(),
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "attempted to call non-function",
-                                ));
+                                return Err(RuntimeError::new("attempted to call non-function"));
                             }
                         };
                         match &*method_data.function.kind() {
                             Object::Function(_) => {
                                 let mut bound_args = Vec::with_capacity(args.len() + 1);
-                                bound_args
-                                    .push(self.receiver_value(&method_data.receiver)?);
+                                bound_args.push(self.receiver_value(&method_data.receiver)?);
                                 bound_args.extend(args);
                                 self.push_function_call_from_obj(
                                     &method_data.function,
@@ -3665,9 +3483,7 @@ impl Vm {
                                 )?;
                             }
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "attempted to call non-function",
-                                ));
+                                return Err(RuntimeError::new("attempted to call non-function"));
                             }
                         }
                     }
@@ -3686,27 +3502,20 @@ impl Vm {
                             .map(|frame| frame.ip)
                             .unwrap_or(0);
                         let call_result = self.call_builtin(builtin, args, kwargs);
-                        self.finalize_builtin_opcode_call(
-                            caller_depth,
-                            caller_ip,
-                            call_result,
-                        )?;
+                        self.finalize_builtin_opcode_call(caller_depth, caller_ip, call_result)?;
                     }
                     Value::Instance(instance) => {
                         let receiver = Value::Instance(instance.clone());
                         let call_target = self
                             .lookup_bound_special_method(&receiver, "__call__")?
-                            .ok_or_else(|| {
-                                RuntimeError::new("attempted to call non-function")
-                            })?;
+                            .ok_or_else(|| RuntimeError::new("attempted to call non-function"))?;
                         match self.call_internal(call_target, args, kwargs)? {
                             InternalCallOutcome::Value(value) => self.push_value(value),
                             InternalCallOutcome::CallerExceptionHandled => {}
                         }
                     }
                     Value::ExceptionType(name) => {
-                        let value =
-                            self.instantiate_exception_type(&name, &args, &kwargs)?;
+                        let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                         self.push_value(value);
                     }
                     _ => return Err(RuntimeError::new("attempted to call non-function")),
@@ -3740,9 +3549,12 @@ impl Vm {
                     as usize;
                 let name = {
                     let frame = self.frames.last().expect("frame exists");
-                    frame.code.names.get(idx).cloned().ok_or_else(|| {
-                        RuntimeError::new("import name index out of range")
-                    })?
+                    frame
+                        .code
+                        .names
+                        .get(idx)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("import name index out of range"))?
                 };
                 let fromlist = self.pop_value()?;
                 let level_value = self.pop_value()?;
@@ -3767,9 +3579,12 @@ impl Vm {
                     as usize;
                 let attr_name = {
                     let frame = self.frames.last().expect("frame exists");
-                    frame.code.names.get(idx).cloned().ok_or_else(|| {
-                        RuntimeError::new("import name index out of range")
-                    })?
+                    frame
+                        .code
+                        .names
+                        .get(idx)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("import name index out of range"))?
                 };
                 let module = self
                     .frames
@@ -3784,17 +3599,13 @@ impl Vm {
                         if attr_name == "*" {
                             let exports = match &*module_obj.kind() {
                                 Object::Module(module_data) => {
-                                    if let Some(all_names) =
-                                        module_data.globals.get("__all__")
-                                    {
+                                    if let Some(all_names) = module_data.globals.get("__all__") {
                                         match all_names {
                                             Value::List(obj) => match &*obj.kind() {
                                                 Object::List(values) => values
                                                     .iter()
                                                     .filter_map(|value| match value {
-                                                        Value::Str(name) => {
-                                                            Some(name.clone())
-                                                        }
+                                                        Value::Str(name) => Some(name.clone()),
                                                         _ => None,
                                                     })
                                                     .collect::<Vec<_>>(),
@@ -3804,9 +3615,7 @@ impl Vm {
                                                 Object::Tuple(values) => values
                                                     .iter()
                                                     .filter_map(|value| match value {
-                                                        Value::Str(name) => {
-                                                            Some(name.clone())
-                                                        }
+                                                        Value::Str(name) => Some(name.clone()),
                                                         _ => None,
                                                     })
                                                     .collect::<Vec<_>>(),
@@ -3842,15 +3651,12 @@ impl Vm {
                                     .collect::<Vec<_>>(),
                                 _ => Vec::new(),
                             };
-                            let frame = if let Some(frame) = self.frames.get_mut(caller_idx)
-                            {
+                            let frame = if let Some(frame) = self.frames.get_mut(caller_idx) {
                                 frame
                             } else if let Some(frame) = self.frames.last_mut() {
                                 frame
                             } else {
-                                return Err(RuntimeError::new(
-                                    "import caller frame missing",
-                                ));
+                                return Err(RuntimeError::new("import caller frame missing"));
                             };
                             let mut touched_globals_version = None;
                             {
@@ -3858,8 +3664,7 @@ impl Vm {
                                     if let Some(slot_idx) =
                                         frame.code.name_to_index.get(&name).copied()
                                     {
-                                        if let Some(slot) = frame.fast_locals.get_mut(slot_idx)
-                                        {
+                                        if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                                             Self::write_fast_local_slot(slot, value.clone());
                                         }
                                         if let Some(existing) = frame.locals.get_mut(&name) {
@@ -3890,22 +3695,15 @@ impl Vm {
                         let module_name = match &*module_obj.kind() {
                             Object::Module(module_data) => module_data.name.clone(),
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "import from expects module object",
-                                ));
+                                return Err(RuntimeError::new("import from expects module object"));
                             }
                         };
                         let attr = match self.load_attr_module(&module_obj, &attr_name) {
                             Ok(attr) => attr,
                             Err(load_err) => {
-                                if let Some(module) =
-                                    self.load_submodule(&module_obj, &attr_name)
-                                {
+                                if let Some(module) = self.load_submodule(&module_obj, &attr_name) {
                                     Value::Module(module)
-                                } else if load_err
-                                    .message
-                                    .contains("has no attribute")
-                                {
+                                } else if load_err.message.contains("has no attribute") {
                                     return Err(RuntimeError::new(format!(
                                         "cannot import name '{}' from '{}'",
                                         attr_name, module_name
@@ -4082,8 +3880,7 @@ impl Vm {
                     return Err(RuntimeError::new("generator ignored GeneratorExit"));
                 }
                 if self.active_generator_resume == Some(owner_id) {
-                    self.generator_resume_outcome =
-                        Some(GeneratorResumeOutcome::Yield(yielded));
+                    self.generator_resume_outcome = Some(GeneratorResumeOutcome::Yield(yielded));
                 } else if let Some(caller) = self.frames.last_mut() {
                     caller.stack.push(yielded);
                 } else {
@@ -4097,12 +3894,7 @@ impl Vm {
                     as usize;
                 let sent = self.pop_value()?;
                 let iter = self.pop_value()?;
-                match self.delegate_yield_from(
-                    &iter,
-                    sent,
-                    None,
-                    GeneratorResumeKind::Next,
-                )? {
+                match self.delegate_yield_from(&iter, sent, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => {
                         self.push_value(iter);
                         self.push_value(value);
@@ -4127,13 +3919,14 @@ impl Vm {
                 let owner_id = owner.id();
                 let (iter_opt, source_opt, sent, thrown, resume_kind) = {
                     let frame = self.frames.last_mut().expect("frame exists");
-                    let source = if frame.yield_from_iter.is_some() {
-                        None
-                    } else {
-                        Some(frame.stack.pop().ok_or_else(|| {
-                            RuntimeError::new("stack underflow (Send source)")
-                        })?)
-                    };
+                    let source =
+                        if frame.yield_from_iter.is_some() {
+                            None
+                        } else {
+                            Some(frame.stack.pop().ok_or_else(|| {
+                                RuntimeError::new("stack underflow (Send source)")
+                            })?)
+                        };
                     let iter = frame.yield_from_iter.take();
                     let sent = frame.generator_resume_value.take().unwrap_or(Value::None);
                     let thrown = frame.generator_pending_throw.take();
@@ -4160,9 +3953,7 @@ impl Vm {
                         self.set_generator_started(&owner, true)?;
                         self.generator_states.insert(owner_id, frame);
                         if resume_kind == GeneratorResumeKind::Close {
-                            return Err(RuntimeError::new(
-                                "generator ignored GeneratorExit",
-                            ));
+                            return Err(RuntimeError::new("generator ignored GeneratorExit"));
                         }
                         if self.active_generator_resume == Some(owner_id) {
                             self.generator_resume_outcome =
@@ -4288,13 +4079,15 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing const argument"))?
                     as usize;
-                let value =
-                    {
-                        let frame = self.frames.last().expect("frame exists");
-                        frame.code.constants.get(idx).cloned().ok_or_else(|| {
-                            RuntimeError::new("constant index out of range")
-                        })?
-                    };
+                let value = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame
+                        .code
+                        .constants
+                        .get(idx)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("constant index out of range"))?
+                };
                 let mut frame = self.frames.pop().expect("frame exists");
                 if let Some(module_dict) = frame.module_locals_dict.take() {
                     self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
@@ -4532,6 +4325,7 @@ impl Vm {
 
         let mut traceback = Vec::new();
         loop {
+            let frame_depth = self.frames.len();
             let Some(frame) = self.frames.last_mut() else {
                 let message = self.format_traceback(&traceback, &exc);
                 return Err(RuntimeError::new(message));
@@ -4548,7 +4342,7 @@ impl Vm {
             }
 
             if let Some(boundary) = self.active_generator_resume_boundary {
-                if self.frames.len() <= boundary {
+                if frame_depth <= boundary {
                     self.pending_generator_exception = Some(exc);
                     self.generator_resume_outcome =
                         Some(GeneratorResumeOutcome::PropagatedException);
@@ -4556,12 +4350,14 @@ impl Vm {
                 }
             }
 
-            // Preserve the caller frame for internal Rust-managed calls (e.g.
-            // descriptor/builtin helper dispatch). The caller should receive
-            // the exception as a regular error value instead of being silently
-            // unwound beneath the internal call boundary.
+            // Preserve the internal-call boundary once unwinding has moved past
+            // the immediate caller frame. This still allows the caller itself
+            // to unwind so outer Python exception handlers can catch the real
+            // exception object (instead of collapsing into a RuntimeError
+            // traceback string at the boundary).
             if let Some(stop_depth) = self.run_stop_depth {
-                if self.frames.len() <= stop_depth {
+                if frame_depth <= stop_depth {
+                    frame.active_exception = Some(exc.clone());
                     let message = self.format_traceback(&traceback, &exc);
                     return Err(RuntimeError::new(message));
                 }
@@ -4582,9 +4378,40 @@ impl Vm {
     }
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
-        let exception_type = classify_runtime_error(&err.message);
-        let exception = ExceptionObject::new(exception_type.to_string(), Some(err.message.clone()));
-        if is_os_error_family(exception_type) {
+        let classified = classify_runtime_error(&err.message);
+        let exception_type = if classified == "RuntimeError" {
+            extract_runtime_error_exception_name(&err.message)
+                .unwrap_or_else(|| classified.to_string())
+        } else {
+            classified.to_string()
+        };
+        if let Some(Value::Exception(active_exception)) = self
+            .frames
+            .last()
+            .and_then(|frame| frame.active_exception.clone())
+        {
+            let traceback_encoded = err.message.starts_with("Traceback (most recent call last):");
+            let prefixed_encoded =
+                runtime_error_line_matches_exception(err.message.trim(), &exception_type);
+            if active_exception.name == exception_type && (traceback_encoded || prefixed_encoded) {
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.active_exception = None;
+                }
+                return self.raise_exception(Value::Exception(active_exception));
+            }
+        }
+        let mut exception_message = Some(err.message.clone());
+        if let Some(from_traceback) =
+            extract_runtime_error_final_message(&err.message, &exception_type)
+        {
+            exception_message = from_traceback;
+        } else if let Some(from_prefixed) =
+            extract_prefixed_exception_message(&err.message, &exception_type)
+        {
+            exception_message = from_prefixed;
+        }
+        let exception = ExceptionObject::new(exception_type.clone(), exception_message);
+        if is_os_error_family(exception_type.as_str()) {
             if let Some(errno) = extract_os_error_errno(&err.message) {
                 exception
                     .attrs
@@ -4598,7 +4425,10 @@ impl Vm {
                     .insert("strerror".to_string(), Value::Str(strerror));
             }
         }
-        if matches!(exception_type, "ImportError" | "ModuleNotFoundError") {
+        if matches!(
+            exception_type.as_str(),
+            "ImportError" | "ModuleNotFoundError"
+        ) {
             if let Some(name) = extract_import_error_name(&err.message) {
                 exception
                     .attrs
@@ -4742,10 +4572,8 @@ impl Vm {
             return Ok((matched_group, remaining_group));
         }
 
-        let matches = self.exception_matches(
-            &Value::Exception(Box::new(exception.clone())),
-            handler_type,
-        )?;
+        let matches =
+            self.exception_matches(&Value::Exception(Box::new(exception.clone())), handler_type)?;
         if matches {
             Ok((Some(exception.clone()), None))
         } else {
@@ -4950,24 +4778,30 @@ impl Vm {
             ));
         }
         match exc {
-            Value::Exception(exception) => output.push_str(&self.format_exception_object(exception)),
+            Value::Exception(exception) => output.push_str(&self.format_exception_chain(exception, 0)),
             _ => output.push_str(&format_value(exc)),
         }
-        if let Value::Exception(exception) = exc {
-            if let Some(cause) = &exception.cause {
+        output
+    }
+
+    fn format_exception_chain(&self, exception: &ExceptionObject, depth: usize) -> String {
+        // Guard against pathological __context__/__cause__ cycles.
+        if depth >= 32 {
+            return self.format_exception_object(exception);
+        }
+        let mut output = String::new();
+        if let Some(cause) = &exception.cause {
+            output.push_str(&self.format_exception_chain(cause, depth + 1));
+            output.push_str("\nThe above exception was the direct cause of the following exception:\n");
+        } else if !exception.suppress_context {
+            if let Some(context) = &exception.context {
+                output.push_str(&self.format_exception_chain(context, depth + 1));
                 output.push_str(
-                    "\nThe above exception was the direct cause of the following exception:\n",
+                    "\nDuring handling of the above exception, another exception occurred:\n",
                 );
-                output.push_str(&self.format_exception_object(cause));
-            } else if !exception.suppress_context {
-                if let Some(context) = &exception.context {
-                    output.push_str(
-                        "\nDuring handling of the above exception, another exception occurred:\n",
-                    );
-                    output.push_str(&self.format_exception_object(context));
-                }
             }
         }
+        output.push_str(&self.format_exception_object(exception));
         output
     }
 
@@ -5178,7 +5012,9 @@ impl Vm {
                         class_data.slots = Some(slot_names);
                         // Preserve the declared __slots__ object shape (str/list/tuple/etc.)
                         // while retaining normalized slot names in ClassObject::slots.
-                        class_data.attrs.insert("__slots__".to_string(), slots_value);
+                        class_data
+                            .attrs
+                            .insert("__slots__".to_string(), slots_value);
                     }
                 }
                 class_data
@@ -5448,7 +5284,11 @@ impl Vm {
     }
 
     #[inline(always)]
-    pub(super) fn store_fast_local(&mut self, idx: usize, value: Value) -> Result<(), RuntimeError> {
+    pub(super) fn store_fast_local(
+        &mut self,
+        idx: usize,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
         let name = {
             let frame = self.frames.last().expect("frame exists");
             frame
@@ -5690,12 +5530,7 @@ impl Vm {
         }
     }
 
-    fn sync_module_frame_fast_local(
-        &mut self,
-        module_id: u64,
-        name: &str,
-        value: Option<Value>,
-    ) {
+    fn sync_module_frame_fast_local(&mut self, module_id: u64, name: &str, value: Option<Value>) {
         for frame in self.frames.iter_mut().rev() {
             if frame.is_module && frame.module.id() == module_id {
                 if let Some(dict) = frame.module_locals_dict.clone() {
@@ -5740,8 +5575,7 @@ impl Vm {
         if instance_data.attrs.contains_key(attr_name) {
             return true;
         }
-        if let Some(Value::Dict(dict_obj)) = instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-        {
+        if let Some(Value::Dict(dict_obj)) = instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR) {
             return dict_get_value(dict_obj, &Value::Str(attr_name.to_string())).is_some();
         }
         false
@@ -5785,8 +5619,7 @@ impl Vm {
                 continue;
             }
             if cached.owner_class.id() != class_ref.id()
-                && self.class_attr_version(&cached.owner_class)
-                    != cached.owner_class_version
+                && self.class_attr_version(&cached.owner_class) != cached.owner_class_version
             {
                 if let Some(frame) = self.frames.last_mut() {
                     if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
@@ -5804,8 +5637,7 @@ impl Vm {
                     self.alloc_builtin_bound_method(builtin, instance.clone())
                 }
                 LoadAttrSiteCacheKind::InstanceClassMethod { descriptor } => {
-                    match self.bind_classmethod_attr(&class_ref, &Value::Module(descriptor))
-                    {
+                    match self.bind_classmethod_attr(&class_ref, &Value::Module(descriptor)) {
                         Some(bound) => bound,
                         None => continue,
                     }
@@ -6057,10 +5889,7 @@ impl Vm {
 
     #[cfg(not(debug_assertions))]
     #[inline]
-    fn fused_direct_one_arg_no_cells_metadata(
-        &self,
-        value: &Value,
-    ) -> Option<(ObjRef, u64)> {
+    fn fused_direct_one_arg_no_cells_metadata(&self, value: &Value) -> Option<(ObjRef, u64)> {
         let func = match value {
             Value::Function(func) => func,
             _ => return None,
@@ -6206,7 +6035,11 @@ impl Vm {
         sub_values(left, Value::Int(right_int), &self.heap)
     }
 
-    fn dispatch_call_no_kwargs(&mut self, func: Value, args: Vec<Value>) -> Result<(), RuntimeError> {
+    fn dispatch_call_no_kwargs(
+        &mut self,
+        func: Value,
+        args: Vec<Value>,
+    ) -> Result<(), RuntimeError> {
         match func {
             Value::Function(func) => {
                 self.push_function_call_from_obj(&func, args, HashMap::new())?;
@@ -6253,9 +6086,7 @@ impl Vm {
                 }
             }
             Value::Builtin(builtin) => {
-                if let Some(value) =
-                    self.try_fast_builtin_no_kwargs(builtin, args.as_slice())?
-                {
+                if let Some(value) = self.try_fast_builtin_no_kwargs(builtin, args.as_slice())? {
                     self.push_value(value);
                     return Ok(());
                 }
@@ -6296,9 +6127,7 @@ impl Vm {
     ) -> Result<bool, RuntimeError> {
         match func {
             Value::Builtin(builtin) => {
-                if let Some(result) =
-                    self.try_fast_builtin_no_kwargs(*builtin, args.as_slice())?
-                {
+                if let Some(result) = self.try_fast_builtin_no_kwargs(*builtin, args.as_slice())? {
                     args.clear();
                     self.push_value(result);
                     return Ok(true);
@@ -6307,11 +6136,7 @@ impl Vm {
             }
             Value::Function(func_obj) => match args.len() {
                 0 => {
-                    self.push_function_call_from_obj(
-                        func_obj,
-                        Vec::new(),
-                        HashMap::new(),
-                    )?;
+                    self.push_function_call_from_obj(func_obj, Vec::new(), HashMap::new())?;
                     Ok(true)
                 }
                 1 => {
@@ -6329,9 +6154,7 @@ impl Vm {
                     let arg2 = args.pop().expect("len checked");
                     let arg1 = args.pop().expect("len checked");
                     let arg0 = args.pop().expect("len checked");
-                    self.push_function_call_three_args_from_obj(
-                        func_obj, arg0, arg1, arg2,
-                    )?;
+                    self.push_function_call_three_args_from_obj(func_obj, arg0, arg1, arg2)?;
                     Ok(true)
                 }
                 _ => Ok(false),
@@ -6349,18 +6172,14 @@ impl Vm {
                 2 => {
                     let arg1 = args.pop().expect("len checked");
                     let arg0 = args.pop().expect("len checked");
-                    self.push_bound_method_call_two_args_from_obj(
-                        method_obj, arg0, arg1,
-                    )?;
+                    self.push_bound_method_call_two_args_from_obj(method_obj, arg0, arg1)?;
                     Ok(true)
                 }
                 3 => {
                     let arg2 = args.pop().expect("len checked");
                     let arg1 = args.pop().expect("len checked");
                     let arg0 = args.pop().expect("len checked");
-                    self.push_bound_method_call_three_args_from_obj(
-                        method_obj, arg0, arg1, arg2,
-                    )?;
+                    self.push_bound_method_call_three_args_from_obj(method_obj, arg0, arg1, arg2)?;
                     Ok(true)
                 }
                 _ => Ok(false),
@@ -6455,10 +6274,7 @@ impl Vm {
     }
 
     #[inline]
-    fn try_fast_builtin_zero_arg_no_kwargs(
-        &self,
-        builtin: BuiltinFunction,
-    ) -> Option<Value> {
+    fn try_fast_builtin_zero_arg_no_kwargs(&self, builtin: BuiltinFunction) -> Option<Value> {
         if builtin == BuiltinFunction::Bool {
             return Some(Value::Bool(false));
         }
@@ -6491,12 +6307,8 @@ impl Vm {
                     .get(caller_idx)
                     .map(|frame| frame.ip)
                     .unwrap_or(0);
-                let call_result = self.call_native_method(
-                    native.kind,
-                    receiver,
-                    Vec::new(),
-                    HashMap::new(),
-                );
+                let call_result =
+                    self.call_native_method(native.kind, receiver, Vec::new(), HashMap::new());
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
             _ => Err(RuntimeError::new("attempted to call non-function")),
@@ -6530,12 +6342,8 @@ impl Vm {
                     .get(caller_idx)
                     .map(|frame| frame.ip)
                     .unwrap_or(0);
-                let call_result = self.call_native_method(
-                    native.kind,
-                    receiver,
-                    vec![arg0],
-                    HashMap::new(),
-                );
+                let call_result =
+                    self.call_native_method(native.kind, receiver, vec![arg0], HashMap::new());
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
             _ => Err(RuntimeError::new("attempted to call non-function")),
@@ -6560,12 +6368,7 @@ impl Vm {
         match &*function.kind() {
             Object::Function(_) => {
                 let receiver_value = self.receiver_value(&receiver)?;
-                self.push_function_call_three_args_from_obj(
-                    &function,
-                    receiver_value,
-                    arg0,
-                    arg1,
-                )
+                self.push_function_call_three_args_from_obj(&function, receiver_value, arg0, arg1)
             }
             Object::NativeMethod(native) => {
                 let caller_depth = self.frames.len();
@@ -6679,7 +6482,9 @@ impl Vm {
                             let valid = {
                                 let func_kind = func.kind();
                                 match &*func_kind {
-                                    Object::Function(data) => data.call_cache_epoch == entry.func_epoch,
+                                    Object::Function(data) => {
+                                        data.call_cache_epoch == entry.func_epoch
+                                    }
                                     _ => false,
                                 }
                             };
@@ -6688,9 +6493,10 @@ impl Vm {
                             } else {
                                 cached_action = match entry.hot_path {
                                     OneArgCallHotPath::SimplePositionalNoCells => {
-                                        if let (Some(code), Some(module)) =
-                                            (entry.cached_code.as_ref(), entry.cached_module.as_ref())
-                                        {
+                                        if let (Some(code), Some(module)) = (
+                                            entry.cached_code.as_ref(),
+                                            entry.cached_module.as_ref(),
+                                        ) {
                                             Some(CachedCallAction::SimpleNoCells {
                                                 code: code.clone(),
                                                 module: module.clone(),
@@ -6736,16 +6542,19 @@ impl Vm {
                     owner_class.as_ref(),
                     arg0,
                 ),
-                CachedCallAction::SimpleNoCellsFromFunc => {
-                    self.push_simple_positional_function_frame_one_arg_no_cells_from_func(func, arg0)
-                }
+                CachedCallAction::SimpleNoCellsFromFunc => self
+                    .push_simple_positional_function_frame_one_arg_no_cells_from_func(func, arg0),
                 CachedCallAction::SimplePositional {
                     code,
                     module,
                     owner_class,
                     closure,
                 } => self.push_simple_positional_function_frame_one_arg(
-                    code, module, owner_class, closure, arg0,
+                    code,
+                    module,
+                    owner_class,
+                    closure,
+                    arg0,
                 ),
                 CachedCallAction::SimplePositionalFromFunc => {
                     self.push_simple_positional_function_frame_one_arg_from_func(func, arg0)
@@ -6852,7 +6661,8 @@ impl Vm {
             Object::Function(data) => data,
             _ => return Err(RuntimeError::new("attempted to call non-function")),
         };
-        if func_data.code.fast_local_count == 1 && func_data.code.plain_positional_arg0_slot == Some(0)
+        if func_data.code.fast_local_count == 1
+            && func_data.code.plain_positional_arg0_slot == Some(0)
         {
             self.push_simple_positional_function_frame_one_arg_slot0_no_cells_ref(
                 &func_data.code,
@@ -7031,7 +6841,12 @@ impl Vm {
         };
         if simple_positional_path {
             return self.push_simple_positional_function_frame_two_args(
-                code, module, owner_class, closure, arg0, arg1,
+                code,
+                module,
+                owner_class,
+                closure,
+                arg0,
+                arg1,
             );
         }
         self.push_function_call_from_obj(func, vec![arg0, arg1], HashMap::new())
@@ -7060,7 +6875,13 @@ impl Vm {
         };
         if simple_positional_path {
             return self.push_simple_positional_function_frame_three_args(
-                code, module, owner_class, closure, arg0, arg1, arg2,
+                code,
+                module,
+                owner_class,
+                closure,
+                arg0,
+                arg1,
+                arg2,
             );
         }
         self.push_function_call_from_obj(func, vec![arg0, arg1, arg2], HashMap::new())
@@ -7109,9 +6930,18 @@ impl Vm {
         value: Value,
     ) {
         let (slot_idx, cell_idx) = match arg_index {
-            0 => (code.plain_positional_arg0_slot, code.plain_positional_arg0_cell),
-            1 => (code.plain_positional_arg1_slot, code.plain_positional_arg1_cell),
-            2 => (code.plain_positional_arg2_slot, code.plain_positional_arg2_cell),
+            0 => (
+                code.plain_positional_arg0_slot,
+                code.plain_positional_arg0_cell,
+            ),
+            1 => (
+                code.plain_positional_arg1_slot,
+                code.plain_positional_arg1_cell,
+            ),
+            2 => (
+                code.plain_positional_arg2_slot,
+                code.plain_positional_arg2_cell,
+            ),
             _ => (
                 code.positional_param_slot_indexes
                     .get(arg_index)
@@ -7374,7 +7204,10 @@ impl Vm {
         }
     }
 
-    pub(super) fn bound_method_reduce_receiver_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
+    pub(super) fn bound_method_reduce_receiver_value(
+        &self,
+        receiver: &ObjRef,
+    ) -> Result<Value, RuntimeError> {
         if let Object::Module(module_data) = &*receiver.kind() {
             if let Some(value) = module_data.globals.get("value") {
                 return Ok(value.clone());
@@ -7450,13 +7283,21 @@ impl Vm {
         class_data.metaclass.clone()
     }
 
-    pub(super) fn alloc_native_bound_method(&self, kind: NativeMethodKind, receiver: ObjRef) -> Value {
+    pub(super) fn alloc_native_bound_method(
+        &self,
+        kind: NativeMethodKind,
+        receiver: ObjRef,
+    ) -> Value {
         let native = self.heap.alloc_native_method(NativeMethodObject::new(kind));
         let bound = BoundMethod::new(native, receiver);
         self.heap.alloc_bound_method(bound)
     }
 
-    pub(super) fn alloc_builtin_bound_method(&self, builtin: BuiltinFunction, receiver: ObjRef) -> Value {
+    pub(super) fn alloc_builtin_bound_method(
+        &self,
+        builtin: BuiltinFunction,
+        receiver: ObjRef,
+    ) -> Value {
         self.alloc_native_bound_method(NativeMethodKind::Builtin(builtin), receiver)
     }
 
@@ -7640,7 +7481,11 @@ impl Vm {
         ))
     }
 
-    pub(super) fn load_attr_property_instance(&self, instance: &ObjRef, attr_name: &str) -> Option<Value> {
+    pub(super) fn load_attr_property_instance(
+        &self,
+        instance: &ObjRef,
+        attr_name: &str,
+    ) -> Option<Value> {
         let Some((fget, fset, fdel, doc)) = self.property_descriptor_parts(instance) else {
             return None;
         };
@@ -7695,5 +7540,4 @@ impl Vm {
             _ => None,
         }
     }
-
 }

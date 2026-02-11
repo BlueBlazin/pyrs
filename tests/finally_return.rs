@@ -1,8 +1,4 @@
-use pyrs::{
-    compiler, parser,
-    runtime::Value,
-    vm::Vm,
-};
+use pyrs::{compiler, parser, runtime::Value, vm::Vm};
 
 #[test]
 fn try_finally_runs_on_return() {
@@ -30,7 +26,8 @@ fn try_except_finally_runs_on_return() {
 
 #[test]
 fn finally_return_overrides_try_return() {
-    let source = "def f():\n    try:\n        return 1\n    finally:\n        return 2\nresult = f()\n";
+    let source =
+        "def f():\n    try:\n        return 1\n    finally:\n        return 2\nresult = f()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
