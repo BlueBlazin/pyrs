@@ -23,7 +23,7 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.60-0.61s` user-time (`~0.62-0.64s` wall) for the `fib(29)x5` gate
+  - ~`0.61-0.63s` user-time (`~0.61-0.64s` wall) for the `fib(29)x5` gate
   - `python3.10` baseline for the same gate: ~`0.50s` user-time
   - ~`0.14-0.15s` user-time for `print(fib(29))` single-run reference
   - `python3.10` baseline for `print(fib(29))`: ~`0.11s` user-time
@@ -133,3 +133,7 @@ Last updated: 2026-02-11
   - fixed `LOAD_GLOBAL` fused-direct path to avoid borrow-check workarounds and route cached direct no-cells calls through borrowed function metadata paths,
   - one-arg no-cells inline-cache hot path now avoids per-call `code/module/owner_class` cloning and dispatches through `push_simple_positional_function_frame_one_arg_no_cells_from_func`,
   - added slot-0/no-cells fast acquire path for same-module/no-owner frames; profiling still shows simple-frame acquisition and eval-loop dispatch as top remaining costs.
+- Latest call/dispatch checkpoint:
+  - added a dedicated slot-0 simple-frame recycle fast path and wired strict fast-return sites to use it with owner-aware fallback,
+  - split release `LOAD_FAST` quickened handling into explicit hot-site branches (already-quickened compare-jump/plain vs first-time probe) to reduce repeated probe overhead,
+  - current warm benchmark remains around `0.61-0.63s` user for `fib(29)x5`; remaining gap is still dominated by eval-loop dispatch and recursive frame/call churn.

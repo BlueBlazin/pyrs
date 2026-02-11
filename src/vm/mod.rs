@@ -993,23 +993,47 @@ impl Vm {
     }
 
     #[inline(always)]
-    fn recycle_simple_frame_clean(&mut self, frame: Box<Frame>) {
-        let mut frame = match self.try_recycle_simple_slot0_frame(frame) {
-            Ok(()) => return,
-            Err(frame) => frame,
-        };
-        if self.simple_frame_pool.len() >= 256 {
+    fn recycle_simple_frame_clean_slot0_unchecked(&mut self, mut frame: Box<Frame>) {
+        debug_assert!(frame.owner_class.is_none());
+        debug_assert!(frame.code.fast_local_count == 1);
+        debug_assert!(frame.code.plain_positional_arg0_slot == Some(0));
+        debug_assert!(frame.locals.is_empty());
+        debug_assert!(frame.cells.is_empty());
+        debug_assert!(frame.blocks.is_empty());
+        debug_assert!(frame.class_bases.is_empty());
+        debug_assert!(frame.class_keywords.is_empty());
+        debug_assert!(frame.stack.is_empty());
+        debug_assert!(frame.module_locals_dict.is_none());
+        debug_assert!(frame.globals_fallback.is_none());
+        debug_assert!(frame.locals_fallback.is_none());
+        debug_assert!(frame.return_instance.is_none());
+        debug_assert!(frame.class_metaclass.is_none());
+        debug_assert!(frame.generator_owner.is_none());
+        debug_assert!(frame.generator_resume_value.is_none());
+        debug_assert!(frame.generator_pending_throw.is_none());
+        debug_assert!(frame.generator_resume_kind.is_none());
+        debug_assert!(frame.yield_from_iter.is_none());
+        debug_assert!(frame.active_exception.is_none());
+        debug_assert!(!frame.discard_result);
+        debug_assert!(!frame.return_class);
+        debug_assert!(!frame.expect_none_return);
+        debug_assert!(!frame.generator_awaiting_resume_value);
+        debug_assert!(!frame.is_module);
+        debug_assert!(!frame.return_module);
+
+        if self.simple_slot0_pool.len() >= 256 {
             return;
         }
+
+        let key = Self::slot0_pool_key(&frame.code, &frame.module);
+        self.retarget_simple_slot0_pool(key);
         frame.ip = 0;
         frame.last_ip = 0;
         if let Some(slot) = frame.fast_locals.get_mut(0) {
             *slot = None;
-        } else {
-            frame.fast_locals.fill(None);
         }
         frame.simple_one_arg_no_cells = true;
-        self.simple_frame_pool.push(frame);
+        self.simple_slot0_pool.push(frame);
     }
 
     pub fn get_global(&self, name: &str) -> Option<Value> {
