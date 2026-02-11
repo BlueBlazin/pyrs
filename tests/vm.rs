@@ -1387,6 +1387,24 @@ x = len(Sized())
 }
 
 #[test]
+fn deleting_module_name_clears_future_lookups() {
+    let source = r#"x = 41
+del x
+missing = False
+try:
+    x
+except Exception as exc:
+    missing = "not defined" in str(exc)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("missing"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn builtin_len_rejects_invalid_dunder_len_results() {
     let source = r#"class Negative:
     def __len__(self):

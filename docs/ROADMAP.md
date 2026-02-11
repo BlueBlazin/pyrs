@@ -42,7 +42,7 @@ Canonical benchmark suite:
 - `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.54s` vs `python3.10 ~0.51s` (`~1.06x`)
+- `fib(29)x5`: `pyrs ~0.54-0.55s` vs `python3.10 ~0.50-0.51s` (`~1.08-1.10x`)
 - dispatch hotpath: `pyrs ~0.48-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
 - dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
 - pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)

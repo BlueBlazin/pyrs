@@ -1294,6 +1294,16 @@ impl Vm {
                         .clone()
                 };
                 let mut removed = false;
+                let module_slot_idx = self
+                    .frames
+                    .last()
+                    .and_then(|frame| {
+                        if frame.is_module {
+                            frame.code.name_to_index.get(&name).copied()
+                        } else {
+                            None
+                        }
+                    });
                 let mut touched_module_version: Option<(u64, u64)> = None;
                 if let Some(frame) = self.frames.last_mut() {
                     if !frame.is_module {
@@ -1321,6 +1331,13 @@ impl Vm {
                                 module_data.touch_globals_version();
                                 touched_module_version =
                                     Some((frame.module.id(), module_data.globals_version));
+                            }
+                        }
+                    }
+                    if removed {
+                        if let Some(slot_idx) = module_slot_idx {
+                            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                                *slot = None;
                             }
                         }
                     }
@@ -5495,6 +5512,11 @@ impl Vm {
                 .get(name_index)
                 .ok_or_else(|| RuntimeError::new("name index out of range"))?;
             if frame.is_module {
+                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
+                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                        Self::write_fast_local_slot(slot, value.clone());
+                    }
+                }
                 if let Some(dict) = frame.module_locals_dict.clone() {
                     dict_set_value(&dict, Value::Str(name.clone()), value.clone());
                 }
@@ -5533,6 +5555,11 @@ impl Vm {
         let mut module_write: Option<(ObjRef, Value)> = None;
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
+                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
+                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                        Self::write_fast_local_slot(slot, value.clone());
+                    }
+                }
                 if let Some(dict) = frame.module_locals_dict.clone() {
                     dict_set_value(&dict, Value::Str(name.to_string()), value.clone());
                 }
@@ -5560,6 +5587,7 @@ impl Vm {
 
     #[inline]
     fn upsert_module_global(&mut self, module: &ObjRef, name: &str, value: Value) {
+        let slot_value = value.clone();
         let mut version = None;
         if let Object::Module(module_data) = &mut *module.kind_mut() {
             if let Some(existing) = module_data.globals.get_mut(name) {
@@ -5570,8 +5598,27 @@ impl Vm {
             module_data.touch_globals_version();
             version = Some(module_data.globals_version);
         }
+        self.sync_module_frame_fast_local(module.id(), name, Some(slot_value));
         if let Some(version) = version {
             self.propagate_module_globals_version(module.id(), version);
+        }
+    }
+
+    fn sync_module_frame_fast_local(
+        &mut self,
+        module_id: u64,
+        name: &str,
+        value: Option<Value>,
+    ) {
+        for frame in self.frames.iter_mut().rev() {
+            if frame.is_module && frame.module.id() == module_id {
+                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
+                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                        *slot = value;
+                    }
+                }
+                break;
+            }
         }
     }
 
@@ -6110,6 +6157,12 @@ impl Vm {
                 }
             }
             Value::Builtin(builtin) => {
+                if let Some(value) =
+                    self.try_fast_builtin_no_kwargs(builtin, args.as_slice())?
+                {
+                    self.push_value(value);
+                    return Ok(());
+                }
                 let caller_depth = self.frames.len();
                 let caller_idx = caller_depth.saturating_sub(1);
                 let caller_ip = self
@@ -6147,19 +6200,12 @@ impl Vm {
     ) -> Result<bool, RuntimeError> {
         match func {
             Value::Builtin(builtin) => {
-                if args.is_empty() {
-                    if let Some(result) = self.try_fast_builtin_zero_arg_no_kwargs(*builtin) {
-                        self.push_value(result);
-                        return Ok(true);
-                    }
-                } else if args.len() == 1 {
-                    if let Some(result) =
-                        self.try_fast_builtin_single_arg_no_kwargs(*builtin, &args[0])?
-                    {
-                        let _ = args.pop();
-                        self.push_value(result);
-                        return Ok(true);
-                    }
+                if let Some(result) =
+                    self.try_fast_builtin_no_kwargs(*builtin, args.as_slice())?
+                {
+                    args.clear();
+                    self.push_value(result);
+                    return Ok(true);
                 }
                 Ok(false)
             }
@@ -6224,6 +6270,19 @@ impl Vm {
                 _ => Ok(false),
             },
             _ => Ok(false),
+        }
+    }
+
+    #[inline]
+    fn try_fast_builtin_no_kwargs(
+        &mut self,
+        builtin: BuiltinFunction,
+        args: &[Value],
+    ) -> Result<Option<Value>, RuntimeError> {
+        match args {
+            [] => Ok(self.try_fast_builtin_zero_arg_no_kwargs(builtin)),
+            [arg0] => self.try_fast_builtin_single_arg_no_kwargs(builtin, arg0),
+            _ => Ok(None),
         }
     }
 

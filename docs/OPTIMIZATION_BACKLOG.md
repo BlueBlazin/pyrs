@@ -21,7 +21,7 @@ Last updated: 2026-02-11
 - `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.51s` user (`~1.06x`)
+- `fib(29)x5`: `pyrs ~0.54-0.55s` user vs `python3.10 ~0.50-0.51s` user (`~1.08-1.10x`)
 - dispatch hotpath: `pyrs ~0.48-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
 - dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
 - pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
@@ -100,6 +100,7 @@ Latest local snapshot (2026-02-11):
   - Added no-keyword small-arity internal-call fast paths in `call_internal` to reduce call/arg churn in stdlib-heavy paths (notably pickle stack).
   - Reduced `LOAD_NAME`/`STORE_NAME` churn in module-scope hot loops by removing `String` clone in `LOAD_NAME` and routing `STORE_NAME` through indexed name storage (`store_name_by_index`) with in-place module/global updates.
   - Added guarded module-scope `LOAD_NAME` site caching (reusing global cache slots with module+builtins version guards) to reduce repeated name lookup/hash churn in top-level loops.
+  - Synced module-frame fast-local slots on global writes (`STORE_GLOBAL`/module upserts) to preserve correctness for accelerated `LOAD_NAME` resolution.
   - Dispatch benchmark now sits around `~0.48-0.60s` in current local runs while preserving vm + curated harness parity.
 - Container checkpoint:
   - Dict backend now keeps an explicit entry-to-slot backreference map, removing O(slots) delete slot scans and replacing broad slot-index decrements with live-entry-directed updates after removal.
