@@ -106,6 +106,10 @@ Milestone 13 completion is blocked on P0 closure of:
   - `LOAD_NAME` cache checks now use `frame.function_globals_version` directly, avoiding per-op module-kind version lookups.
 - Optimization phase-1 closeout is complete; unresolved throughput gaps remain tracked in `docs/OPTIMIZATION_BACKLOG.md` (`OPT-022` through `OPT-026` and related P1 items).
 - CI now runs `scripts/bench_dispatch_hotpath.sh` as non-blocking telemetry and uploads the benchmark artifact for regression tracking.
+- Deferred pickle strict lane status:
+  - `test/test_pickletools.py` is passing in strict subprocess mode.
+  - `test/test_pickle.py` is down to one blocker (`CPicklingErrorTests.test_bad_newobj_ex_args`, proto>=4 C-pickler parity).
+  - `_pickle.Pickler.dump` currently carries a temporary error-remap shim for `__newobj_ex__` C-path mismatch; removal is required before Milestone 13 closure.
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
 - Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.
 - If optimization work is resumed as primary focus, it must explicitly close foundational missing surfaces tracked in backlog (`OPT-022` string interning strategy and remaining `OPT-023+` dispatch/call/container items).

@@ -18,7 +18,7 @@ No partially implemented surface is allowed to remain untracked.
 |---|---|---|---|
 | `json` | Pure-module-first path exists; native fallback still partial | Full CPython semantic parity, malformed-input differential coverage, and perf baseline | 13 |
 | `_csv`/`csv` | Native substrate exists; behavior still partial in long-tail cases | Full parser/writer parity (`test_csv` class), malformed-input hardening, perf baseline | 13 |
-| `pickle`/`pickletools`/`copyreg` | Partial parity; deferred strict pickle lane still open | Strict deferred lane closure + protocol/runtime parity + perf baseline | 13 |
+| `pickle`/`pickletools`/`copyreg` | Deferred strict lane mostly green; remaining blocker is `_pickle.Pickler` vs `pickle._Pickler` parity in `CPicklingErrorTests.test_bad_newobj_ex_args` (proto>=4), with temporary dump-error remap logic in place | Remove temporary `_pickle.Pickler.dump` remap path, land full `__newobj_ex__` CPython C-path parity for proto>=4, and close deferred strict lane | 13 |
 | `_io` | Core mode/newline/validation behavior implemented; stream parity incomplete | Complete `_io` behavior required by strict stdlib and pure-stdlib execution | 13 |
 | `_sre` | Core accelerator surface bootstrapped; long-tail behavior pending | Pure `Lib/re/*` default path passes strict/curated gates | 13 |
 | Hash containers | Dict backend upgraded; set/frozenset mostly hash-indexed | Long-tail semantic + performance parity closure for dict/set/frozenset | 13/14 |
