@@ -5,8 +5,8 @@ mod dict_backend;
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::rc::{Rc, Weak};
@@ -319,6 +319,16 @@ pub enum NativeMethodKind {
     FunctoolsWrapsDecorator,
     FunctoolsPartialCall,
     FunctoolsCmpToKeyCall,
+    CodecsIncrementalEncoderFactoryCall,
+    CodecsIncrementalDecoderFactoryCall,
+    CodecsIncrementalEncoderEncode,
+    CodecsIncrementalEncoderReset,
+    CodecsIncrementalEncoderGetState,
+    CodecsIncrementalEncoderSetState,
+    CodecsIncrementalDecoderDecode,
+    CodecsIncrementalDecoderReset,
+    CodecsIncrementalDecoderGetState,
+    CodecsIncrementalDecoderSetState,
 }
 
 #[derive(Debug, Clone)]
@@ -2335,6 +2345,18 @@ pub enum BuiltinFunction {
     CodecsEscapeDecode,
     CodecsLookup,
     CodecsRegister,
+    CodecsGetIncrementalEncoder,
+    CodecsGetIncrementalDecoder,
+    CodecsIncrementalEncoderInit,
+    CodecsIncrementalEncoderEncode,
+    CodecsIncrementalEncoderReset,
+    CodecsIncrementalEncoderGetState,
+    CodecsIncrementalEncoderSetState,
+    CodecsIncrementalDecoderInit,
+    CodecsIncrementalDecoderDecode,
+    CodecsIncrementalDecoderReset,
+    CodecsIncrementalDecoderGetState,
+    CodecsIncrementalDecoderSetState,
     UnicodedataNormalize,
     ReSearch,
     ReMatch,
@@ -4925,6 +4947,18 @@ impl BuiltinFunction {
             | BuiltinFunction::CodecsEscapeDecode
             | BuiltinFunction::CodecsLookup
             | BuiltinFunction::CodecsRegister
+            | BuiltinFunction::CodecsGetIncrementalEncoder
+            | BuiltinFunction::CodecsGetIncrementalDecoder
+            | BuiltinFunction::CodecsIncrementalEncoderInit
+            | BuiltinFunction::CodecsIncrementalEncoderEncode
+            | BuiltinFunction::CodecsIncrementalEncoderReset
+            | BuiltinFunction::CodecsIncrementalEncoderGetState
+            | BuiltinFunction::CodecsIncrementalEncoderSetState
+            | BuiltinFunction::CodecsIncrementalDecoderInit
+            | BuiltinFunction::CodecsIncrementalDecoderDecode
+            | BuiltinFunction::CodecsIncrementalDecoderReset
+            | BuiltinFunction::CodecsIncrementalDecoderGetState
+            | BuiltinFunction::CodecsIncrementalDecoderSetState
             | BuiltinFunction::UnicodedataNormalize
             | BuiltinFunction::SelectSelect
             | BuiltinFunction::ReSearch
@@ -6291,9 +6325,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::IntBitLengthMethod => {
                         "<bound method int.bit_length>".to_string()
                     }
-                    NativeMethodKind::IntIndexMethod => {
-                        "<bound method int.__index__>".to_string()
-                    }
+                    NativeMethodKind::IntIndexMethod => "<bound method int.__index__>".to_string(),
                     NativeMethodKind::StrStartsWith => "<bound method str.startswith>".to_string(),
                     NativeMethodKind::StrEndsWith => "<bound method str.endswith>".to_string(),
                     NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),
@@ -6448,6 +6480,36 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::FunctoolsCmpToKeyCall => {
                         "<bound method functools.cmp_to_key-call>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalEncoderFactoryCall => {
+                        "<bound method codecs.incrementalencoder-factory-call>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalDecoderFactoryCall => {
+                        "<bound method codecs.incrementaldecoder-factory-call>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalEncoderEncode => {
+                        "<bound method codecs.incrementalencoder.encode>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalEncoderReset => {
+                        "<bound method codecs.incrementalencoder.reset>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalEncoderGetState => {
+                        "<bound method codecs.incrementalencoder.getstate>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalEncoderSetState => {
+                        "<bound method codecs.incrementalencoder.setstate>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalDecoderDecode => {
+                        "<bound method codecs.incrementaldecoder.decode>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalDecoderReset => {
+                        "<bound method codecs.incrementaldecoder.reset>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalDecoderGetState => {
+                        "<bound method codecs.incrementaldecoder.getstate>".to_string()
+                    }
+                    NativeMethodKind::CodecsIncrementalDecoderSetState => {
+                        "<bound method codecs.incrementaldecoder.setstate>".to_string()
                     }
                 },
                 _ => "<bound method ?>".to_string(),

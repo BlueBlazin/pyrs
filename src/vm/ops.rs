@@ -3,11 +3,11 @@ use std::cmp::Ordering;
 use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
 use super::{
-    mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod,
-    value_to_int, NumericValue,
+    NumericValue, mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div,
+    python_mod, value_to_int,
 };
 use crate::runtime::{
-    format_repr, format_value, BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value,
+    BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,
 };
 
 fn int_like_to_bigint(value: &Value) -> Option<BigInt> {
@@ -1658,9 +1658,10 @@ mod tests {
         );
         let err = ordering_from_cmp_value(Value::Str("nope".to_string()))
             .expect_err("non-int-like cmp value should fail");
-        assert!(err
-            .message
-            .contains("cmp_to_key comparator must return a number"));
+        assert!(
+            err.message
+                .contains("cmp_to_key comparator must return a number")
+        );
     }
 
     #[test]

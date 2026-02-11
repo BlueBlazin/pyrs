@@ -1287,8 +1287,7 @@ impl Vm {
                 _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
             },
             Value::Module(obj) => {
-                let is_array =
-                    matches!(&*obj.kind(), Object::Module(module_data) if module_data.name == "__array__");
+                let is_array = matches!(&*obj.kind(), Object::Module(module_data) if module_data.name == "__array__");
                 if is_array {
                     obj
                 } else {
@@ -1300,14 +1299,16 @@ impl Vm {
                 if let Some(buffer_method) =
                     self.lookup_bound_special_method(&receiver, "__buffer__")?
                 {
-                    let buffer_value =
-                        match self.call_internal(buffer_method, vec![Value::Int(0)], HashMap::new())?
-                        {
-                            InternalCallOutcome::Value(value) => value,
-                            InternalCallOutcome::CallerExceptionHandled => {
-                                return Err(RuntimeError::new("__buffer__() raised an exception"));
-                            }
-                        };
+                    let buffer_value = match self.call_internal(
+                        buffer_method,
+                        vec![Value::Int(0)],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("__buffer__() raised an exception"));
+                        }
+                    };
                     match buffer_value {
                         Value::MemoryView(view_obj) => match &*view_obj.kind() {
                             Object::MemoryView(view_data) => view_data.source.clone(),

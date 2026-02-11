@@ -32,8 +32,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::containers::{
@@ -52,10 +52,10 @@ use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::parser;
 use crate::runtime::{
-    format_repr, format_value, BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject,
-    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
-    ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
-    SuperObject, Value,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
+    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
+    NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError, SuperObject, Value,
+    format_repr, format_value,
 };
 
 #[derive(Debug, Clone)]
@@ -3034,11 +3034,7 @@ fn erfc_approx(x: f64) -> f64 {
                             + t * (-1.135_203_98
                                 + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
     let ans = t * poly.exp();
-    if x >= 0.0 {
-        ans
-    } else {
-        2.0 - ans
-    }
+    if x >= 0.0 { ans } else { 2.0 - ans }
 }
 
 fn binary_operator<F>(
@@ -4395,11 +4391,7 @@ fn class_matches(class: &ReCharClass, ch: char) -> bool {
             code >= start_code && code <= end_code
         });
     }
-    if class.negated {
-        !matched
-    } else {
-        matched
-    }
+    if class.negated { !matched } else { matched }
 }
 
 fn atom_matches_char(atom: &ReAtom, ch: char) -> bool {
@@ -5853,6 +5845,7 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "TimeoutError" => Some("OSError"),
         "NotADirectoryError" => Some("OSError"),
         "PermissionError" => Some("OSError"),
+        "UnsupportedOperation" => Some("OSError"),
         "TypeError" => Some("Exception"),
         "ValueError" => Some("Exception"),
         "Error" => Some("Exception"),
@@ -6843,6 +6836,7 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
                 | "ConnectionAbortedError"
                 | "ConnectionRefusedError"
                 | "ConnectionResetError"
+                | "UnsupportedOperation"
         )
     {
         return true;
@@ -7371,8 +7365,14 @@ fn is_runtime_type_name_marker(name: &str) -> bool {
 }
 
 fn runtime_error_matches_exception(message: &str, expected: &str) -> bool {
-    if classify_runtime_error(message) == expected {
+    let classified = classify_runtime_error(message);
+    if classified == expected || exception_type_is_subclass(classified, expected) {
         return true;
+    }
+    if let Some(exception_name) = extract_runtime_error_exception_name(message) {
+        if exception_name == expected || exception_type_is_subclass(&exception_name, expected) {
+            return true;
+        }
     }
     let Some(last_non_empty_line) = message
         .lines()

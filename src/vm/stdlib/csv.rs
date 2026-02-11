@@ -1880,21 +1880,24 @@ mod tests {
 
         let err = validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, ",", 0)
             .expect_err("delimiter in lineterminator should fail");
-        assert!(err
-            .message
-            .contains("bad delimiter or lineterminator value"));
+        assert!(
+            err.message
+                .contains("bad delimiter or lineterminator value")
+        );
 
         let err = validate_csv_parameter_consistency(',', Some('"'), None, false, "\"", 0)
             .expect_err("quotechar in lineterminator should fail");
-        assert!(err
-            .message
-            .contains("bad quotechar or lineterminator value"));
+        assert!(
+            err.message
+                .contains("bad quotechar or lineterminator value")
+        );
 
         let err = validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, "\\", 0)
             .expect_err("escapechar in lineterminator should fail");
-        assert!(err
-            .message
-            .contains("bad escapechar or lineterminator value"));
+        assert!(
+            err.message
+                .contains("bad escapechar or lineterminator value")
+        );
 
         assert!(
             validate_csv_parameter_consistency(',', Some('"'), Some('\\'), false, "", 0).is_ok()

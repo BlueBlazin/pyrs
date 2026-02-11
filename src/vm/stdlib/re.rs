@@ -1193,15 +1193,19 @@ mod tests {
         let (groups, matches) = csv_sniffer_pattern_findall(CSV_SNIFFER_PATTERN_1, sample)
             .expect("pattern 1 should run");
         assert_eq!(groups, 3);
-        assert!(matches
-            .iter()
-            .any(|entry| entry == &vec![",".to_string(), "".to_string(), "\"".to_string()]));
+        assert!(
+            matches
+                .iter()
+                .any(|entry| entry == &vec![",".to_string(), "".to_string(), "\"".to_string()])
+        );
 
         let (_, line_start_matches) =
             csv_sniffer_pattern_findall(CSV_SNIFFER_PATTERN_2, sample).expect("pattern 2 runs");
-        assert!(line_start_matches
-            .iter()
-            .any(|entry| entry[0] == "\"" && entry[1] == "," && entry[2].is_empty()));
+        assert!(
+            line_start_matches
+                .iter()
+                .any(|entry| entry[0] == "\"" && entry[1] == "," && entry[2].is_empty())
+        );
     }
 
     #[test]

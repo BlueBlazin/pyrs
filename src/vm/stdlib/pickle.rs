@@ -2926,9 +2926,11 @@ mod tests {
         let arity_err = vm
             .builtin_object_reduce_ex(Vec::new(), HashMap::new())
             .expect_err("missing self should fail");
-        assert!(arity_err
-            .message
-            .contains("object.__reduce_ex__() takes one or two arguments"));
+        assert!(
+            arity_err
+                .message
+                .contains("object.__reduce_ex__() takes one or two arguments")
+        );
 
         vm.builtin_object_reduce_ex(
             vec![Value::Int(1), Value::Str("bad".to_string())],
@@ -2940,9 +2942,11 @@ mod tests {
         let dialect_err = vm
             .builtin_object_reduce_ex(vec![dialect, Value::Int(4)], HashMap::new())
             .expect_err("dialect pickling should fail");
-        assert!(dialect_err
-            .message
-            .contains("cannot pickle 'Dialect' instances"));
+        assert!(
+            dialect_err
+                .message
+                .contains("cannot pickle 'Dialect' instances")
+        );
     }
 
     #[test]

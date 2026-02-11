@@ -642,6 +642,60 @@ impl Vm {
             "IncrementalEncoder".to_string(),
             Vec::new(),
         ));
+        if let Value::Class(class_obj) = &incremental_decoder_class {
+            if let Object::Class(class_data) = &mut *class_obj.kind_mut() {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("codecs".to_string()));
+                class_data.attrs.insert(
+                    "__init__".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderInit),
+                );
+                class_data.attrs.insert(
+                    "decode".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderDecode),
+                );
+                class_data.attrs.insert(
+                    "reset".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderReset),
+                );
+                class_data.attrs.insert(
+                    "getstate".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderGetState),
+                );
+                class_data.attrs.insert(
+                    "setstate".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderSetState),
+                );
+            }
+        }
+        if let Value::Class(class_obj) = &incremental_encoder_class {
+            if let Object::Class(class_data) = &mut *class_obj.kind_mut() {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("codecs".to_string()));
+                class_data.attrs.insert(
+                    "__init__".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderInit),
+                );
+                class_data.attrs.insert(
+                    "encode".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderEncode),
+                );
+                class_data.attrs.insert(
+                    "reset".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderReset),
+                );
+                class_data.attrs.insert(
+                    "getstate".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderGetState),
+                );
+                class_data.attrs.insert(
+                    "setstate".to_string(),
+                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderSetState),
+                );
+            }
+        }
         let stream_reader_class = self
             .heap
             .alloc_class(ClassObject::new("StreamReader".to_string(), Vec::new()));
@@ -656,6 +710,14 @@ impl Vm {
                 ("escape_decode", BuiltinFunction::CodecsEscapeDecode),
                 ("lookup", BuiltinFunction::CodecsLookup),
                 ("register", BuiltinFunction::CodecsRegister),
+                (
+                    "getincrementalencoder",
+                    BuiltinFunction::CodecsGetIncrementalEncoder,
+                ),
+                (
+                    "getincrementaldecoder",
+                    BuiltinFunction::CodecsGetIncrementalDecoder,
+                ),
             ],
             vec![
                 ("BOM_UTF8", self.heap.alloc_bytes(vec![0xEF, 0xBB, 0xBF])),
@@ -3723,11 +3785,7 @@ impl Vm {
                 roots.push(PathBuf::from(path));
             }
         }
-        if roots.is_empty() {
-            None
-        } else {
-            Some(roots)
-        }
+        if roots.is_empty() { None } else { Some(roots) }
     }
 
     pub(super) fn find_module_source_in_roots(

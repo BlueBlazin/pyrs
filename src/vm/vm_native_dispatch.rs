@@ -24,6 +24,12 @@ impl Vm {
                     | NativeMethodKind::StrRFind
                     | NativeMethodKind::BytesTranslate
                     | NativeMethodKind::ListSort
+                    | NativeMethodKind::CodecsIncrementalEncoderFactoryCall
+                    | NativeMethodKind::CodecsIncrementalDecoderFactoryCall
+                    | NativeMethodKind::CodecsIncrementalEncoderEncode
+                    | NativeMethodKind::CodecsIncrementalDecoderDecode
+                    | NativeMethodKind::CodecsIncrementalEncoderSetState
+                    | NativeMethodKind::CodecsIncrementalDecoderSetState
                     | NativeMethodKind::Builtin(_)
             )
         {
@@ -1237,6 +1243,400 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(self.heap.alloc_bytes(output)))
             }
+            NativeMethodKind::CodecsIncrementalEncoderFactoryCall => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "IncrementalEncoder() expects optional errors argument",
+                    ));
+                }
+                let mut errors_arg = if args.is_empty() {
+                    None
+                } else {
+                    Some(args.remove(0))
+                };
+                if let Some(value) = kwargs.remove("errors") {
+                    if errors_arg.is_some() {
+                        return Err(RuntimeError::new(
+                            "IncrementalEncoder() got multiple values for errors",
+                        ));
+                    }
+                    errors_arg = Some(value);
+                }
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "IncrementalEncoder() got an unexpected keyword argument",
+                    ));
+                }
+                let encoding = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("encoding") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("incremental encoder factory invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("incremental encoder factory invalid")),
+                };
+                let errors =
+                    normalize_codec_errors(errors_arg.unwrap_or(Value::Str("strict".to_string())))?;
+                let encoder_class = self
+                    .modules
+                    .get("codecs")
+                    .and_then(|module| match &*module.kind() {
+                        Object::Module(module_data) => {
+                            match module_data.globals.get("IncrementalEncoder") {
+                                Some(Value::Class(class_obj)) => Some(class_obj.clone()),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    })
+                    .ok_or_else(|| RuntimeError::new("codecs.IncrementalEncoder unavailable"))?;
+                let encoder = match self.heap.alloc_instance(InstanceObject::new(encoder_class)) {
+                    Value::Instance(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Instance(instance_data) = &mut *encoder.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("__pyrs_codec_encoding__".to_string(), Value::Str(encoding));
+                    instance_data
+                        .attrs
+                        .insert("__pyrs_codec_errors__".to_string(), Value::Str(errors));
+                }
+                Ok(NativeCallResult::Value(Value::Instance(encoder)))
+            }
+            NativeMethodKind::CodecsIncrementalDecoderFactoryCall => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "IncrementalDecoder() expects optional errors argument",
+                    ));
+                }
+                let mut errors_arg = if args.is_empty() {
+                    None
+                } else {
+                    Some(args.remove(0))
+                };
+                if let Some(value) = kwargs.remove("errors") {
+                    if errors_arg.is_some() {
+                        return Err(RuntimeError::new(
+                            "IncrementalDecoder() got multiple values for errors",
+                        ));
+                    }
+                    errors_arg = Some(value);
+                }
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "IncrementalDecoder() got an unexpected keyword argument",
+                    ));
+                }
+                let encoding = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("encoding") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("incremental decoder factory invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("incremental decoder factory invalid")),
+                };
+                let errors =
+                    normalize_codec_errors(errors_arg.unwrap_or(Value::Str("strict".to_string())))?;
+                let decoder_class = self
+                    .modules
+                    .get("codecs")
+                    .and_then(|module| match &*module.kind() {
+                        Object::Module(module_data) => {
+                            match module_data.globals.get("IncrementalDecoder") {
+                                Some(Value::Class(class_obj)) => Some(class_obj.clone()),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    })
+                    .ok_or_else(|| RuntimeError::new("codecs.IncrementalDecoder unavailable"))?;
+                let decoder = match self.heap.alloc_instance(InstanceObject::new(decoder_class)) {
+                    Value::Instance(obj) => obj,
+                    _ => unreachable!(),
+                };
+                let pending = self.heap.alloc_bytes(Vec::new());
+                if let Object::Instance(instance_data) = &mut *decoder.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("__pyrs_codec_encoding__".to_string(), Value::Str(encoding));
+                    instance_data
+                        .attrs
+                        .insert("__pyrs_codec_errors__".to_string(), Value::Str(errors));
+                    instance_data
+                        .attrs
+                        .insert("__pyrs_codec_pending__".to_string(), pending);
+                    instance_data
+                        .attrs
+                        .insert("__pyrs_codec_state_flag__".to_string(), Value::Int(0));
+                }
+                Ok(NativeCallResult::Value(Value::Instance(decoder)))
+            }
+            NativeMethodKind::CodecsIncrementalEncoderEncode => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "encode() expects input and optional final argument",
+                    ));
+                }
+                let mut final_arg = if args.len() == 2 {
+                    Some(args.remove(1))
+                } else {
+                    None
+                };
+                if let Some(value) = kwargs.remove("final") {
+                    if final_arg.is_some() {
+                        return Err(RuntimeError::new("encode() got multiple values for final"));
+                    }
+                    final_arg = Some(value);
+                }
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "encode() got an unexpected keyword argument",
+                    ));
+                }
+                if let Some(value) = final_arg {
+                    let _ = is_truthy(&value);
+                }
+                let input = args.remove(0);
+                let text = match input {
+                    Value::Str(text) => text,
+                    _ => return Err(RuntimeError::new("encoder input must be str")),
+                };
+                let (encoding, errors) = match &*receiver.kind() {
+                    Object::Module(module_data) => {
+                        let encoding = match module_data.globals.get("encoding") {
+                            Some(Value::Str(value)) => value.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "incremental encoder object is invalid",
+                                ));
+                            }
+                        };
+                        let errors = match module_data.globals.get("errors") {
+                            Some(Value::Str(value)) => value.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "incremental encoder object is invalid",
+                                ));
+                            }
+                        };
+                        (encoding, errors)
+                    }
+                    _ => return Err(RuntimeError::new("incremental encoder object is invalid")),
+                };
+                let encoded = encode_text_bytes(&text, &encoding, &errors)?;
+                Ok(NativeCallResult::Value(self.heap.alloc_bytes(encoded)))
+            }
+            NativeMethodKind::CodecsIncrementalEncoderReset => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("reset() expects no arguments"));
+                }
+                Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::CodecsIncrementalEncoderGetState => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("getstate() expects no arguments"));
+                }
+                Ok(NativeCallResult::Value(Value::Int(0)))
+            }
+            NativeMethodKind::CodecsIncrementalEncoderSetState => {
+                let mut state_arg = if args.is_empty() {
+                    None
+                } else if args.len() == 1 {
+                    Some(args.remove(0))
+                } else {
+                    return Err(RuntimeError::new("setstate() expects one argument"));
+                };
+                if let Some(value) = kwargs.remove("state") {
+                    if state_arg.is_some() {
+                        return Err(RuntimeError::new(
+                            "setstate() got multiple values for state",
+                        ));
+                    }
+                    state_arg = Some(value);
+                }
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "setstate() got an unexpected keyword argument",
+                    ));
+                }
+                let state = state_arg
+                    .ok_or_else(|| RuntimeError::new("setstate() expects one argument"))?;
+                let _ = value_to_int(state)?;
+                Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::CodecsIncrementalDecoderDecode => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "decode() expects input and optional final argument",
+                    ));
+                }
+                let mut final_arg = if args.len() == 2 {
+                    Some(args.remove(1))
+                } else {
+                    None
+                };
+                if let Some(value) = kwargs.remove("final") {
+                    if final_arg.is_some() {
+                        return Err(RuntimeError::new("decode() got multiple values for final"));
+                    }
+                    final_arg = Some(value);
+                }
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "decode() got an unexpected keyword argument",
+                    ));
+                }
+                let final_decode = if let Some(value) = final_arg {
+                    is_truthy(&value)
+                } else {
+                    false
+                };
+                let input = bytes_like_from_value(args.remove(0))?;
+                let (encoding, errors, pending, state_flag) = match &*receiver.kind() {
+                    Object::Module(module_data) => {
+                        let encoding = match module_data.globals.get("encoding") {
+                            Some(Value::Str(value)) => value.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "incremental decoder object is invalid",
+                                ));
+                            }
+                        };
+                        let errors = match module_data.globals.get("errors") {
+                            Some(Value::Str(value)) => value.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "incremental decoder object is invalid",
+                                ));
+                            }
+                        };
+                        let pending = match module_data.globals.get("pending") {
+                            Some(value) => bytes_like_from_value(value.clone())?,
+                            None => Vec::new(),
+                        };
+                        let state_flag = match module_data.globals.get("state_flag") {
+                            Some(Value::Int(value)) => *value,
+                            _ => 0,
+                        };
+                        (encoding, errors, pending, state_flag)
+                    }
+                    _ => return Err(RuntimeError::new("incremental decoder object is invalid")),
+                };
+                let mut combined = pending;
+                combined.extend_from_slice(&input);
+                let decode_result = if final_decode {
+                    decode_text_bytes(&combined, &encoding, &errors).map(|text| (text, Vec::new()))
+                } else {
+                    let max_tail = match encoding.as_str() {
+                        "utf-8" => 3usize,
+                        "utf-16" | "utf-16-le" | "utf-16-be" => 1usize,
+                        "utf-32" | "utf-32-le" | "utf-32-be" => 3usize,
+                        _ => 0usize,
+                    };
+                    let mut success = None;
+                    let max_try = max_tail.min(combined.len());
+                    for tail_len in 0..=max_try {
+                        let split_at = combined.len() - tail_len;
+                        match decode_text_bytes(&combined[..split_at], &encoding, &errors) {
+                            Ok(text) => {
+                                success = Some((text, combined[split_at..].to_vec()));
+                                break;
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                    success.ok_or_else(|| RuntimeError::new("codec decode failed"))
+                }?;
+                let pending_value = self.heap.alloc_bytes(decode_result.1);
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("pending".to_string(), pending_value);
+                    module_data
+                        .globals
+                        .insert("state_flag".to_string(), Value::Int(state_flag));
+                }
+                Ok(NativeCallResult::Value(Value::Str(decode_result.0)))
+            }
+            NativeMethodKind::CodecsIncrementalDecoderReset => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("reset() expects no arguments"));
+                }
+                let pending = self.heap.alloc_bytes(Vec::new());
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data.globals.insert("pending".to_string(), pending);
+                    module_data
+                        .globals
+                        .insert("state_flag".to_string(), Value::Int(0));
+                }
+                Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::CodecsIncrementalDecoderGetState => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("getstate() expects no arguments"));
+                }
+                let (pending, state_flag) = match &*receiver.kind() {
+                    Object::Module(module_data) => {
+                        let pending = module_data
+                            .globals
+                            .get("pending")
+                            .cloned()
+                            .unwrap_or_else(|| self.heap.alloc_bytes(Vec::new()));
+                        let state_flag = match module_data.globals.get("state_flag") {
+                            Some(Value::Int(value)) => *value,
+                            _ => 0,
+                        };
+                        (pending, state_flag)
+                    }
+                    _ => return Err(RuntimeError::new("incremental decoder object is invalid")),
+                };
+                Ok(NativeCallResult::Value(
+                    self.heap.alloc_tuple(vec![pending, Value::Int(state_flag)]),
+                ))
+            }
+            NativeMethodKind::CodecsIncrementalDecoderSetState => {
+                let mut state_arg = if args.is_empty() {
+                    None
+                } else if args.len() == 1 {
+                    Some(args.remove(0))
+                } else {
+                    return Err(RuntimeError::new("setstate() expects one argument"));
+                };
+                if let Some(value) = kwargs.remove("state") {
+                    if state_arg.is_some() {
+                        return Err(RuntimeError::new(
+                            "setstate() got multiple values for state",
+                        ));
+                    }
+                    state_arg = Some(value);
+                }
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "setstate() got an unexpected keyword argument",
+                    ));
+                }
+                let state = state_arg
+                    .ok_or_else(|| RuntimeError::new("setstate() expects one argument"))?;
+                let tuple_values = match state {
+                    Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                        Object::Tuple(values) => values.clone(),
+                        _ => return Err(RuntimeError::new("state must be a tuple")),
+                    },
+                    _ => return Err(RuntimeError::new("state must be a tuple")),
+                };
+                if tuple_values.len() != 2 {
+                    return Err(RuntimeError::new("state must be a (buffer, flag) tuple"));
+                }
+                let pending_bytes = bytes_like_from_value(tuple_values[0].clone())?;
+                let state_flag = value_to_int(tuple_values[1].clone())?;
+                let pending = self.heap.alloc_bytes(pending_bytes);
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data.globals.insert("pending".to_string(), pending);
+                    module_data
+                        .globals
+                        .insert("state_flag".to_string(), Value::Int(state_flag));
+                }
+                Ok(NativeCallResult::Value(Value::None))
+            }
             NativeMethodKind::ByteArrayClear => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("clear() expects no arguments"));
@@ -1273,7 +1673,9 @@ impl Vm {
                 };
                 let new_size = self.io_index_arg_to_int(args.remove(0))?;
                 if new_size < 0 {
-                    return Err(RuntimeError::new("ValueError: new size must be non-negative"));
+                    return Err(RuntimeError::new(
+                        "ValueError: new size must be non-negative",
+                    ));
                 }
                 let has_exports = self.heap.count_live_memoryviews_for_source(&buffer) > 0;
                 let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
@@ -4615,6 +5017,42 @@ impl Vm {
             BuiltinFunction::CodecsEscapeDecode => self.builtin_codecs_escape_decode(args, kwargs),
             BuiltinFunction::CodecsLookup => self.builtin_codecs_lookup(args, kwargs),
             BuiltinFunction::CodecsRegister => self.builtin_codecs_register(args, kwargs),
+            BuiltinFunction::CodecsGetIncrementalEncoder => {
+                self.builtin_codecs_getincrementalencoder(args, kwargs)
+            }
+            BuiltinFunction::CodecsGetIncrementalDecoder => {
+                self.builtin_codecs_getincrementaldecoder(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalEncoderInit => {
+                self.builtin_codecs_incremental_encoder_init(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalEncoderEncode => {
+                self.builtin_codecs_incremental_encoder_encode(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalEncoderReset => {
+                self.builtin_codecs_incremental_encoder_reset(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalEncoderGetState => {
+                self.builtin_codecs_incremental_encoder_getstate(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalEncoderSetState => {
+                self.builtin_codecs_incremental_encoder_setstate(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalDecoderInit => {
+                self.builtin_codecs_incremental_decoder_init(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalDecoderDecode => {
+                self.builtin_codecs_incremental_decoder_decode(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalDecoderReset => {
+                self.builtin_codecs_incremental_decoder_reset(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalDecoderGetState => {
+                self.builtin_codecs_incremental_decoder_getstate(args, kwargs)
+            }
+            BuiltinFunction::CodecsIncrementalDecoderSetState => {
+                self.builtin_codecs_incremental_decoder_setstate(args, kwargs)
+            }
             BuiltinFunction::UnicodedataNormalize => {
                 self.builtin_unicodedata_normalize(args, kwargs)
             }

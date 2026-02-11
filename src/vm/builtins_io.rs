@@ -1488,11 +1488,7 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "read")?;
         let size = if let Some(value) = args.pop() {
             let size = value_to_int(value)?;
-            if size < 0 {
-                None
-            } else {
-                Some(size as usize)
-            }
+            if size < 0 { None } else { Some(size as usize) }
         } else {
             None
         };
@@ -2640,7 +2636,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("StringIO.__getstate__ expects no arguments"));
+            return Err(RuntimeError::new(
+                "StringIO.__getstate__ expects no arguments",
+            ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         Self::stringio_ensure_open(&receiver)?;
@@ -2689,7 +2687,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("StringIO.__setstate__ expects one argument"));
+            return Err(RuntimeError::new(
+                "StringIO.__setstate__ expects one argument",
+            ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         Self::stringio_ensure_open(&receiver)?;
@@ -3161,7 +3161,8 @@ impl Vm {
     }
 
     fn bytesio_export_count(&self, value_obj: &ObjRef) -> usize {
-        self.heap.count_live_memoryview_exports_for_source(value_obj)
+        self.heap
+            .count_live_memoryview_exports_for_source(value_obj)
     }
 
     fn bytesio_ensure_resizable(&self, value_obj: &ObjRef) -> Result<(), RuntimeError> {
@@ -3179,7 +3180,8 @@ impl Vm {
                 bytes_like_from_value(value)
             }
             Value::Module(obj) => {
-                let is_array = matches!(&*obj.kind(), Object::Module(module) if module.name == "__array__");
+                let is_array =
+                    matches!(&*obj.kind(), Object::Module(module) if module.name == "__array__");
                 if is_array {
                     bytes_like_from_value(Value::Module(obj))
                 } else {
@@ -3627,7 +3629,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BytesIO.__getstate__ expects no arguments"));
+            return Err(RuntimeError::new(
+                "BytesIO.__getstate__ expects no arguments",
+            ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
@@ -3666,7 +3670,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("BytesIO.__setstate__ expects one argument"));
+            return Err(RuntimeError::new(
+                "BytesIO.__setstate__ expects one argument",
+            ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
@@ -3692,9 +3698,11 @@ impl Vm {
         }
         let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
         self.bytesio_ensure_resizable(&value_obj)?;
-        let payload = self.bytesio_payload_from_value(items[0].clone()).map_err(|_| {
-            RuntimeError::new("TypeError: first item of state should be a bytes-like object")
-        })?;
+        let payload = self
+            .bytesio_payload_from_value(items[0].clone())
+            .map_err(|_| {
+                RuntimeError::new("TypeError: first item of state should be a bytes-like object")
+            })?;
         let position_value = items[1].clone();
         let position = match position_value {
             Value::Int(value) => value,

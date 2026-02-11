@@ -43,6 +43,18 @@ impl Vm {
             BuiltinFunction::CodecsEscapeDecode => "escape_decode",
             BuiltinFunction::CodecsLookup => "lookup",
             BuiltinFunction::CodecsRegister => "register",
+            BuiltinFunction::CodecsGetIncrementalEncoder => "getincrementalencoder",
+            BuiltinFunction::CodecsGetIncrementalDecoder => "getincrementaldecoder",
+            BuiltinFunction::CodecsIncrementalEncoderInit => "__init__",
+            BuiltinFunction::CodecsIncrementalEncoderEncode => "encode",
+            BuiltinFunction::CodecsIncrementalEncoderReset => "reset",
+            BuiltinFunction::CodecsIncrementalEncoderGetState => "getstate",
+            BuiltinFunction::CodecsIncrementalEncoderSetState => "setstate",
+            BuiltinFunction::CodecsIncrementalDecoderInit => "__init__",
+            BuiltinFunction::CodecsIncrementalDecoderDecode => "decode",
+            BuiltinFunction::CodecsIncrementalDecoderReset => "reset",
+            BuiltinFunction::CodecsIncrementalDecoderGetState => "getstate",
+            BuiltinFunction::CodecsIncrementalDecoderSetState => "setstate",
             BuiltinFunction::CollectionsDefaultDict => "defaultdict",
             _ => "builtin",
         }
@@ -205,7 +217,19 @@ impl Vm {
             | BuiltinFunction::CodecsDecode
             | BuiltinFunction::CodecsEscapeDecode
             | BuiltinFunction::CodecsLookup
-            | BuiltinFunction::CodecsRegister => "codecs",
+            | BuiltinFunction::CodecsRegister
+            | BuiltinFunction::CodecsGetIncrementalEncoder
+            | BuiltinFunction::CodecsGetIncrementalDecoder
+            | BuiltinFunction::CodecsIncrementalEncoderInit
+            | BuiltinFunction::CodecsIncrementalEncoderEncode
+            | BuiltinFunction::CodecsIncrementalEncoderReset
+            | BuiltinFunction::CodecsIncrementalEncoderGetState
+            | BuiltinFunction::CodecsIncrementalEncoderSetState
+            | BuiltinFunction::CodecsIncrementalDecoderInit
+            | BuiltinFunction::CodecsIncrementalDecoderDecode
+            | BuiltinFunction::CodecsIncrementalDecoderReset
+            | BuiltinFunction::CodecsIncrementalDecoderGetState
+            | BuiltinFunction::CodecsIncrementalDecoderSetState => "codecs",
             _ => "builtins",
         }
         .to_string();
@@ -735,10 +759,12 @@ impl Vm {
                 _ => Err(RuntimeError::new("memoryview receiver is invalid")),
             },
             "nbytes" => match &*view.kind() {
-                Object::MemoryView(view_data) => with_bytes_like_source(&view_data.source, |values| {
-                    Value::Int(values.len() as i64)
-                })
-                .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid")),
+                Object::MemoryView(view_data) => {
+                    with_bytes_like_source(&view_data.source, |values| {
+                        Value::Int(values.len() as i64)
+                    })
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                }
                 _ => Err(RuntimeError::new("memoryview receiver is invalid")),
             },
             _ => Err(RuntimeError::new(format!(

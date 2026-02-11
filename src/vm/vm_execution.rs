@@ -2072,14 +2072,15 @@ impl Vm {
                             let upper = slice.upper;
                             let step = slice.step;
                             let replacement = self.value_to_bytes_payload(value)?;
-                            let has_exports =
-                                self.heap.count_live_memoryviews_for_source(&obj) > 0;
+                            let has_exports = self.heap.count_live_memoryviews_for_source(&obj) > 0;
                             if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                 let step_value = step.unwrap_or(1);
                                 if step_value == 1 {
                                     let (start, stop) =
                                         slice_bounds_for_step_one(values.len(), lower, upper);
-                                    if has_exports && replacement.len() != stop.saturating_sub(start) {
+                                    if has_exports
+                                        && replacement.len() != stop.saturating_sub(start)
+                                    {
                                         return Err(RuntimeError::new(
                                             "BufferError: Existing exports of data: object cannot be re-sized",
                                         ));
@@ -2176,7 +2177,9 @@ impl Vm {
                             let source = match &*obj.kind() {
                                 Object::MemoryView(view) => view.source.clone(),
                                 _ => {
-                                    return Err(RuntimeError::new("store subscript unsupported type"));
+                                    return Err(RuntimeError::new(
+                                        "store subscript unsupported type",
+                                    ));
                                 }
                             };
                             let replacement = self.value_to_bytes_payload(value)?;
@@ -2196,7 +2199,8 @@ impl Vm {
                                         }
                                         values[start..stop].copy_from_slice(&replacement);
                                     } else {
-                                        let indices = slice_indices(values.len(), lower, upper, step)?;
+                                        let indices =
+                                            slice_indices(values.len(), lower, upper, step)?;
                                         if indices.len() != replacement.len() {
                                             return Err(RuntimeError::new(
                                                 "memoryview assignment: lvalue and rvalue have different structures",
@@ -2211,10 +2215,14 @@ impl Vm {
                                     let Some(Value::List(values_obj)) =
                                         module_data.globals.get_mut("values")
                                     else {
-                                        return Err(RuntimeError::new("store subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "store subscript unsupported type",
+                                        ));
                                     };
                                     let Object::List(values) = &mut *values_obj.kind_mut() else {
-                                        return Err(RuntimeError::new("store subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "store subscript unsupported type",
+                                        ));
                                     };
                                     let lower = slice.lower;
                                     let upper = slice.upper;
@@ -2245,10 +2253,14 @@ impl Vm {
                                     }
                                 }
                                 Object::Bytes(_) => {
-                                    return Err(RuntimeError::new("cannot modify read-only memory"));
+                                    return Err(RuntimeError::new(
+                                        "cannot modify read-only memory",
+                                    ));
                                 }
                                 _ => {
-                                    return Err(RuntimeError::new("store subscript unsupported type"));
+                                    return Err(RuntimeError::new(
+                                        "store subscript unsupported type",
+                                    ));
                                 }
                             }
                             self.push_value(Value::MemoryView(obj));
@@ -2261,7 +2273,9 @@ impl Vm {
                             let source = match &*obj.kind() {
                                 Object::MemoryView(view) => view.source.clone(),
                                 _ => {
-                                    return Err(RuntimeError::new("store subscript unsupported type"));
+                                    return Err(RuntimeError::new(
+                                        "store subscript unsupported type",
+                                    ));
                                 }
                             };
                             match &mut *source.kind_mut() {
@@ -2275,7 +2289,9 @@ impl Vm {
                                     }
                                     let byte = value_to_int(value)?;
                                     if !(0..=255).contains(&byte) {
-                                        return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                                        return Err(RuntimeError::new(
+                                            "byte must be in range(0, 256)",
+                                        ));
                                     }
                                     values[idx as usize] = byte as u8;
                                 }
@@ -2283,10 +2299,14 @@ impl Vm {
                                     let Some(Value::List(values_obj)) =
                                         module_data.globals.get_mut("values")
                                     else {
-                                        return Err(RuntimeError::new("store subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "store subscript unsupported type",
+                                        ));
                                     };
                                     let Object::List(values) = &mut *values_obj.kind_mut() else {
-                                        return Err(RuntimeError::new("store subscript unsupported type"));
+                                        return Err(RuntimeError::new(
+                                            "store subscript unsupported type",
+                                        ));
                                     };
                                     let mut idx = value_to_int(index)? as isize;
                                     if idx < 0 {
@@ -2297,15 +2317,21 @@ impl Vm {
                                     }
                                     let byte = value_to_int(value)?;
                                     if !(0..=255).contains(&byte) {
-                                        return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                                        return Err(RuntimeError::new(
+                                            "byte must be in range(0, 256)",
+                                        ));
                                     }
                                     values[idx as usize] = Value::Int(byte);
                                 }
                                 Object::Bytes(_) => {
-                                    return Err(RuntimeError::new("cannot modify read-only memory"));
+                                    return Err(RuntimeError::new(
+                                        "cannot modify read-only memory",
+                                    ));
                                 }
                                 _ => {
-                                    return Err(RuntimeError::new("store subscript unsupported type"));
+                                    return Err(RuntimeError::new(
+                                        "store subscript unsupported type",
+                                    ));
                                 }
                             }
                             self.push_value(Value::MemoryView(obj));
@@ -2318,8 +2344,11 @@ impl Vm {
                             if let Some(setitem) =
                                 self.lookup_bound_special_method(&target, "__setitem__")?
                             {
-                                match self.call_internal(setitem, vec![index, value], HashMap::new())?
-                                {
+                                match self.call_internal(
+                                    setitem,
+                                    vec![index, value],
+                                    HashMap::new(),
+                                )? {
                                     InternalCallOutcome::Value(_) => {}
                                     InternalCallOutcome::CallerExceptionHandled => {
                                         return Ok(None);
@@ -2376,8 +2405,7 @@ impl Vm {
                             let lower = slice.lower;
                             let upper = slice.upper;
                             let step = slice.step;
-                            let has_exports =
-                                self.heap.count_live_memoryviews_for_source(&obj) > 0;
+                            let has_exports = self.heap.count_live_memoryviews_for_source(&obj) > 0;
                             if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                 let step_value = step.unwrap_or(1);
                                 if step_value == 1 {

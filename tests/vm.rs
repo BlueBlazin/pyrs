@@ -1756,9 +1756,10 @@ fn rejects_min_default_with_multiple_positional_args() {
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let err = vm.execute(&code).expect_err("execution should fail");
-    assert!(err
-        .message
-        .contains("Cannot specify a default for min() with multiple positional arguments"));
+    assert!(
+        err.message
+            .contains("Cannot specify a default for min() with multiple positional arguments")
+    );
 }
 
 #[test]
@@ -8116,6 +8117,38 @@ fn executes_utf16_codec_paths() {
 #[test]
 fn executes_utf32_codec_paths() {
     let source = "import codecs\ntext = 'Hi'\nencoded = text.encode('utf-32-le')\ndecoded = codecs.decode(encoded, 'utf-32-le')\nroundtrip = text.encode('utf-32').decode('utf-32')\nok = isinstance(encoded, bytes) and decoded == text and roundtrip == text and len(encoded) == 8\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn supports_incremental_codecs_for_pyio_paths() {
+    let source = "import codecs\n\
+make_enc = codecs.getincrementalencoder('utf-8')\n\
+enc = make_enc('strict')\n\
+encoded = enc.encode('A')\n\
+enc_state = enc.getstate()\n\
+enc.setstate(0)\n\
+enc.reset()\n\
+make_dec = codecs.getincrementaldecoder('utf-8')\n\
+dec = make_dec('strict')\n\
+part1 = dec.decode(bytes([0xE2, 0x82]), final=False)\n\
+dec_state = dec.getstate()\n\
+part2 = dec.decode(bytes([0xAC]), final=True)\n\
+ok = encoded == b'A' and enc_state == 0 and part1 == '' and dec_state[0] == bytes([0xE2, 0x82]) and part2 == '\\u20ac'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn unsupported_operation_is_caught_by_oserror_handlers() {
+    let source = "import io\nok = False\ntry:\n    io.StringIO().seek(1, 1)\nexcept OSError:\n    ok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
