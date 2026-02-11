@@ -221,29 +221,18 @@ impl Vm {
                                     && !frame.is_module
                                     && !frame.return_module
                                 {
-                                    #[cfg(debug_assertions)]
-                                    {
-                                        debug_assert!(frame.locals.is_empty());
-                                        debug_assert!(frame.cells.is_empty());
-                                        debug_assert!(frame.class_bases.is_empty());
-                                        debug_assert!(frame.class_keywords.is_empty());
-                                        debug_assert!(frame.globals_fallback.is_none());
-                                        debug_assert!(frame.locals_fallback.is_none());
-                                        debug_assert!(frame.class_metaclass.is_none());
-                                        debug_assert!(frame.generator_owner.is_none());
-                                        debug_assert!(frame.generator_resume_value.is_none());
-                                        debug_assert!(frame.generator_pending_throw.is_none());
-                                        debug_assert!(frame.generator_resume_kind.is_none());
-                                        debug_assert!(frame.yield_from_iter.is_none());
-                                        debug_assert!(!frame.generator_awaiting_resume_value);
-                                    }
-                                    frame.fast_locals.get(0).and_then(Option::as_ref).cloned()
+                                    true
                                 } else {
-                                    None
+                                    false
                                 }
                             };
-                            if let Some(value) = fast_return {
-                                let frame = self.frames.pop().expect("frame exists");
+                            if fast_return {
+                                let mut frame = self.frames.pop().expect("frame exists");
+                                let value = frame
+                                    .fast_locals
+                                    .get_mut(0)
+                                    .and_then(Option::take)
+                                    .unwrap_or(Value::None);
                                 if let Some(caller) = self.frames.last_mut() {
                                     caller.stack.push(value);
                                     self.recycle_simple_frame_clean(frame);
@@ -4235,18 +4224,18 @@ impl Vm {
                     Err(err) => return Err(err),
                 },
             }
-            // Keep __del__ suppressed only while an active exception is being processed.
-            // Refcount-style cleanup in CPython can happen while ordinary operands are live,
-            // and several stdlib paths (tempfile/shutil) rely on that eagerness.
-            let safe_for_pending_finalizers = self
-                .frames
-                .last()
-                .map(|frame| frame.active_exception.is_none())
-                .unwrap_or(false);
-            if safe_for_pending_finalizers
-                && (!self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty())
-            {
-                self.run_pending_del_finalizers();
+            if !self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty() {
+                // Keep __del__ suppressed only while an active exception is being processed.
+                // Refcount-style cleanup in CPython can happen while ordinary operands are live,
+                // and several stdlib paths (tempfile/shutil) rely on that eagerness.
+                let safe_for_pending_finalizers = self
+                    .frames
+                    .last()
+                    .map(|frame| frame.active_exception.is_none())
+                    .unwrap_or(false);
+                if safe_for_pending_finalizers {
+                    self.run_pending_del_finalizers();
+                }
             }
         }
     }
@@ -5887,7 +5876,7 @@ impl Vm {
         self.push_function_call_from_obj(func, vec![arg0], HashMap::new())
     }
 
-    #[inline]
+    #[inline(always)]
     fn push_simple_positional_function_frame_one_arg_no_cells_from_func(
         &mut self,
         func: &ObjRef,
@@ -5898,12 +5887,22 @@ impl Vm {
             Object::Function(data) => data,
             _ => return Err(RuntimeError::new("attempted to call non-function")),
         };
-        self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
-            &func_data.code,
-            &func_data.module,
-            func_data.owner_class.as_ref(),
-            arg0,
-        )
+        if func_data.code.fast_local_count == 1 && func_data.code.plain_positional_arg0_slot == Some(0)
+        {
+            self.push_simple_positional_function_frame_one_arg_slot0_no_cells_ref(
+                &func_data.code,
+                &func_data.module,
+                func_data.owner_class.as_ref(),
+                arg0,
+            )
+        } else {
+            self.push_simple_positional_function_frame_one_arg_no_cells_ref(
+                &func_data.code,
+                &func_data.module,
+                func_data.owner_class.as_ref(),
+                arg0,
+            )
+        }
     }
 
     #[inline]
@@ -5973,7 +5972,7 @@ impl Vm {
         Ok(())
     }
 
-    #[inline]
+    #[inline(always)]
     fn push_simple_positional_function_frame_one_arg_slot0_no_cells_ref(
         &mut self,
         code: &Rc<CodeObject>,
@@ -6005,7 +6004,7 @@ impl Vm {
         Ok(())
     }
 
-    #[inline]
+    #[inline(always)]
     fn push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
         &mut self,
         code: &Rc<CodeObject>,
