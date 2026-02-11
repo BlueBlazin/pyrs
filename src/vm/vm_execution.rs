@@ -6041,6 +6041,18 @@ impl Vm {
         args: &mut Vec<Value>,
     ) -> Result<bool, RuntimeError> {
         match func {
+            Value::Builtin(builtin) => {
+                if args.len() == 1 {
+                    if let Some(result) =
+                        self.try_fast_builtin_single_arg_no_kwargs(*builtin, &args[0])?
+                    {
+                        let _ = args.pop();
+                        self.push_value(result);
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
             Value::Function(func_obj) => match args.len() {
                 0 => {
                     self.push_function_call_from_obj(
@@ -6103,6 +6115,75 @@ impl Vm {
             },
             _ => Ok(false),
         }
+    }
+
+    #[inline]
+    fn try_fast_builtin_single_arg_no_kwargs(
+        &mut self,
+        builtin: BuiltinFunction,
+        arg0: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if builtin != BuiltinFunction::Len {
+            return Ok(None);
+        }
+        Ok(match arg0 {
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => Some(Value::Int(values.len() as i64)),
+                _ => None,
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => Some(Value::Int(values.len() as i64)),
+                _ => None,
+            },
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(values) => Some(Value::Int(values.len() as i64)),
+                _ => None,
+            },
+            Value::Set(obj) => match &*obj.kind() {
+                Object::Set(values) => Some(Value::Int(values.len() as i64)),
+                _ => None,
+            },
+            Value::FrozenSet(obj) => match &*obj.kind() {
+                Object::FrozenSet(values) => Some(Value::Int(values.len() as i64)),
+                _ => None,
+            },
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) => Some(Value::Int(values.len() as i64)),
+                _ => None,
+            },
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => Some(Value::Int(values.len() as i64)),
+                _ => None,
+            },
+            Value::DictKeys(keys_view) => {
+                if let Object::DictKeysView(view) = &*keys_view.kind() {
+                    if let Object::Dict(values) = &*view.dict.kind() {
+                        return Ok(Some(Value::Int(values.len() as i64)));
+                    }
+                }
+                None
+            }
+            Value::Instance(instance) => {
+                if let Some(values) = self.namedtuple_instance_values(instance) {
+                    return Ok(Some(Value::Int(values.len() as i64)));
+                }
+                if let Some(backing_list) = self.instance_backing_list(instance) {
+                    if let Object::List(values) = &*backing_list.kind() {
+                        return Ok(Some(Value::Int(values.len() as i64)));
+                    }
+                }
+                None
+            }
+            Value::Iterator(iterator) => {
+                if let Some((start, stop, step)) = self.range_object_parts(iterator) {
+                    return Ok(Some(value_from_bigint(
+                        self.range_object_len_bigint(&start, &stop, &step),
+                    )));
+                }
+                None
+            }
+            _ => None,
+        })
     }
 
     #[inline]

@@ -66,6 +66,7 @@ Interpretation:
 ### 2) Call Path Throughput (P0)
 
 - Complete `OPT-024`: broaden call specialization coverage (`CALL_KW`, bound methods, builtin-style fast paths).
+  - Current checkpoint: no-keyword single-argument builtin `len` call-site fast lane is in place for hot container loops.
 - Remove avoidable temporary allocations/clone churn in argument plumbing.
 - Align frame setup/teardown with CPython fast-call lifecycle patterns.
 

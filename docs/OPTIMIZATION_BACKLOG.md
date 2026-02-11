@@ -95,6 +95,7 @@ Latest local snapshot (2026-02-11):
 - Additional checkpoint:
   - `CALL_FUNCTION` now has one/two/three-argument bound-method fast paths that inject the receiver directly into function fast-call lanes instead of routing through generic call dispatch.
   - Extended no-keyword small-arity fast dispatch into `CallCpython`, `CallCpythonKwStack`, and `CallFunctionKw` lanes (including arity-0).
+  - Added a no-keyword single-argument builtin `len` fast lane in call dispatch to avoid generic builtin-call argument plumbing on hot `len(list)` loops.
   - Added no-keyword small-arity internal-call fast paths in `call_internal` to reduce call/arg churn in stdlib-heavy paths (notably pickle stack).
   - Dispatch benchmark now sits around `~0.53-0.56s` in current local runs while preserving vm + curated harness parity.
 - Container checkpoint:
