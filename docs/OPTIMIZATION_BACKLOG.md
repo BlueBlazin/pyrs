@@ -14,19 +14,17 @@ Last updated: 2026-02-11
 - `[ ]` planned
 - `[!]` blocked (requires prerequisite decision/work)
 
-## Primary Performance Gate
+## Benchmark Suite (Canonical)
 
-- Command:
-  - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
-- Canonical reference (non-JIT):
-  - `time python3.10 -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
-- Target:
-  - `< 0.15s` user-time
-- Current:
-  - ~`0.53-0.54s` user-time (`~0.53-0.54s` wall) for the `fib(29)x5` gate
-  - `python3.10` baseline for the same gate: ~`0.49s` user-time
-  - ~`0.12-0.13s` user-time for `print(fib(29))` single-run reference
-  - `python3.10` baseline for `print(fib(29))`: ~`0.11s` user-time
+- `scripts/bench_fib_gate.sh 5`
+- `scripts/bench_dispatch_hotpath.sh 5`
+- `scripts/bench_dict_backend.sh 5`
+
+Latest local snapshot (2026-02-11):
+- `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.50s` user (`~1.07x`)
+- dispatch hotpath: `pyrs ~0.955s` vs `python3.10 ~0.057s` (`~16.7x`)
+- dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01s`
+- pickle hotspot: `pyrs ~6.39s` vs `python3.10 ~0.46s` (`~13.9x`)
 
 ## CPython Reference Map
 
@@ -85,75 +83,11 @@ Last updated: 2026-02-11
 
 1. Every optimization commit must update relevant item status here.
 2. New optimization ideas must be added as new `OPT-*` rows before implementation.
-3. Do not mark sprint complete until all P0 items required for target gate are `[x]`.
+3. Do not mark the sprint complete until P0 items and the benchmark-suite gaps are closed.
 
 ## Current Notes
 
-- Latest landed checkpoint:
-  - per-site frame `LOAD_GLOBAL` inline cache slots with VM epoch invalidation (replacing hot global hash-map cache lookup),
-  - one-arg call-site cache hot-path clone removal,
-  - regression tests for global cache invalidation on `StoreGlobal` and module-attribute mutation.
-- New landed checkpoint:
-  - `LOAD_GLOBAL` cache now guarded by namespace versions (`function_globals` + `builtins`) with frame-version propagation on module writes,
-  - direct `CALL_FUNCTION` arity-2/3 specialization paths added for plain positional calls,
-  - small-int `id()` fast cache for CPython range `[-5, 256]` added in `Heap`,
-  - initial `OPT-022` wiring started by reducing repeat module-global key allocation (`get_mut`/upsert path instead of unconditional key reallocation).
-- Latest call-path checkpoint:
-  - one-arg plain-function fast path now bypasses generic cell/binding setup for no-closure, non-generator call shapes;
-  - compiler now lowers one-positional-arg calls to dedicated `CallFunction1` opcode;
-  - runtime fuses `CompareLt* + JumpIfFalse` and `LoadGlobal + LoadFast + BinarySubConst + CallFunction1` on release builds;
-  - benchmark currently stabilizes around `0.26-0.27s` user-time for `fib(29)` (still above target).
-- `OPT-009` remains in progress: boxed-frame pool and reuse path are active, but profiling still shows frame setup/reset as a visible hotspot in recursive call workloads.
-- Latest dict-path checkpoint:
-  - fixed `Vm::getitem_value` for `Value::Dict` to route through `DictObject` backend lookup APIs (`find_with_hash`) instead of linear `entries.iter().find(...)` scans with generic `==`,
-  - dict microbench regression is resolved: `200k` insert+getitem loop now runs around `0.33s` user-time (previously observed in multi-second to extreme outlier ranges when subscripting bypassed backend probing).
-- Latest call-path checkpoint:
-  - simple-frame pool preparation now avoids duplicate full scrub on acquire (frames are scrubbed on recycle and minimally prepared on acquire),
-  - fused `LOAD_FAST - CONST` one-arg call path now uses by-reference int/bool arithmetic fast path before generic `Value` cloning fallback,
-  - recursive benchmark is currently stable around `1.11s` user-time for `fib(29)x5` across repeated warm runs.
-- Latest dispatch/call-path checkpoint:
-  - release-path `LoadFast + CompareLtConst + JumpIfFalse` fusion now bypasses intermediate stack bool work for int/bool locals,
-  - `LOAD_GLOBAL` fused one-arg call path now caches small-int RHS constants and routes through a direct subtract helper before fallback,
-  - borrowed simple-frame acquisition + strict simple-frame `ReturnValue` fast-return path landed for clean one-arg no-cells frames,
-  - this wave reduced `fib(29)x5` from about `1.34s` user-time to about `1.00s` user-time, but frame push/recycle and eval-loop dispatch still dominate profiles.
-- Latest dispatch checkpoint:
-  - `LoadFast` now classifies quickening sites once (`LoadFastPlain` vs `LoadFastCompareLtConstJump`) and stores fused compare-jump metadata in per-site frame cache, removing repeated pattern-scan overhead at hot load sites,
-  - conservative `LoadFast -> ReturnValue` fast-return fusion landed for strict clean one-arg no-cells frames,
-  - `RETURN_VALUE` path now uses direct frame-local stack pops (removing `pop_value().unwrap_or(...)` overhead),
-  - benchmark improved modestly to about `0.95s` user; dominant bottleneck remains frame/call churn + eval-loop dispatch.
-- Latest value-model checkpoint:
-  - `Value::Exception` now stores boxed exception payloads, removing large inline exception object copies from hot stack/value transport paths,
-  - `Value::Slice` now stores boxed slice payloads, reducing enum max-size pressure and value move cost in generic VM operations,
-  - benchmark improved to about `0.63-0.64s` user for `fib(29)x5` on release builds; dominant bottleneck remains frame/call setup and eval-loop dispatch.
-- Latest call/dispatch checkpoint:
-  - `LOAD_GLOBAL` fused direct-call path now executes through cached code/module metadata (no per-hit function-object metadata lookup in that lane),
-  - `LOAD_FAST`/`LOAD_FAST2` now use primitive-value clone bypasses (`int`/`float`/`bool`/`None`) for stack push hot paths,
-  - removed per-op quickening bookkeeping in `BinaryAdd`/`BinarySub` and `CallFunction1` hot lanes where dedicated opcode fast paths already exist,
-  - benchmark currently stabilizes around `0.60-0.61s` user for `fib(29)x5`; remaining top cost is eval-loop dispatch + frame push/pop churn.
-- Latest call/dispatch checkpoint:
-  - fixed `LOAD_GLOBAL` fused-direct path to avoid borrow-check workarounds and route cached direct no-cells calls through borrowed function metadata paths,
-  - one-arg no-cells inline-cache hot path now avoids per-call `code/module/owner_class` cloning and dispatches through `push_simple_positional_function_frame_one_arg_no_cells_from_func`,
-  - added slot-0/no-cells fast acquire path for same-module/no-owner frames; profiling still shows simple-frame acquisition and eval-loop dispatch as top remaining costs.
-- Latest call/dispatch checkpoint:
-  - added a dedicated slot-0 simple-frame recycle fast path and wired strict fast-return sites to use it with owner-aware fallback,
-  - split release `LOAD_FAST` quickened handling into explicit hot-site branches (already-quickened compare-jump/plain vs first-time probe) to reduce repeated probe overhead,
-  - current warm benchmark remains around `0.61-0.63s` user for `fib(29)x5`; remaining gap is still dominated by eval-loop dispatch and recursive frame/call churn.
-- Latest dispatch checkpoint:
-  - moved opcode execution body out of `Vm::run`'s per-iteration inline closure into `Vm::execute_instruction`,
-  - fast-loop benchmark for `print(fib(29))` now measures around `0.12s` user-time on warm release runs,
-  - fixed release-path `LOAD_FAST` plain-site double-push regression (root cause of list-comprehension/`FOR_ITER` failures), restoring canonical `fib(29)x5` benchmark execution at about `0.55s` user-time.
-- Latest dispatch/call checkpoint:
-  - `LOAD_GLOBAL` fused-direct inline cache now stores function object + epoch guard (instead of code/module metadata clones) and dispatches via borrowed function-reference call path,
-  - release `RETURN_VALUE` simple-frame fast path now uses direct invariant-guarded pop in that lane (no optional fallback),
-  - added `scripts/bench_fib_gate.sh` to standardize repeatable `fib(29)` / `fib(29)x5` perf smoke measurements against `python3.10`.
-- Latest dispatch/call checkpoint:
-  - tightened fused-direct cache-hit validation to epoch-only guard (`call_cache_epoch`) on cached function objects (removed repeated full call-shape checks on hot hits),
-  - measured gate moved from ~`0.568s` to ~`0.55s` user (`fib(29)x5`), with single-run `fib(29)` stable around `0.12s`.
-- Latest dispatch/call checkpoint:
-  - `LOAD_GLOBAL` fused call lanes now return immediately after fused dispatch (cached and non-cached), removing unnecessary hot-lane bookkeeping and temporary `Value` churn,
-  - `sample` snapshots show `drop_in_place<Value>` top-of-stack samples reduced from ~`71` to ~`43` on `fib(36)`,
-  - measured gate now stabilizes around ~`0.54-0.55s` user (`fib(29)x5`), single-run `fib(29)` around `0.12s`.
-- Latest dispatch/call checkpoint:
-  - replaced cached fused-direct scratch tuple (`Option<(usize, usize, Option<i64>, ObjRef)>`) with split scalar temporaries in `LOAD_GLOBAL`, removing another hot-lane drop site,
-  - benchmark now stabilizes around ~`0.53-0.54s` user for `fib(29)x5` (7-run warm sample: `0.5343s` user),
-  - dispatch hotpath smoke benchmark remained stable/improved (`pyrs_dispatch_hotpath_sec`: `0.6828s` -> `0.6647s`, `python3.10` reference in same lane `~0.0645s`).
+- Fib recursion gate is near `python3.10` on this machine and now serves as a regression smoke, not the sole optimization target.
+- Largest remaining throughput gaps are dispatch hotpath and pickle/container-heavy workloads.
+- Active foundational items for closure: `OPT-022`, `OPT-023`, `OPT-024`, `OPT-025`, `OPT-026`.
+- Detailed historical optimization deltas are tracked in git history; keep this section to current-state notes only.

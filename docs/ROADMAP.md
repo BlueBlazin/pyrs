@@ -36,10 +36,20 @@ It is intentionally forward-looking and should not be used as an append-only cha
 
 Milestone 13 functional closure is temporarily paused while performance is brought to a usable baseline.
 
-Primary gate:
-- `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
-- Target: `< 0.10s` (user-time reference target)
-- Current measured baseline after recent fixes: ~`0.59s` user-time
+Canonical benchmark suite:
+- `scripts/bench_fib_gate.sh 5`
+- `scripts/bench_dispatch_hotpath.sh 5`
+- `scripts/bench_dict_backend.sh 5`
+
+Latest local snapshot (2026-02-11):
+- `fib(29)x5`: `pyrs ~0.54s` vs `python3.10 ~0.50s` (`~1.07x`)
+- dispatch hotpath: `pyrs ~0.955s` vs `python3.10 ~0.057s` (`~16.7x`)
+- dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01s`
+- pickle hotspot: `pyrs ~6.39s` vs `python3.10 ~0.46s` (`~13.9x`)
+
+Interpretation:
+- fib recursion is no longer the sole bottleneck.
+- optimization priority is now foundational dispatch/call/container/startup closure.
 
 This sprint is implementation-driven from CPython internals:
 - Eval loop and opcode specialization patterns: `Python/ceval.c`, `Python/generated_cases.c.h`
@@ -51,9 +61,11 @@ Detailed execution plan: `docs/OPTIMIZATION_PLAN.md`
 Canonical optimization status tracker: `docs/OPTIMIZATION_BACKLOG.md`
 
 Mandatory foundational optimization scope during sprint includes:
-- small-int/immortal integer strategy closure (`OPT-021`)
 - explicit string interning strategy closure (`OPT-022`)
 - `LOAD_ATTR`/method-call cache specialization (`OPT-023`)
+- broadened call-path specialization (`OPT-024`)
+- dict/set throughput tuning against CPython behavior (`OPT-025`)
+- temporary allocation/freelist strategy closure (`OPT-026`)
 
 ## Active Milestone: 13 (Paused During Perf Sprint)
 

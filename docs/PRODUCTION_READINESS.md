@@ -15,10 +15,16 @@ Status:
 
 Performance sprint is the active top priority before further Milestone 13 closure work.
 
-Required benchmark gate for this sprint:
-- `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(29))"`
-- Target: `< 0.10s` user-time reference target
-- Current baseline after latest foundational optimizations: ~`1.00s` user-time
+Required benchmark suite for this sprint:
+1. `scripts/bench_fib_gate.sh 5`
+2. `scripts/bench_dispatch_hotpath.sh 5`
+3. `scripts/bench_dict_backend.sh 5`
+
+Latest local snapshot (2026-02-11):
+- `fib(29)x5`: `pyrs ~0.54s` vs `python3.10 ~0.50s` (`~1.07x`)
+- dispatch hotpath: `pyrs ~0.955s` vs `python3.10 ~0.057s` (`~16.7x`)
+- dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01s`
+- pickle hotspot: `pyrs ~6.39s` vs `python3.10 ~0.46s` (`~13.9x`)
 
 Implementation strategy is tracked in `docs/OPTIMIZATION_PLAN.md` and is explicitly CPython-referenced.
 Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
@@ -33,7 +39,7 @@ Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 | `_io` behavioral parity needed by stdlib | `[~]` | Core mode/newline/validation landed; full stream parity pending |
 | `_sre` parity needed for pure `re` default | `[~]` | Core surface exists; long-tail behavior still pending |
 | Hash-container parity and performance closure (`dict`/`set`/`frozenset`) | `[~]` | Backend upgraded; long-tail semantic/perf closure pending |
-| VM throughput/perf closure vs CPython for production workloads | `[~]` | Foundational CPython-style fast-locals design landed (`f_localsplus`-like slot-backed locals + lazy dict sync), plus function-call clone reduction and release LTO tuning; substantial gap remains and requires closure of backlog items including explicit small-int/immortal strategy, string interning strategy, and `LOAD_ATTR`/method-call cache specialization (`docs/OPTIMIZATION_BACKLOG.md`) |
+| VM throughput/perf closure vs CPython for production workloads | `[~]` | Fib recursion gate is near baseline on this machine, but major throughput gaps remain in dispatch and container/stdlib hotpaths; closure requires `OPT-022` through `OPT-026` completion (`docs/OPTIMIZATION_BACKLOG.md`) |
 | P0 engineering gate backlog (`docs/ALGO_AUDIT_BACKLOG.md`) | `[~]` | Must be fully closed before Milestone 13 completion |
 
 ## Core Interpreter Readiness

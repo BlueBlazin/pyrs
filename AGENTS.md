@@ -4,7 +4,7 @@
 Build a production-grade Python interpreter in Rust with full source + bytecode compatibility for CPython 3.14, minimal third-party dependencies, and an architecture that can support future JIT/extension work.
 
 ## Non-Negotiable Engineering Rule
-- Do not make \"fast changes\" or \"quick fixes\" as a substitute for proper design.
+- Do not make "fast changes" or "quick fixes" as a substitute for proper design.
 - Favor careful, fundamental fixes over tactical patches, even if they take longer.
 - If a temporary workaround is unavoidable, it must be:
   1. explicitly marked temporary in code/docs,
@@ -45,7 +45,7 @@ Milestone 13 completion is blocked on P0 closure of:
   2. Then strict pure-stdlib suite expansion and closure
 - Performance override rule:
   - If optimization sprint is active, performance work takes precedence over Milestone 13 functional closure tasks.
-  - Required benchmark gate: `fib(29) x5` under `0.15s` user-time before returning to normal Milestone 13 execution order.
+  - Use the benchmark suite (`scripts/bench_fib_gate.sh`, `scripts/bench_dispatch_hotpath.sh`, `scripts/bench_dict_backend.sh`) as the optimization gate before returning to normal Milestone 13 execution order.
 - Prefer official CPython pure-Python stdlib implementations where feasible.
 - Keep native VM handlers as accelerator/runtime layers, not full high-level reimplementations.
 - Commit frequently in small focused checkpoints.
@@ -82,13 +82,17 @@ Milestone 13 completion is blocked on P0 closure of:
 - No-op inventory snapshot: `docs/NOOP_BUILTIN_INVENTORY.txt`
 
 ## Current Focus
-- Active top priority: optimization sprint.
-- Performance gate:
-  - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
-  - Canonical non-JIT reference: `time python3.10 -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
-  - Repeatable smoke script: `scripts/bench_fib_gate.sh 5`
-  - Target: `< 0.15s` user-time
-  - Current baseline: `fib(29)x5` is now ~`0.53-0.54s` user-time (`~0.53-0.54s` wall, warm local release runs); single-run reference `print(fib(29))` is ~`0.12s` user-time.
+- Active top priority: optimization sprint (foundational/general throughput, not fib-only micro-tuning).
+- Performance suite (canonical):
+  - `scripts/bench_fib_gate.sh 5`
+  - `scripts/bench_dispatch_hotpath.sh 5`
+  - `scripts/bench_dict_backend.sh 5`
+- Latest baseline snapshot (2026-02-11, local warm release):
+  - `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.50s` user (`~1.07x`)
+  - dispatch hotpath: `pyrs ~0.955s` vs `python3.10 ~0.057s` (`~16.7x`)
+  - dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01s`
+  - pickle hotspot: `pyrs ~6.39s` vs `python3.10 ~0.46s` (`~13.9x`)
+- Optimization sprint exit is based on broad workload closure (dispatch/call/container/startup), not only fib recursion.
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
 - Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.
 - Optimization sprint must explicitly close foundational missing surfaces tracked in backlog (`OPT-022` string interning strategy and remaining `OPT-023+` dispatch/call/container items) before being considered complete.

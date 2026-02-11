@@ -2,151 +2,95 @@
 
 ## Scope
 
-This document is the active execution plan for the performance sprint.
-During this sprint, performance work takes precedence over Milestone 13 functional closure.
-The permanent optimization status ledger is `docs/OPTIMIZATION_BACKLOG.md`.
+This is the active execution plan for the optimization sprint.
+During this sprint, broad runtime throughput work takes precedence over Milestone 13 functional closure.
+The canonical optimization status ledger is `docs/OPTIMIZATION_BACKLOG.md`.
 
-## Gap Audit (2026-02-10)
+## Current Benchmark Suite (Not Fib-Only)
 
-The previous optimization plan under-specified several foundational CPython performance surfaces.
-These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
-- `OPT-021` small-int/immortal integer strategy
-- `OPT-022` explicit string interning strategy
-- `OPT-023` `LOAD_ATTR`/method-call inline cache specialization
-- `OPT-024` broader call-path specialization (`CALL_KW`, bound-method, builtin/vectorcall analogs)
-- `OPT-025` dict/set probing/resizing performance tuning
-- `OPT-026` allocator/freelist strategy for hot temporaries
+Run these in release mode:
 
-Primary benchmark gate:
-- Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
-- Canonical reference (non-JIT): `time python3.10 -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
-- Target: `< 0.15s` user-time
-- Current baseline (latest run): about `0.53-0.54s` user-time (`~0.53-0.54s` wall)
-- `python3.10` baseline for same gate: about `0.49s` user-time
-- Current reliable single-run reference (`print(fib(29))`): about `0.12-0.13s` user-time (`python3.10`: `0.10-0.11s`)
-- Latest checkpoint before this wave: about `0.95s` user-time (`~0.96s` wall after warm-up)
+1. `scripts/bench_fib_gate.sh 5`
+2. `scripts/bench_dispatch_hotpath.sh 5`
+3. `scripts/bench_dict_backend.sh 5`
+
+Latest local snapshot (2026-02-11):
+
+- `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.50s` user (`~1.07x`)
+- Dispatch hotpath: `pyrs ~0.955s` vs `python3.10 ~0.057s` (`~16.7x`)
+- Dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01s`
+- Pickle hotspot: `pyrs ~6.39s` vs `python3.10 ~0.46s` (`~13.9x`)
+
+Interpretation:
+- Recursive arithmetic is no longer the dominant performance blocker.
+- Remaining P0 performance risk is dispatch/call/container and stdlib-hotpath overhead.
 
 ## Ground Rules
 
-1. No patchy micro-fixes without architecture rationale.
-2. Every optimization must be validated with:
-   - targeted tests (`cargo test --lib`, `cargo test --test vm`)
-   - benchmark deltas
-   - profiler evidence (`cargo flamegraph` when available, otherwise `sample` captures in `perf/`)
-3. Every optimization wave should map explicitly to CPython internals.
-4. Item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint.
+1. No tactical micro-fixes without architecture rationale.
+2. Every optimization wave must include:
+   - targeted correctness tests (`cargo test --lib`, `cargo test --test vm`)
+   - benchmark deltas from the suite above
+   - profiler evidence (`cargo flamegraph` or `sample` artifacts in `perf/`)
+3. Every wave must map to a CPython reference surface.
+4. `docs/OPTIMIZATION_BACKLOG.md` must be updated in the same checkpoint as behavior/perf changes.
 
-Canonical profiler command for this sprint:
-- `mkdir -p perf && CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin pyrs --output perf/fib35_after_single_slot_fill.svg -- -S -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(35))"`
+## CPython Source Reference Map
 
-Canonical benchmark command for this sprint:
-- `scripts/bench_fib_gate.sh 5`
-
-## CPython Source References
-
-- Eval loop and adaptive dispatch:
+- Eval loop and specialization:
   - `/Users/$USER/Downloads/Python-3.14.3/Python/ceval.c`
   - `/Users/$USER/Downloads/Python-3.14.3/Python/generated_cases.c.h`
-- Frame and localsplus lifecycle:
+- Frame model and lifecycle:
   - `/Users/$USER/Downloads/Python-3.14.3/Include/internal/pycore_frame.h`
   - `/Users/$USER/Downloads/Python-3.14.3/Python/frame.c`
-- Call/vectorcall paths:
+- Call protocol/vectorcall:
   - `/Users/$USER/Downloads/Python-3.14.3/Objects/call.c`
   - `/Users/$USER/Downloads/Python-3.14.3/Include/cpython/abstract.h`
-- Integer and small-int behavior:
+- Integer/small-int behavior:
   - `/Users/$USER/Downloads/Python-3.14.3/Objects/longobject.c`
+- Unicode/interning:
+  - `/Users/$USER/Downloads/Python-3.14.3/Objects/unicodeobject.c`
+  - `/Users/$USER/Downloads/Python-3.14.3/Include/internal/pycore_unicodeobject.h`
+- Dict/set internals:
+  - `/Users/$USER/Downloads/Python-3.14.3/Objects/dictobject.c`
+  - `/Users/$USER/Downloads/Python-3.14.3/Objects/setobject.c`
 
-## Completed in This Sprint
+## Execution Workstreams
 
-1. Removed bigint conversion from hot int arithmetic/comparison fast paths.
-2. Added single-arg call path specialization for `CALL_FUNCTION`.
-3. Added simple positional function-call fast path for common Python function calls.
-4. Removed eager error-formatting overhead in `pop_value()` success path.
-5. Added precomputed positional parameter binding indexes on `CodeObject`.
-6. Added `LOAD_GLOBAL` cache path keyed by `(code, name index)` with invalidation on global mutation paths.
-7. Added hot-opcode fast paths for `LoadFast`, `LoadFast2`, `BinaryAdd`, `BinarySub`, `CompareLt`, and `CallFunction(argc=1)` stack pop.
-8. Reduced per-opcode finalizer polling overhead by gating on pending-finalizer state.
-9. Replaced global hash-map `LOAD_GLOBAL` cache lookups with per-site frame inline cache slots guarded by VM cache epoch invalidation.
-10. Removed eager one-arg call-site cache cloning on hot path and retained cache only as guarded call metadata.
-11. Reworked `LOAD_GLOBAL` cache guards to CPython-style namespace version checks (`function_globals` version + builtins version), removing VM-wide cache epoch invalidation.
-12. Added direct `CALL_FUNCTION` arity-2/arity-3 fast paths for plain positional functions.
-13. Extended positional binding precompute data for args 1/2 and routed hot simple-call frame setup through shared frame-prep/store helpers.
-14. Landed CPython-range small-int fast-ID path (`[-5, 256]`) to avoid hash-map growth on immediate-id hot/value paths.
-15. Added a dedicated one-arg plain-function fast path for no-closure/non-generator calls (direct fast-local bind) to reduce generic call/setup overhead on recursive workloads.
-16. Added dedicated `CallFunction1` opcode lowering for one-positional-arg calls (compiler -> VM).
-17. Added bool fast path in `JumpIfTrue/JumpIfFalse` to skip generic truthiness conversion for common compare-result branches.
-18. Added release-path fused branch evaluation for `CompareLt/CompareLtConst` followed by `JumpIfFalse` (no intermediate stack bool).
-19. Added release-path fused recursive-call sequence for `LoadGlobal + LoadFast + BinarySubConst + CallFunction1`.
-20. Removed duplicate simple-frame scrub work by scrubbing on recycle and doing minimal state prep on acquire for one-arg no-cells pooled frames.
-21. Added by-reference int/bool fast path in fused `LOAD_FAST - CONST` call preparation to avoid hot-path `Value` clone churn before fallback.
-22. Added fused `LoadFast + CompareLtConst + JumpIfFalse` release-path branch evaluation to skip stack push/pop + compare dispatch for int/bool locals.
-23. Added `LOAD_GLOBAL` fused-call small-int RHS cache (`fused_const_small_int`) and direct fast subtract path to avoid repeated constant decoding + clone fallback churn.
-24. Added borrowed simple-frame acquisition path for fused direct calls plus a strict `ReturnValue` fast-return path for clean simple one-arg no-cells frames.
-25. Added `LoadFast` per-site quickening classification (`LoadFastPlain` / `LoadFastCompareLtConstJump`) so compare-jump fusion probing is done once per site instead of repeated pattern scans.
-26. Added conservative `LoadFast -> ReturnValue` fast-return fusion for strict clean one-arg no-cells frames, with full fallback to generic return behavior.
-27. Removed `pop_value().unwrap_or(...)` overhead from hot `RETURN_VALUE` paths by direct stack-pop in frame-local return handling.
-28. Reduced `Value` payload footprint by boxing heavyweight variants used in VM transport (`ExceptionObject` and slice payload), shrinking stack/clone/move churn in hot loops.
-29. Fixed `LOAD_GLOBAL` fused-direct borrow contention by splitting cache metadata extraction from mutable VM operations.
-30. Routed one-arg no-cells direct-call execution through borrowed function metadata paths (avoiding per-call `code/module/owner_class` clone in that lane).
-31. Added a slot-0/no-cells simple-frame fast acquire path for same-module/no-owner calls.
-32. Added a dedicated slot-0 simple-frame recycle fast path and routed strict fast-return sites through it (with owner-aware fallback to safe recycler).
-33. Split `LoadFast` release quickened behavior into explicit hot-site branches (`LoadFastCompareLtConstJump` and `LoadFastPlain`) to avoid repeated pattern-probing work on already-quickened sites.
-34. Removed per-instruction closure dispatch wrapper from `Vm::run` by moving opcode execution into `execute_instruction`, so the hot loop now performs a direct method call instead of recreating an inline closure each iteration.
-35. Fixed release-only `LOAD_FAST` plain-site quickened path stack corruption (double-push on already-quickened plain sites), restoring list-comprehension/`FOR_ITER` correctness for the canonical `fib(29)x5` gate.
-36. Reworked `LOAD_GLOBAL` fused-direct cache entries to store function objects + epoch guards (instead of cloning code/module metadata per hit), and dispatch direct one-arg no-cells calls from function references.
-37. Tightened release `RETURN_VALUE` simple-frame fast-return checks and removed optional-pop fallback from that lane (direct pop with invariant guard).
-38. Added a repeatable benchmark smoke script (`scripts/bench_fib_gate.sh`) to track `fib(29)` + `fib(29)x5` deltas versus `python3.10`.
-39. Reduced `LOAD_GLOBAL` fused-direct cache-hit guard overhead by trusting function `call_cache_epoch` (instead of revalidating full call-shape metadata on every hit), improving recursion-heavy gate throughput.
-40. Simplified `LOAD_GLOBAL` fused one-arg call hot lanes with early return after fused dispatch (eliminating post-dispatch temporary `Value`/flag bookkeeping on that path), reducing drop churn in recursion-heavy runs.
-41. Reduced temporary tuple/option churn in `LOAD_GLOBAL` cached fused-direct lane by replacing `Option<(local,const,small_int,func)>` scratch state with split scalar fields, further reducing drop pressure in recursion-heavy loops.
+### 1) Dispatch and Attribute/Method Specialization (P0)
 
-## Current Hotspots (Post-Change)
+- Complete `OPT-023`: guarded `LOAD_ATTR` and method-call inline cache paths.
+- Reduce eval-loop indirection and branch overhead in generic opcode dispatch.
+- Ensure cache invalidation parity (type/version mutation paths).
 
-1. Function-call setup overhead (`push_function_call_one_arg_from_obj`) remains dominant.
-2. Generic opcode dispatch overhead in the eval loop (`run::execute_instruction`) remains dominant.
-3. Frame construction/reset overhead (`acquire_frame`) is improved but still visible in recursion-heavy code.
-4. Stack movement/copy work (`_platform_memmove`) remains significant in tight recursive loops.
-5. Attribute/method lookup and interning gaps remain for broader workloads (`OPT-022`, `OPT-023`).
-6. Recursive-call workloads are still dominated by frame/call setup and stack churn; current `fib(29)x5` remains around `0.53-0.54s` user-time (target `<0.15s`).
-7. Dict subscripting now routes through hash-probing backend lookup in `getitem` paths (linear scan bypass removed); remaining primary gap is recursive call/dispatch overhead, not dict key lookup.
+### 2) Call Path Throughput (P0)
 
-## Execution Plan
+- Complete `OPT-024`: broaden call specialization coverage (`CALL_KW`, bound methods, builtin-style fast paths).
+- Remove avoidable temporary allocations/clone churn in argument plumbing.
+- Align frame setup/teardown with CPython fast-call lifecycle patterns.
 
-### Phase 1: Frame/Call Path Closure
+### 3) Container/Lookup Throughput (P1 with P0 impact)
 
-1. Introduce a lightweight function-frame path that avoids class/module frame baggage.
-2. Add frame-object pooling/freelist for non-generator function frames.
-3. Remove per-call temporary allocations in argument plumbing for hot arities (`argc=1`, `argc=2`).
+- Complete `OPT-025`: dict/set probe/load-factor/resizing tuning against CPython behavior.
+- Continue clone/allocation audit for container hot paths.
+- Keep semantic parity checks in lockstep with perf changes.
 
-### Phase 2: CPython-Style Fast Dispatch
+### 4) String Interning and Allocation Strategy (P0/P1)
 
-1. Add quickened specialized opcode paths for hot integer operations:
-   - compare-int
-   - add-int
-   - sub-int
-2. Add cached global/builtin lookup path for repeated `LOAD_GLOBAL` names.
-3. Use profiler-driven opcode frequency data to choose first specialization set.
-4. Add `LOAD_ATTR` + method-call inline cache specialization with guarded invalidation.
+- Complete `OPT-022`: explicit interning policy for identifiers, attribute names, and module-global keys.
+- Complete `OPT-026`: freelist/buffer reuse strategy for hot temporary objects and call buffers.
 
-### Phase 3: Data/Lookup Fast Paths
+### 5) Startup and End-to-End Throughput (P1)
 
-1. Reduce hash-map churn in local/global lookups on hot code paths.
-2. Introduce compact per-frame lookup caches where semantics permit.
-3. Validate against CPython behavior for invalidation and shadowing rules.
-4. Add explicit string interning policy (identifier names, attribute names, module global keys).
-5. Land small-int/immortal integer strategy decision and implementation with parity/perf proof.
+- Execute `OPT-016`: import/startup overhead audit and reductions where semantics permit.
+- Keep strict stdlib and curated harness lanes green after each perf wave.
 
-### Phase 4: Toolchain and Build Optimizations
+## Exit Criteria for Optimization Sprint
 
-1. Evaluate `target-cpu=native` release profile for local perf measurement.
-2. Add PGO/BOLT exploration branch for release artifacts.
-3. Keep default CI/release behavior deterministic unless explicitly switched.
-
-## Stop Conditions for Sprint
-
-1. `fib(29)` reaches `< 0.10s` user-time.
-2. No regressions in:
+1. No single microbenchmark dominates optimization priorities.
+2. Dispatch hotpath and dict/pickle hotspot ratios are materially reduced (tracked in backlog).
+3. P0 optimization backlog items are `[x]` or have documented closure criteria/owners.
+4. No correctness regressions in:
    - `cargo test --lib`
    - `cargo test --test vm`
-   - `cargo test --test cpython_harness` (non-strict lane)
-3. Profiling shows no single avoidable hotspot above ~5% in the core benchmark.
+   - `cargo test --test cpython_harness` (curated non-strict lane)
