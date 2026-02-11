@@ -17,7 +17,7 @@ Run these in release mode:
 Latest local snapshot (2026-02-11):
 
 - `fib(29)x5`: `pyrs ~0.53-0.54s` user vs `python3.10 ~0.49-0.50s` user (`~1.07x`)
-- Dispatch hotpath: `pyrs ~0.83-0.86s` vs `python3.10 ~0.053-0.059s` (`~14-16x`)
+- Dispatch hotpath: `pyrs ~0.81-0.86s` vs `python3.10 ~0.053-0.059s` (`~14-16x`)
 - Dict microbench: `pyrs ~0.27-0.29s` vs `python3.10 ~0.01-0.02s`
 - Pickle hotspot: `pyrs ~4.2-4.4s` vs `python3.10 ~0.41-0.44s` (`~10x`)
 
