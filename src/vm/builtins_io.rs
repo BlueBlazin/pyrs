@@ -2108,6 +2108,13 @@ impl Vm {
         }
     }
 
+    fn stringio_mark_closed(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
+        self.stringio_store_buffer(instance, Vec::new(), 0)?;
+        Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(instance, "closed", Value::Bool(true))?;
+        Ok(())
+    }
+
     fn stringio_translate_text(text: String, newline: Option<&str>) -> String {
         match newline {
             None => Self::io_normalize_universal_newlines(&text),
@@ -2442,8 +2449,7 @@ impl Vm {
             ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        Self::instance_attr_set(&receiver, "_closed", Value::Bool(true))?;
-        Self::instance_attr_set(&receiver, "closed", Value::Bool(true))?;
+        self.stringio_mark_closed(&receiver)?;
         Ok(Value::None)
     }
 
@@ -2456,8 +2462,7 @@ impl Vm {
             return Err(RuntimeError::new("StringIO.close expects no arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        Self::instance_attr_set(&receiver, "_closed", Value::Bool(true))?;
-        Self::instance_attr_set(&receiver, "closed", Value::Bool(true))?;
+        self.stringio_mark_closed(&receiver)?;
         Ok(Value::None)
     }
 
@@ -3000,8 +3005,11 @@ impl Vm {
             return Err(RuntimeError::new("BytesIO.close expects no arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        let (value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        self.bytesio_store_state(&receiver, value_obj, pos, true)?;
+        let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        if let Object::ByteArray(values) = &mut *value_obj.kind_mut() {
+            values.clear();
+        }
+        self.bytesio_store_state(&receiver, value_obj, 0, true)?;
         Ok(Value::None)
     }
 
