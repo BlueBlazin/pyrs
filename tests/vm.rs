@@ -737,6 +737,17 @@ fn exposes_sys_version_info() {
 }
 
 #[test]
+fn exposes_sys_implementation_identity() {
+    let source = "import sys\nimpl = sys.implementation\nok = impl.name == 'pyrs' and impl.cache_tag == 'cpython-314'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_warnoptions() {
     let source = "import sys\nn = len(sys.warnoptions)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

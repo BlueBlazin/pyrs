@@ -5,3 +5,4 @@ test/test_copyreg.py
 test/test_csv.py
 test/test_json/__init__.py
 test/test_genericalias.py
+test/test_memoryio.py

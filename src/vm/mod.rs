@@ -1691,7 +1691,7 @@ impl Vm {
             if let Object::Module(impl_data) = &mut *implementation.kind_mut() {
                 impl_data
                     .globals
-                    .insert("name".to_string(), Value::Str("cpython".to_string()));
+                    .insert("name".to_string(), Value::Str("pyrs".to_string()));
                 impl_data.globals.insert(
                     "cache_tag".to_string(),
                     Value::Str("cpython-314".to_string()),
