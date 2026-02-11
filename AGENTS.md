@@ -88,7 +88,7 @@ Milestone 13 completion is blocked on P0 closure of:
   - Canonical non-JIT reference: `time python3.10 -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
   - Repeatable smoke script: `scripts/bench_fib_gate.sh 5`
   - Target: `< 0.15s` user-time
-  - Current baseline: `fib(29)x5` is now ~`0.54-0.55s` user-time (`~0.54-0.55s` wall, warm local release runs); single-run reference `print(fib(29))` is ~`0.12s` user-time.
+  - Current baseline: `fib(29)x5` is now ~`0.53-0.54s` user-time (`~0.53-0.54s` wall, warm local release runs); single-run reference `print(fib(29))` is ~`0.12s` user-time.
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
 - Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.
 - Optimization sprint must explicitly close foundational missing surfaces tracked in backlog (`OPT-022` string interning strategy and remaining `OPT-023+` dispatch/call/container items) before being considered complete.

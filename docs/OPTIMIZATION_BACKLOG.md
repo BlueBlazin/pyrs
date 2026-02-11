@@ -23,7 +23,7 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.54-0.55s` user-time (`~0.54-0.55s` wall) for the `fib(29)x5` gate
+  - ~`0.53-0.54s` user-time (`~0.53-0.54s` wall) for the `fib(29)x5` gate
   - `python3.10` baseline for the same gate: ~`0.49s` user-time
   - ~`0.12-0.13s` user-time for `print(fib(29))` single-run reference
   - `python3.10` baseline for `print(fib(29))`: ~`0.11s` user-time
@@ -153,3 +153,7 @@ Last updated: 2026-02-11
   - `LOAD_GLOBAL` fused call lanes now return immediately after fused dispatch (cached and non-cached), removing unnecessary hot-lane bookkeeping and temporary `Value` churn,
   - `sample` snapshots show `drop_in_place<Value>` top-of-stack samples reduced from ~`71` to ~`43` on `fib(36)`,
   - measured gate now stabilizes around ~`0.54-0.55s` user (`fib(29)x5`), single-run `fib(29)` around `0.12s`.
+- Latest dispatch/call checkpoint:
+  - replaced cached fused-direct scratch tuple (`Option<(usize, usize, Option<i64>, ObjRef)>`) with split scalar temporaries in `LOAD_GLOBAL`, removing another hot-lane drop site,
+  - benchmark now stabilizes around ~`0.53-0.54s` user for `fib(29)x5` (7-run warm sample: `0.5343s` user),
+  - dispatch hotpath smoke benchmark remained stable/improved (`pyrs_dispatch_hotpath_sec`: `0.6828s` -> `0.6647s`, `python3.10` reference in same lane `~0.0645s`).

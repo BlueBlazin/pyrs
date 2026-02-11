@@ -580,16 +580,19 @@ impl Vm {
                 #[cfg(not(debug_assertions))]
                 let mut fused_direct_one_arg_no_cells = false;
                 #[cfg(not(debug_assertions))]
-                let mut fused_direct_cached: Option<(ObjRef, u64)> = None;
+                let mut fused_direct_cached_func: Option<ObjRef> = None;
+                #[cfg(not(debug_assertions))]
+                let mut fused_direct_cached_epoch: u64 = 0;
                 #[cfg(not(debug_assertions))]
                 let mut fused_const_small_int: Option<i64> = None;
                 #[cfg(not(debug_assertions))]
-                let mut cached_direct_call: Option<(
-                    usize,
-                    usize,
-                    Option<i64>,
-                    ObjRef,
-                )> = None;
+                let mut cached_direct_local_idx = 0usize;
+                #[cfg(not(debug_assertions))]
+                let mut cached_direct_const_idx = 0usize;
+                #[cfg(not(debug_assertions))]
+                let mut cached_direct_small_int: Option<i64> = None;
+                #[cfg(not(debug_assertions))]
+                let mut cached_direct_func: Option<ObjRef> = None;
                 if let Some(frame) = self.frames.last() {
                     if let Some(entry) = frame.load_global_inline_cache.get(site_index) {
                         if let Some(cached) = entry {
@@ -616,16 +619,15 @@ impl Vm {
                                                 }
                                             };
                                             if direct_ok {
-                                                cached_direct_call = Some((
-                                                    local_idx as usize,
-                                                    const_idx as usize,
-                                                    cached.fused_const_small_int,
-                                                    func.clone(),
-                                                ));
+                                                cached_direct_local_idx = local_idx as usize;
+                                                cached_direct_const_idx = const_idx as usize;
+                                                cached_direct_small_int =
+                                                    cached.fused_const_small_int;
+                                                cached_direct_func = Some(func.clone());
                                             }
                                         }
                                     }
-                                    if cached_direct_call.is_none() {
+                                    if cached_direct_func.is_none() {
                                         value = Some(cached.value.clone());
                                         if let (Some(local_idx), Some(const_idx)) =
                                             (cached.fused_local_idx, cached.fused_const_idx)
@@ -640,10 +642,9 @@ impl Vm {
                                         fused_const_small_int =
                                             cached.fused_const_small_int;
                                         if let Some(func) = cached.fused_direct_func.as_ref() {
-                                            fused_direct_cached = Some((
-                                                func.clone(),
-                                                cached.fused_direct_func_epoch,
-                                            ));
+                                            fused_direct_cached_func = Some(func.clone());
+                                            fused_direct_cached_epoch =
+                                                cached.fused_direct_func_epoch;
                                         }
                                     }
                                 }
@@ -656,19 +657,13 @@ impl Vm {
                     }
                 }
                 #[cfg(not(debug_assertions))]
-                if let Some((
-                    local_idx,
-                    const_idx,
-                    cached_small_int,
-                    func_obj,
-                )) = cached_direct_call
-                {
-                    let arg = if let Some(right_int) = cached_small_int {
+                if let Some(func_obj) = cached_direct_func {
+                    let arg = if let Some(right_int) = cached_direct_small_int {
                         let left_small = {
                             let frame = self.frames.last().expect("frame exists");
                             frame
                                 .fast_locals
-                                .get(local_idx)
+                                .get(cached_direct_local_idx)
                                 .and_then(Option::as_ref)
                                 .and_then(|value| match value {
                                     Value::Int(integer) => Some(*integer),
@@ -686,10 +681,16 @@ impl Vm {
                                 )?,
                             }
                         } else {
-                            self.fused_fast_local_sub_small_int_arg(local_idx, right_int)?
+                            self.fused_fast_local_sub_small_int_arg(
+                                cached_direct_local_idx,
+                                right_int,
+                            )?
                         }
                     } else {
-                        self.fused_fast_local_sub_const_arg(local_idx, const_idx)?
+                        self.fused_fast_local_sub_const_arg(
+                            cached_direct_local_idx,
+                            cached_direct_const_idx,
+                        )?
                     };
                     {
                         let caller = self.frames.last_mut().expect("frame exists");
@@ -712,10 +713,17 @@ impl Vm {
                         self.resolve_load_global_value(idx)?;
                     if cacheable {
                         if fused_candidate.is_some() {
-                            fused_direct_cached =
-                                self.fused_direct_one_arg_no_cells_metadata(&value);
-                            fused_direct_one_arg_no_cells =
-                                fused_direct_cached.is_some();
+                            if let Some((func, epoch)) =
+                                self.fused_direct_one_arg_no_cells_metadata(&value)
+                            {
+                                fused_direct_one_arg_no_cells = true;
+                                fused_direct_cached_func = Some(func);
+                                fused_direct_cached_epoch = epoch;
+                            } else {
+                                fused_direct_one_arg_no_cells = false;
+                                fused_direct_cached_func = None;
+                                fused_direct_cached_epoch = 0;
+                            }
                             fused_const_small_int =
                                 fused_candidate.and_then(|(_, const_idx)| {
                                     self.frames
@@ -732,11 +740,6 @@ impl Vm {
                             if let Some(slot) =
                                 frame.load_global_inline_cache.get_mut(site_index)
                             {
-                                let (fused_direct_func, fused_direct_func_epoch) =
-                                    match &fused_direct_cached {
-                                        Some((func, epoch)) => (Some(func.clone()), *epoch),
-                                        None => (None, 0),
-                                    };
                                 *slot = Some(LoadGlobalSiteCacheEntry {
                                     globals_module_id,
                                     globals_version,
@@ -750,8 +753,8 @@ impl Vm {
                                         .map(|(_, const_idx)| *const_idx as u32),
                                     fused_const_small_int,
                                     fused_direct_one_arg_no_cells,
-                                    fused_direct_func,
-                                    fused_direct_func_epoch,
+                                    fused_direct_func: fused_direct_cached_func.clone(),
+                                    fused_direct_func_epoch: fused_direct_cached_epoch,
                                 });
                             }
                         }
