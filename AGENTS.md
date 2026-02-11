@@ -89,13 +89,14 @@ Milestone 13 completion is blocked on P0 closure of:
   - `scripts/bench_dict_backend.sh 5`
 - Latest baseline snapshot (2026-02-11, local warm release):
   - `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.51s` user (`~1.06x`)
-  - dispatch hotpath: `pyrs ~0.48-0.53s` vs `python3.10 ~0.055-0.058s` (`~8-9x`)
+  - dispatch hotpath: `pyrs ~0.48-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
   - dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
   - pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 - Latest container checkpoint:
   - dict entry->slot backreference map landed to remove O(slots) delete scans and tighten post-delete index maintenance to live-entry-directed updates.
 - Latest call-path checkpoint:
   - no-keyword single-argument builtin `len` fast lane is active in opcode call dispatch for hot container loops.
+  - no-keyword builtin `bool` zero/single-arg fast lanes are active in opcode call dispatch.
   - module-scope `LOAD_NAME`/`STORE_NAME` paths now avoid per-opcode name-clone churn; `STORE_NAME` uses indexed storage path with direct module/global upsert.
 - Optimization sprint exit is based on broad workload closure (dispatch/call/container/startup), not only fib recursion.
 - CI now runs `scripts/bench_dispatch_hotpath.sh` as non-blocking telemetry and uploads the benchmark artifact for regression tracking.

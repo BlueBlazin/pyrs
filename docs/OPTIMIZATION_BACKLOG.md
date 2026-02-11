@@ -22,7 +22,7 @@ Last updated: 2026-02-11
 
 Latest local snapshot (2026-02-11):
 - `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.51s` user (`~1.06x`)
-- dispatch hotpath: `pyrs ~0.48-0.53s` vs `python3.10 ~0.055-0.058s` (`~8-9x`)
+- dispatch hotpath: `pyrs ~0.48-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
 - dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
 - pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 
@@ -96,9 +96,10 @@ Latest local snapshot (2026-02-11):
   - `CALL_FUNCTION` now has one/two/three-argument bound-method fast paths that inject the receiver directly into function fast-call lanes instead of routing through generic call dispatch.
   - Extended no-keyword small-arity fast dispatch into `CallCpython`, `CallCpythonKwStack`, and `CallFunctionKw` lanes (including arity-0).
   - Added a no-keyword single-argument builtin `len` fast lane in call dispatch to avoid generic builtin-call argument plumbing on hot `len(list)` loops.
+  - Added no-keyword builtin `bool` fast lanes for zero-arg and single-arg calls in opcode dispatch.
   - Added no-keyword small-arity internal-call fast paths in `call_internal` to reduce call/arg churn in stdlib-heavy paths (notably pickle stack).
   - Reduced `LOAD_NAME`/`STORE_NAME` churn in module-scope hot loops by removing `String` clone in `LOAD_NAME` and routing `STORE_NAME` through indexed name storage (`store_name_by_index`) with in-place module/global updates.
-  - Dispatch benchmark now sits around `~0.48-0.53s` in current local runs while preserving vm + curated harness parity.
+  - Dispatch benchmark now sits around `~0.48-0.60s` in current local runs while preserving vm + curated harness parity.
 - Container checkpoint:
   - Dict backend now keeps an explicit entry-to-slot backreference map, removing O(slots) delete slot scans and replacing broad slot-index decrements with live-entry-directed updates after removal.
   - Added backend tests for index-removal + retain/rebuild paths to lock backreference invariants.

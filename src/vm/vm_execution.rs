@@ -6079,7 +6079,12 @@ impl Vm {
     ) -> Result<bool, RuntimeError> {
         match func {
             Value::Builtin(builtin) => {
-                if args.len() == 1 {
+                if args.is_empty() {
+                    if let Some(result) = self.try_fast_builtin_zero_arg_no_kwargs(*builtin) {
+                        self.push_value(result);
+                        return Ok(true);
+                    }
+                } else if args.len() == 1 {
                     if let Some(result) =
                         self.try_fast_builtin_single_arg_no_kwargs(*builtin, &args[0])?
                     {
@@ -6160,6 +6165,9 @@ impl Vm {
         builtin: BuiltinFunction,
         arg0: &Value,
     ) -> Result<Option<Value>, RuntimeError> {
+        if builtin == BuiltinFunction::Bool {
+            return Ok(Some(Value::Bool(self.truthy_from_value(arg0)?)));
+        }
         if builtin != BuiltinFunction::Len {
             return Ok(None);
         }
@@ -6221,6 +6229,17 @@ impl Vm {
             }
             _ => None,
         })
+    }
+
+    #[inline]
+    fn try_fast_builtin_zero_arg_no_kwargs(
+        &self,
+        builtin: BuiltinFunction,
+    ) -> Option<Value> {
+        if builtin == BuiltinFunction::Bool {
+            return Some(Value::Bool(false));
+        }
+        None
     }
 
     #[inline]
