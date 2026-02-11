@@ -21,8 +21,8 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.66-0.68s` user-time (`~0.68-0.70s` wall) for the `fib(29)x5` gate
-  - ~`0.21-0.22s` user-time for `print(fib(29))` single-run reference
+  - ~`0.63-0.64s` user-time (`~0.65-0.67s` wall) for the `fib(29)x5` gate
+  - ~`0.14-0.15s` user-time for `print(fib(29))` single-run reference
 
 ## CPython Reference Map
 
@@ -119,7 +119,7 @@ Last updated: 2026-02-11
 - Latest value-model checkpoint:
   - `Value::Exception` now stores boxed exception payloads, removing large inline exception object copies from hot stack/value transport paths,
   - `Value::Slice` now stores boxed slice payloads, reducing enum max-size pressure and value move cost in generic VM operations,
-  - benchmark improved to about `0.66-0.68s` user for `fib(29)x5` on release builds; dominant bottleneck remains frame/call setup and eval-loop dispatch.
+  - benchmark improved to about `0.63-0.64s` user for `fib(29)x5` on release builds; dominant bottleneck remains frame/call setup and eval-loop dispatch.
 - Latest call/dispatch checkpoint:
   - fixed `LOAD_GLOBAL` fused-direct path to avoid borrow-check workarounds and route cached direct no-cells calls through borrowed function metadata paths,
   - one-arg no-cells inline-cache hot path now avoids per-call `code/module/owner_class` cloning and dispatches through `push_simple_positional_function_frame_one_arg_no_cells_from_func`,
