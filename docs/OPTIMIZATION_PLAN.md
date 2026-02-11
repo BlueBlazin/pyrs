@@ -23,6 +23,8 @@ Primary benchmark gate:
 - Target: `< 0.15s` user-time
 - Current baseline (latest run): about `0.61-0.63s` user-time (`~0.61-0.64s` wall)
 - `python3.10` baseline for same gate: about `0.50s` user-time
+- Current reliable single-run reference (`print(fib(29))`): about `0.12s` user-time (`python3.10`: `0.10-0.11s`)
+- Note: the `fib(29)x5` list-comprehension gate currently hits a known release-path regression and is tracked in `OPT-028`.
 - Latest checkpoint before this wave: about `0.95s` user-time (`~0.96s` wall after warm-up)
 
 ## Ground Rules
@@ -87,11 +89,12 @@ Canonical profiler command for this sprint:
 31. Added a slot-0/no-cells simple-frame fast acquire path for same-module/no-owner calls.
 32. Added a dedicated slot-0 simple-frame recycle fast path and routed strict fast-return sites through it (with owner-aware fallback to safe recycler).
 33. Split `LoadFast` release quickened behavior into explicit hot-site branches (`LoadFastCompareLtConstJump` and `LoadFastPlain`) to avoid repeated pattern-probing work on already-quickened sites.
+34. Removed per-instruction closure dispatch wrapper from `Vm::run` by moving opcode execution into `execute_instruction`, so the hot loop now performs a direct method call instead of recreating an inline closure each iteration.
 
 ## Current Hotspots (Post-Change)
 
 1. Function-call setup overhead (`push_function_call_one_arg_from_obj`) remains dominant.
-2. Generic opcode dispatch overhead in the eval loop (`run::_closure`) remains dominant.
+2. Generic opcode dispatch overhead in the eval loop (`run::execute_instruction`) remains dominant.
 3. Frame construction/reset overhead (`acquire_frame`) is improved but still visible in recursion-heavy code.
 4. Stack movement/copy work (`_platform_memmove`) remains significant in tight recursive loops.
 5. Attribute/method lookup and interning gaps remain for broader workloads (`OPT-022`, `OPT-023`).
