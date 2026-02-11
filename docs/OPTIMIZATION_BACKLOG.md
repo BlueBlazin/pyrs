@@ -23,7 +23,7 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.56-0.57s` user-time (`~0.58s` wall) for the `fib(29)x5` gate
+  - ~`0.55s` user-time (`~0.55-0.56s` wall) for the `fib(29)x5` gate
   - `python3.10` baseline for the same gate: ~`0.49s` user-time
   - ~`0.12-0.13s` user-time for `print(fib(29))` single-run reference
   - `python3.10` baseline for `print(fib(29))`: ~`0.11s` user-time
@@ -146,3 +146,6 @@ Last updated: 2026-02-11
   - `LOAD_GLOBAL` fused-direct inline cache now stores function object + epoch guard (instead of code/module metadata clones) and dispatches via borrowed function-reference call path,
   - release `RETURN_VALUE` simple-frame fast path now uses direct invariant-guarded pop in that lane (no optional fallback),
   - added `scripts/bench_fib_gate.sh` to standardize repeatable `fib(29)` / `fib(29)x5` perf smoke measurements against `python3.10`.
+- Latest dispatch/call checkpoint:
+  - tightened fused-direct cache-hit validation to epoch-only guard (`call_cache_epoch`) on cached function objects (removed repeated full call-shape checks on hot hits),
+  - measured gate moved from ~`0.568s` to ~`0.55s` user (`fib(29)x5`), with single-run `fib(29)` stable around `0.12s`.

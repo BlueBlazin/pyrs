@@ -21,7 +21,7 @@ Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
 - Canonical reference (non-JIT): `time python3.10 -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
 - Target: `< 0.15s` user-time
-- Current baseline (latest run): about `0.55s` user-time (`~0.56s` wall)
+- Current baseline (latest run): about `0.55s` user-time (`~0.55-0.56s` wall)
 - `python3.10` baseline for same gate: about `0.49s` user-time
 - Current reliable single-run reference (`print(fib(29))`): about `0.12-0.13s` user-time (`python3.10`: `0.10-0.11s`)
 - Latest checkpoint before this wave: about `0.95s` user-time (`~0.96s` wall after warm-up)
@@ -96,6 +96,7 @@ Canonical benchmark command for this sprint:
 36. Reworked `LOAD_GLOBAL` fused-direct cache entries to store function objects + epoch guards (instead of cloning code/module metadata per hit), and dispatch direct one-arg no-cells calls from function references.
 37. Tightened release `RETURN_VALUE` simple-frame fast-return checks and removed optional-pop fallback from that lane (direct pop with invariant guard).
 38. Added a repeatable benchmark smoke script (`scripts/bench_fib_gate.sh`) to track `fib(29)` + `fib(29)x5` deltas versus `python3.10`.
+39. Reduced `LOAD_GLOBAL` fused-direct cache-hit guard overhead by trusting function `call_cache_epoch` (instead of revalidating full call-shape metadata on every hit), improving recursion-heavy gate throughput.
 
 ## Current Hotspots (Post-Change)
 

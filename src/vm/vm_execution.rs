@@ -611,19 +611,8 @@ impl Vm {
                                                 let func_kind = func.kind();
                                                 match &*func_kind {
                                                     Object::Function(func_data) => {
-                                                        let code = &func_data.code;
                                                         func_data.call_cache_epoch
                                                             == cached.fused_direct_func_epoch
-                                                            && func_data
-                                                                .plain_positional_call_arity
-                                                                == Some(1)
-                                                            && code
-                                                                .plain_positional_arg0_cell
-                                                                .is_none()
-                                                            && code.cellvars.is_empty()
-                                                            && func_data.closure.is_empty()
-                                                            && !code.is_generator
-                                                            && !code.is_comprehension
                                                     }
                                                     _ => false,
                                                 }
