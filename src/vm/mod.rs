@@ -322,8 +322,6 @@ enum QuickenedSiteKind {
     None,
     LoadFastPlain,
     LoadFastCompareLtConstJump,
-    AddInt,
-    SubInt,
     CompareLtInt,
     CallFunctionOneArg,
 }
@@ -568,6 +566,8 @@ pub struct Vm {
     frames: Vec<Box<Frame>>,
     frame_pool: Vec<Box<Frame>>,
     simple_frame_pool: Vec<Box<Frame>>,
+    simple_slot0_pool: Vec<Box<Frame>>,
+    simple_slot0_pool_key: Option<(usize, u64)>,
     builtins: HashMap<String, Value>,
     modules: HashMap<String, ObjRef>,
     main_module: ObjRef,
@@ -630,6 +630,8 @@ impl Vm {
             frames: Vec::with_capacity(128),
             frame_pool: Vec::with_capacity(128),
             simple_frame_pool: Vec::with_capacity(128),
+            simple_slot0_pool: Vec::with_capacity(128),
+            simple_slot0_pool_key: None,
             builtins: HashMap::new(),
             modules,
             main_module,
@@ -795,6 +797,22 @@ impl Vm {
     }
 
     #[inline(always)]
+    fn slot0_pool_key(code: &Rc<CodeObject>, module: &ObjRef) -> (usize, u64) {
+        (Rc::as_ptr(code) as usize, module.id())
+    }
+
+    #[inline(always)]
+    fn retarget_simple_slot0_pool(&mut self, key: (usize, u64)) {
+        if self.simple_slot0_pool_key == Some(key) {
+            return;
+        }
+        while let Some(frame) = self.simple_slot0_pool.pop() {
+            self.simple_frame_pool.push(frame);
+        }
+        self.simple_slot0_pool_key = Some(key);
+    }
+
+    #[inline(always)]
     fn acquire_simple_frame_slot0_no_cells_fast_ref(
         &mut self,
         code: &Rc<CodeObject>,
@@ -803,18 +821,16 @@ impl Vm {
     ) -> Box<Frame> {
         debug_assert!(code.fast_local_count == 1);
         debug_assert!(code.plain_positional_arg0_slot == Some(0));
+        let key = Self::slot0_pool_key(code, module);
+        self.retarget_simple_slot0_pool(key);
+        if let Some(mut frame) = self.simple_slot0_pool.pop() {
+            frame.ip = 0;
+            frame.last_ip = 0;
+            frame.function_globals_version = globals_version;
+            frame.simple_one_arg_no_cells = true;
+            return frame;
+        }
         if let Some(mut frame) = self.simple_frame_pool.pop() {
-            if Rc::ptr_eq(&frame.code, code)
-                && frame.module.id() == module.id()
-                && frame.owner_class.is_none()
-                && frame.fast_locals.len() == 1
-            {
-                frame.ip = 0;
-                frame.last_ip = 0;
-                frame.function_globals_version = globals_version;
-                frame.simple_one_arg_no_cells = true;
-                return frame;
-            }
             frame.prepare_simple_one_arg_no_cells_ref(code, module, None);
             frame.function_globals_version = globals_version;
             return frame;
@@ -830,6 +846,29 @@ impl Vm {
         frame.function_globals_version = globals_version;
         frame.simple_one_arg_no_cells = true;
         frame
+    }
+
+    #[inline(always)]
+    fn try_recycle_simple_slot0_frame(&mut self, mut frame: Box<Frame>) -> Result<(), Box<Frame>> {
+        if frame.owner_class.is_some()
+            || frame.code.fast_local_count != 1
+            || frame.code.plain_positional_arg0_slot != Some(0)
+        {
+            return Err(frame);
+        }
+        let key = Self::slot0_pool_key(&frame.code, &frame.module);
+        self.retarget_simple_slot0_pool(key);
+        if self.simple_slot0_pool.len() >= 256 {
+            return Err(frame);
+        }
+        frame.ip = 0;
+        frame.last_ip = 0;
+        if let Some(slot) = frame.fast_locals.get_mut(0) {
+            *slot = None;
+        }
+        frame.simple_one_arg_no_cells = true;
+        self.simple_slot0_pool.push(frame);
+        Ok(())
     }
 
     fn recycle_simple_frame(&mut self, mut frame: Box<Frame>) {
@@ -863,11 +902,13 @@ impl Vm {
             && !frame.is_module
             && !frame.return_module
         {
-            if let Some(slot) = frame.fast_locals.get_mut(0) {
-                *slot = None;
+            if let Err(mut frame) = self.try_recycle_simple_slot0_frame(frame) {
+                if let Some(slot) = frame.fast_locals.get_mut(0) {
+                    *slot = None;
+                }
+                frame.simple_one_arg_no_cells = true;
+                self.simple_frame_pool.push(frame);
             }
-            frame.simple_one_arg_no_cells = true;
-            self.simple_frame_pool.push(frame);
             return;
         }
         if !frame.locals.is_empty() {
@@ -940,14 +981,23 @@ impl Vm {
             frame.return_module = false;
         }
         frame.simple_one_arg_no_cells = true;
-        if !single_arg_direct_slot {
-            frame.fast_locals.fill(None);
+        if single_arg_direct_slot {
+            if let Err(mut frame) = self.try_recycle_simple_slot0_frame(frame) {
+                frame.fast_locals.fill(None);
+                self.simple_frame_pool.push(frame);
+            }
+            return;
         }
+        frame.fast_locals.fill(None);
         self.simple_frame_pool.push(frame);
     }
 
     #[inline(always)]
-    fn recycle_simple_frame_clean(&mut self, mut frame: Box<Frame>) {
+    fn recycle_simple_frame_clean(&mut self, frame: Box<Frame>) {
+        let mut frame = match self.try_recycle_simple_slot0_frame(frame) {
+            Ok(()) => return,
+            Err(frame) => frame,
+        };
         if self.simple_frame_pool.len() >= 256 {
             return;
         }

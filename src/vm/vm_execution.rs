@@ -30,6 +30,17 @@ impl Vm {
         }
     }
 
+    #[inline(always)]
+    fn clone_fast_local_stack_value(value: &Value) -> Value {
+        match value {
+            Value::Int(integer) => Value::Int(*integer),
+            Value::Float(number) => Value::Float(*number),
+            Value::Bool(flag) => Value::Bool(*flag),
+            Value::None => Value::None,
+            _ => value.clone(),
+        }
+    }
+
     pub(super) fn run(&mut self) -> Result<Value, RuntimeError> {
         loop {
             if let Some(stop_depth) = self.run_stop_depth {
@@ -369,7 +380,9 @@ impl Vm {
                                 let frame = self.frames.last_mut().expect("frame exists");
                                 if idx < frame.fast_locals.len() {
                                     if let Some(value) = &frame.fast_locals[idx] {
-                                        frame.stack.push(value.clone());
+                                        frame
+                                            .stack
+                                            .push(Self::clone_fast_local_stack_value(value));
                                         true
                                     } else {
                                         false
@@ -393,7 +406,9 @@ impl Vm {
                                 let frame = self.frames.last_mut().expect("frame exists");
                                 if idx < frame.fast_locals.len() {
                                     if let Some(value) = &frame.fast_locals[idx] {
-                                        frame.stack.push(value.clone());
+                                        frame
+                                            .stack
+                                            .push(Self::clone_fast_local_stack_value(value));
                                         true
                                     } else {
                                         false
@@ -438,7 +453,7 @@ impl Vm {
                             let frame = self.frames.last().expect("frame exists");
                             let first_value = if first < frame.fast_locals.len() {
                                 match &frame.fast_locals[first] {
-                                    Some(value) => Some(value.clone()),
+                                    Some(value) => Some(Self::clone_fast_local_stack_value(value)),
                                     None => None,
                                 }
                             } else {
@@ -446,7 +461,7 @@ impl Vm {
                             };
                             let second_value = if second < frame.fast_locals.len() {
                                 match &frame.fast_locals[second] {
-                                    Some(value) => Some(value.clone()),
+                                    Some(value) => Some(Self::clone_fast_local_stack_value(value)),
                                     None => None,
                                 }
                             } else {
@@ -1430,9 +1445,6 @@ impl Vm {
                         }
                     }
                     Opcode::BinaryAdd => {
-                        let site_index = self.current_site_index();
-                        let quickened_int =
-                            self.is_quickened_site(site_index, QuickenedSiteKind::AddInt);
                         let (left, right) = {
                             let frame = self.frames.last_mut().expect("frame exists");
                             let right = frame
@@ -1445,33 +1457,13 @@ impl Vm {
                                 .ok_or_else(|| RuntimeError::new("stack underflow (BinaryAdd lhs)"))?;
                             (left, right)
                         };
-                        let (value, can_quicken) = if quickened_int {
-                            let value = match (left, right) {
-                                (Value::Int(a), Value::Int(b)) => match a.checked_add(b) {
-                                    Some(sum) => Value::Int(sum),
-                                    None => add_values(Value::Int(a), Value::Int(b), &self.heap)?,
-                                },
-                                (left, right) => {
-                                    self.clear_quickened_site(site_index);
-                                    add_values(left, right, &self.heap)?
-                                }
-                            };
-                            (value, false)
-                        } else {
-                            match (left, right) {
-                                (Value::Int(a), Value::Int(b)) => {
-                                    let value = match a.checked_add(b) {
-                                        Some(sum) => Value::Int(sum),
-                                        None => add_values(Value::Int(a), Value::Int(b), &self.heap)?,
-                                    };
-                                    (value, true)
-                                }
-                                (left, right) => (add_values(left, right, &self.heap)?, false),
-                            }
+                        let value = match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => match a.checked_add(b) {
+                                Some(sum) => Value::Int(sum),
+                                None => add_values(Value::Int(a), Value::Int(b), &self.heap)?,
+                            },
+                            (left, right) => add_values(left, right, &self.heap)?,
                         };
-                        if can_quicken {
-                            self.mark_quickened_site(site_index, QuickenedSiteKind::AddInt);
-                        }
                         self.frames
                             .last_mut()
                             .expect("frame exists")
@@ -1479,9 +1471,6 @@ impl Vm {
                             .push(value);
                     }
                     Opcode::BinarySub => {
-                        let site_index = self.current_site_index();
-                        let quickened_int =
-                            self.is_quickened_site(site_index, QuickenedSiteKind::SubInt);
                         let (left, right) = {
                             let frame = self.frames.last_mut().expect("frame exists");
                             let right = frame
@@ -1494,33 +1483,13 @@ impl Vm {
                                 .ok_or_else(|| RuntimeError::new("stack underflow (BinarySub lhs)"))?;
                             (left, right)
                         };
-                        let (value, can_quicken) = if quickened_int {
-                            let value = match (left, right) {
-                                (Value::Int(a), Value::Int(b)) => match a.checked_sub(b) {
-                                    Some(diff) => Value::Int(diff),
-                                    None => sub_values(Value::Int(a), Value::Int(b), &self.heap)?,
-                                },
-                                (left, right) => {
-                                    self.clear_quickened_site(site_index);
-                                    sub_values(left, right, &self.heap)?
-                                }
-                            };
-                            (value, false)
-                        } else {
-                            match (left, right) {
-                                (Value::Int(a), Value::Int(b)) => {
-                                    let value = match a.checked_sub(b) {
-                                        Some(diff) => Value::Int(diff),
-                                        None => sub_values(Value::Int(a), Value::Int(b), &self.heap)?,
-                                    };
-                                    (value, true)
-                                }
-                                (left, right) => (sub_values(left, right, &self.heap)?, false),
-                            }
+                        let value = match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => match a.checked_sub(b) {
+                                Some(diff) => Value::Int(diff),
+                                None => sub_values(Value::Int(a), Value::Int(b), &self.heap)?,
+                            },
+                            (left, right) => sub_values(left, right, &self.heap)?,
                         };
-                        if can_quicken {
-                            self.mark_quickened_site(site_index, QuickenedSiteKind::SubInt);
-                        }
                         self.frames
                             .last_mut()
                             .expect("frame exists")
@@ -2831,9 +2800,6 @@ impl Vm {
                         }
                     }
                     Opcode::CallFunction1 => {
-                        let site_index = self.current_site_index();
-                        let quickened_one_arg =
-                            self.is_quickened_site(site_index, QuickenedSiteKind::CallFunctionOneArg);
                         let (func, arg0) = {
                             let frame = self.frames.last_mut().expect("frame exists");
                             let arg0 = frame
@@ -2848,18 +2814,9 @@ impl Vm {
                         };
                         match func {
                             Value::Function(func_obj) => {
-                                if !quickened_one_arg {
-                                    self.mark_quickened_site(
-                                        site_index,
-                                        QuickenedSiteKind::CallFunctionOneArg,
-                                    );
-                                }
                                 self.push_function_call_one_arg_from_obj(&func_obj, arg0)?;
                             }
                             other => {
-                                if quickened_one_arg {
-                                    self.clear_quickened_site(site_index);
-                                }
                                 self.dispatch_call_no_kwargs(other, vec![arg0])?
                             }
                         }
@@ -5731,6 +5688,11 @@ impl Vm {
         arg0: Value,
     ) -> Result<(), RuntimeError> {
         enum CachedCallAction {
+            SimpleNoCells {
+                code: Rc<CodeObject>,
+                module: ObjRef,
+                owner_class: Option<ObjRef>,
+            },
             SimpleNoCellsFromFunc,
             SimplePositional {
                 code: Rc<CodeObject>,
@@ -5754,6 +5716,17 @@ impl Vm {
                     clear_cached = true;
                     return None;
                 }
+                if entry.hot_path == OneArgCallHotPath::SimplePositionalNoCells {
+                    if let (Some(code), Some(module)) =
+                        (entry.cached_code.as_ref(), entry.cached_module.as_ref())
+                    {
+                        return Some(CachedCallAction::SimpleNoCells {
+                            code: code.clone(),
+                            module: module.clone(),
+                            owner_class: entry.cached_owner_class.clone(),
+                        });
+                    }
+                }
                 let valid = {
                     let func_kind = func.kind();
                     match &*func_kind {
@@ -5767,7 +5740,17 @@ impl Vm {
                 }
                 match entry.hot_path {
                     OneArgCallHotPath::SimplePositionalNoCells => {
-                        Some(CachedCallAction::SimpleNoCellsFromFunc)
+                        if let (Some(code), Some(module)) =
+                            (entry.cached_code.as_ref(), entry.cached_module.as_ref())
+                        {
+                            Some(CachedCallAction::SimpleNoCells {
+                                code: code.clone(),
+                                module: module.clone(),
+                                owner_class: entry.cached_owner_class.clone(),
+                            })
+                        } else {
+                            Some(CachedCallAction::SimpleNoCellsFromFunc)
+                        }
                     }
                     OneArgCallHotPath::SimplePositional => {
                         if let (Some(code), Some(module), Some(closure)) = (
@@ -5790,6 +5773,16 @@ impl Vm {
             });
         if let Some(action) = cached_action {
             return match action {
+                CachedCallAction::SimpleNoCells {
+                    code,
+                    module,
+                    owner_class,
+                } => self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
+                    &code,
+                    &module,
+                    owner_class.as_ref(),
+                    arg0,
+                ),
                 CachedCallAction::SimpleNoCellsFromFunc => {
                     self.push_simple_positional_function_frame_one_arg_no_cells_from_func(func, arg0)
                 }
