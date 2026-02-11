@@ -29,16 +29,13 @@ This mirrors CPython's own Unicode-name database structure rather than a hand-ma
 Use CPython 3.14 source plus Python 3.14 runtime:
 
 ```bash
-/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
-  scripts/generate_unicode_name_table.py \
-  --cpython-src /Users/$USER/Downloads/Python-3.14.3
+python3.14 scripts/generate_unicode_name_table.py --cpython-src /path/to/Python-3.14.3
 ```
 
 Verification mode (no write):
 
 ```bash
-/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
-  scripts/generate_unicode_name_table.py \
-  --check \
-  --cpython-src /Users/$USER/Downloads/Python-3.14.3
+python3.14 scripts/generate_unicode_name_table.py --check --cpython-src /path/to/Python-3.14.3
 ```
+
+`PYRS_CPYTHON_SRC` can be used instead of passing `--cpython-src` every run.
