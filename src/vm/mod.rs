@@ -315,6 +315,21 @@ struct LoadFastSiteCacheEntry {
     jump_target: usize,
 }
 
+#[derive(Clone)]
+enum LoadAttrSiteCacheKind {
+    InstanceFunction { function: ObjRef },
+    InstanceBuiltin { builtin: BuiltinFunction },
+}
+
+#[derive(Clone)]
+struct LoadAttrSiteCacheEntry {
+    class_id: u64,
+    class_version: u64,
+    owner_class: ObjRef,
+    owner_class_version: u64,
+    kind: LoadAttrSiteCacheKind,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(debug_assertions, allow(dead_code))]
 enum QuickenedSiteKind {
@@ -365,6 +380,7 @@ struct Frame {
     yield_from_iter: Option<Value>,
     quickened_sites: Vec<QuickenedSiteKind>,
     load_fast_inline_cache: Vec<Option<LoadFastSiteCacheEntry>>,
+    load_attr_inline_cache: Vec<Option<LoadAttrSiteCacheEntry>>,
     one_arg_inline_cache: Vec<Option<OneArgCallSiteCacheEntry>>,
     load_global_inline_cache: Vec<Option<LoadGlobalSiteCacheEntry>>,
     simple_one_arg_no_cells: bool,
@@ -415,6 +431,7 @@ impl Frame {
             yield_from_iter: None,
             quickened_sites: vec![QuickenedSiteKind::None; instruction_len],
             load_fast_inline_cache: vec![None; instruction_len],
+            load_attr_inline_cache: vec![None; instruction_len],
             one_arg_inline_cache: vec![None; instruction_len],
             load_global_inline_cache: vec![None; instruction_len],
             simple_one_arg_no_cells: false,
@@ -473,6 +490,7 @@ impl Frame {
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
             self.load_fast_inline_cache = vec![None; instruction_len];
+            self.load_attr_inline_cache = vec![None; instruction_len];
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
             let fast_locals_len = self.code.fast_local_count;
@@ -544,6 +562,7 @@ impl Frame {
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
             self.load_fast_inline_cache = vec![None; instruction_len];
+            self.load_attr_inline_cache = vec![None; instruction_len];
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
             let fast_locals_len = self.code.fast_local_count;
@@ -602,6 +621,7 @@ pub struct Vm {
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
     builtins_version: u64,
+    class_attr_versions: HashMap<u64, u64>,
 }
 
 impl Drop for Vm {
@@ -666,6 +686,7 @@ impl Vm {
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             builtins_version: 1,
+            class_attr_versions: HashMap::new(),
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
@@ -709,6 +730,29 @@ impl Vm {
                 frame.function_globals_version = version;
             }
         }
+    }
+
+    #[inline]
+    fn class_attr_version(&self, class: &ObjRef) -> u64 {
+        self.class_attr_versions
+            .get(&class.id())
+            .copied()
+            .unwrap_or(1)
+    }
+
+    #[inline]
+    fn touch_class_attr_version_by_id(&mut self, class_id: u64) -> u64 {
+        let entry = self.class_attr_versions.entry(class_id).or_insert(1);
+        *entry = entry.wrapping_add(1);
+        if *entry == 0 {
+            *entry = 1;
+        }
+        *entry
+    }
+
+    #[inline]
+    fn touch_class_attr_version(&mut self, class: &ObjRef) -> u64 {
+        self.touch_class_attr_version_by_id(class.id())
     }
 
     fn acquire_frame(

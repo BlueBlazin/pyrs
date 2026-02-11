@@ -21,10 +21,10 @@ Last updated: 2026-02-11
 - `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.53-0.54s` user vs `python3.10 ~0.49-0.50s` user (`~1.07x`)
-- dispatch hotpath: `pyrs ~0.81-0.86s` vs `python3.10 ~0.053-0.059s` (`~14-16x`)
-- dict microbench: `pyrs ~0.27-0.29s` vs `python3.10 ~0.01-0.02s`
-- pickle hotspot: `pyrs ~4.2-4.4s` vs `python3.10 ~0.41-0.44s` (`~10x`)
+- `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.50s` user (`~1.08x`)
+- dispatch hotpath: `pyrs ~0.54-0.65s` vs `python3.10 ~0.058-0.061s` (`~9-11x`)
+- dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01-0.02s`
+- pickle hotspot: `pyrs ~4.88s` vs `python3.10 ~0.41s` (`~12x`)
 
 ## CPython Reference Map
 
@@ -72,8 +72,8 @@ Latest local snapshot (2026-02-11):
 | `OPT-020` | P0 | validation | Keep benchmark + flamegraph regression gate for each optimization wave | N/A | `[~]` |
 | `OPT-021` | P0 | integer model | CPython small-int/immortal integer strategy review and implementation decision (`[-5, 256]` cache equivalent or explicit immediate-int justification with parity/perf proof) | `longobject.c` | `[x]` |
 | `OPT-022` | P0 | unicode | Implement explicit string interning strategy for identifiers/attribute names/module globals (and wire compiler/import call sites) | `unicodeobject.c`, `pycore_unicodeobject.h` | `[~]` |
-| `OPT-023` | P0 | dispatch | Add `LOAD_ATTR`/method-call inline cache specialization path (type/version guarded) | `ceval.c`, `generated_cases.c.h` | `[ ]` |
-| `OPT-024` | P1 | calls | Extend call specialization beyond `CALL_FUNCTION` (`CALL_KW`, bound-method calls, builtin/vectorcall analog path) | `call.c`, `ceval.c` | `[ ]` |
+| `OPT-023` | P0 | dispatch | Add `LOAD_ATTR`/method-call inline cache specialization path (type/version guarded) | `ceval.c`, `generated_cases.c.h` | `[~]` |
+| `OPT-024` | P1 | calls | Extend call specialization beyond `CALL_FUNCTION` (`CALL_KW`, bound-method calls, builtin/vectorcall analog path) | `call.c`, `ceval.c` | `[~]` |
 | `OPT-025` | P1 | containers | Dict/set probe/load-factor/resizing tuning against CPython behavior (not just correctness) | `dictobject.c`, `setobject.c` | `[ ]` |
 | `OPT-026` | P1 | allocations | Add allocator/freelist strategy for hot temporary objects and call argument buffers | `frame.c`, `dictobject.c`, `call.c` | `[ ]` |
 | `OPT-027` | P0 | value model | Shrink `Value` payload by boxing heavyweight inline variants used in hot VM transport paths | `ceval.c` value-pointer transport model | `[~]` |
@@ -89,10 +89,12 @@ Latest local snapshot (2026-02-11):
 
 - Latest optimization checkpoint:
   - `load_attr_instance` now bypasses generic bound-method invocation when `__getattribute__` resolves to builtin `object.__getattribute__`, routing directly to default slot-style attribute resolution.
-  - This closes a major non-semantic dispatch overhead source and improves dispatch benchmark from ~`0.955s` to ~`0.81-0.86s` in current local runs.
+  - Added guarded per-site `LOAD_ATTR` instance cache for function/builtin method descriptors with class/version invalidation (receiver + owner class versions).
+  - Added class attribute version tracking and mutation bump points (`STORE_ATTR` / `DELETE_ATTR` / `setattr` / `delattr` class targets).
 - Additional checkpoint:
   - `CALL_FUNCTION` now has one/two/three-argument bound-method fast paths that inject the receiver directly into function fast-call lanes instead of routing through generic call dispatch.
-  - This further reduced dispatch benchmark to roughly `~0.81s` in current local runs while preserving vm + curated harness parity.
+  - Extended no-keyword small-arity fast dispatch into `CallCpython`, `CallCpythonKwStack`, and `CallFunctionKw` lanes.
+  - Dispatch benchmark now sits around `~0.54-0.65s` in current local runs while preserving vm + curated harness parity.
 - Fib recursion gate is near `python3.10` on this machine and now serves as a regression smoke, not the sole optimization target.
 - Largest remaining throughput gaps are dispatch hotpath and pickle/container-heavy workloads.
 - Active foundational items for closure: `OPT-022`, `OPT-023`, `OPT-024`, `OPT-025`, `OPT-026`.

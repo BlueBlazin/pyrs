@@ -213,6 +213,38 @@ fn load_global_cache_invalidates_after_module_attr_store() {
 }
 
 #[test]
+fn load_attr_cache_invalidates_after_class_store_attr() {
+    let source = "class A:\n    def f(self):\n        return 1\n\na = A()\nbefore = a.f()\nA.f = lambda self: 2\nafter = a.f()";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("before"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("after"), Some(Value::Int(2)));
+}
+
+#[test]
+fn load_attr_cache_invalidates_after_setattr_on_base_class() {
+    let source = "class Base:\n    def f(self):\n        return 3\n\nclass Child(Base):\n    pass\n\nchild = Child()\nbefore = child.f()\nsetattr(Base, 'f', lambda self: 9)\nafter = child.f()";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("before"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("after"), Some(Value::Int(9)));
+}
+
+#[test]
+fn load_attr_cache_invalidates_after_delattr_on_class() {
+    let source = "class A:\n    def f(self):\n        return 1\n\na = A()\n_ = a.f()\ndelattr(A, 'f')\nmissing = False\ntry:\n    a.f()\nexcept AttributeError:\n    missing = True";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("missing"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_destructuring_assignment() {
     let module = parser::parse_module("a, b = [1, 2]").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

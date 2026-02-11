@@ -875,6 +875,7 @@ impl Vm {
                         .clone()
                 };
                 let caller_idx = self.frames.len().saturating_sub(1);
+                let site_index = self.current_site_index();
                 let value = self.pop_value()?;
                 let attr = if attr_name == "__class__" {
                     self.load_dunder_class_attr(&value)?
@@ -894,13 +895,32 @@ impl Vm {
                             }
                         }
                         Value::Instance(instance) => {
-                            match self.load_attr_instance(&instance, &attr_name)? {
-                                AttrAccessOutcome::Value(attr) => attr,
-                                AttrAccessOutcome::ExceptionHandled => {
-                                    return Err(self.runtime_error_from_active_exception(
-                                        "attribute access failed",
-                                    ))
-                                }
+                            if let Some(cached_attr) = self
+                                .try_load_attr_instance_site_cache(
+                                    site_index,
+                                    &instance,
+                                    &attr_name,
+                                )?
+                            {
+                                cached_attr
+                            } else {
+                                let loaded = match self.load_attr_instance(
+                                    &instance,
+                                    &attr_name,
+                                )? {
+                                    AttrAccessOutcome::Value(attr) => attr,
+                                    AttrAccessOutcome::ExceptionHandled => {
+                                        return Err(self.runtime_error_from_active_exception(
+                                            "attribute access failed",
+                                        ))
+                                    }
+                                };
+                                self.update_load_attr_instance_site_cache(
+                                    site_index,
+                                    &instance,
+                                    &attr_name,
+                                );
+                                loaded
                             }
                         }
                         Value::Super(super_obj) => {
@@ -1329,6 +1349,7 @@ impl Vm {
                         if let Object::Class(class_data) = &mut *class.kind_mut() {
                             class_data.attrs.insert(attr_name, value);
                         }
+                        self.touch_class_attr_version(&class);
                     }
                     Value::Function(func) => {
                         self.store_attr_function(&func, attr_name, value)?
@@ -1377,6 +1398,7 @@ impl Vm {
                         if let Object::Class(class_data) = &mut *class.kind_mut() {
                             class_data.attrs.insert(attr_name, value);
                         }
+                        self.touch_class_attr_version(&class);
                     }
                     Value::Function(func) => {
                         self.store_attr_function(&func, attr_name, value)?
@@ -1430,6 +1452,7 @@ impl Vm {
                                 )));
                             }
                         }
+                        self.touch_class_attr_version(&class);
                     }
                     Value::Instance(instance) => {
                         match self.delete_attr_instance(&instance, &attr_name)? {
@@ -2973,103 +2996,116 @@ impl Vm {
                     let _ = self.pop_value();
                 }
 
-                match func {
-                    Value::Function(func) => {
-                        self.push_function_call_from_obj(&func, args, kwargs)?;
-                    }
-                    Value::BoundMethod(method) => {
-                        let method_data = match &*method.kind() {
-                            Object::BoundMethod(data) => data.clone(),
-                            _ => {
-                                return Err(RuntimeError::new(
-                                    "attempted to call non-function",
-                                ));
-                            }
-                        };
-                        match &*method_data.function.kind() {
-                            Object::Function(_) => {
-                                let mut bound_args = Vec::with_capacity(args.len() + 1);
-                                bound_args
-                                    .push(self.receiver_value(&method_data.receiver)?);
-                                bound_args.extend(args);
-                                self.push_function_call_from_obj(
-                                    &method_data.function,
-                                    bound_args,
-                                    kwargs,
-                                )?;
-                            }
-                            Object::NativeMethod(native) => {
-                                let caller_depth = self.frames.len();
-                                let caller_idx = caller_depth.saturating_sub(1);
-                                let caller_ip = self
-                                    .frames
-                                    .get(caller_idx)
-                                    .map(|frame| frame.ip)
-                                    .unwrap_or(0);
-                                let call_result = self.call_native_method(
-                                    native.kind,
-                                    method_data.receiver.clone(),
-                                    args,
-                                    kwargs,
-                                );
-                                self.finalize_native_opcode_call(
-                                    caller_depth,
-                                    caller_ip,
-                                    call_result,
-                                )?;
-                            }
-                            _ => {
-                                return Err(RuntimeError::new(
-                                    "attempted to call non-function",
-                                ));
+                let mut fast_dispatched = false;
+                if kwargs.is_empty() {
+                    fast_dispatched =
+                        self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
+                }
+                if !fast_dispatched {
+                    match func {
+                        Value::Function(func) => {
+                            self.push_function_call_from_obj(&func, args, kwargs)?;
+                        }
+                        Value::BoundMethod(method) => {
+                            let method_data = match &*method.kind() {
+                                Object::BoundMethod(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ));
+                                }
+                            };
+                            match &*method_data.function.kind() {
+                                Object::Function(_) => {
+                                    let mut bound_args =
+                                        Vec::with_capacity(args.len() + 1);
+                                    bound_args
+                                        .push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call_from_obj(
+                                        &method_data.function,
+                                        bound_args,
+                                        kwargs,
+                                    )?;
+                                }
+                                Object::NativeMethod(native) => {
+                                    let caller_depth = self.frames.len();
+                                    let caller_idx = caller_depth.saturating_sub(1);
+                                    let caller_ip = self
+                                        .frames
+                                        .get(caller_idx)
+                                        .map(|frame| frame.ip)
+                                        .unwrap_or(0);
+                                    let call_result = self.call_native_method(
+                                        native.kind,
+                                        method_data.receiver.clone(),
+                                        args,
+                                        kwargs,
+                                    );
+                                    self.finalize_native_opcode_call(
+                                        caller_depth,
+                                        caller_ip,
+                                        call_result,
+                                    )?;
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ));
+                                }
                             }
                         }
-                    }
-                    Value::Class(class) => {
-                        match self.call_internal(Value::Class(class), args, kwargs)? {
-                            InternalCallOutcome::Value(value) => self.push_value(value),
-                            InternalCallOutcome::CallerExceptionHandled => {}
+                        Value::Class(class) => {
+                            match self.call_internal(Value::Class(class), args, kwargs)?
+                            {
+                                InternalCallOutcome::Value(value) => self.push_value(value),
+                                InternalCallOutcome::CallerExceptionHandled => {}
+                            }
                         }
-                    }
-                    Value::Builtin(BuiltinFunction::BuildClass) => {
-                        let class_value = self.call_build_class(args, kwargs)?;
-                        if let Some(value) = class_value {
+                        Value::Builtin(BuiltinFunction::BuildClass) => {
+                            let class_value = self.call_build_class(args, kwargs)?;
+                            if let Some(value) = class_value {
+                                self.push_value(value);
+                            }
+                        }
+                        Value::Builtin(builtin) => {
+                            let caller_depth = self.frames.len();
+                            let caller_idx = caller_depth.saturating_sub(1);
+                            let caller_ip = self
+                                .frames
+                                .get(caller_idx)
+                                .map(|frame| frame.ip)
+                                .unwrap_or(0);
+                            let call_result = self.call_builtin(builtin, args, kwargs);
+                            self.finalize_builtin_opcode_call(
+                                caller_depth,
+                                caller_ip,
+                                call_result,
+                            )?;
+                        }
+                        Value::Instance(instance) => {
+                            let receiver = Value::Instance(instance.clone());
+                            let call_target = self
+                                .lookup_bound_special_method(&receiver, "__call__")?
+                                .ok_or_else(|| {
+                                    RuntimeError::new("attempted to call non-function")
+                                })?;
+                            match self.call_internal(call_target, args, kwargs)? {
+                                InternalCallOutcome::Value(value) => self.push_value(value),
+                                InternalCallOutcome::CallerExceptionHandled => {}
+                            }
+                        }
+                        Value::ExceptionType(name) => {
+                            let value =
+                                self.instantiate_exception_type(&name, &args, &kwargs)?;
                             self.push_value(value);
                         }
-                    }
-                    Value::Builtin(builtin) => {
-                        let caller_depth = self.frames.len();
-                        let caller_idx = caller_depth.saturating_sub(1);
-                        let caller_ip = self
-                            .frames
-                            .get(caller_idx)
-                            .map(|frame| frame.ip)
-                            .unwrap_or(0);
-                        let call_result = self.call_builtin(builtin, args, kwargs);
-                        self.finalize_builtin_opcode_call(
-                            caller_depth,
-                            caller_ip,
-                            call_result,
-                        )?;
-                    }
-                    Value::Instance(instance) => {
-                        let receiver = Value::Instance(instance.clone());
-                        let call_target = self
-                            .lookup_bound_special_method(&receiver, "__call__")?
-                            .ok_or_else(|| {
-                                RuntimeError::new("attempted to call non-function")
-                            })?;
-                        match self.call_internal(call_target, args, kwargs)? {
-                            InternalCallOutcome::Value(value) => self.push_value(value),
-                            InternalCallOutcome::CallerExceptionHandled => {}
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "attempted to call non-function",
+                            ))
                         }
                     }
-                    Value::ExceptionType(name) => {
-                        let value =
-                            self.instantiate_exception_type(&name, &args, &kwargs)?;
-                        self.push_value(value);
-                    }
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
                 }
             }
             Opcode::CallCpythonKwStack => {
@@ -3128,104 +3164,116 @@ impl Vm {
                 {
                     let _ = self.pop_value();
                 }
-
-                match func {
-                    Value::Function(func) => {
-                        self.push_function_call_from_obj(&func, args, kwargs)?;
-                    }
-                    Value::BoundMethod(method) => {
-                        let method_data = match &*method.kind() {
-                            Object::BoundMethod(data) => data.clone(),
-                            _ => {
-                                return Err(RuntimeError::new(
-                                    "attempted to call non-function",
-                                ));
-                            }
-                        };
-                        match &*method_data.function.kind() {
-                            Object::Function(_) => {
-                                let mut bound_args = Vec::with_capacity(args.len() + 1);
-                                bound_args
-                                    .push(self.receiver_value(&method_data.receiver)?);
-                                bound_args.extend(args);
-                                self.push_function_call_from_obj(
-                                    &method_data.function,
-                                    bound_args,
-                                    kwargs,
-                                )?;
-                            }
-                            Object::NativeMethod(native) => {
-                                let caller_depth = self.frames.len();
-                                let caller_idx = caller_depth.saturating_sub(1);
-                                let caller_ip = self
-                                    .frames
-                                    .get(caller_idx)
-                                    .map(|frame| frame.ip)
-                                    .unwrap_or(0);
-                                let call_result = self.call_native_method(
-                                    native.kind,
-                                    method_data.receiver.clone(),
-                                    args,
-                                    kwargs,
-                                );
-                                self.finalize_native_opcode_call(
-                                    caller_depth,
-                                    caller_ip,
-                                    call_result,
-                                )?;
-                            }
-                            _ => {
-                                return Err(RuntimeError::new(
-                                    "attempted to call non-function",
-                                ));
+                let mut fast_dispatched = false;
+                if kwargs.is_empty() {
+                    fast_dispatched =
+                        self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
+                }
+                if !fast_dispatched {
+                    match func {
+                        Value::Function(func) => {
+                            self.push_function_call_from_obj(&func, args, kwargs)?;
+                        }
+                        Value::BoundMethod(method) => {
+                            let method_data = match &*method.kind() {
+                                Object::BoundMethod(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ));
+                                }
+                            };
+                            match &*method_data.function.kind() {
+                                Object::Function(_) => {
+                                    let mut bound_args =
+                                        Vec::with_capacity(args.len() + 1);
+                                    bound_args
+                                        .push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call_from_obj(
+                                        &method_data.function,
+                                        bound_args,
+                                        kwargs,
+                                    )?;
+                                }
+                                Object::NativeMethod(native) => {
+                                    let caller_depth = self.frames.len();
+                                    let caller_idx = caller_depth.saturating_sub(1);
+                                    let caller_ip = self
+                                        .frames
+                                        .get(caller_idx)
+                                        .map(|frame| frame.ip)
+                                        .unwrap_or(0);
+                                    let call_result = self.call_native_method(
+                                        native.kind,
+                                        method_data.receiver.clone(),
+                                        args,
+                                        kwargs,
+                                    );
+                                    self.finalize_native_opcode_call(
+                                        caller_depth,
+                                        caller_ip,
+                                        call_result,
+                                    )?;
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ));
+                                }
                             }
                         }
-                    }
-                    Value::Class(class) => {
-                        match self.call_internal(Value::Class(class), args, kwargs)? {
-                            InternalCallOutcome::Value(value) => self.push_value(value),
-                            InternalCallOutcome::CallerExceptionHandled => {}
+                        Value::Class(class) => {
+                            match self.call_internal(Value::Class(class), args, kwargs)?
+                            {
+                                InternalCallOutcome::Value(value) => self.push_value(value),
+                                InternalCallOutcome::CallerExceptionHandled => {}
+                            }
                         }
-                    }
-                    Value::Builtin(BuiltinFunction::BuildClass) => {
-                        let class_value = self.call_build_class(args, kwargs)?;
-                        if let Some(value) = class_value {
+                        Value::Builtin(BuiltinFunction::BuildClass) => {
+                            let class_value = self.call_build_class(args, kwargs)?;
+                            if let Some(value) = class_value {
+                                self.push_value(value);
+                            }
+                        }
+                        Value::Builtin(builtin) => {
+                            let caller_depth = self.frames.len();
+                            let caller_idx = caller_depth.saturating_sub(1);
+                            let caller_ip = self
+                                .frames
+                                .get(caller_idx)
+                                .map(|frame| frame.ip)
+                                .unwrap_or(0);
+                            let call_result = self.call_builtin(builtin, args, kwargs);
+                            self.finalize_builtin_opcode_call(
+                                caller_depth,
+                                caller_ip,
+                                call_result,
+                            )?;
+                        }
+                        Value::Instance(instance) => {
+                            let receiver = Value::Instance(instance.clone());
+                            let call_target = self
+                                .lookup_bound_special_method(&receiver, "__call__")?
+                                .ok_or_else(|| {
+                                    RuntimeError::new("attempted to call non-function")
+                                })?;
+                            match self.call_internal(call_target, args, kwargs)? {
+                                InternalCallOutcome::Value(value) => self.push_value(value),
+                                InternalCallOutcome::CallerExceptionHandled => {}
+                            }
+                        }
+                        Value::ExceptionType(name) => {
+                            let value =
+                                self.instantiate_exception_type(&name, &args, &kwargs)?;
                             self.push_value(value);
                         }
-                    }
-                    Value::Builtin(builtin) => {
-                        let caller_depth = self.frames.len();
-                        let caller_idx = caller_depth.saturating_sub(1);
-                        let caller_ip = self
-                            .frames
-                            .get(caller_idx)
-                            .map(|frame| frame.ip)
-                            .unwrap_or(0);
-                        let call_result = self.call_builtin(builtin, args, kwargs);
-                        self.finalize_builtin_opcode_call(
-                            caller_depth,
-                            caller_ip,
-                            call_result,
-                        )?;
-                    }
-                    Value::Instance(instance) => {
-                        let receiver = Value::Instance(instance.clone());
-                        let call_target = self
-                            .lookup_bound_special_method(&receiver, "__call__")?
-                            .ok_or_else(|| {
-                                RuntimeError::new("attempted to call non-function")
-                            })?;
-                        match self.call_internal(call_target, args, kwargs)? {
-                            InternalCallOutcome::Value(value) => self.push_value(value),
-                            InternalCallOutcome::CallerExceptionHandled => {}
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "attempted to call non-function",
+                            ))
                         }
                     }
-                    Value::ExceptionType(name) => {
-                        let value =
-                            self.instantiate_exception_type(&name, &args, &kwargs)?;
-                        self.push_value(value);
-                    }
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
                 }
             }
             Opcode::CallFunctionKw => {
@@ -3252,97 +3300,111 @@ impl Vm {
                 }
                 args.reverse();
                 let func = self.pop_value()?;
-                match func {
-                    Value::Function(func) => {
-                        self.push_function_call_from_obj(&func, args, kwargs)?;
-                    }
-                    Value::BoundMethod(method) => {
-                        let method_data = match &*method.kind() {
-                            Object::BoundMethod(data) => data.clone(),
-                            _ => {
-                                return Err(RuntimeError::new(
-                                    "attempted to call non-function",
-                                ));
-                            }
-                        };
-                        match &*method_data.function.kind() {
-                            Object::Function(_) => {
-                                let mut bound_args = Vec::with_capacity(args.len() + 1);
-                                bound_args
-                                    .push(self.receiver_value(&method_data.receiver)?);
-                                bound_args.extend(args);
-                                self.push_function_call_from_obj(
-                                    &method_data.function,
-                                    bound_args,
-                                    kwargs,
-                                )?;
-                            }
-                            Object::NativeMethod(native) => {
-                                let caller_depth = self.frames.len();
-                                let caller_idx = caller_depth.saturating_sub(1);
-                                let caller_ip = self
-                                    .frames
-                                    .get(caller_idx)
-                                    .map(|frame| frame.ip)
-                                    .unwrap_or(0);
-                                let call_result = self.call_native_method(
-                                    native.kind,
-                                    method_data.receiver.clone(),
-                                    args,
-                                    kwargs,
-                                );
-                                self.finalize_native_opcode_call(
-                                    caller_depth,
-                                    caller_ip,
-                                    call_result,
-                                )?;
-                            }
-                            _ => {
-                                return Err(RuntimeError::new(
-                                    "attempted to call non-function",
-                                ));
+                let mut args = args;
+                let mut fast_dispatched = false;
+                if kwargs.is_empty() {
+                    fast_dispatched =
+                        self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
+                }
+                if !fast_dispatched {
+                    match func {
+                        Value::Function(func) => {
+                            self.push_function_call_from_obj(&func, args, kwargs)?;
+                        }
+                        Value::BoundMethod(method) => {
+                            let method_data = match &*method.kind() {
+                                Object::BoundMethod(data) => data.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ));
+                                }
+                            };
+                            match &*method_data.function.kind() {
+                                Object::Function(_) => {
+                                    let mut bound_args =
+                                        Vec::with_capacity(args.len() + 1);
+                                    bound_args
+                                        .push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call_from_obj(
+                                        &method_data.function,
+                                        bound_args,
+                                        kwargs,
+                                    )?;
+                                }
+                                Object::NativeMethod(native) => {
+                                    let caller_depth = self.frames.len();
+                                    let caller_idx = caller_depth.saturating_sub(1);
+                                    let caller_ip = self
+                                        .frames
+                                        .get(caller_idx)
+                                        .map(|frame| frame.ip)
+                                        .unwrap_or(0);
+                                    let call_result = self.call_native_method(
+                                        native.kind,
+                                        method_data.receiver.clone(),
+                                        args,
+                                        kwargs,
+                                    );
+                                    self.finalize_native_opcode_call(
+                                        caller_depth,
+                                        caller_ip,
+                                        call_result,
+                                    )?;
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "attempted to call non-function",
+                                    ));
+                                }
                             }
                         }
-                    }
-                    Value::Class(class) => {
-                        match self.call_internal(Value::Class(class), args, kwargs)? {
-                            InternalCallOutcome::Value(value) => self.push_value(value),
-                            InternalCallOutcome::CallerExceptionHandled => {}
+                        Value::Class(class) => {
+                            match self.call_internal(Value::Class(class), args, kwargs)?
+                            {
+                                InternalCallOutcome::Value(value) => self.push_value(value),
+                                InternalCallOutcome::CallerExceptionHandled => {}
+                            }
+                        }
+                        Value::Builtin(builtin) => {
+                            let caller_depth = self.frames.len();
+                            let caller_idx = caller_depth.saturating_sub(1);
+                            let caller_ip = self
+                                .frames
+                                .get(caller_idx)
+                                .map(|frame| frame.ip)
+                                .unwrap_or(0);
+                            let call_result = self.call_builtin(builtin, args, kwargs);
+                            self.finalize_builtin_opcode_call(
+                                caller_depth,
+                                caller_ip,
+                                call_result,
+                            )?;
+                        }
+                        Value::Instance(instance) => {
+                            let receiver = Value::Instance(instance.clone());
+                            let call_target = self
+                                .lookup_bound_special_method(&receiver, "__call__")?
+                                .ok_or_else(|| {
+                                    RuntimeError::new("attempted to call non-function")
+                                })?;
+                            match self.call_internal(call_target, args, kwargs)? {
+                                InternalCallOutcome::Value(value) => self.push_value(value),
+                                InternalCallOutcome::CallerExceptionHandled => {}
+                            }
+                        }
+                        Value::ExceptionType(name) => {
+                            let value =
+                                self.instantiate_exception_type(&name, &args, &kwargs)?;
+                            self.push_value(value);
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "attempted to call non-function",
+                            ))
                         }
                     }
-                    Value::Builtin(builtin) => {
-                        let caller_depth = self.frames.len();
-                        let caller_idx = caller_depth.saturating_sub(1);
-                        let caller_ip = self
-                            .frames
-                            .get(caller_idx)
-                            .map(|frame| frame.ip)
-                            .unwrap_or(0);
-                        let call_result = self.call_builtin(builtin, args, kwargs);
-                        self.finalize_builtin_opcode_call(
-                            caller_depth,
-                            caller_ip,
-                            call_result,
-                        )?;
-                    }
-                    Value::Instance(instance) => {
-                        let receiver = Value::Instance(instance.clone());
-                        let call_target = self
-                            .lookup_bound_special_method(&receiver, "__call__")?
-                            .ok_or_else(|| {
-                                RuntimeError::new("attempted to call non-function")
-                            })?;
-                        match self.call_internal(call_target, args, kwargs)? {
-                            InternalCallOutcome::Value(value) => self.push_value(value),
-                            InternalCallOutcome::CallerExceptionHandled => {}
-                        }
-                    }
-                    Value::ExceptionType(name) => {
-                        let value =
-                            self.instantiate_exception_type(&name, &args, &kwargs)?;
-                        self.push_value(value);
-                    }
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
                 }
             }
             Opcode::CallFunctionVar => {
@@ -5394,6 +5456,161 @@ impl Vm {
     }
 
     #[inline]
+    fn clear_load_attr_site_cache(&mut self, site_index: usize) {
+        if let Some(frame) = self.frames.last_mut() {
+            if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
+                *slot = None;
+            }
+        }
+    }
+
+    fn instance_has_attr_shadow(&self, instance: &ObjRef, attr_name: &str) -> bool {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return false;
+        };
+        if instance_data.attrs.contains_key(attr_name) {
+            return true;
+        }
+        if let Some(Value::Dict(dict_obj)) = instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+        {
+            return dict_get_value(dict_obj, &Value::Str(attr_name.to_string())).is_some();
+        }
+        false
+    }
+
+    fn try_load_attr_instance_site_cache(
+        &mut self,
+        site_index: usize,
+        instance: &ObjRef,
+        attr_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let cached = self
+            .frames
+            .last()
+            .and_then(|frame| frame.load_attr_inline_cache.get(site_index))
+            .and_then(|slot| slot.as_ref())
+            .cloned();
+        let Some(cached) = cached else {
+            return Ok(None);
+        };
+
+        let class_ref = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return Ok(None),
+        };
+        if class_ref.id() != cached.class_id {
+            return Ok(None);
+        }
+        if self.class_attr_version(&class_ref) != cached.class_version {
+            self.clear_load_attr_site_cache(site_index);
+            return Ok(None);
+        }
+        if cached.owner_class.id() != class_ref.id() {
+            if self.class_attr_version(&cached.owner_class) != cached.owner_class_version {
+                self.clear_load_attr_site_cache(site_index);
+                return Ok(None);
+            }
+        }
+        if self.instance_has_attr_shadow(instance, attr_name) {
+            return Ok(None);
+        }
+
+        let value = match cached.kind {
+            LoadAttrSiteCacheKind::InstanceFunction { function } => {
+                self.heap
+                    .alloc_bound_method(BoundMethod::new(function, instance.clone()))
+            }
+            LoadAttrSiteCacheKind::InstanceBuiltin { builtin } => {
+                self.alloc_builtin_bound_method(builtin, instance.clone())
+            }
+        };
+        Ok(Some(value))
+    }
+
+    fn update_load_attr_instance_site_cache(
+        &mut self,
+        site_index: usize,
+        instance: &ObjRef,
+        attr_name: &str,
+    ) {
+        let class_ref = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => {
+                self.clear_load_attr_site_cache(site_index);
+                return;
+            }
+        };
+        if !matches!(
+            class_attr_lookup(&class_ref, "__getattribute__"),
+            Some(Value::Builtin(BuiltinFunction::ObjectGetAttribute))
+        ) {
+            self.clear_load_attr_site_cache(site_index);
+            return;
+        }
+        if class_attr_lookup(&class_ref, "__getattr__").is_some() {
+            self.clear_load_attr_site_cache(site_index);
+            return;
+        }
+        if self.instance_has_attr_shadow(instance, attr_name) {
+            self.clear_load_attr_site_cache(site_index);
+            return;
+        }
+
+        let mut owner_class: Option<ObjRef> = None;
+        let mut owner_attr: Option<Value> = None;
+        for candidate in self.class_mro_entries(&class_ref) {
+            if let Some(attr) = class_attr_lookup_direct(&candidate, attr_name) {
+                owner_class = Some(candidate);
+                owner_attr = Some(attr);
+                break;
+            }
+        }
+        let Some(owner_class) = owner_class else {
+            self.clear_load_attr_site_cache(site_index);
+            return;
+        };
+
+        let kind = match owner_attr {
+            Some(Value::Function(function)) => {
+                Some(LoadAttrSiteCacheKind::InstanceFunction { function })
+            }
+            Some(Value::Builtin(builtin)) => {
+                let direct_user_defined_attr = matches!(
+                    &*class_ref.kind(),
+                    Object::Class(class_data)
+                        if matches!(
+                            class_data.attrs.get("__pyrs_user_class__"),
+                            Some(Value::Bool(true))
+                        ) && class_data.attrs.contains_key(attr_name)
+                );
+                if direct_user_defined_attr {
+                    None
+                } else {
+                    Some(LoadAttrSiteCacheKind::InstanceBuiltin { builtin })
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(kind) = kind {
+            let entry = LoadAttrSiteCacheEntry {
+                class_id: class_ref.id(),
+                class_version: self.class_attr_version(&class_ref),
+                owner_class: owner_class.clone(),
+                owner_class_version: self.class_attr_version(&owner_class),
+                kind,
+            };
+            if let Some(frame) = self.frames.last_mut() {
+                if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
+                    *slot = Some(entry);
+                }
+            }
+        } else {
+            self.clear_load_attr_site_cache(site_index);
+        }
+    }
+
+    #[inline]
     fn mark_quickened_site(&mut self, site_index: usize, kind: QuickenedSiteKind) {
         if let Some(frame) = self.frames.last_mut() {
             if let Some(slot) = frame.quickened_sites.get_mut(site_index) {
@@ -5720,6 +5937,65 @@ impl Vm {
             _ => return Err(RuntimeError::new("attempted to call non-function")),
         }
         Ok(())
+    }
+
+    #[inline]
+    fn dispatch_small_arity_no_kwargs_call(
+        &mut self,
+        func: &Value,
+        args: &mut Vec<Value>,
+    ) -> Result<bool, RuntimeError> {
+        match func {
+            Value::Function(func_obj) => match args.len() {
+                1 => {
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_function_call_one_arg_from_obj(func_obj, arg0)?;
+                    Ok(true)
+                }
+                2 => {
+                    let arg1 = args.pop().expect("len checked");
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_function_call_two_args_from_obj(func_obj, arg0, arg1)?;
+                    Ok(true)
+                }
+                3 => {
+                    let arg2 = args.pop().expect("len checked");
+                    let arg1 = args.pop().expect("len checked");
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_function_call_three_args_from_obj(
+                        func_obj, arg0, arg1, arg2,
+                    )?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            },
+            Value::BoundMethod(method_obj) => match args.len() {
+                1 => {
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_bound_method_call_one_arg_from_obj(method_obj, arg0)?;
+                    Ok(true)
+                }
+                2 => {
+                    let arg1 = args.pop().expect("len checked");
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_bound_method_call_two_args_from_obj(
+                        method_obj, arg0, arg1,
+                    )?;
+                    Ok(true)
+                }
+                3 => {
+                    let arg2 = args.pop().expect("len checked");
+                    let arg1 = args.pop().expect("len checked");
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_bound_method_call_three_args_from_obj(
+                        method_obj, arg0, arg1, arg2,
+                    )?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            },
+            _ => Ok(false),
+        }
     }
 
     #[inline]

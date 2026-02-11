@@ -4056,6 +4056,42 @@ impl Vm {
         Ok(())
     }
 
+    fn builtin_setattr_with_class_version(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let class_target_id = args.first().and_then(|value| match value {
+            Value::Class(class) => Some(class.id()),
+            _ => None,
+        });
+        let result = self.builtin_setattr(args, kwargs);
+        if result.is_ok() {
+            if let Some(class_id) = class_target_id {
+                self.touch_class_attr_version_by_id(class_id);
+            }
+        }
+        result
+    }
+
+    fn builtin_delattr_with_class_version(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let class_target_id = args.first().and_then(|value| match value {
+            Value::Class(class) => Some(class.id()),
+            _ => None,
+        });
+        let result = self.builtin_delattr(args, kwargs);
+        if result.is_ok() {
+            if let Some(class_id) = class_target_id {
+                self.touch_class_attr_version_by_id(class_id);
+            }
+        }
+        result
+    }
+
     pub(super) fn call_builtin(
         &mut self,
         builtin: BuiltinFunction,
@@ -4108,8 +4144,8 @@ impl Vm {
             BuiltinFunction::PlatformLibcVer => self.builtin_platform_libc_ver(args, kwargs),
             BuiltinFunction::PlatformWin32IsIot => self.builtin_platform_win32_is_iot(args, kwargs),
             BuiltinFunction::GetAttr => self.builtin_getattr(args, kwargs),
-            BuiltinFunction::SetAttr => self.builtin_setattr(args, kwargs),
-            BuiltinFunction::DelAttr => self.builtin_delattr(args, kwargs),
+            BuiltinFunction::SetAttr => self.builtin_setattr_with_class_version(args, kwargs),
+            BuiltinFunction::DelAttr => self.builtin_delattr_with_class_version(args, kwargs),
             BuiltinFunction::HasAttr => self.builtin_hasattr(args, kwargs),
             BuiltinFunction::Callable => self.builtin_callable(args, kwargs),
             BuiltinFunction::Type => self.builtin_type(args, kwargs),
