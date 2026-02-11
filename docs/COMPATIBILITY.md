@@ -48,4 +48,5 @@ Status:
 ## Notes
 - Active strict suite: `tests/cpython_suite_strict_stdlib.txt`
 - Deferred strict pickle suite: `tests/cpython_suite_deferred_pickle.txt`
+- Deferred strict pickle opt-in run: `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite`
 - Canonical milestone plan: `docs/ROADMAP.md`

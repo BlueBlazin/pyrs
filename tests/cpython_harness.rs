@@ -9,9 +9,11 @@ use pyrs::{compiler, parser, vm::Vm};
 
 const ALLOWLIST_FILE: &str = "tests/cpython_allowlist.txt";
 const STRICT_ALLOWLIST_FILE: &str = "tests/cpython_allowlist_strict.txt";
+const DEFERRED_PICKLE_ALLOWLIST_FILE: &str = "tests/cpython_allowlist_deferred_pickle.txt";
 const LANGUAGE_SUITE: &str = "tests/cpython_suite_language.txt";
 const IMPORT_SUITE: &str = "tests/cpython_suite_imports.txt";
 const STRICT_STDLIB_SUITE: &str = "tests/cpython_suite_strict_stdlib.txt";
+const DEFERRED_PICKLE_SUITE: &str = "tests/cpython_suite_deferred_pickle.txt";
 
 fn enabled(name: &str) -> bool {
     std::env::var(name)
@@ -229,6 +231,10 @@ fn strict_stdlib_enabled() -> bool {
     enabled("PYRS_RUN_STRICT_STDLIB") || enabled("PYRS_PARITY_STRICT")
 }
 
+fn deferred_pickle_enabled() -> bool {
+    enabled("PYRS_RUN_DEFERRED_PICKLE")
+}
+
 fn strict_run_allowlisted_entries() -> bool {
     enabled("PYRS_RUN_ALLOWLISTED_STRICT")
 }
@@ -441,9 +447,14 @@ fn allowlist_entries_are_referenced_by_suites() {
         .into_iter()
         .chain(read_list(IMPORT_SUITE))
         .chain(read_list(STRICT_STDLIB_SUITE))
+        .chain(read_list(DEFERRED_PICKLE_SUITE))
         .collect();
     let mut unused = Vec::new();
-    for allowlist_path in [ALLOWLIST_FILE, STRICT_ALLOWLIST_FILE] {
+    for allowlist_path in [
+        ALLOWLIST_FILE,
+        STRICT_ALLOWLIST_FILE,
+        DEFERRED_PICKLE_ALLOWLIST_FILE,
+    ] {
         let allow = read_allowlist(allowlist_path);
         for key in allow.keys() {
             if !suite_entries.contains(key) {
@@ -515,4 +526,26 @@ fn runs_cpython_strict_stdlib_suite() {
     handle
         .join()
         .expect("strict stdlib harness thread should complete");
+}
+
+#[test]
+fn runs_cpython_deferred_pickle_suite() {
+    if !deferred_pickle_enabled() {
+        eprintln!("skipping deferred pickle strict suite (set PYRS_RUN_DEFERRED_PICKLE=1 to enable)");
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .name("cpython-deferred-pickle".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            run_suite_file(
+                DEFERRED_PICKLE_SUITE,
+                DEFERRED_PICKLE_ALLOWLIST_FILE,
+                SuiteMode::StrictUnittest,
+            );
+        })
+        .expect("spawn deferred pickle harness thread");
+    handle
+        .join()
+        .expect("deferred pickle harness thread should complete");
 }

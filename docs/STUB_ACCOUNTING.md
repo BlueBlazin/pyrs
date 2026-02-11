@@ -40,10 +40,12 @@ No partially implemented surface is allowed to remain untracked.
 - Active strict suite: `tests/cpython_suite_strict_stdlib.txt`
 - Deferred strict pickle suite: `tests/cpython_suite_deferred_pickle.txt`
 - Active strict allowlist: `tests/cpython_allowlist_strict.txt` (target: empty)
+- Deferred strict pickle allowlist: `tests/cpython_allowlist_deferred_pickle.txt` (target: empty)
 
 Policy:
 1. Active strict suite should remain green with empty allowlist.
 2. Deferred pickle suite remains explicit until re-enabled and closed.
+3. Deferred pickle suite is opt-in locally (`PYRS_RUN_DEFERRED_PICKLE=1`) to keep fast loops bounded.
 
 ## Remaining Intentional NoOp Scope
 - Test-only CPython helper modules (`_testcapi`, `_testinternalcapi` family)

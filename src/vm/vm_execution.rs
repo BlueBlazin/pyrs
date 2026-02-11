@@ -5672,7 +5672,7 @@ impl Vm {
     }
 
     #[inline]
-    fn upsert_module_global(&mut self, module: &ObjRef, name: &str, value: Value) {
+    pub(super) fn upsert_module_global(&mut self, module: &ObjRef, name: &str, value: Value) {
         let slot_value = value.clone();
         let mut version = None;
         if let Object::Module(module_data) = &mut *module.kind_mut() {
@@ -5698,6 +5698,16 @@ impl Vm {
     ) {
         for frame in self.frames.iter_mut().rev() {
             if frame.is_module && frame.module.id() == module_id {
+                if let Some(dict) = frame.module_locals_dict.clone() {
+                    match value.clone() {
+                        Some(stored) => {
+                            dict_set_value(&dict, Value::Str(name.to_string()), stored);
+                        }
+                        None => {
+                            let _ = dict_remove_value(&dict, &Value::Str(name.to_string()));
+                        }
+                    }
+                }
                 if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
                     if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                         *slot = value;

@@ -3972,11 +3972,7 @@ impl Vm {
         }
         if self.find_module_file(&full_name).is_some() {
             if let Ok(module) = self.import_module_object(&full_name) {
-                if let Object::Module(module_data) = &mut *parent.kind_mut() {
-                    module_data
-                        .globals
-                        .insert(attr_name.to_string(), Value::Module(module.clone()));
-                }
+                self.upsert_module_global(parent, attr_name, Value::Module(module.clone()));
                 return Some(module);
             }
         }
@@ -4186,11 +4182,11 @@ impl Vm {
             } else {
                 self.ensure_module(&child_name)
             };
-            if let Object::Module(module_data) = &mut *current_module.kind_mut() {
-                module_data
-                    .globals
-                    .insert(part.to_string(), Value::Module(child_module.clone()));
-            }
+            self.upsert_module_global(
+                &current_module,
+                part,
+                Value::Module(child_module.clone()),
+            );
             current_module = child_module;
             current_name = child_name;
         }

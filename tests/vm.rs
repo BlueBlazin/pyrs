@@ -6162,7 +6162,17 @@ fn import_fresh_module_json_with_accelerator_present() {
     };
     let source = "from test.support import import_helper\n\
 cjson = import_helper.import_fresh_module('json', fresh=['_json'])\n\
-ok = cjson is not None and hasattr(cjson, 'decoder') and hasattr(cjson, 'JSONDecodeError')\n";
+pyjson = import_helper.import_fresh_module('json', blocked=['_json'])\n\
+has_py_scanner = pyjson is not None and 'scanner' in pyjson.__dict__\n\
+py_scanner_mod = pyjson.__dict__['scanner'].make_scanner.__module__ if has_py_scanner else ''\n\
+ok = (\n\
+    cjson is not None and\n\
+    pyjson is not None and\n\
+    hasattr(cjson, 'decoder') and\n\
+    hasattr(cjson, 'JSONDecodeError') and\n\
+    cjson.scanner.make_scanner.__module__ == '_json' and\n\
+    py_scanner_mod == 'json.scanner'\n\
+)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code =
         compiler::compile_module_with_filename(&module, "<import_fresh_json>").expect("compile");

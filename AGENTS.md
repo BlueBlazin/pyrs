@@ -58,6 +58,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - Strict stdlib harness is opt-in for frequent local loops and reserved for deliberate parity passes:
   - `PYRS_RUN_STRICT_STDLIB=1`
   - `PYRS_PARITY_STRICT=1`
+  - Deferred pickle strict lane: `PYRS_RUN_DEFERRED_PICKLE=1`
 - Keep strict harness subprocess timeout protections enabled to avoid runaway hangs.
 
 ## Canonical Documents (Do Not Duplicate Their Contents Here)
