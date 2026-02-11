@@ -584,8 +584,6 @@ impl Vm {
                 #[cfg(not(debug_assertions))]
                 let mut fused_const_small_int: Option<i64> = None;
                 #[cfg(not(debug_assertions))]
-                let mut fused_from_cached_direct = false;
-                #[cfg(not(debug_assertions))]
                 let mut cached_direct_call: Option<(
                     usize,
                     usize,
@@ -701,12 +699,10 @@ impl Vm {
                         &func_obj,
                         arg,
                     )?;
-                    fused_from_cached_direct = true;
+                    return Ok(None);
                 }
                 #[cfg(not(debug_assertions))]
-                let value = if fused_from_cached_direct {
-                    Value::None
-                } else if let Some(value) = value {
+                let value = if let Some(value) = value {
                     value
                 } else {
                     if !push_null {
@@ -791,11 +787,6 @@ impl Vm {
                     value
                 };
                 #[cfg(not(debug_assertions))]
-                let mut fused = fused_from_cached_direct;
-                #[cfg(debug_assertions)]
-                let fused = false;
-
-                #[cfg(not(debug_assertions))]
                 {
                     if !push_null {
                         if let Some((local_idx, const_idx)) = fused_candidate {
@@ -843,17 +834,15 @@ impl Vm {
                                 } else {
                                     self.push_function_call_one_arg_from_obj(func_obj, arg)?;
                                 }
-                                fused = true;
+                                return Ok(None);
                             }
                         }
                     }
                 }
-                if !fused {
-                    if push_null {
-                        self.push_value(Value::None);
-                    }
-                    self.push_value(value);
+                if push_null {
+                    self.push_value(Value::None);
                 }
+                self.push_value(value);
             }
             Opcode::LoadBuildClass => {
                 self.push_value(Value::Builtin(BuiltinFunction::BuildClass));
