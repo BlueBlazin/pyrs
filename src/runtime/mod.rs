@@ -880,7 +880,7 @@ fn fast_numeric_hash_bits(value: &Value) -> Option<u64> {
                 if as_float.is_finite()
                     && BigInt::from_f64_integral(as_float)
                         .as_ref()
-                        .is_some_and(|converted| converted == integer)
+                        .is_some_and(|converted| converted == integer.as_ref())
                 {
                     Some(if as_float == 0.0 { 0.0 } else { as_float }.to_bits())
                 } else {
@@ -917,7 +917,7 @@ fn value_hash_key(value: &Value) -> Option<u64> {
             if as_float.is_finite()
                 && BigInt::from_f64_integral(as_float)
                     .as_ref()
-                    .is_some_and(|converted| converted == integer)
+                    .is_some_and(|converted| converted == integer.as_ref())
             {
                 let normalized = if as_float == 0.0 { 0.0 } else { as_float };
                 normalized.to_bits().hash(&mut hasher);
@@ -1257,7 +1257,7 @@ impl Heap {
                     self.id_for_immediate(ImmediateKey::Int(*value))
                 }
             }
-            Value::BigInt(value) => self.id_for_immediate(ImmediateKey::BigInt(value.clone())),
+            Value::BigInt(value) => self.id_for_immediate(ImmediateKey::BigInt((**value).clone())),
             Value::Float(value) => self.id_for_immediate(ImmediateKey::Float(value.to_bits())),
             Value::Complex { real, imag } => {
                 self.id_for_immediate(ImmediateKey::Complex(real.to_bits(), imag.to_bits()))
@@ -1662,7 +1662,7 @@ pub enum Value {
     None,
     Bool(bool),
     Int(i64),
-    BigInt(BigInt),
+    BigInt(Box<BigInt>),
     Float(f64),
     Complex {
         real: f64,
@@ -1838,23 +1838,23 @@ impl PartialEq for Value {
             (Value::None, Value::None) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Bool(a), Value::Int(b)) => (*a as i64) == *b,
-            (Value::Bool(a), Value::BigInt(b)) => BigInt::from_i64(*a as i64) == *b,
+            (Value::Bool(a), Value::BigInt(b)) => BigInt::from_i64(*a as i64) == **b,
             (Value::Bool(a), Value::Float(b)) => (*a as i64 as f64) == *b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Int(a), Value::Bool(b)) => *a == (*b as i64),
-            (Value::Int(a), Value::BigInt(b)) => BigInt::from_i64(*a) == *b,
+            (Value::Int(a), Value::BigInt(b)) => BigInt::from_i64(*a) == **b,
             (Value::Int(a), Value::Float(b)) => (*a as f64) == *b,
             (Value::BigInt(a), Value::BigInt(b)) => a == b,
-            (Value::BigInt(a), Value::Bool(b)) => *a == BigInt::from_i64(*b as i64),
-            (Value::BigInt(a), Value::Int(b)) => *a == BigInt::from_i64(*b),
+            (Value::BigInt(a), Value::Bool(b)) => **a == BigInt::from_i64(*b as i64),
+            (Value::BigInt(a), Value::Int(b)) => **a == BigInt::from_i64(*b),
             (Value::BigInt(a), Value::Float(b)) => BigInt::from_f64_integral(*b)
                 .as_ref()
-                .is_some_and(|converted| converted == a),
+                .is_some_and(|converted| converted == a.as_ref()),
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::Float(a), Value::Int(b)) => *a == (*b as f64),
             (Value::Float(a), Value::BigInt(b)) => BigInt::from_f64_integral(*a)
                 .as_ref()
-                .is_some_and(|converted| converted == b),
+                .is_some_and(|converted| converted == b.as_ref()),
             (Value::Float(a), Value::Bool(b)) => *a == (*b as i64 as f64),
             (
                 Value::Complex {
@@ -2926,7 +2926,7 @@ impl BuiltinFunction {
                     }
                     Ok(match parsed.to_i64() {
                         Some(value) => Value::Int(value),
-                        None => Value::BigInt(parsed),
+                        None => Value::BigInt(Box::new(parsed)),
                     })
                 };
 
@@ -2963,7 +2963,7 @@ impl BuiltinFunction {
                             .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
                         Ok(match bigint.to_i64() {
                             Some(value) => Value::Int(value),
-                            None => Value::BigInt(bigint),
+                            None => Value::BigInt(Box::new(bigint)),
                         })
                     }
                     Value::Str(value) => parse_with_base(value, explicit_base),
@@ -5366,7 +5366,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         while cursor.cmp_total(stop) == Ordering::Less {
                             out.push(match cursor.to_i64() {
                                 Some(number) => Value::Int(number),
-                                None => Value::BigInt(cursor.clone()),
+                                None => Value::BigInt(Box::new(cursor.clone())),
                             });
                             cursor = cursor.add(step);
                         }
@@ -5374,7 +5374,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         while cursor.cmp_total(stop) == Ordering::Greater {
                             out.push(match cursor.to_i64() {
                                 Some(number) => Value::Int(number),
-                                None => Value::BigInt(cursor.clone()),
+                                None => Value::BigInt(Box::new(cursor.clone())),
                             });
                             cursor = cursor.add(step);
                         }
@@ -5396,7 +5396,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         while cursor.cmp_total(stop) == Ordering::Less {
                             out.push(match cursor.to_i64() {
                                 Some(number) => Value::Int(number),
-                                None => Value::BigInt(cursor.clone()),
+                                None => Value::BigInt(Box::new(cursor.clone())),
                             });
                             cursor = cursor.add(step);
                         }
@@ -5404,7 +5404,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         while cursor.cmp_total(stop) == Ordering::Greater {
                             out.push(match cursor.to_i64() {
                                 Some(number) => Value::Int(number),
-                                None => Value::BigInt(cursor.clone()),
+                                None => Value::BigInt(Box::new(cursor.clone())),
                             });
                             cursor = cursor.add(step);
                         }
@@ -5689,7 +5689,7 @@ fn int_like_bigint(value: &Value) -> Option<BigInt> {
     match value {
         Value::Int(value) => Some(BigInt::from_i64(*value)),
         Value::Bool(value) => Some(BigInt::from_i64(if *value { 1 } else { 0 })),
-        Value::BigInt(value) => Some(value.clone()),
+        Value::BigInt(value) => Some((**value).clone()),
         _ => None,
     }
 }
@@ -5697,7 +5697,7 @@ fn int_like_bigint(value: &Value) -> Option<BigInt> {
 fn bigint_to_value(value: BigInt) -> Value {
     match value.to_i64() {
         Some(number) => Value::Int(number),
-        None => Value::BigInt(value),
+        None => Value::BigInt(Box::new(value)),
     }
 }
 

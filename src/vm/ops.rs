@@ -14,13 +14,13 @@ fn int_like_to_bigint(value: &Value) -> Option<BigInt> {
     match value {
         Value::Bool(flag) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
         Value::Int(number) => Some(BigInt::from_i64(*number)),
-        Value::BigInt(number) => Some(number.clone()),
+        Value::BigInt(number) => Some((**number).clone()),
         Value::Instance(instance) => match &*instance.kind() {
             Object::Instance(instance_data) => match instance_data.attrs.get("__pyrs_int_storage__")
             {
                 Some(Value::Bool(flag)) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
                 Some(Value::Int(number)) => Some(BigInt::from_i64(*number)),
-                Some(Value::BigInt(number)) => Some(number.clone()),
+                Some(Value::BigInt(number)) => Some((**number).clone()),
                 _ => None,
             },
             _ => None,
@@ -63,7 +63,7 @@ fn integer_pair(left: &Value, right: &Value) -> Option<(BigInt, BigInt)> {
 fn bigint_to_value(value: BigInt) -> Value {
     match value.to_i64() {
         Some(number) => Value::Int(number),
-        None => Value::BigInt(value),
+        None => Value::BigInt(Box::new(value)),
     }
 }
 
@@ -713,7 +713,7 @@ pub(super) fn neg_value(value: Value) -> Result<Value, RuntimeError> {
 pub(super) fn pos_value(value: Value) -> Result<Value, RuntimeError> {
     match value {
         Value::Int(value) => Ok(Value::Int(value)),
-        Value::BigInt(value) => Ok(bigint_to_value(value)),
+        Value::BigInt(value) => Ok(bigint_to_value(*value)),
         Value::Bool(value) => Ok(Value::Int(if value { 1 } else { 0 })),
         Value::Float(value) => Ok(Value::Float(value)),
         _ => Err(RuntimeError::new("unsupported operand type for +")),
@@ -1429,10 +1429,17 @@ mod tests {
         assert_eq!(quotient, Value::Int(-3));
         assert_eq!(remainder, Value::Int(2));
 
-        let big = Value::BigInt(BigInt::from_str_radix("100000000000000000000", 10).unwrap());
+        let big = Value::BigInt(Box::new(
+            BigInt::from_str_radix("100000000000000000000", 10).unwrap(),
+        ));
         let big_q = floor_div_values(big.clone(), Value::Int(7)).expect("big floor div works");
         let big_r = mod_values(big, Value::Int(7)).expect("big mod works");
-        assert_eq!(big_q, Value::BigInt(BigInt::from_str_radix("14285714285714285714", 10).unwrap()));
+        assert_eq!(
+            big_q,
+            Value::BigInt(Box::new(
+                BigInt::from_str_radix("14285714285714285714", 10).unwrap(),
+            ))
+        );
         assert_eq!(big_r, Value::Int(2));
     }
 

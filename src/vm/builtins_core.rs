@@ -4098,7 +4098,7 @@ impl Vm {
             match value {
                 Value::Bool(flag) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
                 Value::Int(number) => Some(BigInt::from_i64(*number)),
-                Value::BigInt(number) => Some(number.clone()),
+                Value::BigInt(number) => Some((**number).clone()),
                 _ => None,
             }
         }

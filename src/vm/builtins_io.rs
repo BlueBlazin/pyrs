@@ -2861,7 +2861,7 @@ impl Vm {
                         if value <= i64::MAX as u64 {
                             values.push(Value::Int(value as i64));
                         } else {
-                            values.push(Value::BigInt(BigInt::from_u64(value)));
+                            values.push(Value::BigInt(Box::new(BigInt::from_u64(value))));
                         }
                         pos += 8;
                     }

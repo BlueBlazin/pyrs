@@ -907,7 +907,7 @@ fn json_node_to_value(node: JsonNode, heap: &Heap) -> Value {
         JsonNode::Null => Value::None,
         JsonNode::Bool(value) => Value::Bool(value),
         JsonNode::Int(value) => Value::Int(value),
-        JsonNode::BigInt(value) => Value::BigInt(value),
+        JsonNode::BigInt(value) => Value::BigInt(Box::new(value)),
         JsonNode::Float(value) => Value::Float(value),
         JsonNode::String(value) => Value::Str(value),
         JsonNode::Array(values) => heap.alloc_list(
