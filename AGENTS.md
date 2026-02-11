@@ -89,7 +89,7 @@ Milestone 13 completion is blocked on P0 closure of:
   - `scripts/bench_dict_backend.sh 5`
 - Latest baseline snapshot (2026-02-11, local warm release):
   - `fib(29)x5`: `pyrs ~0.54-0.55s` user vs `python3.10 ~0.50-0.51s` user (`~1.08-1.10x`)
-  - dispatch hotpath: `pyrs ~0.48-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
+  - dispatch hotpath: `pyrs ~0.46-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
   - dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
   - pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 - Latest container checkpoint:
@@ -101,6 +101,7 @@ Milestone 13 completion is blocked on P0 closure of:
   - module-scope `LOAD_NAME`/`STORE_NAME` paths now avoid per-opcode name-clone churn; `STORE_NAME` uses indexed storage path with direct module/global upsert.
   - module-scope `LOAD_NAME` now has version-guarded site caching against module+builtins versions.
   - module global writes now synchronize module-frame fast-local slots to keep accelerated `LOAD_NAME` lookups semantically correct.
+  - `LOAD_NAME`/indexed `STORE_NAME` now use opcode name-index directly for fast-local slot access instead of `name_to_index` hash lookups.
 - Optimization sprint exit is based on broad workload closure (dispatch/call/container/startup), not only fib recursion.
 - CI now runs `scripts/bench_dispatch_hotpath.sh` as non-blocking telemetry and uploads the benchmark artifact for regression tracking.
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.

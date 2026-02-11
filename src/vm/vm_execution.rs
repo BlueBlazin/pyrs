@@ -240,7 +240,7 @@ impl Vm {
                                 )
                             } else {
                                 (
-                                    self.lookup_name(name)?,
+                                    self.lookup_name_with_index(idx, name)?,
                                     true,
                                     false,
                                     globals_module_id,
@@ -249,7 +249,7 @@ impl Vm {
                             }
                         } else {
                             (
-                                self.lookup_name(name)?,
+                                self.lookup_name_with_index(idx, name)?,
                                 true,
                                 false,
                                 globals_module_id,
@@ -258,7 +258,7 @@ impl Vm {
                         }
                     } else {
                         (
-                            self.lookup_name(name)?,
+                            self.lookup_name_with_index(idx, name)?,
                             false,
                             false,
                             globals_module_id,
@@ -5550,9 +5550,16 @@ impl Vm {
         None
     }
 
-    pub(super) fn lookup_name(&self, name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn lookup_name_with_index(
+        &self,
+        name_index: usize,
+        name: &str,
+    ) -> Result<Value, RuntimeError> {
         if let Some(frame) = self.frames.last() {
-            if let Some(value) = Self::frame_local_value(frame, name) {
+            if let Some(value) = frame.fast_locals.get(name_index).and_then(Option::as_ref) {
+                return Ok(value.clone());
+            }
+            if let Some(value) = frame.locals.get(name) {
                 return Ok(value.clone());
             }
             if let Some(fallback) = &frame.locals_fallback {
@@ -5589,9 +5596,10 @@ impl Vm {
                 .names
                 .get(name_index)
                 .ok_or_else(|| RuntimeError::new("name index out of range"))?;
+            let has_fast_slot = name_index < frame.fast_locals.len();
             if frame.is_module {
-                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
-                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                if has_fast_slot {
+                    if let Some(slot) = frame.fast_locals.get_mut(name_index) {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
                 }
@@ -5608,8 +5616,8 @@ impl Vm {
                     touched_module_version = Some((frame.module.id(), module_data.globals_version));
                 }
             } else {
-                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
-                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                if has_fast_slot {
+                    if let Some(slot) = frame.fast_locals.get_mut(name_index) {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
                 }
@@ -5617,7 +5625,7 @@ impl Vm {
                     *existing = value;
                 } else {
                     // Keep fast locals authoritative; only retain truly dynamic names here.
-                    if !frame.code.name_to_index.contains_key(name.as_str()) {
+                    if !has_fast_slot {
                         frame.locals.insert(name.clone(), value);
                     }
                 }
