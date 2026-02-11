@@ -794,6 +794,44 @@ impl Vm {
         }
     }
 
+    #[inline(always)]
+    fn acquire_simple_frame_slot0_no_cells_fast_ref(
+        &mut self,
+        code: &Rc<CodeObject>,
+        module: &ObjRef,
+        globals_version: u64,
+    ) -> Box<Frame> {
+        debug_assert!(code.fast_local_count == 1);
+        debug_assert!(code.plain_positional_arg0_slot == Some(0));
+        if let Some(mut frame) = self.simple_frame_pool.pop() {
+            if Rc::ptr_eq(&frame.code, code)
+                && frame.module.id() == module.id()
+                && frame.owner_class.is_none()
+                && frame.fast_locals.len() == 1
+            {
+                frame.ip = 0;
+                frame.last_ip = 0;
+                frame.function_globals_version = globals_version;
+                frame.simple_one_arg_no_cells = true;
+                return frame;
+            }
+            frame.prepare_simple_one_arg_no_cells_ref(code, module, None);
+            frame.function_globals_version = globals_version;
+            return frame;
+        }
+        let mut frame = Box::new(Frame::new(
+            code.clone(),
+            module.clone(),
+            false,
+            false,
+            Vec::new(),
+            None,
+        ));
+        frame.function_globals_version = globals_version;
+        frame.simple_one_arg_no_cells = true;
+        frame
+    }
+
     fn recycle_simple_frame(&mut self, mut frame: Box<Frame>) {
         if self.simple_frame_pool.len() >= 256 {
             return;
@@ -2459,7 +2497,7 @@ fn value_to_bigint(value: Value) -> Result<BigInt, RuntimeError> {
     match value {
         Value::Int(value) => Ok(BigInt::from_i64(value)),
         Value::Bool(value) => Ok(BigInt::from_i64(if value { 1 } else { 0 })),
-        Value::BigInt(value) => Ok(value),
+        Value::BigInt(value) => Ok(*value),
         _ => Err(RuntimeError::new("range() expects integers")),
     }
 }
@@ -2467,7 +2505,7 @@ fn value_to_bigint(value: Value) -> Result<BigInt, RuntimeError> {
 fn value_from_bigint(value: BigInt) -> Value {
     match value.to_i64() {
         Some(number) => Value::Int(number),
-        None => Value::BigInt(value),
+        None => Value::BigInt(Box::new(value)),
     }
 }
 

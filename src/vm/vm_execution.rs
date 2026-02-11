@@ -207,33 +207,36 @@ impl Vm {
                                     .unwrap_or(false);
                                 if next_is_return
                                     && frame.simple_one_arg_no_cells
+                                    && idx == 0
                                     && frame.code.fast_local_count == 1
                                     && frame.code.plain_positional_arg0_slot == Some(0)
-                                    && idx == 0
-                                    && frame.stack.is_empty()
-                                    && frame.locals.is_empty()
-                                    && frame.cells.is_empty()
                                     && frame.blocks.is_empty()
-                                    && frame.class_bases.is_empty()
-                                    && frame.class_keywords.is_empty()
+                                    && frame.stack.is_empty()
                                     && frame.module_locals_dict.is_none()
-                                    && frame.globals_fallback.is_none()
-                                    && frame.locals_fallback.is_none()
-                                    && frame.return_instance.is_none()
-                                    && frame.class_metaclass.is_none()
-                                    && frame.generator_owner.is_none()
-                                    && frame.generator_resume_value.is_none()
-                                    && frame.generator_pending_throw.is_none()
-                                    && frame.generator_resume_kind.is_none()
-                                    && frame.yield_from_iter.is_none()
                                     && frame.active_exception.is_none()
                                     && !frame.discard_result
                                     && !frame.return_class
+                                    && frame.return_instance.is_none()
                                     && !frame.expect_none_return
-                                    && !frame.generator_awaiting_resume_value
                                     && !frame.is_module
                                     && !frame.return_module
                                 {
+                                    #[cfg(debug_assertions)]
+                                    {
+                                        debug_assert!(frame.locals.is_empty());
+                                        debug_assert!(frame.cells.is_empty());
+                                        debug_assert!(frame.class_bases.is_empty());
+                                        debug_assert!(frame.class_keywords.is_empty());
+                                        debug_assert!(frame.globals_fallback.is_none());
+                                        debug_assert!(frame.locals_fallback.is_none());
+                                        debug_assert!(frame.class_metaclass.is_none());
+                                        debug_assert!(frame.generator_owner.is_none());
+                                        debug_assert!(frame.generator_resume_value.is_none());
+                                        debug_assert!(frame.generator_pending_throw.is_none());
+                                        debug_assert!(frame.generator_resume_kind.is_none());
+                                        debug_assert!(frame.yield_from_iter.is_none());
+                                        debug_assert!(!frame.generator_awaiting_resume_value);
+                                    }
                                     frame.fast_locals.get(0).and_then(Option::as_ref).cloned()
                                 } else {
                                     None
@@ -506,6 +509,9 @@ impl Vm {
                         let mut fused_const_small_int: Option<i64> = None;
                         #[cfg(not(debug_assertions))]
                         let mut fused_from_cached_direct = false;
+                        #[cfg(not(debug_assertions))]
+                        let mut cached_direct_call: Option<(usize, usize, Option<i64>, ObjRef)> =
+                            None;
                         if let Some(frame) = self.frames.last() {
                             if let Some(entry) = frame.load_global_inline_cache.get(site_index) {
                                 if let Some(cached) = entry {
@@ -513,95 +519,102 @@ impl Vm {
                                         && cached.globals_version == globals_version
                                         && cached.builtins_version == self.builtins_version
                                     {
-                                        value = Some(cached.value.clone());
-                                        #[cfg(not(debug_assertions))]
-                                        if let (Some(local_idx), Some(const_idx)) =
-                                            (cached.fused_local_idx, cached.fused_const_idx)
-                                        {
-                                            fused_candidate =
-                                                Some((local_idx as usize, const_idx as usize));
-                                        }
                                         #[cfg(not(debug_assertions))]
                                         {
-                                            fused_direct_one_arg_no_cells =
-                                                cached.fused_direct_one_arg_no_cells;
-                                            fused_const_small_int = cached.fused_const_small_int;
-                                        }
-                                        #[cfg(not(debug_assertions))]
-                                        if let (Some(code), Some(module)) = (
-                                            cached.fused_direct_code.clone(),
-                                            cached.fused_direct_module.clone(),
-                                        ) {
-                                            fused_direct_cached = Some((
-                                                code,
-                                                module,
-                                                cached.fused_direct_owner_class.clone(),
-                                            ));
-                                        }
-                                        #[cfg(not(debug_assertions))]
-                                        if !push_null
-                                            && fused_direct_one_arg_no_cells
-                                            && fused_candidate.is_some()
-                                        {
-                                            if let (
-                                                Some((local_idx, const_idx)),
-                                                Some((code, module, owner_class)),
-                                            ) = (fused_candidate, fused_direct_cached.as_ref())
+                                            if !push_null
+                                                && cached.fused_direct_one_arg_no_cells
                                             {
-                                                let arg = if let Some(right_int) =
-                                                    fused_const_small_int
+                                                if let (Some(local_idx), Some(const_idx)) =
+                                                    (cached.fused_local_idx, cached.fused_const_idx)
                                                 {
-                                                    let left_small = {
-                                                        let frame =
-                                                            self.frames.last().expect("frame exists");
-                                                        frame
-                                                            .fast_locals
-                                                            .get(local_idx)
-                                                            .and_then(Option::as_ref)
-                                                            .and_then(|value| match value {
-                                                                Value::Int(integer) => Some(*integer),
-                                                                Value::Bool(flag) => {
-                                                                    Some(if *flag { 1 } else { 0 })
-                                                                }
-                                                                _ => None,
-                                                            })
-                                                    };
-                                                    if let Some(left_int) = left_small {
-                                                        match left_int.checked_sub(right_int) {
-                                                            Some(diff) => Value::Int(diff),
-                                                            None => sub_values(
-                                                                Value::Int(left_int),
-                                                                Value::Int(right_int),
-                                                                &self.heap,
-                                                            )?,
-                                                        }
-                                                    } else {
-                                                        self.fused_fast_local_sub_small_int_arg(
-                                                            local_idx, right_int,
-                                                        )?
+                                                    if let Value::Function(func_obj) = &cached.value {
+                                                        cached_direct_call = Some((
+                                                            local_idx as usize,
+                                                            const_idx as usize,
+                                                            cached.fused_const_small_int,
+                                                            func_obj.clone(),
+                                                        ));
                                                     }
-                                                } else {
-                                                    self.fused_fast_local_sub_const_arg(
-                                                        local_idx, const_idx,
-                                                    )?
-                                                };
-                                                {
-                                                    let caller =
-                                                        self.frames.last_mut().expect("frame exists");
-                                                    caller.ip += 3;
                                                 }
-                                                self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
-                                                    code,
-                                                    module,
-                                                    owner_class.as_ref(),
-                                                    arg,
-                                                )?;
-                                                fused_from_cached_direct = true;
                                             }
+                                            if cached_direct_call.is_none() {
+                                                value = Some(cached.value.clone());
+                                                if let (Some(local_idx), Some(const_idx)) =
+                                                    (cached.fused_local_idx, cached.fused_const_idx)
+                                                {
+                                                    fused_candidate = Some((
+                                                        local_idx as usize,
+                                                        const_idx as usize,
+                                                    ));
+                                                }
+                                                fused_direct_one_arg_no_cells =
+                                                    cached.fused_direct_one_arg_no_cells;
+                                                fused_const_small_int =
+                                                    cached.fused_const_small_int;
+                                                if let (Some(code), Some(module)) = (
+                                                    cached.fused_direct_code.clone(),
+                                                    cached.fused_direct_module.clone(),
+                                                ) {
+                                                    fused_direct_cached = Some((
+                                                        code,
+                                                        module,
+                                                        cached.fused_direct_owner_class.clone(),
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        #[cfg(debug_assertions)]
+                                        {
+                                            value = Some(cached.value.clone());
                                         }
                                     }
                                 }
                             }
+                        }
+                        #[cfg(not(debug_assertions))]
+                        if let Some((
+                            local_idx,
+                            const_idx,
+                            cached_small_int,
+                            func_obj,
+                        )) = cached_direct_call
+                        {
+                            let arg = if let Some(right_int) = cached_small_int {
+                                let left_small = {
+                                    let frame = self.frames.last().expect("frame exists");
+                                    frame
+                                        .fast_locals
+                                        .get(local_idx)
+                                        .and_then(Option::as_ref)
+                                        .and_then(|value| match value {
+                                            Value::Int(integer) => Some(*integer),
+                                            Value::Bool(flag) => Some(if *flag { 1 } else { 0 }),
+                                            _ => None,
+                                        })
+                                };
+                                if let Some(left_int) = left_small {
+                                    match left_int.checked_sub(right_int) {
+                                        Some(diff) => Value::Int(diff),
+                                        None => sub_values(
+                                            Value::Int(left_int),
+                                            Value::Int(right_int),
+                                            &self.heap,
+                                        )?,
+                                    }
+                                } else {
+                                    self.fused_fast_local_sub_small_int_arg(local_idx, right_int)?
+                                }
+                            } else {
+                                self.fused_fast_local_sub_const_arg(local_idx, const_idx)?
+                            };
+                            {
+                                let caller = self.frames.last_mut().expect("frame exists");
+                                caller.ip += 3;
+                            }
+                            self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
+                                &func_obj, arg,
+                            )?;
+                            fused_from_cached_direct = true;
                         }
                         #[cfg(not(debug_assertions))]
                         let value = if fused_from_cached_direct {
@@ -4084,34 +4097,38 @@ impl Vm {
                             } else {
                                 let frame = self.frames.last().expect("frame exists");
                                 frame.simple_one_arg_no_cells
+                                    && frame.stack.len() == 1
+                                    && frame.blocks.is_empty()
                                     && frame.code.fast_local_count == 1
                                     && frame.code.plain_positional_arg0_slot == Some(0)
                                     && !frame.is_module
                                     && !frame.discard_result
-                                    && frame.generator_owner.is_none()
+                                    && frame.module_locals_dict.is_none()
+                                    && frame.active_exception.is_none()
                                     && !frame.return_class
                                     && frame.return_instance.is_none()
                                     && !frame.return_module
-                                    && frame.module_locals_dict.is_none()
                                     && !frame.expect_none_return
-                                    && frame.active_exception.is_none()
-                                    && frame.locals.is_empty()
-                                    && frame.cells.is_empty()
-                                    && frame.blocks.is_empty()
-                                    && frame.class_bases.is_empty()
-                                    && frame.class_keywords.is_empty()
-                                    && frame.stack.len() == 1
-                                    && frame.globals_fallback.is_none()
-                                    && frame.locals_fallback.is_none()
-                                    && frame.class_metaclass.is_none()
-                                    && !frame.generator_awaiting_resume_value
-                                    && frame.generator_resume_value.is_none()
-                                    && frame.generator_pending_throw.is_none()
-                                    && frame.generator_resume_kind.is_none()
-                                    && frame.yield_from_iter.is_none()
+                                    && frame.generator_owner.is_none()
                             }
                         };
                         if simple_fast_return {
+                            #[cfg(debug_assertions)]
+                            {
+                                let frame = self.frames.last().expect("frame exists");
+                                debug_assert!(frame.locals.is_empty());
+                                debug_assert!(frame.cells.is_empty());
+                                debug_assert!(frame.class_bases.is_empty());
+                                debug_assert!(frame.class_keywords.is_empty());
+                                debug_assert!(frame.globals_fallback.is_none());
+                                debug_assert!(frame.locals_fallback.is_none());
+                                debug_assert!(frame.class_metaclass.is_none());
+                                debug_assert!(!frame.generator_awaiting_resume_value);
+                                debug_assert!(frame.generator_resume_value.is_none());
+                                debug_assert!(frame.generator_pending_throw.is_none());
+                                debug_assert!(frame.generator_resume_kind.is_none());
+                                debug_assert!(frame.yield_from_iter.is_none());
+                            }
                             let value = {
                                 let frame = self.frames.last_mut().expect("frame exists");
                                 frame.stack.pop().unwrap_or(Value::None)
@@ -5045,6 +5062,7 @@ impl Vm {
         Ok(out)
     }
 
+    #[inline(always)]
     pub(super) fn pop_value(&mut self) -> Result<Value, RuntimeError> {
         let frame = self.frames.last_mut().expect("frame exists");
         if let Some(value) = frame.stack.pop() {
@@ -5063,6 +5081,7 @@ impl Vm {
         )))
     }
 
+    #[inline(always)]
     pub(super) fn push_value(&mut self, value: Value) {
         let frame = self.frames.last_mut().expect("frame exists");
         frame.stack.push(value);
@@ -5127,6 +5146,7 @@ impl Vm {
         }
     }
 
+    #[inline(always)]
     pub(super) fn load_fast_local(&mut self, idx: usize) -> Result<Value, RuntimeError> {
         let cached = {
             let frame = self.frames.last().expect("frame exists");
@@ -5164,6 +5184,7 @@ impl Vm {
         Ok(value)
     }
 
+    #[inline(always)]
     pub(super) fn store_fast_local(&mut self, idx: usize, value: Value) -> Result<(), RuntimeError> {
         let name = {
             let frame = self.frames.last().expect("frame exists");
@@ -5684,11 +5705,6 @@ impl Vm {
         arg0: Value,
     ) -> Result<(), RuntimeError> {
         enum CachedCallAction {
-            SimpleNoCells {
-                code: Rc<CodeObject>,
-                module: ObjRef,
-                owner_class: Option<ObjRef>,
-            },
             SimpleNoCellsFromFunc,
             SimplePositional {
                 code: Rc<CodeObject>,
@@ -5725,17 +5741,7 @@ impl Vm {
                 }
                 match entry.hot_path {
                     OneArgCallHotPath::SimplePositionalNoCells => {
-                        if let (Some(code), Some(module)) =
-                            (entry.cached_code.as_ref(), entry.cached_module.as_ref())
-                        {
-                            Some(CachedCallAction::SimpleNoCells {
-                                code: code.clone(),
-                                module: module.clone(),
-                                owner_class: entry.cached_owner_class.clone(),
-                            })
-                        } else {
-                            Some(CachedCallAction::SimpleNoCellsFromFunc)
-                        }
+                        Some(CachedCallAction::SimpleNoCellsFromFunc)
                     }
                     OneArgCallHotPath::SimplePositional => {
                         if let (Some(code), Some(module), Some(closure)) = (
@@ -5758,16 +5764,6 @@ impl Vm {
             });
         if let Some(action) = cached_action {
             return match action {
-                CachedCallAction::SimpleNoCells {
-                    code,
-                    module,
-                    owner_class,
-                } => self.push_simple_positional_function_frame_one_arg_no_cells(
-                    code,
-                    module,
-                    owner_class,
-                    arg0,
-                ),
                 CachedCallAction::SimpleNoCellsFromFunc => {
                     self.push_simple_positional_function_frame_one_arg_no_cells_from_func(func, arg0)
                 }
@@ -5879,19 +5875,17 @@ impl Vm {
         func: &ObjRef,
         arg0: Value,
     ) -> Result<(), RuntimeError> {
-        let (code, module, owner_class) = {
-            let func_kind = func.kind();
-            let func_data = match &*func_kind {
-                Object::Function(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
-            };
-            (
-                func_data.code.clone(),
-                func_data.module.clone(),
-                func_data.owner_class.clone(),
-            )
+        let func_kind = func.kind();
+        let func_data = match &*func_kind {
+            Object::Function(data) => data,
+            _ => return Err(RuntimeError::new("attempted to call non-function")),
         };
-        self.push_simple_positional_function_frame_one_arg_no_cells(code, module, owner_class, arg0)
+        self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
+            &func_data.code,
+            &func_data.module,
+            func_data.owner_class.as_ref(),
+            arg0,
+        )
     }
 
     #[inline]
@@ -5971,7 +5965,18 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         debug_assert!(code.plain_positional_arg0_slot == Some(0));
         debug_assert!(code.fast_local_count == 1);
-        let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
+        let globals_version = self
+            .frames
+            .last()
+            .map(|caller| caller.function_globals_version)
+            .unwrap_or_else(|| module_globals_version(module));
+        let mut frame = if owner_class.is_none() {
+            self.acquire_simple_frame_slot0_no_cells_fast_ref(code, module, globals_version)
+        } else {
+            let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
+            frame.function_globals_version = globals_version;
+            frame
+        };
         if let Some(caller) = self.frames.last() {
             if let Some(active_exception) = caller.active_exception.as_ref() {
                 frame.active_exception = Some(active_exception.clone());

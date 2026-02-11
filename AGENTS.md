@@ -86,7 +86,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - Performance gate:
   - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
   - Target: `< 0.15s` user-time
-  - Current baseline: ~`0.95s` user-time (`~0.96s` wall, warm local release runs); single-run reference `print(fib(29))` is ~`0.23-0.24s` user-time.
+  - Current baseline: ~`0.66-0.68s` user-time (`~0.68-0.70s` wall, warm local release runs); single-run reference `print(fib(29))` is ~`0.21-0.22s` user-time.
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
 - Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.
 - Optimization sprint must explicitly close foundational missing surfaces tracked in backlog (`OPT-022` string interning strategy and remaining `OPT-023+` dispatch/call/container items) before being considered complete.

@@ -21,8 +21,8 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.95s` user-time (`~0.96s` wall, warm) for the `fib(29)x5` gate
-  - ~`0.24s` user-time for `print(fib(29))` single-run reference
+  - ~`0.66-0.68s` user-time (`~0.68-0.70s` wall) for the `fib(29)x5` gate
+  - ~`0.21-0.22s` user-time for `print(fib(29))` single-run reference
 
 ## CPython Reference Map
 
@@ -74,6 +74,7 @@ Last updated: 2026-02-11
 | `OPT-024` | P1 | calls | Extend call specialization beyond `CALL_FUNCTION` (`CALL_KW`, bound-method calls, builtin/vectorcall analog path) | `call.c`, `ceval.c` | `[ ]` |
 | `OPT-025` | P1 | containers | Dict/set probe/load-factor/resizing tuning against CPython behavior (not just correctness) | `dictobject.c`, `setobject.c` | `[ ]` |
 | `OPT-026` | P1 | allocations | Add allocator/freelist strategy for hot temporary objects and call argument buffers | `frame.c`, `dictobject.c`, `call.c` | `[ ]` |
+| `OPT-027` | P0 | value model | Shrink `Value` payload by boxing heavyweight inline variants used in hot VM transport paths | `ceval.c` value-pointer transport model | `[~]` |
 
 ## Rules For This Backlog
 
@@ -115,3 +116,11 @@ Last updated: 2026-02-11
   - conservative `LoadFast -> ReturnValue` fast-return fusion landed for strict clean one-arg no-cells frames,
   - `RETURN_VALUE` path now uses direct frame-local stack pops (removing `pop_value().unwrap_or(...)` overhead),
   - benchmark improved modestly to about `0.95s` user; dominant bottleneck remains frame/call churn + eval-loop dispatch.
+- Latest value-model checkpoint:
+  - `Value::Exception` now stores boxed exception payloads, removing large inline exception object copies from hot stack/value transport paths,
+  - `Value::Slice` now stores boxed slice payloads, reducing enum max-size pressure and value move cost in generic VM operations,
+  - benchmark improved to about `0.66-0.68s` user for `fib(29)x5` on release builds; dominant bottleneck remains frame/call setup and eval-loop dispatch.
+- Latest call/dispatch checkpoint:
+  - fixed `LOAD_GLOBAL` fused-direct path to avoid borrow-check workarounds and route cached direct no-cells calls through borrowed function metadata paths,
+  - one-arg no-cells inline-cache hot path now avoids per-call `code/module/owner_class` cloning and dispatches through `push_simple_positional_function_frame_one_arg_no_cells_from_func`,
+  - added slot-0/no-cells fast acquire path for same-module/no-owner frames; profiling still shows simple-frame acquisition and eval-loop dispatch as top remaining costs.
