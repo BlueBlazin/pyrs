@@ -88,10 +88,10 @@ Milestone 13 completion is blocked on P0 closure of:
   - `scripts/bench_dispatch_hotpath.sh 5`
   - `scripts/bench_dict_backend.sh 5`
 - Latest baseline snapshot (2026-02-11, local warm release):
-  - `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.50s` user (`~1.07x`)
-  - dispatch hotpath: `pyrs ~0.955s` vs `python3.10 ~0.057s` (`~16.7x`)
-  - dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01s`
-  - pickle hotspot: `pyrs ~6.39s` vs `python3.10 ~0.46s` (`~13.9x`)
+  - `fib(29)x5`: `pyrs ~0.53-0.54s` user vs `python3.10 ~0.50s` user (`~1.07x`)
+  - dispatch hotpath: `pyrs ~0.855s` vs `python3.10 ~0.059s` (`~14.5x`)
+  - dict microbench: `pyrs ~0.29s` vs `python3.10 ~0.02s`
+  - pickle hotspot: `pyrs ~4.38s` vs `python3.10 ~0.44s` (`~10.0x`)
 - Optimization sprint exit is based on broad workload closure (dispatch/call/container/startup), not only fib recursion.
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
 - Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.

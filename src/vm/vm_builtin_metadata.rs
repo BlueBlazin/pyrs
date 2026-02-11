@@ -2531,6 +2531,22 @@ impl Vm {
         instance: &ObjRef,
         attr_name: &str,
     ) -> Result<AttrAccessOutcome, RuntimeError> {
+        let class_ref = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return Err(RuntimeError::new("attribute access unsupported type")),
+        };
+
+        // CPython routes the default object-attribute path through a native slot
+        // rather than an ordinary Python-level method call each access.
+        // Mirror that behavior by bypassing generic bound-method invocation when
+        // __getattribute__ resolves to the builtin object implementation.
+        if matches!(
+            class_attr_lookup(&class_ref, "__getattribute__"),
+            Some(Value::Builtin(BuiltinFunction::ObjectGetAttribute))
+        ) {
+            return self.load_attr_instance_default(instance, attr_name, true);
+        }
+
         let receiver = Value::Instance(instance.clone());
         if let Some(getattribute_method) =
             self.lookup_bound_special_method(&receiver, "__getattribute__")?
