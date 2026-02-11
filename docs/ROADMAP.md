@@ -27,14 +27,14 @@ It is intentionally forward-looking and should not be used as an append-only cha
 | 10 | Async/concurrency foundations | Complete |
 | 11 | Test/parity gate infrastructure | Complete |
 | 12 | Curated language/import harness closure | Complete |
-| 13 | Long-tail parity + stdlib usability closure | In Progress (Temporarily Paused for Perf Sprint) |
+| 13 | Long-tail parity + stdlib usability closure | In Progress |
 | 14 | Performance + observability + architecture hardening | Pending |
 | 15 | Native extension ecosystem compatibility | Pending |
 | 16 | Release hardening/certification | Pending |
 
-## Active Priority Override: Performance Sprint
+## Performance Checkpoint (Phase 1 Complete)
 
-Milestone 13 functional closure is temporarily paused while performance is brought to a usable baseline.
+Foundational optimization phase-1 is complete. Milestone 13 functional closure is active again, with benchmark regressions monitored continuously.
 
 Canonical benchmark suite:
 - `scripts/bench_fib_gate.sh 5`
@@ -42,14 +42,15 @@ Canonical benchmark suite:
 - `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.54-0.56s` vs `python3.10 ~0.50-0.51s` (`~1.08-1.12x`)
-- dispatch hotpath: `pyrs ~0.44-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
-- dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
-- pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
+- `fib(29)x5`: `pyrs ~0.56s` vs `python3.10 ~0.49s` (`~1.15x`)
+- dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
+- dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
+- pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
 
 Interpretation:
 - fib recursion is no longer the sole bottleneck.
-- optimization priority is now foundational dispatch/call/container/startup closure.
+- remaining performance risk is dispatch/call/container/startup closure.
+- unresolved optimization items remain tracked in `docs/OPTIMIZATION_BACKLOG.md` and are expected Milestone 14 deliverables unless pulled forward for regressions.
 
 This sprint is implementation-driven from CPython internals:
 - Eval loop and opcode specialization patterns: `Python/ceval.c`, `Python/generated_cases.c.h`

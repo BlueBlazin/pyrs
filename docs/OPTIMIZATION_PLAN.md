@@ -16,14 +16,15 @@ Run these in release mode:
 
 Latest local snapshot (2026-02-11):
 
-- `fib(29)x5`: `pyrs ~0.54-0.56s` user vs `python3.10 ~0.50-0.51s` user (`~1.08-1.12x`)
-- Dispatch hotpath: `pyrs ~0.44-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
-- Dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
-- Pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
+- `fib(29)x5`: `pyrs ~0.56s` user vs `python3.10 ~0.49s` user (`~1.15x`)
+- Dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
+- Dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
+- Pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
 
 Interpretation:
 - Recursive arithmetic is no longer the dominant performance blocker.
 - Remaining P0 performance risk is dispatch/call/container and stdlib-hotpath overhead.
+- Foundational optimization phase-1 is complete; remaining items are tracked and can be pulled forward as needed while Milestone 13 continues.
 
 ## Ground Rules
 

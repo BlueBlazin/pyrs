@@ -21,10 +21,10 @@ Last updated: 2026-02-11
 - `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.54-0.56s` user vs `python3.10 ~0.50-0.51s` user (`~1.08-1.12x`)
-- dispatch hotpath: `pyrs ~0.44-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
-- dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
-- pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
+- `fib(29)x5`: `pyrs ~0.56s` user vs `python3.10 ~0.49s` user (`~1.15x`)
+- dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
+- dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
+- pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
 
 ## CPython Reference Map
 
@@ -113,4 +113,5 @@ Latest local snapshot (2026-02-11):
 - Fib recursion gate is near `python3.10` on this machine and now serves as a regression smoke, not the sole optimization target.
 - Largest remaining throughput gaps are dispatch hotpath and pickle/container-heavy workloads.
 - Active foundational items for closure: `OPT-022`, `OPT-023`, `OPT-024`, `OPT-025`, `OPT-026`.
+- Optimization phase-1 checkpoint is complete; this backlog remains the source of truth for Milestone 14 throughput closure and any regression-driven pull-forward work.
 - Detailed historical optimization deltas are tracked in git history; keep this section to current-state notes only.

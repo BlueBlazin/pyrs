@@ -8,6 +8,7 @@
 
 - Milestones `0-12` are complete.
 - Milestones `13-16` remain (long-tail parity, stdlib/packaging closure, performance/observability, extension ecosystem, and release hardening).
+- Optimization phase-1 checkpoint is complete; remaining throughput gaps are tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 
 ## What Works Today
 
@@ -21,6 +22,23 @@
 - Not full CPython 3.14 parity yet (remaining long-tail language/runtime and stdlib edge semantics).
 - C-extension compatibility is not implemented yet (e.g. NumPy remains out of scope until extension milestones).
 - Performance/hardening milestones are still ahead.
+
+## Performance Snapshot
+
+Canonical benchmark suite:
+
+```bash
+scripts/bench_fib_gate.sh 5
+scripts/bench_dispatch_hotpath.sh 5
+scripts/bench_dict_backend.sh 5
+```
+
+Latest local snapshot (`2026-02-11`):
+
+- `fib(29)x5`: `pyrs ~0.56s` user vs `python3.10 ~0.49s` user (`~1.15x`)
+- dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
+- dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
+- pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
 
 ## Native Stdlib Layout
 

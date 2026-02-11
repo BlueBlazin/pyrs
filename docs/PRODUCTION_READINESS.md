@@ -11,9 +11,9 @@ Status:
 - `[~]` in progress
 - `[x]` complete
 
-## Current Priority Override
+## Performance Checkpoint Status
 
-Performance sprint is the active top priority before further Milestone 13 closure work.
+Foundational optimization phase-1 is complete. Milestone 13 closure work is active, with benchmark regressions tracked as a standing quality gate.
 
 Required benchmark suite for this sprint:
 1. `scripts/bench_fib_gate.sh 5`
@@ -21,10 +21,10 @@ Required benchmark suite for this sprint:
 3. `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.54-0.56s` vs `python3.10 ~0.50-0.51s` (`~1.08-1.12x`)
-- dispatch hotpath: `pyrs ~0.44-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
-- dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
-- pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
+- `fib(29)x5`: `pyrs ~0.56s` vs `python3.10 ~0.49s` (`~1.15x`)
+- dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
+- dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
+- pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
 
 Implementation strategy is tracked in `docs/OPTIMIZATION_PLAN.md` and is explicitly CPython-referenced.
 Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
