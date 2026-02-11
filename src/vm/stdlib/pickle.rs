@@ -1628,7 +1628,9 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "Pickler.clear_memo")?;
         if !args.is_empty() {
-            return Err(RuntimeError::new("Pickler.clear_memo() expects no arguments"));
+            return Err(RuntimeError::new(
+                "Pickler.clear_memo() expects no arguments",
+            ));
         }
         let _file =
             Self::pickle_get_instance_attr(&instance, PICKLER_FILE_ATTR).ok_or_else(|| {
@@ -1642,9 +1644,10 @@ impl Vm {
                 HashMap::new(),
             )?;
             let _ = self.call_internal(clear_method, Vec::new(), HashMap::new())?;
-            if let Ok(memo) =
-                self.builtin_getattr(vec![fallback, Value::Str("memo".to_string())], HashMap::new())
-            {
+            if let Ok(memo) = self.builtin_getattr(
+                vec![fallback, Value::Str("memo".to_string())],
+                HashMap::new(),
+            ) {
                 let _ = Self::pickle_store_instance_attr(&instance, "memo", memo);
             }
         }
@@ -1765,7 +1768,11 @@ impl Vm {
                     HashMap::new(),
                 )?;
             }
-            self.pickle_sync_fallback_instance_attr(&instance, fallback.clone(), "persistent_load")?;
+            self.pickle_sync_fallback_instance_attr(
+                &instance,
+                fallback.clone(),
+                "persistent_load",
+            )?;
             let load_method = self.builtin_getattr(
                 vec![fallback, Value::Str("load".to_string())],
                 HashMap::new(),
@@ -1775,7 +1782,10 @@ impl Vm {
                 Self::pickle_get_instance_attr(&instance, UNPICKLER_FALLBACK_ATTR)
                     .filter(|value| !matches!(value, Value::None))
             {
-                self.pickle_clear_fallback_instance_attr(cached_fallback.clone(), "persistent_load");
+                self.pickle_clear_fallback_instance_attr(
+                    cached_fallback.clone(),
+                    "persistent_load",
+                );
                 if let Ok(memo) = self.builtin_getattr(
                     vec![cached_fallback, Value::Str("memo".to_string())],
                     HashMap::new(),
@@ -1788,7 +1798,8 @@ impl Vm {
                 InternalCallOutcome::CallerExceptionHandled => Ok(Value::None),
             }
         })();
-        let _ = Self::pickle_store_instance_attr(&instance, UNPICKLER_BUSY_ATTR, Value::Bool(false));
+        let _ =
+            Self::pickle_store_instance_attr(&instance, UNPICKLER_BUSY_ATTR, Value::Bool(false));
         result
     }
 
@@ -2602,11 +2613,10 @@ impl Vm {
                             HashMap::new(),
                         )? {
                             InternalCallOutcome::Value(result) => Ok(result),
-                            InternalCallOutcome::CallerExceptionHandled => Err(
-                                self.runtime_error_from_active_exception(
+                            InternalCallOutcome::CallerExceptionHandled => Err(self
+                                .runtime_error_from_active_exception(
                                     "object.__reduce_ex__() failed",
-                                ),
-                            ),
+                                )),
                         };
                     }
                 }
@@ -2916,11 +2926,9 @@ mod tests {
         let arity_err = vm
             .builtin_object_reduce_ex(Vec::new(), HashMap::new())
             .expect_err("missing self should fail");
-        assert!(
-            arity_err
-                .message
-                .contains("object.__reduce_ex__() takes one or two arguments")
-        );
+        assert!(arity_err
+            .message
+            .contains("object.__reduce_ex__() takes one or two arguments"));
 
         vm.builtin_object_reduce_ex(
             vec![Value::Int(1), Value::Str("bad".to_string())],
@@ -2932,11 +2940,9 @@ mod tests {
         let dialect_err = vm
             .builtin_object_reduce_ex(vec![dialect, Value::Int(4)], HashMap::new())
             .expect_err("dialect pickling should fail");
-        assert!(
-            dialect_err
-                .message
-                .contains("cannot pickle 'Dialect' instances")
-        );
+        assert!(dialect_err
+            .message
+            .contains("cannot pickle 'Dialect' instances"));
     }
 
     #[test]

@@ -32,8 +32,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::containers::{
@@ -52,10 +52,10 @@ use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::parser;
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
-    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
-    NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError, SuperObject, Value,
-    format_repr, format_value,
+    format_repr, format_value, BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject,
+    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
+    ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
+    SuperObject, Value,
 };
 
 #[derive(Debug, Clone)]
@@ -1777,6 +1777,10 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::SysGetFilesystemEncodeErrors),
             );
             module_data.globals.insert(
+                "getrefcount".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetRefCount),
+            );
+            module_data.globals.insert(
                 "getrecursionlimit".to_string(),
                 Value::Builtin(BuiltinFunction::SysGetRecursionLimit),
             );
@@ -1790,6 +1794,14 @@ impl Vm {
             module_data
                 .globals
                 .insert("audit".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            module_data.globals.insert(
+                "unraisablehook".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
+            module_data.globals.insert(
+                "__unraisablehook__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             let build_stream = |name: &str,
                                 write_builtin: BuiltinFunction,
                                 flush_builtin: BuiltinFunction,
@@ -3022,7 +3034,11 @@ fn erfc_approx(x: f64) -> f64 {
                             + t * (-1.135_203_98
                                 + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
     let ans = t * poly.exp();
-    if x >= 0.0 { ans } else { 2.0 - ans }
+    if x >= 0.0 {
+        ans
+    } else {
+        2.0 - ans
+    }
 }
 
 fn binary_operator<F>(
@@ -3665,6 +3681,15 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
             Object::MemoryView(view) => {
                 with_bytes_like_source(&view.source, |values| values.to_vec())
                     .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
+            }
+            _ => Err(RuntimeError::new("expected bytes-like payload")),
+        },
+        Value::Module(obj) => match &*obj.kind() {
+            Object::Module(module_data) if module_data.name == "__array__" => {
+                match module_data.globals.get("values") {
+                    Some(values) => value_to_bytes_payload(values.clone()),
+                    None => Err(RuntimeError::new("expected bytes-like payload")),
+                }
             }
             _ => Err(RuntimeError::new("expected bytes-like payload")),
         },
@@ -4351,7 +4376,11 @@ fn class_matches(class: &ReCharClass, ch: char) -> bool {
             code >= start_code && code <= end_code
         });
     }
-    if class.negated { !matched } else { matched }
+    if class.negated {
+        !matched
+    } else {
+        matched
+    }
 }
 
 fn atom_matches_char(atom: &ReAtom, ch: char) -> bool {
@@ -6855,10 +6884,7 @@ fn extract_runtime_error_exception_name(message: &str) -> Option<String> {
     Some(candidate.to_string())
 }
 
-fn extract_runtime_error_final_message(
-    message: &str,
-    exception: &str,
-) -> Option<Option<String>> {
+fn extract_runtime_error_final_message(message: &str, exception: &str) -> Option<Option<String>> {
     if !message.starts_with("Traceback (most recent call last):") {
         return None;
     }
@@ -6877,10 +6903,7 @@ fn extract_runtime_error_final_message(
     Some(message)
 }
 
-fn extract_prefixed_exception_message(
-    message: &str,
-    exception: &str,
-) -> Option<Option<String>> {
+fn extract_prefixed_exception_message(message: &str, exception: &str) -> Option<Option<String>> {
     let line = message.trim();
     if !runtime_error_line_matches_exception(line, exception) {
         return None;
@@ -6967,7 +6990,7 @@ fn should_refine_os_error(message: &str) -> bool {
 }
 
 fn classify_runtime_error(message: &str) -> &'static str {
-    const DIRECT_PREFIX_EXCEPTIONS: [&str; 23] = [
+    const DIRECT_PREFIX_EXCEPTIONS: [&str; 24] = [
         "TypeError",
         "ValueError",
         "RuntimeError",
@@ -6991,6 +7014,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         "PickleError",
         "PicklingError",
         "UnpicklingError",
+        "BufferError",
     ];
     let trimmed = message.trim();
     if message.starts_with("Traceback (most recent call last):") {
@@ -7085,6 +7109,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     }
     if runtime_error_line_matches_exception(trimmed, "KeyboardInterrupt") {
         return "KeyboardInterrupt";
+    }
+    if runtime_error_line_matches_exception(trimmed, "UnsupportedOperation") {
+        return "UnsupportedOperation";
     }
     if runtime_error_line_matches_exception(trimmed, "SystemExit") {
         return "SystemExit";

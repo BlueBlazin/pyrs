@@ -1209,6 +1209,38 @@ impl Vm {
         Ok(Value::Str("surrogateescape".to_string()))
     }
 
+    pub(super) fn builtin_sys_getrefcount(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("sys.getrefcount() expects one argument"));
+        }
+        let count = match &args[0] {
+            Value::List(obj)
+            | Value::Tuple(obj)
+            | Value::Dict(obj)
+            | Value::DictKeys(obj)
+            | Value::Set(obj)
+            | Value::FrozenSet(obj)
+            | Value::Bytes(obj)
+            | Value::ByteArray(obj)
+            | Value::MemoryView(obj)
+            | Value::Iterator(obj)
+            | Value::Generator(obj)
+            | Value::Module(obj)
+            | Value::Class(obj)
+            | Value::Instance(obj)
+            | Value::Super(obj)
+            | Value::BoundMethod(obj)
+            | Value::Function(obj)
+            | Value::Cell(obj) => obj.strong_count() as i64 + 1,
+            _ => 1,
+        };
+        Ok(Value::Int(count))
+    }
+
     pub(super) fn builtin_sys_getrecursionlimit(
         &self,
         args: Vec<Value>,

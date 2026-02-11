@@ -6961,6 +6961,27 @@ ok = (
 }
 
 #[test]
+fn _io_detach_raises_unsupportedoperation_for_memory_streams() {
+    let source = r#"import _io
+_io.StringIO().detach()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("UnsupportedOperation: detach"));
+
+    let source = r#"import _io
+_io.BytesIO().detach()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("UnsupportedOperation: detach"));
+}
+
+#[test]
 fn io_textiowrapper_init_wraps_binary_buffer_for_readline() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

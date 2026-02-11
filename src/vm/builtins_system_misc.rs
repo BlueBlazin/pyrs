@@ -2211,7 +2211,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !args.is_empty() || !kwargs.is_empty() {
-            return Err(RuntimeError::new("get_recursion_depth() takes no arguments"));
+            return Err(RuntimeError::new(
+                "get_recursion_depth() takes no arguments",
+            ));
         }
         Ok(Value::Int(self.frames.len().max(1) as i64))
     }

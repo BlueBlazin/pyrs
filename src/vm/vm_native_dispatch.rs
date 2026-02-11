@@ -1232,6 +1232,12 @@ impl Vm {
                 if !args.is_empty() && args.len() != 3 {
                     return Err(RuntimeError::new("__exit__() expects 3 arguments"));
                 }
+                if let Object::MemoryView(view) = &mut *receiver.kind_mut() {
+                    view.released = true;
+                    view.export_owner = None;
+                } else {
+                    return Err(RuntimeError::new("memoryview receiver is invalid"));
+                }
                 Ok(NativeCallResult::Value(Value::Bool(false)))
             }
             NativeMethodKind::MemoryViewToReadOnly => {
@@ -1332,6 +1338,12 @@ impl Vm {
             NativeMethodKind::MemoryViewRelease => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("release() expects no arguments"));
+                }
+                if let Object::MemoryView(view) = &mut *receiver.kind_mut() {
+                    view.released = true;
+                    view.export_owner = None;
+                } else {
+                    return Err(RuntimeError::new("memoryview receiver is invalid"));
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -4196,6 +4208,7 @@ impl Vm {
             BuiltinFunction::SysGetFilesystemEncodeErrors => {
                 self.builtin_sys_getfilesystemencodeerrors(args, kwargs)
             }
+            BuiltinFunction::SysGetRefCount => self.builtin_sys_getrefcount(args, kwargs),
             BuiltinFunction::SysGetRecursionLimit => {
                 self.builtin_sys_getrecursionlimit(args, kwargs)
             }
@@ -4747,6 +4760,7 @@ impl Vm {
             BuiltinFunction::StringIOTell => self.builtin_stringio_tell(args, kwargs),
             BuiltinFunction::StringIOWriteLines => self.builtin_stringio_writelines(args, kwargs),
             BuiltinFunction::StringIOTruncate => self.builtin_stringio_truncate(args, kwargs),
+            BuiltinFunction::StringIODetach => self.builtin_stringio_detach(args, kwargs),
             BuiltinFunction::StringIOIter => self.builtin_stringio_iter(args, kwargs),
             BuiltinFunction::StringIONext => self.builtin_stringio_next(args, kwargs),
             BuiltinFunction::StringIOEnter => self.builtin_stringio_enter(args, kwargs),
@@ -4768,6 +4782,9 @@ impl Vm {
             BuiltinFunction::BytesIOReadInto => self.builtin_bytesio_readinto(args, kwargs),
             BuiltinFunction::BytesIOGetValue => self.builtin_bytesio_getvalue(args, kwargs),
             BuiltinFunction::BytesIOGetBuffer => self.builtin_bytesio_getbuffer(args, kwargs),
+            BuiltinFunction::BytesIOGetState => self.builtin_bytesio_getstate(args, kwargs),
+            BuiltinFunction::BytesIOSetState => self.builtin_bytesio_setstate(args, kwargs),
+            BuiltinFunction::BytesIODetach => self.builtin_bytesio_detach(args, kwargs),
             BuiltinFunction::BytesIOSeek => self.builtin_bytesio_seek(args, kwargs),
             BuiltinFunction::BytesIOTell => self.builtin_bytesio_tell(args, kwargs),
             BuiltinFunction::BytesIOFlush => self.builtin_bytesio_flush(args, kwargs),

@@ -3248,6 +3248,9 @@ impl Vm {
                 self.alloc_synthetic_class("unittest.IsolatedAsyncioTestCase"),
             ));
         }
+        if module_name == "__array__" && attr_name == "tobytes" {
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Bytes, module.clone()));
+        }
         if attr_name == "__dict__" {
             if let Some(dict) = active_frame_module_dict {
                 return Ok(Value::Dict(dict));

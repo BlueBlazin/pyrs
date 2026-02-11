@@ -2164,77 +2164,106 @@ impl Vm {
                             }
                         }
                     },
-                    target => match index {
-                        Value::Slice(_) => {
-                            return Err(RuntimeError::new("slice assignment not supported"));
-                        }
-                        index => match target {
-                            Value::Dict(obj) => {
-                                dict_set_value_checked(&obj, index, value)?;
-                                self.push_value(Value::Dict(obj));
-                            }
-                            Value::MemoryView(obj) => {
-                                let source = match &*obj.kind() {
-                                    Object::MemoryView(view) => view.source.clone(),
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "store subscript unsupported type",
-                                        ));
-                                    }
-                                };
-                                match &mut *source.kind_mut() {
-                                    Object::ByteArray(values) => {
-                                        let mut idx = value_to_int(index)? as isize;
-                                        if idx < 0 {
-                                            idx += values.len() as isize;
-                                        }
-                                        if idx < 0 || idx as usize >= values.len() {
-                                            return Err(RuntimeError::new("index out of range"));
-                                        }
-                                        let byte = value_to_int(value)?;
-                                        if !(0..=255).contains(&byte) {
+                    target => match (target, index) {
+                        (Value::MemoryView(obj), Value::Slice(slice)) => {
+                            let source = match &*obj.kind() {
+                                Object::MemoryView(view) => view.source.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new("store subscript unsupported type"));
+                                }
+                            };
+                            let replacement = self.value_to_bytes_payload(value)?;
+                            match &mut *source.kind_mut() {
+                                Object::ByteArray(values) => {
+                                    let lower = slice.lower;
+                                    let upper = slice.upper;
+                                    let step = slice.step;
+                                    let step_value = step.unwrap_or(1);
+                                    if step_value == 1 {
+                                        let (start, stop) =
+                                            slice_bounds_for_step_one(values.len(), lower, upper);
+                                        if replacement.len() != stop.saturating_sub(start) {
                                             return Err(RuntimeError::new(
-                                                "byte must be in range(0, 256)",
+                                                "memoryview assignment: lvalue and rvalue have different structures",
                                             ));
                                         }
-                                        values[idx as usize] = byte as u8;
-                                    }
-                                    Object::Bytes(_) => {
-                                        return Err(RuntimeError::new(
-                                            "cannot modify read-only memory",
-                                        ));
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "store subscript unsupported type",
-                                        ));
-                                    }
-                                }
-                                self.push_value(Value::MemoryView(obj));
-                            }
-                            _ => {
-                                let target_value = target.clone();
-                                if let Some(setitem) =
-                                    self.lookup_bound_special_method(&target, "__setitem__")?
-                                {
-                                    match self.call_internal(
-                                        setitem,
-                                        vec![index, value],
-                                        HashMap::new(),
-                                    )? {
-                                        InternalCallOutcome::Value(_) => {}
-                                        InternalCallOutcome::CallerExceptionHandled => {
-                                            return Ok(None);
+                                        values[start..stop].copy_from_slice(&replacement);
+                                    } else {
+                                        let indices = slice_indices(values.len(), lower, upper, step)?;
+                                        if indices.len() != replacement.len() {
+                                            return Err(RuntimeError::new(
+                                                "memoryview assignment: lvalue and rvalue have different structures",
+                                            ));
+                                        }
+                                        for (idx, item) in indices.into_iter().zip(replacement) {
+                                            values[idx] = item;
                                         }
                                     }
-                                    self.push_value(target_value);
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "store subscript unsupported type",
-                                    ));
+                                }
+                                Object::Bytes(_) => {
+                                    return Err(RuntimeError::new("cannot modify read-only memory"));
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new("store subscript unsupported type"));
                                 }
                             }
-                        },
+                            self.push_value(Value::MemoryView(obj));
+                        }
+                        (Value::Dict(obj), index) => {
+                            dict_set_value_checked(&obj, index, value)?;
+                            self.push_value(Value::Dict(obj));
+                        }
+                        (Value::MemoryView(obj), index) => {
+                            let source = match &*obj.kind() {
+                                Object::MemoryView(view) => view.source.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new("store subscript unsupported type"));
+                                }
+                            };
+                            match &mut *source.kind_mut() {
+                                Object::ByteArray(values) => {
+                                    let mut idx = value_to_int(index)? as isize;
+                                    if idx < 0 {
+                                        idx += values.len() as isize;
+                                    }
+                                    if idx < 0 || idx as usize >= values.len() {
+                                        return Err(RuntimeError::new("index out of range"));
+                                    }
+                                    let byte = value_to_int(value)?;
+                                    if !(0..=255).contains(&byte) {
+                                        return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                                    }
+                                    values[idx as usize] = byte as u8;
+                                }
+                                Object::Bytes(_) => {
+                                    return Err(RuntimeError::new("cannot modify read-only memory"));
+                                }
+                                _ => {
+                                    return Err(RuntimeError::new("store subscript unsupported type"));
+                                }
+                            }
+                            self.push_value(Value::MemoryView(obj));
+                        }
+                        (_target, Value::Slice(_)) => {
+                            return Err(RuntimeError::new("slice assignment not supported"));
+                        }
+                        (target, index) => {
+                            let target_value = target.clone();
+                            if let Some(setitem) =
+                                self.lookup_bound_special_method(&target, "__setitem__")?
+                            {
+                                match self.call_internal(setitem, vec![index, value], HashMap::new())?
+                                {
+                                    InternalCallOutcome::Value(_) => {}
+                                    InternalCallOutcome::CallerExceptionHandled => {
+                                        return Ok(None);
+                                    }
+                                }
+                                self.push_value(target_value);
+                            } else {
+                                return Err(RuntimeError::new("store subscript unsupported type"));
+                            }
+                        }
                     },
                 };
             }
@@ -4390,7 +4419,9 @@ impl Vm {
             .last()
             .and_then(|frame| frame.active_exception.clone())
         {
-            let traceback_encoded = err.message.starts_with("Traceback (most recent call last):");
+            let traceback_encoded = err
+                .message
+                .starts_with("Traceback (most recent call last):");
             let prefixed_encoded =
                 runtime_error_line_matches_exception(err.message.trim(), &exception_type);
             if active_exception.name == exception_type && (traceback_encoded || prefixed_encoded) {
@@ -4778,7 +4809,9 @@ impl Vm {
             ));
         }
         match exc {
-            Value::Exception(exception) => output.push_str(&self.format_exception_chain(exception, 0)),
+            Value::Exception(exception) => {
+                output.push_str(&self.format_exception_chain(exception, 0))
+            }
             _ => output.push_str(&format_value(exc)),
         }
         output
@@ -4792,7 +4825,9 @@ impl Vm {
         let mut output = String::new();
         if let Some(cause) = &exception.cause {
             output.push_str(&self.format_exception_chain(cause, depth + 1));
-            output.push_str("\nThe above exception was the direct cause of the following exception:\n");
+            output.push_str(
+                "\nThe above exception was the direct cause of the following exception:\n",
+            );
         } else if !exception.suppress_context {
             if let Some(context) = &exception.context {
                 output.push_str(&self.format_exception_chain(context, depth + 1));

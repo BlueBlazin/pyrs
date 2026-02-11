@@ -3340,9 +3340,10 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let timeout = kwargs
-            .remove("timeout")
-            .or_else(|| if args.len() > 3 { args.pop() } else { None });
+        let timeout =
+            kwargs
+                .remove("timeout")
+                .or_else(|| if args.len() > 3 { args.pop() } else { None });
         if let Some(timeout) = timeout {
             if !matches!(timeout, Value::None) {
                 let timeout_secs = value_to_f64(timeout)?;

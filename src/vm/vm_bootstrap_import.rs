@@ -3723,7 +3723,11 @@ impl Vm {
                 roots.push(PathBuf::from(path));
             }
         }
-        if roots.is_empty() { None } else { Some(roots) }
+        if roots.is_empty() {
+            None
+        } else {
+            Some(roots)
+        }
     }
 
     pub(super) fn find_module_source_in_roots(

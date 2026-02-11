@@ -1,4 +1,4 @@
-use crate::runtime::{ObjRef, Object, RuntimeError, SetObject, Value, value_lookup_hash};
+use crate::runtime::{value_lookup_hash, ObjRef, Object, RuntimeError, SetObject, Value};
 
 pub(crate) fn dedup_hashable_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     let mut deduped = SetObject::new(Vec::new());

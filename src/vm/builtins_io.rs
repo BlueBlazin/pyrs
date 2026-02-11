@@ -837,6 +837,10 @@ impl Vm {
             Value::Builtin(BuiltinFunction::StringIOTruncate),
         );
         class_data.attrs.insert(
+            "detach".to_string(),
+            Value::Builtin(BuiltinFunction::StringIODetach),
+        );
+        class_data.attrs.insert(
             "close".to_string(),
             Value::Builtin(BuiltinFunction::StringIOClose),
         );
@@ -926,6 +930,18 @@ impl Vm {
         class_data.attrs.insert(
             "getbuffer".to_string(),
             Value::Builtin(BuiltinFunction::BytesIOGetBuffer),
+        );
+        class_data.attrs.insert(
+            "__getstate__".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOGetState),
+        );
+        class_data.attrs.insert(
+            "__setstate__".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOSetState),
+        );
+        class_data.attrs.insert(
+            "detach".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIODetach),
         );
         class_data.attrs.insert(
             "seek".to_string(),
@@ -2542,6 +2558,17 @@ impl Vm {
         Ok(Value::Int(size as i64))
     }
 
+    pub(super) fn builtin_stringio_detach(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.detach expects no arguments"));
+        }
+        Err(RuntimeError::new("UnsupportedOperation: detach"))
+    }
+
     pub(super) fn builtin_stringio_flush(
         &mut self,
         args: Vec<Value>,
@@ -2790,6 +2817,74 @@ impl Vm {
         }
     }
 
+    fn bytesio_export_count(&self, value_obj: &ObjRef) -> usize {
+        self.heap.count_live_memoryview_exports_for_source(value_obj)
+    }
+
+    fn bytesio_ensure_resizable(&self, value_obj: &ObjRef) -> Result<(), RuntimeError> {
+        if self.bytesio_export_count(value_obj) > 0 {
+            return Err(RuntimeError::new(
+                "BufferError: Existing exports of data: object cannot be re-sized",
+            ));
+        }
+        Ok(())
+    }
+
+    fn bytesio_payload_from_value(&mut self, value: Value) -> Result<Vec<u8>, RuntimeError> {
+        match value {
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                bytes_like_from_value(value)
+            }
+            Value::Module(obj) => {
+                let is_array = matches!(&*obj.kind(), Object::Module(module) if module.name == "__array__");
+                if is_array {
+                    bytes_like_from_value(Value::Module(obj))
+                } else {
+                    Err(RuntimeError::new(format!(
+                        "TypeError: a bytes-like object is required, not '{}'",
+                        self.value_type_name_for_error(&Value::Module(obj))
+                    )))
+                }
+            }
+            Value::Instance(obj) => {
+                let has_storage = matches!(
+                    &*obj.kind(),
+                    Object::Instance(instance_data)
+                        if instance_data.attrs.contains_key("__pyrs_bytes_storage__")
+                );
+                if has_storage {
+                    bytes_like_from_value(Value::Instance(obj))
+                } else {
+                    let receiver = Value::Instance(obj.clone());
+                    if let Some(buffer_method) =
+                        self.lookup_bound_special_method(&receiver, "__buffer__")?
+                    {
+                        let buffer_value = match self.call_internal(
+                            buffer_method,
+                            vec![Value::Int(0)],
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(RuntimeError::new("__buffer__() raised an exception"));
+                            }
+                        };
+                        bytes_like_from_value(buffer_value)
+                    } else {
+                        Err(RuntimeError::new(format!(
+                            "TypeError: a bytes-like object is required, not '{}'",
+                            self.value_type_name_for_error(&Value::Instance(obj))
+                        )))
+                    }
+                }
+            }
+            other => Err(RuntimeError::new(format!(
+                "TypeError: a bytes-like object is required, not '{}'",
+                self.value_type_name_for_error(&other)
+            ))),
+        }
+    }
+
     pub(super) fn builtin_bytesio_init(
         &mut self,
         mut args: Vec<Value>,
@@ -2801,11 +2896,13 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let initial = args.pop().or_else(|| kwargs.remove("initial_bytes"));
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("BytesIO.__init__ unexpected keyword"));
+            return Err(RuntimeError::new(
+                "TypeError: BytesIO.__init__() got an unexpected keyword argument",
+            ));
         }
         let bytes = match initial {
-            None => Vec::new(),
-            Some(value) => bytes_like_from_value(value)?,
+            None | Some(Value::None) => Vec::new(),
+            Some(value) => self.bytesio_payload_from_value(value)?,
         };
         let value_obj = match self.heap.alloc_bytearray(bytes) {
             Value::ByteArray(obj) => obj,
@@ -2825,11 +2922,22 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let payload = bytes_like_from_value(args.remove(0))?;
+        let payload = self.bytesio_payload_from_value(args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
         let written = payload.len();
         let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
         if written == 0 {
             return Ok(Value::Int(0));
+        }
+        let needs_resize = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            let start = pos.max(buffer.len());
+            start.saturating_add(written) > buffer.len()
+        };
+        if needs_resize {
+            self.bytesio_ensure_resizable(&value_obj)?;
         }
         pos = {
             let Object::ByteArray(buffer) = &mut *value_obj.kind_mut() else {
@@ -2887,7 +2995,16 @@ impl Vm {
             Some(value) => self.io_index_arg_to_int(value)?,
         };
         if target_size < 0 {
-            return Err(RuntimeError::new("negative size value"));
+            return Err(RuntimeError::new("ValueError: negative size value"));
+        }
+        let current_len = {
+            let Object::ByteArray(buffer) = &*value_obj.kind() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            buffer.len()
+        };
+        if target_size as usize != current_len {
+            self.bytesio_ensure_resizable(&value_obj)?;
         }
         {
             let Object::ByteArray(buffer) = &mut *value_obj.kind_mut() else {
@@ -2959,6 +3076,9 @@ impl Vm {
             None | Some(Value::None) => -1,
             Some(value) => self.io_index_arg_to_int(value)?,
         };
+        if limit == 0 {
+            return Ok(self.heap.alloc_bytes(Vec::new()));
+        }
         let (value_obj, mut pos, closed) = self.bytesio_state_from_instance(&receiver)?;
         let line_out = {
             let Object::ByteArray(buffer) = &*value_obj.kind() else {
@@ -3057,7 +3177,7 @@ impl Vm {
             Value::ByteArray(obj) => {
                 let Object::ByteArray(values) = &mut *obj.kind_mut() else {
                     return Err(RuntimeError::new(
-                        "readinto() argument must be read-write bytes-like object",
+                        "TypeError: readinto() argument must be read-write bytes-like object",
                     ));
                 };
                 let count = values.len().min(remaining.len());
@@ -3069,22 +3189,49 @@ impl Vm {
                     Object::MemoryView(view) => view.source.clone(),
                     _ => {
                         return Err(RuntimeError::new(
-                            "readinto() argument must be read-write bytes-like object",
+                            "TypeError: readinto() argument must be read-write bytes-like object",
                         ));
                     }
                 };
                 let Object::ByteArray(values) = &mut *source.kind_mut() else {
                     return Err(RuntimeError::new(
-                        "readinto() argument must be read-write bytes-like object",
+                        "TypeError: readinto() argument must be read-write bytes-like object",
                     ));
                 };
                 let count = values.len().min(remaining.len());
                 values[..count].copy_from_slice(&remaining[..count]);
                 count
             }
+            Value::Module(module_obj) => {
+                let Object::Module(module_data) = &mut *module_obj.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                if module_data.name != "__array__" {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                }
+                let Some(Value::List(values_obj)) = module_data.globals.get_mut("values") else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let Object::List(values) = &mut *values_obj.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let count = values.len().min(remaining.len());
+                for (slot, byte) in values.iter_mut().zip(remaining.iter()).take(count) {
+                    *slot = Value::Int(*byte as i64);
+                }
+                count
+            }
             _ => {
                 return Err(RuntimeError::new(
-                    "readinto() argument must be read-write bytes-like object",
+                    "TypeError: readinto() argument must be read-write bytes-like object",
                 ));
             }
         };
@@ -3120,7 +3267,161 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
         let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        Ok(self.heap.alloc_memoryview(value_obj))
+        let view = match self.heap.alloc_memoryview(value_obj) {
+            Value::MemoryView(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::MemoryView(view_data) = &mut *view.kind_mut() {
+            view_data.export_owner = Some(receiver);
+            view_data.released = false;
+        }
+        Ok(Value::MemoryView(view))
+    }
+
+    pub(super) fn builtin_bytesio_getstate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.__getstate__ expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let (value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        let payload = match &*value_obj.kind() {
+            Object::ByteArray(values) => values.clone(),
+            _ => return Err(RuntimeError::new("BytesIO internal buffer is invalid")),
+        };
+        let instance_dict = match &*receiver.kind() {
+            Object::Instance(instance_data) => {
+                let mut entries = Vec::new();
+                for (name, value) in &instance_data.attrs {
+                    if matches!(name.as_str(), "_value" | "_pos" | "_closed" | "closed") {
+                        continue;
+                    }
+                    entries.push((Value::Str(name.clone()), value.clone()));
+                }
+                if entries.is_empty() {
+                    Value::None
+                } else {
+                    self.heap.alloc_dict(entries)
+                }
+            }
+            _ => return Err(RuntimeError::new("BytesIO receiver must be instance")),
+        };
+        Ok(self.heap.alloc_tuple(vec![
+            self.heap.alloc_bytes(payload),
+            Value::Int(pos as i64),
+            instance_dict,
+        ]))
+    }
+
+    pub(super) fn builtin_bytesio_setstate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("BytesIO.__setstate__ expects one argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        let state = args.remove(0);
+        let (items, state_type_name) = match state {
+            Value::Tuple(tuple_obj) => {
+                let Object::Tuple(items) = &*tuple_obj.kind() else {
+                    return Err(RuntimeError::new("BytesIO.__setstate__ state is invalid"));
+                };
+                (items.clone(), "tuple")
+            }
+            other => {
+                let type_name = self.value_type_name_for_error(&other);
+                return Err(RuntimeError::new(format!(
+                    "TypeError: BytesIO.__setstate__ argument should be 3-tuple, got {type_name}",
+                )));
+            }
+        };
+        if items.len() < 3 {
+            return Err(RuntimeError::new(format!(
+                "TypeError: BytesIO.__setstate__ argument should be 3-tuple, got {state_type_name}",
+            )));
+        }
+        let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        self.bytesio_ensure_resizable(&value_obj)?;
+        let payload = self.bytesio_payload_from_value(items[0].clone()).map_err(|_| {
+            RuntimeError::new("TypeError: first item of state should be a bytes-like object")
+        })?;
+        let position_value = items[1].clone();
+        let position = match position_value {
+            Value::Int(value) => value,
+            Value::Bool(value) => i64::from(value),
+            Value::BigInt(ref value) => value.to_i64().ok_or_else(|| {
+                RuntimeError::new("OverflowError: position out of range for this platform")
+            })?,
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: second item of state must be an integer, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        if position < 0 {
+            return Err(RuntimeError::new(
+                "ValueError: position value cannot be negative",
+            ));
+        }
+        self.bytesio_store_state(&receiver, value_obj.clone(), 0, false)?;
+        {
+            let Object::ByteArray(values) = &mut *value_obj.kind_mut() else {
+                return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
+            };
+            values.clear();
+            values.extend_from_slice(&payload);
+        }
+        self.bytesio_store_state(&receiver, value_obj, position as usize, false)?;
+        let dict_state = items[2].clone();
+        match dict_state {
+            Value::None => {}
+            Value::Dict(dict_obj) => {
+                let updates = match &*dict_obj.kind() {
+                    Object::Dict(dict) => dict.to_vec(),
+                    _ => return Err(RuntimeError::new("third item of state should be a dict")),
+                };
+                let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
+                    return Err(RuntimeError::new("BytesIO receiver must be instance"));
+                };
+                for (key, value) in updates {
+                    let Value::Str(name) = key else {
+                        return Err(RuntimeError::new(
+                            "TypeError: third item of state should be a dict",
+                        ));
+                    };
+                    if matches!(name.as_str(), "_value" | "_pos" | "_closed" | "closed") {
+                        continue;
+                    }
+                    instance_data.attrs.insert(name, value);
+                }
+            }
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: third item of state should be a dict, got a {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_bytesio_detach(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.detach expects no arguments"));
+        }
+        Err(RuntimeError::new("UnsupportedOperation: detach"))
     }
 
     pub(super) fn builtin_bytesio_seek(
@@ -3144,16 +3445,17 @@ impl Vm {
             let Object::ByteArray(buffer) = &*value_obj.kind() else {
                 return Err(RuntimeError::new("BytesIO internal buffer is invalid"));
             };
-            let base = match whence {
-                0 => 0i64,
-                1 => pos as i64,
-                2 => buffer.len() as i64,
-                _ => return Err(RuntimeError::new("BytesIO.seek invalid whence")),
+            let new_pos = match whence {
+                0 => {
+                    if offset < 0 {
+                        return Err(RuntimeError::new("ValueError: negative seek value"));
+                    }
+                    offset
+                }
+                1 => (pos as i64 + offset).max(0),
+                2 => (buffer.len() as i64 + offset).max(0),
+                _ => return Err(RuntimeError::new("ValueError: invalid whence")),
             };
-            let new_pos = base + offset;
-            if new_pos < 0 {
-                return Err(RuntimeError::new("negative seek value"));
-            }
             new_pos as usize
         };
         self.bytesio_store_state(&receiver, value_obj, new_pos, closed)?;
@@ -3271,6 +3573,11 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
+        if self.bytesio_export_count(&value_obj) > 0 {
+            return Err(RuntimeError::new(
+                "BufferError: Existing exports of data: object cannot be re-sized",
+            ));
+        }
         if let Object::ByteArray(values) = &mut *value_obj.kind_mut() {
             values.clear();
         }

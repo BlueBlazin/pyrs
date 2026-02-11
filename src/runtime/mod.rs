@@ -1089,6 +1089,8 @@ pub struct MemoryViewObject {
     pub source: ObjRef,
     pub itemsize: usize,
     pub format: Option<String>,
+    pub export_owner: Option<ObjRef>,
+    pub released: bool,
 }
 
 #[derive(Debug)]
@@ -1188,6 +1190,8 @@ impl Heap {
             source,
             itemsize: 1,
             format: None,
+            export_owner: None,
+            released: false,
         })))
     }
 
@@ -1201,7 +1205,49 @@ impl Heap {
             source,
             itemsize,
             format,
+            export_owner: None,
+            released: false,
         })))
+    }
+
+    pub fn count_live_memoryview_exports_for_owner(&self, owner: &ObjRef) -> usize {
+        let mut count = 0usize;
+        for weak in self.registry.borrow().iter() {
+            let Some(obj) = weak.upgrade() else {
+                continue;
+            };
+            let Object::MemoryView(view) = &*obj.kind.borrow() else {
+                continue;
+            };
+            if view.released {
+                continue;
+            }
+            if let Some(export_owner) = &view.export_owner {
+                if export_owner.id() == owner.id() {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    pub fn count_live_memoryview_exports_for_source(&self, source: &ObjRef) -> usize {
+        let mut count = 0usize;
+        for weak in self.registry.borrow().iter() {
+            let Some(obj) = weak.upgrade() else {
+                continue;
+            };
+            let Object::MemoryView(view) = &*obj.kind.borrow() else {
+                continue;
+            };
+            if view.released || view.export_owner.is_none() {
+                continue;
+            }
+            if view.source.id() == source.id() {
+                count += 1;
+            }
+        }
+        count
     }
 
     pub fn alloc_module(&self, module: ModuleObject) -> Value {
@@ -1895,6 +1941,12 @@ impl PartialEq for Value {
                     _ => false,
                 }
             }
+            (Value::Bytes(a), Value::ByteArray(b)) | (Value::ByteArray(b), Value::Bytes(a)) => {
+                match (&*a.kind(), &*b.kind()) {
+                    (Object::Bytes(left), Object::ByteArray(right)) => left == right,
+                    _ => false,
+                }
+            }
             (Value::MemoryView(a), Value::MemoryView(b)) => a.id() == b.id(),
             (Value::Iterator(a), Value::Iterator(b)) => a.id() == b.id(),
             (Value::Generator(a), Value::Generator(b)) => a.id() == b.id(),
@@ -2056,6 +2108,7 @@ pub enum BuiltinFunction {
     SysExit,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
+    SysGetRefCount,
     SysGetRecursionLimit,
     SysSetRecursionLimit,
     SysStdoutWrite,
@@ -2460,6 +2513,7 @@ pub enum BuiltinFunction {
     StringIOTell,
     StringIOWriteLines,
     StringIOTruncate,
+    StringIODetach,
     StringIOIter,
     StringIONext,
     StringIOEnter,
@@ -2481,6 +2535,9 @@ pub enum BuiltinFunction {
     BytesIOReadInto,
     BytesIOGetValue,
     BytesIOGetBuffer,
+    BytesIOGetState,
+    BytesIOSetState,
+    BytesIODetach,
     BytesIOSeek,
     BytesIOTell,
     BytesIOIter,
@@ -2667,6 +2724,7 @@ impl BuiltinFunction {
             | BuiltinFunction::StringIOTell
             | BuiltinFunction::StringIOWriteLines
             | BuiltinFunction::StringIOTruncate
+            | BuiltinFunction::StringIODetach
             | BuiltinFunction::StringIOIter
             | BuiltinFunction::StringIONext
             | BuiltinFunction::StringIOEnter
@@ -2686,6 +2744,9 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOReadInto
             | BuiltinFunction::BytesIOGetValue
             | BuiltinFunction::BytesIOGetBuffer
+            | BuiltinFunction::BytesIOGetState
+            | BuiltinFunction::BytesIOSetState
+            | BuiltinFunction::BytesIODetach
             | BuiltinFunction::BytesIOSeek
             | BuiltinFunction::BytesIOTell
             | BuiltinFunction::BytesIOIter
@@ -4659,6 +4720,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysExit
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
+            | BuiltinFunction::SysGetRefCount
             | BuiltinFunction::SysGetRecursionLimit
             | BuiltinFunction::SysSetRecursionLimit
             | BuiltinFunction::SysStdoutWrite
@@ -5666,6 +5728,26 @@ fn value_to_bytes_with_encoding(
             }
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
+        Value::Module(obj) => match &*obj.kind() {
+            Object::Module(module_data) if module_data.name == "__array__" => {
+                let Some(Value::List(values_obj)) = module_data.globals.get("values") else {
+                    return Err(RuntimeError::new("bytes() unsupported type"));
+                };
+                let Object::List(values) = &*values_obj.kind() else {
+                    return Err(RuntimeError::new("bytes() unsupported type"));
+                };
+                let mut out = Vec::with_capacity(values.len());
+                for item in values {
+                    let value = value_to_int(item.clone())?;
+                    if !(0..=255).contains(&value) {
+                        return Err(RuntimeError::new("bytes must be in range(0, 256)"));
+                    }
+                    out.push(value as u8);
+                }
+                Ok(out)
+            }
+            _ => Err(RuntimeError::new("bytes() unsupported type")),
+        },
         other => {
             let mut out = Vec::new();
             for item in iterable_values(other)? {
@@ -6568,6 +6650,8 @@ mod tests {
             source: heap.alloc(Object::ByteArray(vec![])),
             itemsize: 1,
             format: None,
+            export_owner: None,
+            released: false,
         }));
         if let Object::MemoryView(data) = &mut *view.kind_mut() {
             data.source = view.clone();
