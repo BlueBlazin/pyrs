@@ -4091,6 +4091,24 @@ impl Vm {
                         return Ok(Some(value));
                     }
                     Opcode::ReturnValue => {
+                        #[cfg(not(debug_assertions))]
+                        let simple_fast_return = {
+                            if self.frames.len() <= 1 {
+                                false
+                            } else {
+                                let frame = self.frames.last().expect("frame exists");
+                                frame.simple_one_arg_no_cells
+                                    && frame.stack.len() == 1
+                                    && !frame.discard_result
+                                    && frame.active_exception.is_none()
+                                    && !frame.return_class
+                                    && frame.return_instance.is_none()
+                                    && !frame.return_module
+                                    && !frame.expect_none_return
+                                    && !frame.is_module
+                            }
+                        };
+                        #[cfg(debug_assertions)]
                         let simple_fast_return = {
                             if self.frames.len() <= 1 {
                                 false
