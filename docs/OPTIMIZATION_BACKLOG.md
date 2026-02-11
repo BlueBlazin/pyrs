@@ -21,9 +21,9 @@ Last updated: 2026-02-11
 - `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.50s` user (`~1.08x`)
-- dispatch hotpath: `pyrs ~0.54-0.65s` vs `python3.10 ~0.058-0.061s` (`~9-11x`)
-- dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01-0.02s`
+- `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.51s` user (`~1.06x`)
+- dispatch hotpath: `pyrs ~0.53-0.56s` vs `python3.10 ~0.056-0.058s` (`~9-10x`)
+- dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
 - pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 
 ## CPython Reference Map
@@ -74,7 +74,7 @@ Latest local snapshot (2026-02-11):
 | `OPT-022` | P0 | unicode | Implement explicit string interning strategy for identifiers/attribute names/module globals (and wire compiler/import call sites) | `unicodeobject.c`, `pycore_unicodeobject.h` | `[~]` |
 | `OPT-023` | P0 | dispatch | Add `LOAD_ATTR`/method-call inline cache specialization path (type/version guarded) | `ceval.c`, `generated_cases.c.h` | `[~]` |
 | `OPT-024` | P1 | calls | Extend call specialization beyond `CALL_FUNCTION` (`CALL_KW`, bound-method calls, builtin/vectorcall analog path) | `call.c`, `ceval.c` | `[~]` |
-| `OPT-025` | P1 | containers | Dict/set probe/load-factor/resizing tuning against CPython behavior (not just correctness) | `dictobject.c`, `setobject.c` | `[ ]` |
+| `OPT-025` | P1 | containers | Dict/set probe/load-factor/resizing tuning against CPython behavior (not just correctness) | `dictobject.c`, `setobject.c` | `[~]` |
 | `OPT-026` | P1 | allocations | Add allocator/freelist strategy for hot temporary objects and call argument buffers | `frame.c`, `dictobject.c`, `call.c` | `[ ]` |
 | `OPT-027` | P0 | value model | Shrink `Value` payload by boxing heavyweight inline variants used in hot VM transport paths | `ceval.c` value-pointer transport model | `[~]` |
 | `OPT-028` | P0 | dispatch correctness | Restore release-path list comprehension/iterator correctness (`FOR_ITER` and list-comp call lanes) so `fib(29)x5` gate is runnable and trustworthy | `ceval.c`, `generated_cases.c.h` | `[x]` |
@@ -96,7 +96,10 @@ Latest local snapshot (2026-02-11):
   - `CALL_FUNCTION` now has one/two/three-argument bound-method fast paths that inject the receiver directly into function fast-call lanes instead of routing through generic call dispatch.
   - Extended no-keyword small-arity fast dispatch into `CallCpython`, `CallCpythonKwStack`, and `CallFunctionKw` lanes (including arity-0).
   - Added no-keyword small-arity internal-call fast paths in `call_internal` to reduce call/arg churn in stdlib-heavy paths (notably pickle stack).
-  - Dispatch benchmark now sits around `~0.54-0.65s` in current local runs while preserving vm + curated harness parity.
+  - Dispatch benchmark now sits around `~0.53-0.56s` in current local runs while preserving vm + curated harness parity.
+- Container checkpoint:
+  - Dict backend now keeps an explicit entry-to-slot backreference map, removing O(slots) delete slot scans and replacing broad slot-index decrements with live-entry-directed updates after removal.
+  - Added backend tests for index-removal + retain/rebuild paths to lock backreference invariants.
 - CI checkpoint:
   - parity workflow now runs `scripts/bench_dispatch_hotpath.sh` in non-blocking mode and uploads the perf artifact for regression visibility.
 - Fib recursion gate is near `python3.10` on this machine and now serves as a regression smoke, not the sole optimization target.

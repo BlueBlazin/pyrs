@@ -5,6 +5,7 @@ const MIN_TABLE_SIZE: usize = 8;
 const LOAD_NUMERATOR: usize = 2;
 const LOAD_DENOMINATOR: usize = 3;
 const MAX_PERTURB_ROUNDS: usize = (usize::BITS as usize / PERTURB_SHIFT) + 2;
+const NO_SLOT: usize = usize::MAX;
 
 #[derive(Debug, Clone, Copy)]
 enum DictSlot {
@@ -16,6 +17,7 @@ enum DictSlot {
 #[derive(Debug, Clone)]
 pub(super) struct DictBackend {
     entries: Vec<(Value, Value)>,
+    entry_slots: Vec<usize>,
     slots: Vec<DictSlot>,
     used: usize,
     filled: usize,
@@ -31,6 +33,7 @@ impl DictBackend {
     pub(super) fn new(initial_entries: Vec<(Value, Value)>) -> Self {
         let mut out = Self {
             entries: Vec::new(),
+            entry_slots: Vec::new(),
             slots: Vec::new(),
             used: 0,
             filled: 0,
@@ -51,6 +54,7 @@ impl DictBackend {
 
     pub(super) fn clear(&mut self) {
         self.entries.clear();
+        self.entry_slots.clear();
         self.slots.clear();
         self.used = 0;
         self.filled = 0;
@@ -101,6 +105,7 @@ impl DictBackend {
                 return;
             }
             self.entries.push((key, value));
+            self.entry_slots.push(NO_SLOT);
             self.used = self.entries.len();
             return;
         };
@@ -124,6 +129,7 @@ impl DictBackend {
 
         let entry = self.entries.len();
         self.entries.push((key, value));
+        self.entry_slots.push(slot);
         self.used += 1;
         if matches!(self.slots[slot], DictSlot::Empty) {
             self.filled += 1;
@@ -142,11 +148,13 @@ impl DictBackend {
     }
 
     pub(super) fn remove(&mut self, index: usize) -> (Value, Value) {
-        if value_lookup_hash(&self.entries[index].0).is_some() {
-            self.remove_slot_for_entry(index);
+        let removed_slot = self.entry_slots[index];
+        if removed_slot != NO_SLOT {
+            self.remove_slot_for_entry(index, removed_slot);
         }
         let (removed_key, removed_value) = self.entries.remove(index);
-        if value_lookup_hash(&removed_key).is_some() {
+        self.entry_slots.remove(index);
+        if removed_slot != NO_SLOT {
             self.adjust_slot_indices_after_remove(index);
         }
         self.used = self.entries.len();
@@ -204,12 +212,14 @@ impl DictBackend {
     fn resize_slots(&mut self, target: usize) {
         let size = next_power_of_two(target.max(MIN_TABLE_SIZE));
         self.slots = vec![DictSlot::Empty; size];
+        self.entry_slots = vec![NO_SLOT; self.entries.len()];
         self.filled = 0;
         self.used = self.entries.len();
         for (entry, (key, _)) in self.entries.iter().enumerate() {
             if let Some(hash) = value_lookup_hash(key) {
                 let slot = self.lookup_vacant_slot(hash);
                 self.slots[slot] = DictSlot::Occupied { hash, entry };
+                self.entry_slots[entry] = slot;
                 self.filled += 1;
             }
         }
@@ -277,24 +287,22 @@ impl DictBackend {
         SlotLookup::Vacant(first_dummy.unwrap_or(slot))
     }
 
-    fn remove_slot_for_entry(&mut self, expected_entry: usize) {
-        for slot in &mut self.slots {
-            if let DictSlot::Occupied {
-                entry,
-                ..
-            } = slot
-            {
+    fn remove_slot_for_entry(&mut self, expected_entry: usize, slot_index: usize) {
+        if let Some(slot) = self.slots.get_mut(slot_index) {
+            if let DictSlot::Occupied { entry, .. } = slot {
                 if *entry == expected_entry {
                     *slot = DictSlot::Dummy;
-                    return;
                 }
             }
         }
     }
 
     fn adjust_slot_indices_after_remove(&mut self, removed_index: usize) {
-        for slot in &mut self.slots {
-            if let DictSlot::Occupied { entry, .. } = slot {
+        for slot_index in self.entry_slots.iter().skip(removed_index) {
+            if *slot_index == NO_SLOT {
+                continue;
+            }
+            if let Some(DictSlot::Occupied { entry, .. }) = self.slots.get_mut(*slot_index) {
                 if *entry > removed_index {
                     *entry -= 1;
                 }
@@ -415,5 +423,61 @@ mod tests {
             Some(&Value::Str("def".to_string()))
         );
         assert!(backend.contains_key(&Value::Str("s2".to_string())));
+    }
+
+    #[test]
+    fn remove_by_index_keeps_slot_backrefs_in_sync() {
+        let mut backend = DictBackend::new(Vec::new());
+        backend.resize_slots(64);
+        let keys = collide_on_mask(backend.slots.len() - 1, 20);
+        for (idx, key) in keys.iter().enumerate() {
+            backend.insert(key.clone(), Value::Int(idx as i64));
+        }
+
+        let removed = backend.remove(7);
+        assert_eq!(removed, (keys[7].clone(), Value::Int(7)));
+        for (idx, key) in keys.iter().enumerate() {
+            if idx == 7 {
+                assert_eq!(backend.find(key), None);
+            } else {
+                assert_eq!(backend.find(key), Some(&Value::Int(idx as i64)));
+            }
+        }
+
+        let removed_again = backend.remove(0);
+        assert_eq!(removed_again, (keys[0].clone(), Value::Int(0)));
+        assert_eq!(backend.find(&keys[0]), None);
+        assert_eq!(backend.find(&keys[19]), Some(&Value::Int(19)));
+
+        let replacement = collide_on_mask(backend.slots.len() - 1, 40)
+            .pop()
+            .expect("replacement key");
+        backend.insert(replacement.clone(), Value::Int(999));
+        assert_eq!(backend.find(&replacement), Some(&Value::Int(999)));
+    }
+
+    #[test]
+    fn retain_rebuilds_slot_backrefs() {
+        let mut backend = DictBackend::new(Vec::new());
+        backend.resize_slots(32);
+        let keys = collide_on_mask(backend.slots.len() - 1, 12);
+        for (idx, key) in keys.iter().enumerate() {
+            backend.insert(key.clone(), Value::Int(idx as i64));
+        }
+
+        backend.retain(|(_, value)| matches!(value, Value::Int(v) if v % 2 == 0));
+        for (idx, key) in keys.iter().enumerate() {
+            if idx % 2 == 0 {
+                assert_eq!(backend.find(key), Some(&Value::Int(idx as i64)));
+            } else {
+                assert_eq!(backend.find(key), None);
+            }
+        }
+
+        let extra = collide_on_mask(backend.slots.len() - 1, 24)
+            .pop()
+            .expect("extra key");
+        backend.insert(extra.clone(), Value::Int(1234));
+        assert_eq!(backend.find(&extra), Some(&Value::Int(1234)));
     }
 }
