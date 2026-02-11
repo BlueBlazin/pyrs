@@ -341,6 +341,11 @@ impl Vm {
                 }
             }
         };
+        if mode_kind == 'a' {
+            if let Some(file) = self.find_open_file_mut(fd) {
+                let _ = file.seek(SeekFrom::End(0));
+            }
+        }
 
         let raw_mode = if binary_mode {
             mode.clone()
@@ -702,6 +707,29 @@ impl Vm {
                 class_name
             ))),
         }
+    }
+
+    pub(super) fn install_iobase_methods(class_data: &mut ClassObject) {
+        class_data.attrs.insert(
+            "__iter__".to_string(),
+            Value::Builtin(BuiltinFunction::IoBaseIter),
+        );
+        class_data.attrs.insert(
+            "__next__".to_string(),
+            Value::Builtin(BuiltinFunction::IoBaseNext),
+        );
+        class_data.attrs.insert(
+            "close".to_string(),
+            Value::Builtin(BuiltinFunction::IoBaseClose),
+        );
+        class_data.attrs.insert(
+            "flush".to_string(),
+            Value::Builtin(BuiltinFunction::IoBaseFlush),
+        );
+        class_data.attrs.insert(
+            "__del__".to_string(),
+            Value::Builtin(BuiltinFunction::IoBaseDel),
+        );
     }
 
     pub(super) fn install_io_file_methods(class_data: &mut ClassObject) {
@@ -1310,6 +1338,338 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.tell")?;
         self.io_buffered_delegate_method(&instance, "tell", args, kwargs, "buffered tell failed")
+    }
+
+    fn io_writable_buffer_len(&self, target: &Value) -> Result<usize, RuntimeError> {
+        match target {
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => Ok(values.len()),
+                _ => Err(RuntimeError::new(
+                    "TypeError: readinto() argument must be read-write bytes-like object",
+                )),
+            },
+            Value::MemoryView(view_obj) => {
+                let source = match &*view_obj.kind() {
+                    Object::MemoryView(view) => view.source.clone(),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "TypeError: readinto() argument must be read-write bytes-like object",
+                        ));
+                    }
+                };
+                match &*source.kind() {
+                    Object::ByteArray(values) => Ok(values.len()),
+                    _ => Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    )),
+                }
+            }
+            Value::Module(module_obj) => {
+                let Object::Module(module_data) = &*module_obj.kind() else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                if module_data.name != "__array__" {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                }
+                let Some(Value::List(values_obj)) = module_data.globals.get("values") else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let Object::List(values) = &*values_obj.kind() else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                Ok(values.len())
+            }
+            _ => Err(RuntimeError::new(
+                "TypeError: readinto() argument must be read-write bytes-like object",
+            )),
+        }
+    }
+
+    fn io_copy_into_writable_buffer(
+        &mut self,
+        target: Value,
+        payload: &[u8],
+    ) -> Result<usize, RuntimeError> {
+        match target {
+            Value::ByteArray(obj) => {
+                let Object::ByteArray(values) = &mut *obj.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let count = values.len().min(payload.len());
+                values[..count].copy_from_slice(&payload[..count]);
+                Ok(count)
+            }
+            Value::MemoryView(view_obj) => {
+                let source = match &*view_obj.kind() {
+                    Object::MemoryView(view) => view.source.clone(),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "TypeError: readinto() argument must be read-write bytes-like object",
+                        ));
+                    }
+                };
+                let Object::ByteArray(values) = &mut *source.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let count = values.len().min(payload.len());
+                values[..count].copy_from_slice(&payload[..count]);
+                Ok(count)
+            }
+            Value::Module(module_obj) => {
+                let Object::Module(module_data) = &mut *module_obj.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                if module_data.name != "__array__" {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                }
+                let Some(Value::List(values_obj)) = module_data.globals.get_mut("values") else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let Object::List(values) = &mut *values_obj.kind_mut() else {
+                    return Err(RuntimeError::new(
+                        "TypeError: readinto() argument must be read-write bytes-like object",
+                    ));
+                };
+                let count = values.len().min(payload.len());
+                for (slot, byte) in values.iter_mut().zip(payload.iter()).take(count) {
+                    *slot = Value::Int(*byte as i64);
+                }
+                Ok(count)
+            }
+            _ => Err(RuntimeError::new(
+                "TypeError: readinto() argument must be read-write bytes-like object",
+            )),
+        }
+    }
+
+    fn builtin_io_buffered_readinto_impl(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        method_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("BufferedIOBase.readinto expects 1 argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.readinto")?;
+        let target = args.remove(0);
+        let request = self.io_writable_buffer_len(&target)?;
+        if request == 0 {
+            return Ok(Value::Int(0));
+        }
+        let read_method = match self.builtin_getattr(
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str(method_name.to_string()),
+            ],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(_err) if method_name == "read1" => self.builtin_getattr(
+                vec![Value::Instance(instance), Value::Str("read".to_string())],
+                HashMap::new(),
+            )?,
+            Err(err) => return Err(err),
+        };
+        let payload_value = match self.call_internal(
+            read_method,
+            vec![Value::Int(request as i64)],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(
+                    "BufferedIOBase.readinto failed",
+                ));
+            }
+        };
+        let payload = bytes_like_from_value(payload_value).map_err(|_| {
+            RuntimeError::new("TypeError: read() should return bytes")
+        })?;
+        let copied = self.io_copy_into_writable_buffer(target, &payload)?;
+        Ok(Value::Int(copied as i64))
+    }
+
+    pub(super) fn builtin_io_buffered_readinto(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_io_buffered_readinto_impl(args, kwargs, "read")
+    }
+
+    pub(super) fn builtin_io_buffered_readinto1(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_io_buffered_readinto_impl(args, kwargs, "read1")
+    }
+
+    fn io_raw_readinto_chunk(
+        &mut self,
+        receiver: &ObjRef,
+        size: usize,
+    ) -> Result<Option<Vec<u8>>, RuntimeError> {
+        if size == 0 {
+            return Ok(Some(Vec::new()));
+        }
+        let buffer_obj = match self.heap.alloc_bytearray(vec![0; size]) {
+            Value::ByteArray(obj) => obj,
+            _ => unreachable!(),
+        };
+        let readinto = self.builtin_getattr(
+            vec![
+                Value::Instance(receiver.clone()),
+                Value::Str("readinto".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        let result = match self.call_internal(
+            readinto,
+            vec![Value::ByteArray(buffer_obj.clone())],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(
+                    "RawIOBase.readinto failed",
+                ));
+            }
+        };
+        let Some(read_count) = (match result {
+            Value::None => None,
+            Value::Int(value) => Some(value),
+            Value::Bool(value) => Some(i64::from(value)),
+            Value::BigInt(value) => Some(value.to_i64().ok_or_else(|| {
+                RuntimeError::new("ValueError: readinto returned value outside buffer size")
+            })?),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: readinto() should return integer or None, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        }) else {
+            return Ok(None);
+        };
+        if read_count < 0 || read_count as usize > size {
+            return Err(RuntimeError::new(format!(
+                "ValueError: readinto returned {read_count} outside buffer size {size}",
+            )));
+        }
+        let Object::ByteArray(values) = &*buffer_obj.kind() else {
+            return Err(RuntimeError::new("RawIOBase.readinto produced invalid buffer"));
+        };
+        Ok(Some(values[..read_count as usize].to_vec()))
+    }
+
+    pub(super) fn builtin_io_raw_read(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("RawIOBase.read expects 0-1 arguments"));
+        }
+        let receiver = self.take_bound_instance_arg(&mut args, "RawIOBase.read")?;
+        let size = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
+        if size < 0 {
+            return self.builtin_io_raw_readall(
+                vec![Value::Instance(receiver)],
+                HashMap::new(),
+            );
+        }
+        let Some(payload) = self.io_raw_readinto_chunk(&receiver, size as usize)? else {
+            return Ok(Value::None);
+        };
+        Ok(self.heap.alloc_bytes(payload))
+    }
+
+    pub(super) fn builtin_io_raw_readall(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("RawIOBase.readall expects no arguments"));
+        }
+        let receiver = self.take_bound_instance_arg(&mut args, "RawIOBase.readall")?;
+        let read = self.builtin_getattr(
+            vec![
+                Value::Instance(receiver.clone()),
+                Value::Str("read".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        let mut out = Vec::new();
+        loop {
+            let chunk_value =
+                match self.call_internal(read.clone(), vec![Value::Int(8192)], HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(
+                            self.runtime_error_from_active_exception("RawIOBase.readall failed")
+                        );
+                    }
+                };
+            match chunk_value {
+                Value::None => {
+                    if out.is_empty() {
+                        return Ok(Value::None);
+                    }
+                    break;
+                }
+                Value::Bytes(obj) => {
+                    let Object::Bytes(values) = &*obj.kind() else {
+                        return Err(RuntimeError::new(
+                            "RawIOBase.read() returned invalid bytes payload",
+                        ));
+                    };
+                    if values.is_empty() {
+                        break;
+                    }
+                    out.extend_from_slice(values);
+                }
+                Value::ByteArray(_) | Value::MemoryView(_) => {
+                    let values = bytes_like_from_value(chunk_value).map_err(|_| {
+                        RuntimeError::new("TypeError: read() should return bytes")
+                    })?;
+                    if values.is_empty() {
+                        break;
+                    }
+                    out.extend(values);
+                }
+                other => {
+                    return Err(RuntimeError::new(format!(
+                        "TypeError: read() should return bytes or None, not {}",
+                        self.value_type_name_for_error(&other)
+                    )));
+                }
+            }
+        }
+        Ok(self.heap.alloc_bytes(out))
     }
 
     pub(super) fn io_file_fd_from_instance_inner(
@@ -2091,6 +2451,100 @@ impl Vm {
             return Err(RuntimeError::new("__iter__() expects no arguments"));
         }
         Ok(args.remove(0))
+    }
+
+    fn iobase_is_closed(instance: &ObjRef) -> bool {
+        matches!(
+            Self::instance_attr_get(instance, "closed"),
+            Some(Value::Bool(true))
+        ) || matches!(
+            Self::instance_attr_get(instance, "__IOBase_closed"),
+            Some(Value::Bool(true))
+        ) || matches!(
+            Self::instance_attr_get(instance, "_closed"),
+            Some(Value::Bool(true))
+        )
+    }
+
+    fn iobase_mark_closed(instance: &ObjRef) -> Result<(), RuntimeError> {
+        Self::instance_attr_set(instance, "__IOBase_closed", Value::Bool(true))?;
+        Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(instance, "closed", Value::Bool(true))?;
+        Ok(())
+    }
+
+    pub(super) fn builtin_iobase_flush(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("flush() expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        if Self::iobase_is_closed(&receiver) {
+            return Err(RuntimeError::new("I/O operation on closed file."));
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_iobase_close(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("close() expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        if Self::iobase_is_closed(&receiver) {
+            return Ok(Value::None);
+        }
+        let flush = self.builtin_getattr(
+            vec![
+                Value::Instance(receiver.clone()),
+                Value::Str("flush".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        let flush_error = match self.call_internal(flush, Vec::new(), HashMap::new()) {
+            Ok(InternalCallOutcome::Value(_)) => None,
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                Some(self.runtime_error_from_active_exception("close() failed"))
+            }
+            Err(err) => Some(err),
+        };
+        Self::iobase_mark_closed(&receiver)?;
+        if let Some(err) = flush_error {
+            return Err(err);
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_iobase_del(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("__del__() expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        if Self::iobase_is_closed(&receiver) {
+            return Ok(Value::None);
+        }
+        let close = match self.builtin_getattr(
+            vec![
+                Value::Instance(receiver.clone()),
+                Value::Str("close".to_string()),
+            ],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(_) => return Ok(Value::None),
+        };
+        let _ = self.call_internal(close, Vec::new(), HashMap::new());
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_iobase_next(

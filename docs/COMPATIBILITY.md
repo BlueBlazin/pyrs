@@ -38,7 +38,7 @@ Status:
 ## Stdlib Compatibility
 - `[x]` Foundational stdlib bootstrap in place (math/time/os/pathlib/io/json/re/etc. at varying depth)
 - `[~]` P0 closure still pending for `json`, `_csv`/`csv`, `pickle`/`pickletools`/`copyreg`
-- `[~]` `_io` parity advanced (`io.FileIO` + `_io.FileIO.__init__`, `_io.StringIO`/`_io.BytesIO` close/context/open-state/readable/writable/seekable, `read1`/`readlines`/`writelines`/`truncate`/`flush`/`isatty`, `getbuffer`/`detach`, `__getstate__`/`__setstate__`, buffer-export resize guards, and incremental codec factory/state support); full pure-`_pyio` `test_memoryio` lane now green under `sys.implementation.name == 'pyrs'` (CPython-only tests skipped), with remaining long-tail still pending
+- `[~]` `_io` parity advanced (`io.FileIO` + `_io.FileIO.__init__`, `IOBase` close/flush/finalizer defaults, `RawIOBase` default `read`/`readall`, `BufferedIOBase` default `readinto`/`readinto1`, `_io.StringIO`/`_io.BytesIO` close/context/open-state/readable/writable/seekable, `read1`/`readlines`/`writelines`/`truncate`/`flush`/`isatty`, `getbuffer`/`detach`, `__getstate__`/`__setstate__`, buffer-export resize guards, and incremental codec factory/state support); full pure-`_pyio` `test_memoryio` lane now green under `sys.implementation.name == 'pyrs'` (CPython-only tests skipped), with remaining long-tail still pending
 - `[~]` Native-core-first parity work in progress (`_io`, `_csv`, `_sre`, `_pickle`)
 - `[~]` Strict stdlib lane active for non-pickle scope; deferred strict pickle lane still open
 

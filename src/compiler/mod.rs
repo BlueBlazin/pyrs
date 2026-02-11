@@ -1879,6 +1879,11 @@ impl Compiler {
         self.emit(Opcode::StoreFast, Some(idx));
     }
 
+    fn emit_delete_name(&mut self, name: &str) {
+        let idx = self.code.add_name(name.to_string());
+        self.emit(Opcode::DeleteName, Some(idx));
+    }
+
     fn emit_store_name_scoped(&mut self, name: &str) -> Result<(), CompileError> {
         let idx = self.code.add_name(name.to_string());
         match self.name_kind(name) {
@@ -3128,6 +3133,7 @@ impl Compiler {
                 self.emit_load_name(&temp)?;
                 let idx = self.code.add_name(name.clone());
                 self.emit(Opcode::StoreAttr, Some(idx));
+                self.emit_delete_name(&temp);
                 Ok(())
             }
             AssignTarget::Subscript { value, index } => {
@@ -3138,6 +3144,7 @@ impl Compiler {
                 self.emit_load_name(&temp)?;
                 self.emit(Opcode::StoreSubscript, None);
                 self.emit(Opcode::PopTop, None);
+                self.emit_delete_name(&temp);
                 Ok(())
             }
         }

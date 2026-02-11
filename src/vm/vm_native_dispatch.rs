@@ -5252,8 +5252,17 @@ impl Vm {
             BuiltinFunction::IoBufferedWrite => self.builtin_io_buffered_write(args, kwargs),
             BuiltinFunction::IoBufferedSeek => self.builtin_io_buffered_seek(args, kwargs),
             BuiltinFunction::IoBufferedTell => self.builtin_io_buffered_tell(args, kwargs),
+            BuiltinFunction::IoBufferedReadInto => self.builtin_io_buffered_readinto(args, kwargs),
+            BuiltinFunction::IoBufferedReadInto1 => {
+                self.builtin_io_buffered_readinto1(args, kwargs)
+            }
+            BuiltinFunction::IoRawRead => self.builtin_io_raw_read(args, kwargs),
+            BuiltinFunction::IoRawReadAll => self.builtin_io_raw_readall(args, kwargs),
             BuiltinFunction::IoBaseIter => self.builtin_iobase_iter(args, kwargs),
             BuiltinFunction::IoBaseNext => self.builtin_iobase_next(args, kwargs),
+            BuiltinFunction::IoBaseClose => self.builtin_iobase_close(args, kwargs),
+            BuiltinFunction::IoBaseFlush => self.builtin_iobase_flush(args, kwargs),
+            BuiltinFunction::IoBaseDel => self.builtin_iobase_del(args, kwargs),
             BuiltinFunction::StringIOInit => self.builtin_stringio_init(args, kwargs),
             BuiltinFunction::StringIOWrite => self.builtin_stringio_write(args, kwargs),
             BuiltinFunction::StringIORead => self.builtin_stringio_read(args, kwargs),

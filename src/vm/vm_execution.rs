@@ -1277,6 +1277,13 @@ impl Vm {
                             }
                         }
                     }
+                    if frame.is_module && !removed {
+                        if let Some(slot_idx) = module_slot_idx {
+                            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                                removed = slot.take().is_some();
+                            }
+                        }
+                    }
                     if removed {
                         if let Some(slot_idx) = module_slot_idx {
                             if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {

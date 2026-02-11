@@ -2390,6 +2390,14 @@ impl Vm {
                                 "tell".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedTell),
                             );
+                            class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                            );
+                            class_data.attrs.insert(
+                                "readinto1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
                         }
                     }
                     ("BufferedReader", class)
@@ -2424,6 +2432,14 @@ impl Vm {
                             class_data.attrs.insert(
                                 "tell".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedTell),
+                            );
+                            class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                            );
+                            class_data.attrs.insert(
+                                "readinto1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
                             );
                         }
                     }
@@ -2460,6 +2476,14 @@ impl Vm {
                                 "tell".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedTell),
                             );
+                            class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                            );
+                            class_data.attrs.insert(
+                                "readinto1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
                         }
                     }
                     ("BufferedRandom", class)
@@ -2475,33 +2499,60 @@ impl Vm {
                         .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            class_data.attrs.insert(
-                                "__iter__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBaseIter),
-                            );
-                            class_data.attrs.insert(
-                                "__next__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBaseNext),
-                            );
+                            Self::install_iobase_methods(class_data);
                         }
                     }
                     ("IOBase", class)
                 },
-                (
-                    "RawIOBase",
-                    self.heap
-                        .alloc_class(ClassObject::new("RawIOBase".to_string(), Vec::new())),
-                ),
-                (
-                    "BufferedIOBase",
-                    self.heap
-                        .alloc_class(ClassObject::new("BufferedIOBase".to_string(), Vec::new())),
-                ),
-                (
-                    "TextIOBase",
-                    self.heap
-                        .alloc_class(ClassObject::new("TextIOBase".to_string(), Vec::new())),
-                ),
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("RawIOBase".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_iobase_methods(class_data);
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoRawRead),
+                            );
+                            class_data.attrs.insert(
+                                "readall".to_string(),
+                                Value::Builtin(BuiltinFunction::IoRawReadAll),
+                            );
+                        }
+                    }
+                    ("RawIOBase", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BufferedIOBase".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_iobase_methods(class_data);
+                            class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                            );
+                            class_data.attrs.insert(
+                                "readinto1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
+                        }
+                    }
+                    ("BufferedIOBase", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("TextIOBase".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_iobase_methods(class_data);
+                        }
+                    }
+                    ("TextIOBase", class)
+                },
                 (
                     "Reader",
                     self.heap
@@ -2705,6 +2756,14 @@ impl Vm {
                                 "tell".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedTell),
                             );
+                            class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                            );
+                            class_data.attrs.insert(
+                                "readinto1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
                         }
                     }
                     ("BufferedReader", class)
@@ -2739,6 +2798,14 @@ impl Vm {
                             class_data.attrs.insert(
                                 "tell".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedTell),
+                            );
+                            class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                            );
+                            class_data.attrs.insert(
+                                "readinto1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
                             );
                         }
                     }
@@ -2775,6 +2842,14 @@ impl Vm {
                                 "tell".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedTell),
                             );
+                            class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                            );
+                            class_data.attrs.insert(
+                                "readinto1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
                         }
                     }
                     ("BufferedRandom", class)
@@ -2801,33 +2876,60 @@ impl Vm {
                         .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class {
                         if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            class_data.attrs.insert(
-                                "__iter__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBaseIter),
-                            );
-                            class_data.attrs.insert(
-                                "__next__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBaseNext),
-                            );
+                            Self::install_iobase_methods(class_data);
                         }
                     }
                     ("IOBase", class)
                 },
-                (
-                    "RawIOBase",
-                    self.heap
-                        .alloc_class(ClassObject::new("RawIOBase".to_string(), Vec::new())),
-                ),
-                (
-                    "BufferedIOBase",
-                    self.heap
-                        .alloc_class(ClassObject::new("BufferedIOBase".to_string(), Vec::new())),
-                ),
-                (
-                    "TextIOBase",
-                    self.heap
-                        .alloc_class(ClassObject::new("TextIOBase".to_string(), Vec::new())),
-                ),
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("RawIOBase".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_iobase_methods(class_data);
+                            class_data.attrs.insert(
+                                "read".to_string(),
+                                Value::Builtin(BuiltinFunction::IoRawRead),
+                            );
+                            class_data.attrs.insert(
+                                "readall".to_string(),
+                                Value::Builtin(BuiltinFunction::IoRawReadAll),
+                            );
+                        }
+                    }
+                    ("RawIOBase", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BufferedIOBase".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_iobase_methods(class_data);
+                            class_data.attrs.insert(
+                                "readinto".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                            );
+                            class_data.attrs.insert(
+                                "readinto1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
+                        }
+                    }
+                    ("BufferedIOBase", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("TextIOBase".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class {
+                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                            Self::install_iobase_methods(class_data);
+                        }
+                    }
+                    ("TextIOBase", class)
+                },
                 (
                     "IncrementalNewlineDecoder",
                     self.heap.alloc_class(ClassObject::new(

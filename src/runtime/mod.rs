@@ -2545,8 +2545,15 @@ pub enum BuiltinFunction {
     IoBufferedWrite,
     IoBufferedSeek,
     IoBufferedTell,
+    IoBufferedReadInto,
+    IoBufferedReadInto1,
+    IoRawRead,
+    IoRawReadAll,
     IoBaseIter,
     IoBaseNext,
+    IoBaseClose,
+    IoBaseFlush,
+    IoBaseDel,
     StringIOInit,
     StringIOWrite,
     StringIORead,
@@ -2812,6 +2819,9 @@ impl BuiltinFunction {
             | BuiltinFunction::IoFileTruncate
             | BuiltinFunction::IoBaseIter
             | BuiltinFunction::IoBaseNext
+            | BuiltinFunction::IoBaseClose
+            | BuiltinFunction::IoBaseFlush
+            | BuiltinFunction::IoBaseDel
             | BuiltinFunction::BytesIOWriteLines
             | BuiltinFunction::BytesIOTruncate
             | BuiltinFunction::IoFileDetach
@@ -2821,6 +2831,10 @@ impl BuiltinFunction {
             | BuiltinFunction::IoBufferedWrite
             | BuiltinFunction::IoBufferedSeek
             | BuiltinFunction::IoBufferedTell
+            | BuiltinFunction::IoBufferedReadInto
+            | BuiltinFunction::IoBufferedReadInto1
+            | BuiltinFunction::IoRawRead
+            | BuiltinFunction::IoRawReadAll
             | BuiltinFunction::RePatternFindAll
             | BuiltinFunction::RePatternFindIter
             | BuiltinFunction::SreCompile
@@ -6820,6 +6834,27 @@ mod tests {
         drop(method);
         heap.collect_cycles(&[]);
         assert_eq!(heap.live_objects_count(), 0);
+    }
+
+    #[test]
+    fn gc_collects_self_referential_instance_with_rooted_class() {
+        let heap = Heap::new();
+        let class = heap.alloc(Object::Class(ClassObject::new("Carrier", Vec::new())));
+        let instance = heap.alloc(Object::Instance(InstanceObject::new(class.clone())));
+        let instance_id = instance.id();
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("self".to_string(), Value::Instance(instance.clone()));
+        }
+
+        heap.collect_cycles(&[Value::Class(class)]);
+        drop(instance);
+
+        assert!(
+            heap.find_object_by_id(instance_id).is_none(),
+            "self-referential instance should be collectable",
+        );
     }
 
     #[test]

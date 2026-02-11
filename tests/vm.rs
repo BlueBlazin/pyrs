@@ -6994,6 +6994,88 @@ _io.BytesIO().detach()
 }
 
 #[test]
+fn _io_base_destructor_closes_and_flushes_receiver() {
+    let source = r#"import _io, gc
+record = []
+class MyIO(_io.BufferedIOBase):
+    def __init__(self):
+        self.on_del = 1
+        self.on_close = 2
+        self.on_flush = 3
+    def __del__(self):
+        record.append(self.on_del)
+        try:
+            f = super().__del__
+        except AttributeError:
+            pass
+        else:
+            f()
+    def close(self):
+        record.append(self.on_close)
+        super().close()
+    def flush(self):
+        record.append(self.on_flush)
+        super().flush()
+f = MyIO()
+del f
+gc.collect()
+ok = (record == [1, 2, 3])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn assignment_temp_values_do_not_leak_after_attr_store() {
+    let source = r#"import gc, weakref
+class C:
+    pass
+o = C()
+q = C()
+o.q = q
+wro = weakref.ref(o)
+wrq = weakref.ref(q)
+del q
+del o
+gc.collect()
+ok = (wro() is None and wrq() is None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_rawiobase_default_read_and_readall_use_readinto() {
+    let source = r#"import _io
+class Reader(_io.RawIOBase):
+    def __init__(self, avail):
+        self.avail = avail
+    def readinto(self, b):
+        data = self.avail[:len(b)]
+        self.avail = self.avail[len(b):]
+        b[:len(data)] = data
+        return len(data)
+r = Reader(b"abcdef")
+a = r.read(2)
+b = r.read(3)
+c = r.readall()
+d = r.read(1)
+ok = (a == b"ab" and b == b"cde" and c == b"f" and d == b"")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn io_textiowrapper_init_wraps_binary_buffer_for_readline() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
