@@ -19,8 +19,10 @@ These are now tracked in `docs/OPTIMIZATION_BACKLOG.md` as:
 
 Primary benchmark gate:
 - Command: `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
+- Canonical reference (non-JIT): `time python3.10 -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
 - Target: `< 0.15s` user-time
 - Current baseline (latest run): about `0.60-0.61s` user-time (`~0.62-0.64s` wall)
+- `python3.10` baseline for same gate: about `0.50s` user-time
 - Latest checkpoint before this wave: about `0.95s` user-time (`~0.96s` wall after warm-up)
 
 ## Ground Rules

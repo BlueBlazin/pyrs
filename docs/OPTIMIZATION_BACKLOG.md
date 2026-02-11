@@ -18,11 +18,15 @@ Last updated: 2026-02-11
 
 - Command:
   - `time target/release/pyrs -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
+- Canonical reference (non-JIT):
+  - `time python3.10 -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); [fib(29) for _ in range(5)]"`
 - Target:
   - `< 0.15s` user-time
 - Current:
   - ~`0.60-0.61s` user-time (`~0.62-0.64s` wall) for the `fib(29)x5` gate
+  - `python3.10` baseline for the same gate: ~`0.50s` user-time
   - ~`0.14-0.15s` user-time for `print(fib(29))` single-run reference
+  - `python3.10` baseline for `print(fib(29))`: ~`0.11s` user-time
 
 ## CPython Reference Map
 
