@@ -21,8 +21,8 @@ Last updated: 2026-02-11
 - `scripts/bench_dict_backend.sh 5`
 
 Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.54-0.55s` user vs `python3.10 ~0.50-0.51s` user (`~1.08-1.10x`)
-- dispatch hotpath: `pyrs ~0.46-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
+- `fib(29)x5`: `pyrs ~0.54-0.56s` user vs `python3.10 ~0.50-0.51s` user (`~1.08-1.12x`)
+- dispatch hotpath: `pyrs ~0.44-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
 - dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
 - pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 
@@ -103,7 +103,8 @@ Latest local snapshot (2026-02-11):
   - Added guarded module-scope `LOAD_NAME` site caching (reusing global cache slots with module+builtins version guards) to reduce repeated name lookup/hash churn in top-level loops.
   - Synced module-frame fast-local slots on global writes (`STORE_GLOBAL`/module upserts) to preserve correctness for accelerated `LOAD_NAME` resolution.
   - `LOAD_NAME` local resolution now uses opcode name-index directly for fast-local slot lookup (`lookup_name_with_index`) instead of hashing through `name_to_index`; `store_name_by_index` now writes fast-local slots by index directly.
-  - Dispatch benchmark now sits around `~0.46-0.60s` in current local runs while preserving vm + curated harness parity.
+  - `LOAD_NAME` cache guards now read `frame.function_globals_version` directly (avoiding per-op module-kind version lookup in hot module loops).
+  - Dispatch benchmark now sits around `~0.44-0.60s` in current local runs while preserving vm + curated harness parity.
 - Container checkpoint:
   - Dict backend now keeps an explicit entry-to-slot backreference map, removing O(slots) delete slot scans and replacing broad slot-index decrements with live-entry-directed updates after removal.
   - Added backend tests for index-removal + retain/rebuild paths to lock backreference invariants.

@@ -16,8 +16,8 @@ Run these in release mode:
 
 Latest local snapshot (2026-02-11):
 
-- `fib(29)x5`: `pyrs ~0.54-0.55s` user vs `python3.10 ~0.50-0.51s` user (`~1.08-1.10x`)
-- Dispatch hotpath: `pyrs ~0.46-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
+- `fib(29)x5`: `pyrs ~0.54-0.56s` user vs `python3.10 ~0.50-0.51s` user (`~1.08-1.12x`)
+- Dispatch hotpath: `pyrs ~0.44-0.60s` vs `python3.10 ~0.055-0.058s` (`~8-10x`)
 - Dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
 - Pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 
@@ -73,6 +73,7 @@ Interpretation:
   - Current checkpoint: module-scope `LOAD_NAME` now uses version-guarded site caching for hash-churn reduction in top-level loops.
   - Current checkpoint: module global upserts now synchronize module-frame fast-local slots for correctness under accelerated `LOAD_NAME`.
   - Current checkpoint: `LOAD_NAME` and indexed `STORE_NAME` now resolve fast-local slots by opcode name-index directly (no `name_to_index` hash lookup on the hot path).
+  - Current checkpoint: `LOAD_NAME` cache checks now use `frame.function_globals_version` directly instead of module-kind version lookup per opcode.
 - Remove avoidable temporary allocations/clone churn in argument plumbing.
 - Align frame setup/teardown with CPython fast-call lifecycle patterns.
 

@@ -217,7 +217,7 @@ impl Vm {
                         .get(idx)
                         .ok_or_else(|| RuntimeError::new("name index out of range"))?;
                     let globals_module_id = frame.module.id();
-                    let globals_version = module_globals_version(&frame.module);
+                    let globals_version = frame.function_globals_version;
                     let cacheable = frame.is_module
                         && frame.locals.is_empty()
                         && frame.locals_fallback.is_none()
