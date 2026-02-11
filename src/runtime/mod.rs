@@ -231,6 +231,7 @@ pub enum NativeMethodKind {
     ListSort,
     IntToBytes,
     IntBitLengthMethod,
+    IntIndexMethod,
     StrStartsWith,
     StrEndsWith,
     StrReplace,
@@ -245,6 +246,8 @@ pub enum NativeMethodKind {
     BytesFind,
     BytesTranslate,
     BytesJoin,
+    ByteArrayClear,
+    ByteArrayResize,
     MemoryViewEnter,
     MemoryViewExit,
     MemoryViewToReadOnly,
@@ -1241,6 +1244,25 @@ impl Heap {
                 continue;
             };
             if view.released || view.export_owner.is_none() {
+                continue;
+            }
+            if view.source.id() == source.id() {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    pub fn count_live_memoryviews_for_source(&self, source: &ObjRef) -> usize {
+        let mut count = 0usize;
+        for weak in self.registry.borrow().iter() {
+            let Some(obj) = weak.upgrade() else {
+                continue;
+            };
+            let Object::MemoryView(view) = &*obj.kind.borrow() else {
+                continue;
+            };
+            if view.released {
                 continue;
             }
             if view.source.id() == source.id() {
@@ -2509,6 +2531,8 @@ pub enum BuiltinFunction {
     StringIOReadLine,
     StringIOReadLines,
     StringIOGetValue,
+    StringIOGetState,
+    StringIOSetState,
     StringIOSeek,
     StringIOTell,
     StringIOWriteLines,
@@ -2720,6 +2744,8 @@ impl BuiltinFunction {
             | BuiltinFunction::StringIOReadLine
             | BuiltinFunction::StringIOReadLines
             | BuiltinFunction::StringIOGetValue
+            | BuiltinFunction::StringIOGetState
+            | BuiltinFunction::StringIOSetState
             | BuiltinFunction::StringIOSeek
             | BuiltinFunction::StringIOTell
             | BuiltinFunction::StringIOWriteLines
@@ -3660,6 +3686,16 @@ impl BuiltinFunction {
                                     }
                                 }
                             }
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "memoryview() expects bytes-like object",
+                            ));
+                        }
+                    },
+                    Value::Module(obj) => match &*obj.kind() {
+                        Object::Module(module_data) if module_data.name == "__array__" => {
+                            obj.clone()
                         }
                         _ => {
                             return Err(RuntimeError::new(
@@ -5778,6 +5814,24 @@ fn with_bytes_like_source<R>(source: &ObjRef, map: impl FnOnce(&[u8]) -> R) -> O
                 _ => None,
             }
         }
+        Object::Module(module_data) if module_data.name == "__array__" => {
+            let values = module_data.globals.get("values")?;
+            let Value::List(values_obj) = values else {
+                return None;
+            };
+            let Object::List(items) = &*values_obj.kind() else {
+                return None;
+            };
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                let value = value_to_int(item.clone()).ok()?;
+                if !(0..=255).contains(&value) {
+                    return None;
+                }
+                out.push(value as u8);
+            }
+            Some(map(&out))
+        }
         _ => None,
     }
 }
@@ -6237,6 +6291,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::IntBitLengthMethod => {
                         "<bound method int.bit_length>".to_string()
                     }
+                    NativeMethodKind::IntIndexMethod => {
+                        "<bound method int.__index__>".to_string()
+                    }
                     NativeMethodKind::StrStartsWith => "<bound method str.startswith>".to_string(),
                     NativeMethodKind::StrEndsWith => "<bound method str.endswith>".to_string(),
                     NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),
@@ -6255,6 +6312,12 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method bytes.translate>".to_string()
                     }
                     NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
+                    NativeMethodKind::ByteArrayClear => {
+                        "<bound method bytearray.clear>".to_string()
+                    }
+                    NativeMethodKind::ByteArrayResize => {
+                        "<bound method bytearray.resize>".to_string()
+                    }
                     NativeMethodKind::MemoryViewEnter => {
                         "<bound method memoryview.__enter__>".to_string()
                     }

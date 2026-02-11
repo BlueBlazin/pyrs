@@ -737,6 +737,21 @@ impl Vm {
                     value.bit_length() as i64
                 )))
             }
+            NativeMethodKind::IntIndexMethod => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__index__() expects no arguments"));
+                }
+                let value = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Int(value)) => Value::Int(*value),
+                        Some(Value::Bool(value)) => Value::Int(if *value { 1 } else { 0 }),
+                        Some(Value::BigInt(value)) => Value::BigInt(value.clone()),
+                        _ => return Err(RuntimeError::new("int receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("int receiver is invalid")),
+                };
+                Ok(NativeCallResult::Value(value))
+            }
             NativeMethodKind::StrStartsWith | NativeMethodKind::StrEndsWith => {
                 let method_name = if matches!(kind, NativeMethodKind::StrStartsWith) {
                     "startswith"
@@ -1221,6 +1236,56 @@ impl Vm {
                     output.extend_from_slice(&bytes);
                 }
                 Ok(NativeCallResult::Value(self.heap.alloc_bytes(output)))
+            }
+            NativeMethodKind::ByteArrayClear => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("clear() expects no arguments"));
+                }
+                let buffer = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::ByteArray(obj)) => obj.clone(),
+                        _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                };
+                let has_exports = self.heap.count_live_memoryviews_for_source(&buffer) > 0;
+                let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
+                    return Err(RuntimeError::new("bytearray receiver is invalid"));
+                };
+                if !values.is_empty() && has_exports {
+                    return Err(RuntimeError::new(
+                        "BufferError: Existing exports of data: object cannot be re-sized",
+                    ));
+                }
+                values.clear();
+                Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::ByteArrayResize => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("resize() takes exactly one argument"));
+                }
+                let buffer = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::ByteArray(obj)) => obj.clone(),
+                        _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                };
+                let new_size = self.io_index_arg_to_int(args.remove(0))?;
+                if new_size < 0 {
+                    return Err(RuntimeError::new("ValueError: new size must be non-negative"));
+                }
+                let has_exports = self.heap.count_live_memoryviews_for_source(&buffer) > 0;
+                let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
+                    return Err(RuntimeError::new("bytearray receiver is invalid"));
+                };
+                if has_exports && values.len() != new_size as usize {
+                    return Err(RuntimeError::new(
+                        "BufferError: Existing exports of data: object cannot be re-sized",
+                    ));
+                }
+                values.resize(new_size as usize, 0);
+                Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::MemoryViewEnter => {
                 if !args.is_empty() {
@@ -4233,6 +4298,7 @@ impl Vm {
             BuiltinFunction::Float => self.builtin_float(args, kwargs),
             BuiltinFunction::Complex => self.builtin_complex(args, kwargs),
             BuiltinFunction::Str => self.builtin_str(args, kwargs),
+            BuiltinFunction::MemoryView => self.builtin_memoryview(args, kwargs),
             BuiltinFunction::FloatFromHex => self.builtin_float_fromhex(args, kwargs),
             BuiltinFunction::FloatHex => self.builtin_float_hex(args, kwargs),
             BuiltinFunction::StrMakeTrans => self.builtin_str_maketrans(args, kwargs),
@@ -4756,6 +4822,8 @@ impl Vm {
             BuiltinFunction::StringIOReadLine => self.builtin_stringio_readline(args, kwargs),
             BuiltinFunction::StringIOReadLines => self.builtin_stringio_readlines(args, kwargs),
             BuiltinFunction::StringIOGetValue => self.builtin_stringio_getvalue(args, kwargs),
+            BuiltinFunction::StringIOGetState => self.builtin_stringio_getstate(args, kwargs),
+            BuiltinFunction::StringIOSetState => self.builtin_stringio_setstate(args, kwargs),
             BuiltinFunction::StringIOSeek => self.builtin_stringio_seek(args, kwargs),
             BuiltinFunction::StringIOTell => self.builtin_stringio_tell(args, kwargs),
             BuiltinFunction::StringIOWriteLines => self.builtin_stringio_writelines(args, kwargs),

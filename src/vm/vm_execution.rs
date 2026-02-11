@@ -2072,11 +2072,18 @@ impl Vm {
                             let upper = slice.upper;
                             let step = slice.step;
                             let replacement = self.value_to_bytes_payload(value)?;
+                            let has_exports =
+                                self.heap.count_live_memoryviews_for_source(&obj) > 0;
                             if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                 let step_value = step.unwrap_or(1);
                                 if step_value == 1 {
                                     let (start, stop) =
                                         slice_bounds_for_step_one(values.len(), lower, upper);
+                                    if has_exports && replacement.len() != stop.saturating_sub(start) {
+                                        return Err(RuntimeError::new(
+                                            "BufferError: Existing exports of data: object cannot be re-sized",
+                                        ));
+                                    }
                                     values.splice(start..stop, replacement);
                                 } else {
                                     let indices = slice_indices(values.len(), lower, upper, step)?;
@@ -2200,6 +2207,43 @@ impl Vm {
                                         }
                                     }
                                 }
+                                Object::Module(module_data) if module_data.name == "__array__" => {
+                                    let Some(Value::List(values_obj)) =
+                                        module_data.globals.get_mut("values")
+                                    else {
+                                        return Err(RuntimeError::new("store subscript unsupported type"));
+                                    };
+                                    let Object::List(values) = &mut *values_obj.kind_mut() else {
+                                        return Err(RuntimeError::new("store subscript unsupported type"));
+                                    };
+                                    let lower = slice.lower;
+                                    let upper = slice.upper;
+                                    let step = slice.step;
+                                    let step_value = step.unwrap_or(1);
+                                    if step_value == 1 {
+                                        let (start, stop) =
+                                            slice_bounds_for_step_one(values.len(), lower, upper);
+                                        if replacement.len() != stop.saturating_sub(start) {
+                                            return Err(RuntimeError::new(
+                                                "memoryview assignment: lvalue and rvalue have different structures",
+                                            ));
+                                        }
+                                        for (offset, item) in replacement.iter().enumerate() {
+                                            values[start + offset] = Value::Int(*item as i64);
+                                        }
+                                    } else {
+                                        let indices =
+                                            slice_indices(values.len(), lower, upper, step)?;
+                                        if indices.len() != replacement.len() {
+                                            return Err(RuntimeError::new(
+                                                "memoryview assignment: lvalue and rvalue have different structures",
+                                            ));
+                                        }
+                                        for (idx, item) in indices.into_iter().zip(replacement) {
+                                            values[idx] = Value::Int(item as i64);
+                                        }
+                                    }
+                                }
                                 Object::Bytes(_) => {
                                     return Err(RuntimeError::new("cannot modify read-only memory"));
                                 }
@@ -2234,6 +2278,28 @@ impl Vm {
                                         return Err(RuntimeError::new("byte must be in range(0, 256)"));
                                     }
                                     values[idx as usize] = byte as u8;
+                                }
+                                Object::Module(module_data) if module_data.name == "__array__" => {
+                                    let Some(Value::List(values_obj)) =
+                                        module_data.globals.get_mut("values")
+                                    else {
+                                        return Err(RuntimeError::new("store subscript unsupported type"));
+                                    };
+                                    let Object::List(values) = &mut *values_obj.kind_mut() else {
+                                        return Err(RuntimeError::new("store subscript unsupported type"));
+                                    };
+                                    let mut idx = value_to_int(index)? as isize;
+                                    if idx < 0 {
+                                        idx += values.len() as isize;
+                                    }
+                                    if idx < 0 || idx as usize >= values.len() {
+                                        return Err(RuntimeError::new("index out of range"));
+                                    }
+                                    let byte = value_to_int(value)?;
+                                    if !(0..=255).contains(&byte) {
+                                        return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                                    }
+                                    values[idx as usize] = Value::Int(byte);
                                 }
                                 Object::Bytes(_) => {
                                     return Err(RuntimeError::new("cannot modify read-only memory"));
@@ -2310,15 +2376,27 @@ impl Vm {
                             let lower = slice.lower;
                             let upper = slice.upper;
                             let step = slice.step;
+                            let has_exports =
+                                self.heap.count_live_memoryviews_for_source(&obj) > 0;
                             if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                 let step_value = step.unwrap_or(1);
                                 if step_value == 1 {
                                     let (start, stop) =
                                         slice_bounds_for_step_one(values.len(), lower, upper);
+                                    if has_exports && stop > start {
+                                        return Err(RuntimeError::new(
+                                            "BufferError: Existing exports of data: object cannot be re-sized",
+                                        ));
+                                    }
                                     values.drain(start..stop);
                                 } else {
                                     let mut indices =
                                         slice_indices(values.len(), lower, upper, step)?;
+                                    if has_exports && !indices.is_empty() {
+                                        return Err(RuntimeError::new(
+                                            "BufferError: Existing exports of data: object cannot be re-sized",
+                                        ));
+                                    }
                                     indices.sort_unstable();
                                     for idx in indices.into_iter().rev() {
                                         values.remove(idx);
@@ -2327,6 +2405,11 @@ impl Vm {
                             }
                         }
                         index => {
+                            if self.heap.count_live_memoryviews_for_source(&obj) > 0 {
+                                return Err(RuntimeError::new(
+                                    "BufferError: Existing exports of data: object cannot be re-sized",
+                                ));
+                            }
                             if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                 let mut idx = value_to_int(index)? as isize;
                                 if idx < 0 {

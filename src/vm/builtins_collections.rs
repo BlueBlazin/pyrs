@@ -65,7 +65,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("operator.index expects one argument"));
         }
-        Ok(Value::Int(value_to_int(args[0].clone())?))
+        Ok(Value::Int(self.io_index_arg_to_int(args[0].clone())?))
     }
 
     pub(super) fn builtin_operator_eq(

@@ -1272,6 +1272,93 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_memoryview(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("memoryview() expects one argument"));
+        }
+        let source = match args.remove(0) {
+            Value::Bytes(obj) | Value::ByteArray(obj) => obj,
+            Value::MemoryView(obj) => match &*obj.kind() {
+                Object::MemoryView(view_data) => view_data.source.clone(),
+                _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
+            },
+            Value::Module(obj) => {
+                let is_array =
+                    matches!(&*obj.kind(), Object::Module(module_data) if module_data.name == "__array__");
+                if is_array {
+                    obj
+                } else {
+                    return Err(RuntimeError::new("memoryview() expects bytes-like object"));
+                }
+            }
+            Value::Instance(obj) => {
+                let receiver = Value::Instance(obj.clone());
+                if let Some(buffer_method) =
+                    self.lookup_bound_special_method(&receiver, "__buffer__")?
+                {
+                    let buffer_value =
+                        match self.call_internal(buffer_method, vec![Value::Int(0)], HashMap::new())?
+                        {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(RuntimeError::new("__buffer__() raised an exception"));
+                            }
+                        };
+                    match buffer_value {
+                        Value::MemoryView(view_obj) => match &*view_obj.kind() {
+                            Object::MemoryView(view_data) => view_data.source.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "memoryview() expects bytes-like object",
+                                ));
+                            }
+                        },
+                        Value::Bytes(obj) | Value::ByteArray(obj) => obj,
+                        Value::Module(obj) => {
+                            let is_array = matches!(
+                                &*obj.kind(),
+                                Object::Module(module_data) if module_data.name == "__array__"
+                            );
+                            if is_array {
+                                obj
+                            } else {
+                                return Err(RuntimeError::new(
+                                    "memoryview() expects bytes-like object",
+                                ));
+                            }
+                        }
+                        other => {
+                            let payload = self.value_to_bytes_payload(other)?;
+                            match self.heap.alloc_bytearray(payload) {
+                                Value::ByteArray(obj) => obj,
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                } else if matches!(
+                    &*obj.kind(),
+                    Object::Instance(instance_data)
+                        if instance_data.attrs.contains_key("__pyrs_bytes_storage__")
+                ) {
+                    obj
+                } else {
+                    return Err(RuntimeError::new("memoryview() expects bytes-like object"));
+                }
+            }
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "memoryview() expects bytes-like object, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        Ok(self.heap.alloc_memoryview(source))
+    }
+
     pub(super) fn builtin_sys_stream_write(
         &self,
         args: Vec<Value>,

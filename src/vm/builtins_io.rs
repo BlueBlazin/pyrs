@@ -821,6 +821,14 @@ impl Vm {
             Value::Builtin(BuiltinFunction::StringIOGetValue),
         );
         class_data.attrs.insert(
+            "__getstate__".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOGetState),
+        );
+        class_data.attrs.insert(
+            "__setstate__".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOSetState),
+        );
+        class_data.attrs.insert(
             "seek".to_string(),
             Value::Builtin(BuiltinFunction::StringIOSeek),
         );
@@ -2152,6 +2160,112 @@ impl Vm {
         }
     }
 
+    fn stringio_detect_newline_markers(text: &str) -> (bool, bool, bool) {
+        let chars: Vec<char> = text.chars().collect();
+        let mut saw_cr = false;
+        let mut saw_lf = false;
+        let mut saw_crlf = false;
+        let mut idx = 0usize;
+        while idx < chars.len() {
+            match chars[idx] {
+                '\r' => {
+                    if idx + 1 < chars.len() && chars[idx + 1] == '\n' {
+                        saw_crlf = true;
+                        idx += 2;
+                    } else {
+                        saw_cr = true;
+                        idx += 1;
+                    }
+                }
+                '\n' => {
+                    saw_lf = true;
+                    idx += 1;
+                }
+                _ => idx += 1,
+            }
+        }
+        (saw_cr, saw_lf, saw_crlf)
+    }
+
+    fn stringio_newlines_markers(instance: &ObjRef) -> (bool, bool, bool) {
+        let Some(value) = Self::instance_attr_get(instance, "newlines") else {
+            return (false, false, false);
+        };
+        match value {
+            Value::None => (false, false, false),
+            Value::Str(kind) => match kind.as_str() {
+                "\r" => (true, false, false),
+                "\n" => (false, true, false),
+                "\r\n" => (false, false, true),
+                _ => (false, false, false),
+            },
+            Value::Tuple(obj) => {
+                let Object::Tuple(items) = &*obj.kind() else {
+                    return (false, false, false);
+                };
+                let mut saw_cr = false;
+                let mut saw_lf = false;
+                let mut saw_crlf = false;
+                for item in items {
+                    if let Value::Str(kind) = item {
+                        match kind.as_str() {
+                            "\r" => saw_cr = true,
+                            "\n" => saw_lf = true,
+                            "\r\n" => saw_crlf = true,
+                            _ => {}
+                        }
+                    }
+                }
+                (saw_cr, saw_lf, saw_crlf)
+            }
+            _ => (false, false, false),
+        }
+    }
+
+    fn stringio_set_newlines_markers(
+        &mut self,
+        instance: &ObjRef,
+        saw_cr: bool,
+        saw_lf: bool,
+        saw_crlf: bool,
+    ) -> Result<(), RuntimeError> {
+        let value = match (saw_cr, saw_lf, saw_crlf) {
+            (false, false, false) => Value::None,
+            (true, false, false) => Value::Str("\r".to_string()),
+            (false, true, false) => Value::Str("\n".to_string()),
+            (false, false, true) => Value::Str("\r\n".to_string()),
+            _ => {
+                let mut items = Vec::new();
+                if saw_cr {
+                    items.push(Value::Str("\r".to_string()));
+                }
+                if saw_lf {
+                    items.push(Value::Str("\n".to_string()));
+                }
+                if saw_crlf {
+                    items.push(Value::Str("\r\n".to_string()));
+                }
+                self.heap.alloc_tuple(items)
+            }
+        };
+        Self::instance_attr_set(instance, "newlines", value)
+    }
+
+    fn stringio_update_newlines_from_text(
+        &mut self,
+        instance: &ObjRef,
+        text: &str,
+    ) -> Result<(), RuntimeError> {
+        let (current_cr, current_lf, current_crlf) = Self::stringio_newlines_markers(instance);
+        let (new_cr, new_lf, new_crlf) = Self::stringio_detect_newline_markers(text);
+        self.stringio_set_newlines_markers(
+            instance,
+            current_cr || new_cr,
+            current_lf || new_lf,
+            current_crlf || new_crlf,
+        )
+    }
+
     fn stringio_ensure_open(instance: &ObjRef) -> Result<(), RuntimeError> {
         if Self::stringio_is_closed(instance) {
             Err(RuntimeError::new("I/O operation on closed file"))
@@ -2177,7 +2291,7 @@ impl Vm {
         }
     }
 
-    fn io_index_arg_to_int(&mut self, value: Value) -> Result<i64, RuntimeError> {
+    pub(super) fn io_index_arg_to_int(&mut self, value: Value) -> Result<i64, RuntimeError> {
         match value {
             Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => value_to_int(value),
             other => {
@@ -2223,27 +2337,76 @@ impl Vm {
         buffer: &[char],
         pos: usize,
         limit: Option<usize>,
+        newline: Option<&str>,
     ) -> usize {
-        let mut end = pos;
-        while end < buffer.len() {
-            let ch = buffer[end];
-            if ch == '\n' {
+        let Some(max_len) = limit else {
+            return Self::stringio_next_line_end(buffer, pos, Some(usize::MAX), newline);
+        };
+        if max_len == 0 {
+            return pos;
+        }
+        let is_universal = newline.is_none() || newline == Some("");
+        if is_universal {
+            let mut end = pos;
+            while end < buffer.len() {
+                if end - pos >= max_len {
+                    break;
+                }
+                let ch = buffer[end];
+                if ch == '\n' {
+                    end += 1;
+                    break;
+                }
+                if ch == '\r' {
+                    end += 1;
+                    if end < buffer.len() && buffer[end] == '\n' {
+                        if end - pos >= max_len {
+                            break;
+                        }
+                        end += 1;
+                    }
+                    break;
+                }
                 end += 1;
-                break;
             }
-            if ch == '\r' {
-                end += 1;
-                if end < buffer.len() && buffer[end] == '\n' {
-                    if limit.is_some_and(|max| end - pos >= max) {
+            return end;
+        }
+
+        let mut end = pos;
+        while end < buffer.len() && end - pos < max_len {
+            match newline {
+                Some("\n") | None => {
+                    if buffer[end] == '\n' {
+                        end += 1;
                         break;
                     }
                     end += 1;
                 }
-                break;
-            }
-            end += 1;
-            if limit.is_some_and(|max| end - pos >= max) {
-                break;
+                Some("\r") => {
+                    if buffer[end] == '\r' {
+                        end += 1;
+                        break;
+                    }
+                    end += 1;
+                }
+                Some("\r\n") => {
+                    if end + 1 < buffer.len() && buffer[end] == '\r' && buffer[end + 1] == '\n' {
+                        if end - pos + 2 > max_len {
+                            end = pos + max_len;
+                        } else {
+                            end += 2;
+                        }
+                        break;
+                    }
+                    end += 1;
+                }
+                Some(_) => {
+                    if buffer[end] == '\n' {
+                        end += 1;
+                        break;
+                    }
+                    end += 1;
+                }
             }
         }
         end
@@ -2280,6 +2443,10 @@ impl Vm {
             }
         };
 
+        let initial_raw_text = match &initial {
+            Some(Value::Str(value)) => Some(value.clone()),
+            _ => None,
+        };
         let initial_text = match initial {
             None => Vec::new(),
             Some(Value::None) => Vec::new(),
@@ -2296,8 +2463,15 @@ impl Vm {
         self.stringio_store_buffer(&receiver, initial_text, 0)?;
         Self::instance_attr_set(&receiver, "_closed", Value::Bool(false))?;
         Self::instance_attr_set(&receiver, "closed", Value::Bool(false))?;
-        let newline_value = newline.map(Value::Str).unwrap_or(Value::None);
+        let newline_value = newline.clone().map(Value::Str).unwrap_or(Value::None);
         Self::instance_attr_set(&receiver, "_newline", newline_value)?;
+        Self::instance_attr_set(&receiver, "newlines", Value::None)?;
+        Self::instance_attr_set(&receiver, "encoding", Value::None)?;
+        Self::instance_attr_set(&receiver, "errors", Value::None)?;
+        Self::instance_attr_set(&receiver, "line_buffering", Value::Bool(false))?;
+        if let (None, Some(initial_value)) = (newline, initial_raw_text) {
+            self.stringio_update_newlines_from_text(&receiver, &initial_value)?;
+        }
         Ok(Value::None)
     }
 
@@ -2320,6 +2494,9 @@ impl Vm {
             }
         };
         let newline = Self::stringio_newline(&receiver);
+        if newline.is_none() {
+            self.stringio_update_newlines_from_text(&receiver, &input)?;
+        }
         let translated = Self::stringio_translate_text(input.clone(), newline.as_deref());
         let mut insert = input.chars().collect::<Vec<_>>();
         if translated != input {
@@ -2399,7 +2576,8 @@ impl Vm {
         } else {
             Some(limit as usize)
         };
-        let end = Self::stringio_next_line_end(&buffer, pos, max);
+        let newline = Self::stringio_newline(&receiver);
+        let end = Self::stringio_next_line_end(&buffer, pos, max, newline.as_deref());
         let out: String = buffer[pos..end].iter().collect();
         self.stringio_store_buffer(&receiver, buffer, end)?;
         Ok(Value::Str(out))
@@ -2454,6 +2632,170 @@ impl Vm {
         Self::stringio_ensure_open(&receiver)?;
         let (buffer, _pos) = self.stringio_buffer_from_instance(&receiver)?;
         Ok(Value::Str(buffer.iter().collect()))
+    }
+
+    pub(super) fn builtin_stringio_getstate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.__getstate__ expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
+        let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
+        let text: String = buffer.iter().collect();
+        let newline = Self::instance_attr_get(&receiver, "_newline").unwrap_or(Value::None);
+        let instance_dict = match &*receiver.kind() {
+            Object::Instance(instance_data) => {
+                let mut entries = Vec::new();
+                for (name, value) in &instance_data.attrs {
+                    if matches!(
+                        name.as_str(),
+                        "_value"
+                            | "_pos"
+                            | "_closed"
+                            | "closed"
+                            | "_newline"
+                            | "newlines"
+                            | "encoding"
+                            | "errors"
+                            | "line_buffering"
+                    ) {
+                        continue;
+                    }
+                    entries.push((Value::Str(name.clone()), value.clone()));
+                }
+                if entries.is_empty() {
+                    Value::None
+                } else {
+                    self.heap.alloc_dict(entries)
+                }
+            }
+            _ => return Err(RuntimeError::new("StringIO receiver must be instance")),
+        };
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Str(text),
+            newline,
+            Value::Int(pos as i64),
+            instance_dict,
+        ]))
+    }
+
+    pub(super) fn builtin_stringio_setstate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("StringIO.__setstate__ expects one argument"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
+        let state = args.remove(0);
+        let items = match state {
+            Value::Tuple(tuple_obj) => {
+                let Object::Tuple(items) = &*tuple_obj.kind() else {
+                    return Err(RuntimeError::new("StringIO.__setstate__ state is invalid"));
+                };
+                items.clone()
+            }
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: StringIO.__setstate__ argument should be 4-tuple, got {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        if items.len() < 4 {
+            return Err(RuntimeError::new(
+                "TypeError: StringIO.__setstate__ argument should be 4-tuple, got tuple",
+            ));
+        }
+
+        let initial_text = match &items[0] {
+            Value::None => String::new(),
+            Value::Str(text) => text.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: first item of state should be a str, got {}",
+                    self.value_type_name_for_error(other)
+                )));
+            }
+        };
+
+        let mut init_kwargs = HashMap::new();
+        init_kwargs.insert("newline".to_string(), items[1].clone());
+        let _ = self.builtin_stringio_init(
+            vec![Value::Instance(receiver.clone()), Value::None],
+            init_kwargs,
+        )?;
+        self.stringio_store_buffer(&receiver, initial_text.chars().collect(), 0)?;
+
+        let position = match &items[2] {
+            Value::Int(value) => *value,
+            Value::Bool(value) => i64::from(*value),
+            Value::BigInt(value) => value.to_i64().ok_or_else(|| {
+                RuntimeError::new("OverflowError: position out of range for this platform")
+            })?,
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: third item of state must be an integer, got {}",
+                    self.value_type_name_for_error(other)
+                )));
+            }
+        };
+        if position < 0 {
+            return Err(RuntimeError::new(
+                "ValueError: position value cannot be negative",
+            ));
+        }
+        let (buffer, _old_pos) = self.stringio_buffer_from_instance(&receiver)?;
+        self.stringio_store_buffer(&receiver, buffer, position as usize)?;
+
+        match &items[3] {
+            Value::None => {}
+            Value::Dict(dict_obj) => {
+                let updates = match &*dict_obj.kind() {
+                    Object::Dict(dict) => dict.to_vec(),
+                    _ => return Err(RuntimeError::new("fourth item of state should be a dict")),
+                };
+                let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
+                    return Err(RuntimeError::new("StringIO receiver must be instance"));
+                };
+                for (key, value) in updates {
+                    let Value::Str(name) = key else {
+                        return Err(RuntimeError::new(
+                            "TypeError: fourth item of state should be a dict",
+                        ));
+                    };
+                    if matches!(
+                        name.as_str(),
+                        "_value"
+                            | "_pos"
+                            | "_closed"
+                            | "closed"
+                            | "_newline"
+                            | "newlines"
+                            | "encoding"
+                            | "errors"
+                            | "line_buffering"
+                    ) {
+                        continue;
+                    }
+                    instance_data.attrs.insert(name, value);
+                }
+            }
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: fourth item of state should be a dict, got a {}",
+                    self.value_type_name_for_error(other)
+                )));
+            }
+        }
+
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_stringio_seek(
@@ -2624,7 +2966,8 @@ impl Vm {
         if pos >= buffer.len() {
             return Err(RuntimeError::new("StopIteration"));
         }
-        let end = Self::stringio_next_line_end(&buffer, pos, None);
+        let newline = Self::stringio_newline(&receiver);
+        let end = Self::stringio_next_line_end(&buffer, pos, None, newline.as_deref());
         let out: String = buffer[pos..end].iter().collect();
         self.stringio_store_buffer(&receiver, buffer, end)?;
         Ok(Value::Str(out))

@@ -3648,6 +3648,24 @@ fn with_bytes_like_source<R>(source: &ObjRef, map: impl FnOnce(&[u8]) -> R) -> O
                 _ => None,
             }
         }
+        Object::Module(module_data) if module_data.name == "__array__" => {
+            let values = module_data.globals.get("values")?;
+            let Value::List(values_obj) = values else {
+                return None;
+            };
+            let Object::List(items) = &*values_obj.kind() else {
+                return None;
+            };
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                let value = value_to_int(item.clone()).ok()?;
+                if !(0..=255).contains(&value) {
+                    return None;
+                }
+                out.push(value as u8);
+            }
+            Some(map(&out))
+        }
         _ => None,
     }
 }
@@ -3663,6 +3681,7 @@ fn bytes_like_source_is_readonly(source: &ObjRef) -> Option<bool> {
                 _ => None,
             }
         }
+        Object::Module(module_data) if module_data.name == "__array__" => Some(false),
         _ => None,
     }
 }

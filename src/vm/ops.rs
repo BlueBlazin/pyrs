@@ -138,6 +138,30 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             }
             _ => Err(RuntimeError::new("unsupported operand type for +")),
         },
+        (Value::Bytes(a), other) => match &*a.kind() {
+            Object::Bytes(left) => {
+                if let Some(right) = bytes_like_payload(&other) {
+                    let mut result = left.clone();
+                    result.extend(right);
+                    Ok(heap.alloc_bytes(result))
+                } else {
+                    Err(RuntimeError::new("unsupported operand type for +"))
+                }
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for +")),
+        },
+        (Value::ByteArray(a), other) => match &*a.kind() {
+            Object::ByteArray(left) => {
+                if let Some(right) = bytes_like_payload(&other) {
+                    let mut result = left.clone();
+                    result.extend(right);
+                    Ok(heap.alloc_bytearray(result))
+                } else {
+                    Err(RuntimeError::new("unsupported operand type for +"))
+                }
+            }
+            _ => Err(RuntimeError::new("unsupported operand type for +")),
+        },
         (Value::List(a), Value::List(b)) => match (&*a.kind(), &*b.kind()) {
             (Object::List(left), Object::List(right)) => {
                 let mut result = left.clone();
@@ -1347,6 +1371,27 @@ fn bytes_like_payload(value: &Value) -> Option<Vec<u8>> {
                     },
                     _ => None,
                 }
+            }
+            _ => None,
+        },
+        Value::Module(obj) => match &*obj.kind() {
+            Object::Module(module_data) if module_data.name == "__array__" => {
+                let values = module_data.globals.get("values")?;
+                let Value::List(list_obj) = values else {
+                    return None;
+                };
+                let Object::List(items) = &*list_obj.kind() else {
+                    return None;
+                };
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    let value = value_to_int(item.clone()).ok()?;
+                    if !(0..=255).contains(&value) {
+                        return None;
+                    }
+                    out.push(value as u8);
+                }
+                Some(out)
             }
             _ => None,
         },

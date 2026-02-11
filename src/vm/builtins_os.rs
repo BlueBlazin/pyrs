@@ -3144,6 +3144,9 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("streamreader".to_string(), Value::None);
+            instance_data
+                .attrs
+                .insert("_is_text_encoding".to_string(), Value::Bool(true));
         }
         Ok(Value::Instance(instance))
     }

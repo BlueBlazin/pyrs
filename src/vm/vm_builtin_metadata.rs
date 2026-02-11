@@ -513,6 +513,7 @@ impl Vm {
         let kind = match attr_name {
             "to_bytes" => NativeMethodKind::IntToBytes,
             "bit_length" => NativeMethodKind::IntBitLengthMethod,
+            "__index__" | "__int__" => NativeMethodKind::IntIndexMethod,
             _ => {
                 return Err(RuntimeError::new(format!(
                     "int has no attribute '{}'",
@@ -606,6 +607,12 @@ impl Vm {
             "find" => NativeMethodKind::BytesFind,
             "translate" => NativeMethodKind::BytesTranslate,
             "join" => NativeMethodKind::BytesJoin,
+            "clear" if matches!(receiver_value, Value::ByteArray(_)) => {
+                NativeMethodKind::ByteArrayClear
+            }
+            "resize" if matches!(receiver_value, Value::ByteArray(_)) => {
+                NativeMethodKind::ByteArrayResize
+            }
             _ => {
                 return Err(RuntimeError::new(format!(
                     "bytes has no attribute '{}'",
@@ -725,6 +732,13 @@ impl Vm {
             },
             "itemsize" => match &*view.kind() {
                 Object::MemoryView(view_data) => Ok(Value::Int(view_data.itemsize as i64)),
+                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+            },
+            "nbytes" => match &*view.kind() {
+                Object::MemoryView(view_data) => with_bytes_like_source(&view_data.source, |values| {
+                    Value::Int(values.len() as i64)
+                })
+                .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid")),
                 _ => Err(RuntimeError::new("memoryview receiver is invalid")),
             },
             _ => Err(RuntimeError::new(format!(
