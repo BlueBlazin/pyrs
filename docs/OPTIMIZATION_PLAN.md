@@ -17,7 +17,7 @@ Run these in release mode:
 Latest local snapshot (2026-02-11):
 
 - `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.51s` user (`~1.06x`)
-- Dispatch hotpath: `pyrs ~0.53-0.56s` vs `python3.10 ~0.056-0.058s` (`~9-10x`)
+- Dispatch hotpath: `pyrs ~0.48-0.53s` vs `python3.10 ~0.055-0.058s` (`~8-9x`)
 - Dict microbench: `pyrs ~0.25s` vs `python3.10 ~0.02s`
 - Pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 
@@ -67,6 +67,7 @@ Interpretation:
 
 - Complete `OPT-024`: broaden call specialization coverage (`CALL_KW`, bound methods, builtin-style fast paths).
   - Current checkpoint: no-keyword single-argument builtin `len` call-site fast lane is in place for hot container loops.
+  - Current checkpoint: module-scope `LOAD_NAME`/`STORE_NAME` overhead reduced by avoiding per-opcode name cloning and using indexed store path.
 - Remove avoidable temporary allocations/clone churn in argument plumbing.
 - Align frame setup/teardown with CPython fast-call lifecycle patterns.
 

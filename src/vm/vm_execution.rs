@@ -208,16 +208,15 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing name argument"))?
                     as usize;
-                let name = {
+                let value = {
                     let frame = self.frames.last().expect("frame exists");
-                    frame
+                    let name = frame
                         .code
                         .names
                         .get(idx)
-                        .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                        .clone()
+                        .ok_or_else(|| RuntimeError::new("name index out of range"))?;
+                    self.lookup_name(name)?
                 };
-                let value = self.lookup_name(&name)?;
                 self.frames
                     .last_mut()
                     .expect("frame exists")
@@ -1203,15 +1202,6 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing name argument"))?
                     as usize;
-                let name = {
-                    let frame = self.frames.last().expect("frame exists");
-                    frame
-                        .code
-                        .names
-                        .get(idx)
-                        .ok_or_else(|| RuntimeError::new("name index out of range"))?
-                        .clone()
-                };
                 let value = {
                     let frame = self.frames.last_mut().expect("frame exists");
                     frame
@@ -1219,7 +1209,7 @@ impl Vm {
                         .pop()
                         .ok_or_else(|| RuntimeError::new("stack underflow (StoreName)"))?
                 };
-                self.store_name(name, value);
+                self.store_name_by_index(idx, value)?;
             }
             Opcode::DeleteName => {
                 let idx = instr
@@ -4036,7 +4026,7 @@ impl Vm {
             }
             Opcode::SetupAnnotations => {
                 let dict = self.heap.alloc_dict(Vec::new());
-                self.store_name("__annotations__".to_string(), dict);
+                self.store_name("__annotations__", dict);
             }
             Opcode::SetupExcept => {
                 let handler = instr
@@ -5424,32 +5414,79 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new(format!("name '{name}' is not defined")))
     }
 
-    pub(super) fn store_name(&mut self, name: String, value: Value) {
-        let mut module_write: Option<(ObjRef, String, Value)> = None;
+    pub(super) fn store_name_by_index(
+        &mut self,
+        name_index: usize,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        let mut touched_module_version: Option<(u64, u64)> = None;
         if let Some(frame) = self.frames.last_mut() {
+            let name = frame
+                .code
+                .names
+                .get(name_index)
+                .ok_or_else(|| RuntimeError::new("name index out of range"))?;
             if frame.is_module {
                 if let Some(dict) = frame.module_locals_dict.clone() {
                     dict_set_value(&dict, Value::Str(name.clone()), value.clone());
                 }
-                module_write = Some((frame.module.clone(), name, value));
+                if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                    if let Some(existing) = module_data.globals.get_mut(name.as_str()) {
+                        *existing = value;
+                    } else {
+                        module_data.globals.insert(name.clone(), value);
+                    }
+                    module_data.touch_globals_version();
+                    touched_module_version = Some((frame.module.id(), module_data.globals_version));
+                }
             } else {
-                if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
+                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
                     if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
                 }
-                if let Some(existing) = frame.locals.get_mut(&name) {
+                if let Some(existing) = frame.locals.get_mut(name.as_str()) {
                     *existing = value;
                 } else {
                     // Keep fast locals authoritative; only retain truly dynamic names here.
-                    if !frame.code.name_to_index.contains_key(&name) {
-                        frame.locals.insert(name, value);
+                    if !frame.code.name_to_index.contains_key(name.as_str()) {
+                        frame.locals.insert(name.clone(), value);
                     }
                 }
             }
         }
-        if let Some((module, name, value)) = module_write {
-            self.upsert_module_global(&module, &name, value);
+        if let Some((module_id, module_version)) = touched_module_version {
+            self.propagate_module_globals_version(module_id, module_version);
+        }
+        Ok(())
+    }
+
+    pub(super) fn store_name(&mut self, name: &str, value: Value) {
+        let mut module_write: Option<(ObjRef, Value)> = None;
+        if let Some(frame) = self.frames.last_mut() {
+            if frame.is_module {
+                if let Some(dict) = frame.module_locals_dict.clone() {
+                    dict_set_value(&dict, Value::Str(name.to_string()), value.clone());
+                }
+                module_write = Some((frame.module.clone(), value));
+            } else {
+                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
+                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                        Self::write_fast_local_slot(slot, value.clone());
+                    }
+                }
+                if let Some(existing) = frame.locals.get_mut(name) {
+                    *existing = value;
+                } else {
+                    // Keep fast locals authoritative; only retain truly dynamic names here.
+                    if !frame.code.name_to_index.contains_key(name) {
+                        frame.locals.insert(name.to_string(), value);
+                    }
+                }
+            }
+        }
+        if let Some((module, value)) = module_write {
+            self.upsert_module_global(&module, name, value);
         }
     }
 
