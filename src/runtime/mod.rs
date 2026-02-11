@@ -5,8 +5,8 @@ mod dict_backend;
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::rc::{Rc, Weak};
@@ -2461,6 +2461,10 @@ pub enum BuiltinFunction {
     StringIONext,
     StringIOEnter,
     StringIOExit,
+    StringIOClose,
+    StringIOReadable,
+    StringIOWritable,
+    StringIOSeekable,
     BytesIOInit,
     BytesIOWrite,
     BytesIOWriteLines,
@@ -2477,6 +2481,9 @@ pub enum BuiltinFunction {
     BytesIOEnter,
     BytesIOExit,
     BytesIOClose,
+    BytesIOReadable,
+    BytesIOWritable,
+    BytesIOSeekable,
     DateTimeNow,
     DateToday,
     DateInit,
@@ -2652,6 +2659,10 @@ impl BuiltinFunction {
             | BuiltinFunction::StringIONext
             | BuiltinFunction::StringIOEnter
             | BuiltinFunction::StringIOExit
+            | BuiltinFunction::StringIOClose
+            | BuiltinFunction::StringIOReadable
+            | BuiltinFunction::StringIOWritable
+            | BuiltinFunction::StringIOSeekable
             | BuiltinFunction::BytesIOInit
             | BuiltinFunction::BytesIOWrite
             | BuiltinFunction::BytesIORead
@@ -2666,6 +2677,9 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOEnter
             | BuiltinFunction::BytesIOExit
             | BuiltinFunction::BytesIOClose
+            | BuiltinFunction::BytesIOReadable
+            | BuiltinFunction::BytesIOWritable
+            | BuiltinFunction::BytesIOSeekable
             | BuiltinFunction::IoFileInit
             | BuiltinFunction::IoFileWriteLines
             | BuiltinFunction::IoFileTruncate

@@ -1,4 +1,4 @@
-use super::{Value, value_key_equal, value_lookup_hash};
+use super::{value_key_equal, value_lookup_hash, Value};
 
 const PERTURB_SHIFT: usize = 5;
 const MIN_TABLE_SIZE: usize = 8;

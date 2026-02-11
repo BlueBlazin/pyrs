@@ -825,6 +825,22 @@ impl Vm {
             Value::Builtin(BuiltinFunction::StringIOTell),
         );
         class_data.attrs.insert(
+            "close".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOClose),
+        );
+        class_data.attrs.insert(
+            "readable".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOReadable),
+        );
+        class_data.attrs.insert(
+            "writable".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOWritable),
+        );
+        class_data.attrs.insert(
+            "seekable".to_string(),
+            Value::Builtin(BuiltinFunction::StringIOSeekable),
+        );
+        class_data.attrs.insert(
             "__init__".to_string(),
             Value::Builtin(BuiltinFunction::StringIOInit),
         );
@@ -890,6 +906,18 @@ impl Vm {
         class_data.attrs.insert(
             "tell".to_string(),
             Value::Builtin(BuiltinFunction::BytesIOTell),
+        );
+        class_data.attrs.insert(
+            "readable".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOReadable),
+        );
+        class_data.attrs.insert(
+            "writable".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOWritable),
+        );
+        class_data.attrs.insert(
+            "seekable".to_string(),
+            Value::Builtin(BuiltinFunction::BytesIOSeekable),
         );
         class_data.attrs.insert(
             "__init__".to_string(),
@@ -1400,7 +1428,11 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "read")?;
         let size = if let Some(value) = args.pop() {
             let size = value_to_int(value)?;
-            if size < 0 { None } else { Some(size as usize) }
+            if size < 0 {
+                None
+            } else {
+                Some(size as usize)
+            }
         } else {
             None
         };
@@ -2054,6 +2086,38 @@ impl Vm {
         Ok((text, pos))
     }
 
+    fn stringio_is_closed(instance: &ObjRef) -> bool {
+        matches!(
+            Self::instance_attr_get(instance, "_closed"),
+            Some(Value::Bool(true))
+        )
+    }
+
+    fn stringio_newline(instance: &ObjRef) -> Option<String> {
+        match Self::instance_attr_get(instance, "_newline") {
+            Some(Value::Str(newline)) => Some(newline),
+            _ => None,
+        }
+    }
+
+    fn stringio_ensure_open(instance: &ObjRef) -> Result<(), RuntimeError> {
+        if Self::stringio_is_closed(instance) {
+            Err(RuntimeError::new("I/O operation on closed file"))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn stringio_translate_text(text: String, newline: Option<&str>) -> String {
+        match newline {
+            None => Self::io_normalize_universal_newlines(&text),
+            Some("") | Some("\n") => text,
+            Some("\r") => text.replace('\n', "\r"),
+            Some("\r\n") => text.replace('\n', "\r\n"),
+            Some(_) => text,
+        }
+    }
+
     pub(super) fn stringio_store_buffer(
         &mut self,
         instance: &ObjRef,
@@ -2112,16 +2176,45 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let initial = args.pop().or_else(|| kwargs.remove("initial_value"));
-        let _ = kwargs.remove("newline");
+        let newline_arg = kwargs.remove("newline");
         if !kwargs.is_empty() {
             return Err(RuntimeError::new("StringIO.__init__ unexpected keyword"));
         }
-        let text = match initial {
-            None => Vec::new(),
-            Some(Value::Str(value)) => value.chars().collect(),
-            Some(value) => format_value(&value).chars().collect(),
+
+        let newline = match newline_arg.unwrap_or(Value::Str("\n".to_string())) {
+            Value::None => None,
+            Value::Str(value) if matches!(value.as_str(), "" | "\n" | "\r" | "\r\n") => Some(value),
+            Value::Str(value) => {
+                return Err(RuntimeError::new(format!(
+                    "ValueError: illegal newline value: {value:?}"
+                )));
+            }
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: newline must be str or None, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
         };
-        self.stringio_store_buffer(&receiver, text, 0)?;
+
+        let initial_text = match initial {
+            None => Vec::new(),
+            Some(Value::None) => Vec::new(),
+            Some(Value::Str(value)) => Self::stringio_translate_text(value, newline.as_deref())
+                .chars()
+                .collect(),
+            Some(other) => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: initial_value must be str or None, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        self.stringio_store_buffer(&receiver, initial_text, 0)?;
+        Self::instance_attr_set(&receiver, "_closed", Value::Bool(false))?;
+        Self::instance_attr_set(&receiver, "closed", Value::Bool(false))?;
+        let newline_value = newline.map(Value::Str).unwrap_or(Value::None);
+        Self::instance_attr_set(&receiver, "_newline", newline_value)?;
         Ok(Value::None)
     }
 
@@ -2134,25 +2227,36 @@ impl Vm {
             return Err(RuntimeError::new("StringIO.write expects 1 argument"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
         let input = match args.remove(0) {
             Value::Str(value) => value,
-            other => format_value(&other),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: string argument expected, got non-str",
+                ));
+            }
         };
+        let newline = Self::stringio_newline(&receiver);
+        let translated = Self::stringio_translate_text(input.clone(), newline.as_deref());
         let mut insert = input.chars().collect::<Vec<_>>();
+        if translated != input {
+            insert = translated.chars().collect::<Vec<_>>();
+        }
         let (buffer, mut pos) = self.stringio_buffer_from_instance(&receiver)?;
         if pos > buffer.len() {
             pos = buffer.len();
         }
-        let tail_start = pos.saturating_add(insert.len());
+        let insert_len = insert.len();
+        let tail_start = pos.saturating_add(insert_len);
         let mut new_buf = Vec::new();
         new_buf.extend_from_slice(&buffer[..pos]);
         new_buf.append(&mut insert);
         if tail_start < buffer.len() {
             new_buf.extend_from_slice(&buffer[tail_start..]);
         }
-        let new_pos = pos + input.chars().count();
+        let new_pos = pos + insert_len;
         self.stringio_store_buffer(&receiver, new_buf, new_pos)?;
-        Ok(Value::Int(new_pos as i64 - pos as i64))
+        Ok(Value::Int(input.chars().count() as i64))
     }
 
     pub(super) fn builtin_stringio_read(
@@ -2164,6 +2268,7 @@ impl Vm {
             return Err(RuntimeError::new("StringIO.read expects 0-1 arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
         let size = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         let end = if size < 0 {
@@ -2185,6 +2290,7 @@ impl Vm {
             return Err(RuntimeError::new("StringIO.readline expects 0-1 arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
         let limit = args.pop().map(value_to_int).transpose()?.unwrap_or(-1);
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         if pos >= buffer.len() {
@@ -2210,6 +2316,7 @@ impl Vm {
             return Err(RuntimeError::new("StringIO.getvalue expects no arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
         let (buffer, _pos) = self.stringio_buffer_from_instance(&receiver)?;
         Ok(Value::Str(buffer.iter().collect()))
     }
@@ -2223,6 +2330,7 @@ impl Vm {
             return Err(RuntimeError::new("StringIO.seek expects 1-2 arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
         let offset = value_to_int(args.remove(0))?;
         let whence = if args.is_empty() {
             0
@@ -2230,17 +2338,27 @@ impl Vm {
             value_to_int(args.remove(0))?
         };
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
-        let base = match whence {
-            0 => 0i64,
-            1 => pos as i64,
-            2 => buffer.len() as i64,
-            _ => return Err(RuntimeError::new("StringIO.seek invalid whence")),
-        };
-        let mut new_pos = base + offset;
-        if new_pos < 0 {
-            new_pos = 0;
+        if !matches!(whence, 0 | 1 | 2) {
+            return Err(RuntimeError::new(format!(
+                "ValueError: Invalid whence ({whence}, should be 0, 1 or 2)"
+            )));
         }
-        let new_pos = new_pos as usize;
+        if whence == 0 && offset < 0 {
+            return Err(RuntimeError::new(format!(
+                "ValueError: Negative seek position {offset}"
+            )));
+        }
+        if whence != 0 && offset != 0 {
+            return Err(RuntimeError::new(
+                "OSError: Can't do nonzero cur-relative seeks",
+            ));
+        }
+        let new_pos = match whence {
+            0 => offset as usize,
+            1 => pos,
+            2 => buffer.len(),
+            _ => unreachable!(),
+        };
         self.stringio_store_buffer(&receiver, buffer, new_pos)?;
         Ok(Value::Int(new_pos as i64))
     }
@@ -2254,6 +2372,7 @@ impl Vm {
             return Err(RuntimeError::new("StringIO.tell expects no arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
         let (_buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         Ok(Value::Int(pos as i64))
     }
@@ -2266,7 +2385,13 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("StringIO.__iter__ expects no arguments"));
         }
-        Ok(args.remove(0))
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        if Self::stringio_is_closed(&receiver) {
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on closed file.",
+            ));
+        }
+        Ok(Value::Instance(receiver))
     }
 
     pub(super) fn builtin_stringio_next(
@@ -2278,6 +2403,7 @@ impl Vm {
             return Err(RuntimeError::new("StringIO.__next__ expects no arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         if pos >= buffer.len() {
             return Err(RuntimeError::new("StopIteration"));
@@ -2296,7 +2422,13 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("StringIO.__enter__ expects no arguments"));
         }
-        Ok(args.remove(0))
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        if Self::stringio_is_closed(&receiver) {
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on closed file.",
+            ));
+        }
+        Ok(Value::Instance(receiver))
     }
 
     pub(super) fn builtin_stringio_exit(
@@ -2309,8 +2441,63 @@ impl Vm {
                 "StringIO.__exit__ expects up to 3 arguments",
             ));
         }
-        let _receiver = self.receiver_from_value(&args.remove(0))?;
-        Ok(Value::Bool(false))
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::instance_attr_set(&receiver, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(&receiver, "closed", Value::Bool(true))?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_stringio_close(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.close expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::instance_attr_set(&receiver, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(&receiver, "closed", Value::Bool(true))?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_stringio_readable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.readable expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
+        Ok(Value::Bool(true))
+    }
+
+    pub(super) fn builtin_stringio_writable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.writable expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
+        Ok(Value::Bool(true))
+    }
+
+    pub(super) fn builtin_stringio_seekable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("StringIO.seekable expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        Self::stringio_ensure_open(&receiver)?;
+        Ok(Value::Bool(true))
     }
 
     pub(super) fn bytesio_state_from_instance(
@@ -2784,7 +2971,9 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("BytesIO.__enter__ expects no arguments"));
         }
-        Ok(args.remove(0))
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        Ok(Value::Instance(receiver))
     }
 
     pub(super) fn builtin_bytesio_exit(
@@ -2798,9 +2987,8 @@ impl Vm {
             ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        let (value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
-        self.bytesio_store_state(&receiver, value_obj, pos, true)?;
-        Ok(Value::Bool(false))
+        let _ = self.builtin_bytesio_close(vec![Value::Instance(receiver)], HashMap::new())?;
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_bytesio_close(
@@ -2815,6 +3003,45 @@ impl Vm {
         let (value_obj, pos, _closed) = self.bytesio_state_from_instance(&receiver)?;
         self.bytesio_store_state(&receiver, value_obj, pos, true)?;
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_bytesio_readable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.readable expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        Ok(Value::Bool(true))
+    }
+
+    pub(super) fn builtin_bytesio_writable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.writable expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        Ok(Value::Bool(true))
+    }
+
+    pub(super) fn builtin_bytesio_seekable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("BytesIO.seekable expects no arguments"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        self.bytesio_ensure_open(&receiver)?;
+        Ok(Value::Bool(true))
     }
 
     pub(super) fn parse_struct_format(

@@ -38,7 +38,7 @@ Status:
 ## Stdlib Compatibility
 - `[x]` Foundational stdlib bootstrap in place (math/time/os/pathlib/io/json/re/etc. at varying depth)
 - `[~]` P0 closure still pending for `json`, `_csv`/`csv`, `pickle`/`pickletools`/`copyreg`
-- `[~]` `_io` constructor/class-surface parity advanced (`io.FileIO` + `_io.FileIO.__init__`, `_io.StringIO` native methods); remaining stream long-tail still pending
+- `[~]` `_io` parity advanced (`io.FileIO` + `_io.FileIO.__init__`, `_io.StringIO`/`_io.BytesIO` close/context/open-state/readable/writable/seekable + stricter init/seek validation); remaining stream long-tail still pending
 - `[~]` Native-core-first parity work in progress (`_io`, `_csv`, `_sre`, `_pickle`)
 - `[~]` Strict stdlib lane active for non-pickle scope; deferred strict pickle lane still open
 

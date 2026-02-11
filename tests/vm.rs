@@ -1756,10 +1756,9 @@ fn rejects_min_default_with_multiple_positional_args() {
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let err = vm.execute(&code).expect_err("execution should fail");
-    assert!(
-        err.message
-            .contains("Cannot specify a default for min() with multiple positional arguments")
-    );
+    assert!(err
+        .message
+        .contains("Cannot specify a default for min() with multiple positional arguments"));
 }
 
 #[test]
@@ -6775,6 +6774,134 @@ ok = (
     and first == "a\n"
     and rest == "b\n"
 )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_stringio_closed_seek_and_validation_parity() {
+    let source = r#"import _io
+bad_initial = False
+try:
+    _io.StringIO(1)
+except TypeError:
+    bad_initial = True
+
+bad_newline_type = False
+try:
+    _io.StringIO("", newline=1)
+except TypeError:
+    bad_newline_type = True
+
+bad_newline_value = False
+try:
+    _io.StringIO("", newline="x")
+except ValueError:
+    bad_newline_value = True
+
+s = _io.StringIO("ab")
+seek1 = False
+seek2 = False
+seek3 = False
+try:
+    s.seek(1, 1)
+except OSError:
+    seek1 = True
+try:
+    s.seek(1, 2)
+except OSError:
+    seek2 = True
+try:
+    s.seek(-1, 0)
+except ValueError:
+    seek3 = True
+
+s.close()
+closed_ops = 0
+for op in (
+    lambda: s.read(),
+    lambda: s.getvalue(),
+    lambda: s.tell(),
+    lambda: s.readable(),
+    lambda: s.writable(),
+    lambda: s.seekable(),
+):
+    try:
+        op()
+    except ValueError:
+        closed_ops += 1
+
+ok = bad_initial and bad_newline_type and bad_newline_value and seek1 and seek2 and seek3 and closed_ops == 6 and s.closed
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_stringio_context_exit_closes_and_returns_none() {
+    let source = r#"import _io
+s = _io.StringIO("ab")
+ret = s.__exit__(None, None, None)
+closed = s.closed
+enter_closed = False
+try:
+    s.__enter__()
+except ValueError:
+    enter_closed = True
+ok = (ret is None) and closed and enter_closed
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_bytesio_api_and_closed_state_parity() {
+    let source = r#"import _io
+b = _io.BytesIO(b"ab")
+api_ok = b.readable() and b.writable() and b.seekable()
+iter_ok = (iter(b) is b)
+b.close()
+closed_enter = False
+closed_read = False
+closed_write = False
+closed_readable = False
+closed_writable = False
+closed_seekable = False
+try:
+    b.__enter__()
+except ValueError:
+    closed_enter = True
+try:
+    b.read()
+except ValueError:
+    closed_read = True
+try:
+    b.write(b"x")
+except ValueError:
+    closed_write = True
+try:
+    b.readable()
+except ValueError:
+    closed_readable = True
+try:
+    b.writable()
+except ValueError:
+    closed_writable = True
+try:
+    b.seekable()
+except ValueError:
+    closed_seekable = True
+ok = api_ok and iter_ok and b.closed and closed_enter and closed_read and closed_write and closed_readable and closed_writable and closed_seekable
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

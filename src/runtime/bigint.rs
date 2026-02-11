@@ -165,7 +165,11 @@ impl BigInt {
         for limb in self.limbs.iter().rev() {
             value = value * 4_294_967_296.0 + (*limb as f64);
         }
-        if self.sign < 0 { -value } else { value }
+        if self.sign < 0 {
+            -value
+        } else {
+            value
+        }
     }
 
     pub fn to_abs_le_bytes(&self) -> Vec<u8> {
@@ -708,9 +712,7 @@ mod tests {
         let value = BigInt::from_str_radix("1234567890abcdef11223344", 16).expect("parse");
         assert_eq!(
             value.to_abs_le_bytes(),
-            vec![
-                0x44, 0x33, 0x22, 0x11, 0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12
-            ]
+            vec![0x44, 0x33, 0x22, 0x11, 0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12]
         );
         assert_eq!(BigInt::zero().to_abs_le_bytes(), vec![0]);
         assert_eq!(BigInt::from_i64(-255).to_abs_le_bytes(), vec![0xff]);
