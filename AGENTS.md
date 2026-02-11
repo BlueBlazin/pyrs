@@ -71,6 +71,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - Algorithmic/semantic audit backlog: `docs/ALGO_AUDIT_BACKLOG.md`
 - VM architecture map: `docs/VM_ARCHITECTURE_MAP.md`
 - Compatibility matrix: `docs/COMPATIBILITY.md`
+- Unicode-name data provenance/regeneration: `docs/UNICODE_NAME_DATA.md`
 - Coverage gate workflow: `scripts/run_coverage_gate.sh`
 - Optimization execution plan: `docs/OPTIMIZATION_PLAN.md`
 - Optimization backlog and status ledger: `docs/OPTIMIZATION_BACKLOG.md`

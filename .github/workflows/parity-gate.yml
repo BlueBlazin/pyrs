@@ -19,6 +19,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
@@ -33,6 +38,13 @@ jobs:
           curl -fsSL -o /tmp/Python-3.14.3.tgz https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
           tar -xzf /tmp/Python-3.14.3.tgz -C /tmp
           echo "PYRS_CPYTHON_LIB=/tmp/Python-3.14.3/Lib" >> "$GITHUB_ENV"
+
+      - name: Verify generated Unicode-name table
+        run: |
+          python scripts/generate_unicode_name_table.py \
+            --check \
+            --cpython-src /tmp/Python-3.14.3 \
+            --output src/parser/unicode_names_data.txt
 
       - name: Run full test suite
         run: cargo test -q

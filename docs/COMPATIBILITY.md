@@ -12,6 +12,7 @@ Status:
 ## Parser and Language Surface
 - `[x]` Core parser/compiler foundations through Milestone 12
 - `[x]` Major modern syntax landed (`match`/`case`, comprehensions, assignment expressions, async syntax, decorators, annotations baseline)
+- `[x]` `\N{...}` Unicode-name escapes: canonical names + aliases accepted, named-sequence escapes rejected (CPython parity)
 - `[~]` Full tokenizer/grammar long-tail parity still pending
 - `[~]` Remaining pattern/exception-group/f-string edge parity still pending
 

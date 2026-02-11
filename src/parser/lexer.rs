@@ -1,5 +1,5 @@
 use crate::parser::token::{Keyword, Token, TokenKind};
-use crate::parser::unicode_names::lookup_unicode_name;
+use crate::parser::unicode_names::{UnicodeNameLookup, lookup_unicode_name};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LexError {
@@ -1097,13 +1097,16 @@ impl<'a> Lexer<'a> {
                         start_column,
                     ));
                 }
-                let Some(ch) = lookup_unicode_name(&name) else {
-                    return Err(LexError::new(
-                        "invalid unicode escape",
-                        start_offset,
-                        start_line,
-                        start_column,
-                    ));
+                let ch = match lookup_unicode_name(&name) {
+                    UnicodeNameLookup::Char(ch) => ch,
+                    UnicodeNameLookup::NamedSequence | UnicodeNameLookup::Unknown => {
+                        return Err(LexError::new(
+                            "invalid unicode escape",
+                            start_offset,
+                            start_line,
+                            start_column,
+                        ));
+                    }
                 };
                 Ok(Some(ch))
             }
@@ -1237,6 +1240,26 @@ mod tests {
         let err = lexer
             .tokenize()
             .expect_err("unknown unicode name should fail");
+        assert!(err.message.contains("invalid unicode escape"));
+    }
+
+    #[test]
+    fn decodes_alias_named_unicode_escape_in_string_literals() {
+        let mut lexer = Lexer::new("\"\\N{line feed}\"");
+        let tokens = lexer.tokenize().expect("tokenization should succeed");
+        assert!(
+            tokens
+                .iter()
+                .any(|token| { token.kind == TokenKind::String && token.lexeme == "\n" })
+        );
+    }
+
+    #[test]
+    fn rejects_named_sequence_in_unicode_escape() {
+        let mut lexer = Lexer::new("\"\\N{LATIN SMALL LETTER R WITH TILDE}\"");
+        let err = lexer
+            .tokenize()
+            .expect_err("named sequence should fail in unicode escapes");
         assert!(err.message.contains("invalid unicode escape"));
     }
 }

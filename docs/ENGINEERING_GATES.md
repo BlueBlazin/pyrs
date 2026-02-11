@@ -125,6 +125,7 @@ Run this pipeline continuously during Milestone 13 and Milestone 14:
 9. coverage gate summary (`scripts/run_coverage_gate.sh`; CI enforces soft floors at 70% regions / 65% functions / 70% lines, local runs remain report-only unless `PYRS_COVERAGE_ENFORCE=1`)
 10. strict-harness timeout regression (`tests/cpython_harness.rs::subprocess_harness_helper_times_out_hanging_program`) so hang/memory-growth incidents fail fast
 11. dispatch hotpath perf smoke (`scripts/bench_dispatch_hotpath.sh`) on CI as non-blocking telemetry artifact; regressions must be investigated before performance sprint closure
+12. generated Unicode-name table drift check (`scripts/generate_unicode_name_table.py --check`) to prevent unvetted/manual changes in parser Unicode data
 
 Strict stdlib harness policy:
 - `tests/cpython_harness.rs` strict suite runs in isolated subprocesses with a per-entry timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent unbounded hangs/memory growth from masking regressions.
