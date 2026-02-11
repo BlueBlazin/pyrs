@@ -23,11 +23,10 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.61-0.63s` user-time (`~0.61-0.64s` wall) for the `fib(29)x5` gate
-  - `python3.10` baseline for the same gate: ~`0.50s` user-time
+  - ~`0.55s` user-time (`~0.56s` wall) for the `fib(29)x5` gate
+  - `python3.10` baseline for the same gate: ~`0.49s` user-time
   - ~`0.12s` user-time for `print(fib(29))` single-run reference
   - `python3.10` baseline for `print(fib(29))`: ~`0.11s` user-time
-  - release `fib(29)x5` list-comprehension run is currently blocked by a known regression (`OPT-028`) and requires closure before we can treat this gate as authoritative again.
 
 ## CPython Reference Map
 
@@ -80,7 +79,7 @@ Last updated: 2026-02-11
 | `OPT-025` | P1 | containers | Dict/set probe/load-factor/resizing tuning against CPython behavior (not just correctness) | `dictobject.c`, `setobject.c` | `[ ]` |
 | `OPT-026` | P1 | allocations | Add allocator/freelist strategy for hot temporary objects and call argument buffers | `frame.c`, `dictobject.c`, `call.c` | `[ ]` |
 | `OPT-027` | P0 | value model | Shrink `Value` payload by boxing heavyweight inline variants used in hot VM transport paths | `ceval.c` value-pointer transport model | `[~]` |
-| `OPT-028` | P0 | dispatch correctness | Restore release-path list comprehension/iterator correctness (`FOR_ITER` and list-comp call lanes) so `fib(29)x5` gate is runnable and trustworthy | `ceval.c`, `generated_cases.c.h` | `[~]` |
+| `OPT-028` | P0 | dispatch correctness | Restore release-path list comprehension/iterator correctness (`FOR_ITER` and list-comp call lanes) so `fib(29)x5` gate is runnable and trustworthy | `ceval.c`, `generated_cases.c.h` | `[x]` |
 
 ## Rules For This Backlog
 
@@ -142,4 +141,4 @@ Last updated: 2026-02-11
 - Latest dispatch checkpoint:
   - moved opcode execution body out of `Vm::run`'s per-iteration inline closure into `Vm::execute_instruction`,
   - fast-loop benchmark for `print(fib(29))` now measures around `0.12s` user-time on warm release runs,
-  - release-path list-comprehension regression remains open and is now tracked explicitly as `OPT-028` before treating `fib(29)x5` as the primary pass/fail gate again.
+  - fixed release-path `LOAD_FAST` plain-site double-push regression (root cause of list-comprehension/`FOR_ITER` failures), restoring canonical `fib(29)x5` benchmark execution at about `0.55s` user-time.

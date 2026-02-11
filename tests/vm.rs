@@ -5778,6 +5778,19 @@ fn list_comprehension_evaluates_first_iterable_in_outer_scope() {
 }
 
 #[test]
+fn executes_one_arg_function_with_for_iter_and_list_augassign() {
+    let source = "def f(it):\n    out = []\n    for x in it:\n        out += [x]\n    return out\nvals = f(range(3))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        list_values(vm.get_global("vals")),
+        Some(vec![Value::Int(0), Value::Int(1), Value::Int(2)])
+    );
+}
+
+#[test]
 fn executes_dict_comprehension() {
     let source = "d = {x: x + 1 for x in [1, 2, 3]}\n";
     let module = parser::parse_module(source).expect("parse should succeed");

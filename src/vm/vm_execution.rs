@@ -280,6 +280,8 @@ impl Vm {
                 #[cfg(not(debug_assertions))]
                 let mut fused_compare_jump = false;
                 #[cfg(not(debug_assertions))]
+                let mut plain_site_load_handled = false;
+                #[cfg(not(debug_assertions))]
                 {
                     let site_index = self.current_site_index();
                     let site_kind = {
@@ -363,6 +365,7 @@ impl Vm {
                                 .stack
                                 .push(value);
                         }
+                        plain_site_load_handled = true;
                     } else {
                         let mut cache_to_store: Option<LoadFastSiteCacheEntry> = None;
                         let mut mark_plain = false;
@@ -445,7 +448,7 @@ impl Vm {
                     }
                 }
                 #[cfg(not(debug_assertions))]
-                if !fused_compare_jump {
+                if !fused_compare_jump && !plain_site_load_handled {
                     let fast_hit = {
                         let frame = self.frames.last_mut().expect("frame exists");
                         if idx < frame.fast_locals.len() {
