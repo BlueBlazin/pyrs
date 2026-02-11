@@ -23,9 +23,9 @@ Last updated: 2026-02-11
 - Target:
   - `< 0.15s` user-time
 - Current:
-  - ~`0.55s` user-time (`~0.56s` wall) for the `fib(29)x5` gate
+  - ~`0.56-0.57s` user-time (`~0.58s` wall) for the `fib(29)x5` gate
   - `python3.10` baseline for the same gate: ~`0.49s` user-time
-  - ~`0.12s` user-time for `print(fib(29))` single-run reference
+  - ~`0.12-0.13s` user-time for `print(fib(29))` single-run reference
   - `python3.10` baseline for `print(fib(29))`: ~`0.11s` user-time
 
 ## CPython Reference Map
@@ -142,3 +142,7 @@ Last updated: 2026-02-11
   - moved opcode execution body out of `Vm::run`'s per-iteration inline closure into `Vm::execute_instruction`,
   - fast-loop benchmark for `print(fib(29))` now measures around `0.12s` user-time on warm release runs,
   - fixed release-path `LOAD_FAST` plain-site double-push regression (root cause of list-comprehension/`FOR_ITER` failures), restoring canonical `fib(29)x5` benchmark execution at about `0.55s` user-time.
+- Latest dispatch/call checkpoint:
+  - `LOAD_GLOBAL` fused-direct inline cache now stores function object + epoch guard (instead of code/module metadata clones) and dispatches via borrowed function-reference call path,
+  - release `RETURN_VALUE` simple-frame fast path now uses direct invariant-guarded pop in that lane (no optional fallback),
+  - added `scripts/bench_fib_gate.sh` to standardize repeatable `fib(29)` / `fib(29)x5` perf smoke measurements against `python3.10`.

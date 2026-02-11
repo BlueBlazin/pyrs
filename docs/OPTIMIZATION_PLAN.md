@@ -23,7 +23,7 @@ Primary benchmark gate:
 - Target: `< 0.15s` user-time
 - Current baseline (latest run): about `0.55s` user-time (`~0.56s` wall)
 - `python3.10` baseline for same gate: about `0.49s` user-time
-- Current reliable single-run reference (`print(fib(29))`): about `0.12s` user-time (`python3.10`: `0.10-0.11s`)
+- Current reliable single-run reference (`print(fib(29))`): about `0.12-0.13s` user-time (`python3.10`: `0.10-0.11s`)
 - Latest checkpoint before this wave: about `0.95s` user-time (`~0.96s` wall after warm-up)
 
 ## Ground Rules
@@ -38,6 +38,9 @@ Primary benchmark gate:
 
 Canonical profiler command for this sprint:
 - `mkdir -p perf && CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin pyrs --output perf/fib35_after_single_slot_fill.svg -- -S -c "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2); print(fib(35))"`
+
+Canonical benchmark command for this sprint:
+- `scripts/bench_fib_gate.sh 5`
 
 ## CPython Source References
 
@@ -90,6 +93,9 @@ Canonical profiler command for this sprint:
 33. Split `LoadFast` release quickened behavior into explicit hot-site branches (`LoadFastCompareLtConstJump` and `LoadFastPlain`) to avoid repeated pattern-probing work on already-quickened sites.
 34. Removed per-instruction closure dispatch wrapper from `Vm::run` by moving opcode execution into `execute_instruction`, so the hot loop now performs a direct method call instead of recreating an inline closure each iteration.
 35. Fixed release-only `LOAD_FAST` plain-site quickened path stack corruption (double-push on already-quickened plain sites), restoring list-comprehension/`FOR_ITER` correctness for the canonical `fib(29)x5` gate.
+36. Reworked `LOAD_GLOBAL` fused-direct cache entries to store function objects + epoch guards (instead of cloning code/module metadata per hit), and dispatch direct one-arg no-cells calls from function references.
+37. Tightened release `RETURN_VALUE` simple-frame fast-return checks and removed optional-pop fallback from that lane (direct pop with invariant guard).
+38. Added a repeatable benchmark smoke script (`scripts/bench_fib_gate.sh`) to track `fib(29)` + `fib(29)x5` deltas versus `python3.10`.
 
 ## Current Hotspots (Post-Change)
 
@@ -98,7 +104,7 @@ Canonical profiler command for this sprint:
 3. Frame construction/reset overhead (`acquire_frame`) is improved but still visible in recursion-heavy code.
 4. Stack movement/copy work (`_platform_memmove`) remains significant in tight recursive loops.
 5. Attribute/method lookup and interning gaps remain for broader workloads (`OPT-022`, `OPT-023`).
-6. Recursive-call workloads are still dominated by frame/call setup and stack churn; current `fib(29)x5` remains around `0.55s` user-time (target `<0.15s`).
+6. Recursive-call workloads are still dominated by frame/call setup and stack churn; current `fib(29)x5` remains around `0.56-0.57s` user-time (target `<0.15s`).
 7. Dict subscripting now routes through hash-probing backend lookup in `getitem` paths (linear scan bypass removed); remaining primary gap is recursive call/dispatch overhead, not dict key lookup.
 
 ## Execution Plan

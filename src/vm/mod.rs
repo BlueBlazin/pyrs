@@ -304,9 +304,8 @@ struct LoadGlobalSiteCacheEntry {
     fused_const_idx: Option<u32>,
     fused_const_small_int: Option<i64>,
     fused_direct_one_arg_no_cells: bool,
-    fused_direct_code: Option<Rc<CodeObject>>,
-    fused_direct_module: Option<ObjRef>,
-    fused_direct_owner_class: Option<ObjRef>,
+    fused_direct_func: Option<ObjRef>,
+    fused_direct_func_epoch: u64,
 }
 
 #[derive(Clone, Copy)]
