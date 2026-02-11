@@ -97,6 +97,7 @@ Latest local snapshot (2026-02-11):
   - Extended no-keyword small-arity fast dispatch into `CallCpython`, `CallCpythonKwStack`, and `CallFunctionKw` lanes (including arity-0).
   - Added a no-keyword single-argument builtin `len` fast lane in call dispatch to avoid generic builtin-call argument plumbing on hot `len(list)` loops.
   - Added no-keyword builtin `bool` fast lanes for zero-arg and single-arg calls in opcode dispatch.
+  - `CALL_FUNCTION`/`CALL_FUNCTION1` builtin branches now attempt direct zero/one-arg no-kwargs fast-lane resolution before falling back to generic builtin dispatch.
   - Added no-keyword small-arity internal-call fast paths in `call_internal` to reduce call/arg churn in stdlib-heavy paths (notably pickle stack).
   - Reduced `LOAD_NAME`/`STORE_NAME` churn in module-scope hot loops by removing `String` clone in `LOAD_NAME` and routing `STORE_NAME` through indexed name storage (`store_name_by_index`) with in-place module/global updates.
   - Added guarded module-scope `LOAD_NAME` site caching (reusing global cache slots with module+builtins version guards) to reduce repeated name lookup/hash churn in top-level loops.

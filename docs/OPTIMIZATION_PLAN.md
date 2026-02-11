@@ -69,6 +69,7 @@ Interpretation:
   - Current checkpoint: no-keyword single-argument builtin `len` call-site fast lane is in place for hot container loops.
   - Current checkpoint: module-scope `LOAD_NAME`/`STORE_NAME` overhead reduced by avoiding per-opcode name cloning and using indexed store path.
   - Current checkpoint: no-keyword builtin `bool` zero/single-arg fast lanes are in place in dispatch.
+  - Current checkpoint: `CALL_FUNCTION`/`CALL_FUNCTION1` builtin branches now hit zero/one-arg no-kwargs fast lanes before generic builtin dispatch.
   - Current checkpoint: module-scope `LOAD_NAME` now uses version-guarded site caching for hash-churn reduction in top-level loops.
   - Current checkpoint: module global upserts now synchronize module-frame fast-local slots for correctness under accelerated `LOAD_NAME`.
 - Remove avoidable temporary allocations/clone churn in argument plumbing.

@@ -97,6 +97,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - Latest call-path checkpoint:
   - no-keyword single-argument builtin `len` fast lane is active in opcode call dispatch for hot container loops.
   - no-keyword builtin `bool` zero/single-arg fast lanes are active in opcode call dispatch.
+  - `CALL_FUNCTION`/`CALL_FUNCTION1` builtin branches now try direct zero/one-arg no-kwargs fast lanes before generic builtin call fallback.
   - module-scope `LOAD_NAME`/`STORE_NAME` paths now avoid per-opcode name-clone churn; `STORE_NAME` uses indexed storage path with direct module/global upsert.
   - module-scope `LOAD_NAME` now has version-guarded site caching against module+builtins versions.
   - module global writes now synchronize module-frame fast-local slots to keep accelerated `LOAD_NAME` lookups semantically correct.

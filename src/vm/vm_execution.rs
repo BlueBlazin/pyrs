@@ -2862,6 +2862,31 @@ impl Vm {
                         Value::BoundMethod(method_obj) => {
                             self.push_bound_method_call_zero_args_from_obj(&method_obj)?;
                         }
+                        Value::Builtin(builtin) => {
+                            if let Some(result) =
+                                self.try_fast_builtin_zero_arg_no_kwargs(builtin)
+                            {
+                                self.push_value(result);
+                            } else {
+                                let caller_depth = self.frames.len();
+                                let caller_idx = caller_depth.saturating_sub(1);
+                                let caller_ip = self
+                                    .frames
+                                    .get(caller_idx)
+                                    .map(|frame| frame.ip)
+                                    .unwrap_or(0);
+                                let call_result = self.call_builtin(
+                                    builtin,
+                                    Vec::new(),
+                                    HashMap::new(),
+                                );
+                                self.finalize_builtin_opcode_call(
+                                    caller_depth,
+                                    caller_ip,
+                                    call_result,
+                                )?;
+                            }
+                        }
                         other => self.dispatch_call_no_kwargs(other, Vec::new())?,
                     }
                 } else if argc == 1 {
@@ -2898,6 +2923,34 @@ impl Vm {
                                 &method_obj,
                                 arg0,
                             )?;
+                        }
+                        Value::Builtin(builtin) => {
+                            if quickened_one_arg {
+                                self.clear_quickened_site(site_index);
+                            }
+                            if let Some(result) =
+                                self.try_fast_builtin_single_arg_no_kwargs(builtin, &arg0)?
+                            {
+                                self.push_value(result);
+                            } else {
+                                let caller_depth = self.frames.len();
+                                let caller_idx = caller_depth.saturating_sub(1);
+                                let caller_ip = self
+                                    .frames
+                                    .get(caller_idx)
+                                    .map(|frame| frame.ip)
+                                    .unwrap_or(0);
+                                let call_result = self.call_builtin(
+                                    builtin,
+                                    vec![arg0],
+                                    HashMap::new(),
+                                );
+                                self.finalize_builtin_opcode_call(
+                                    caller_depth,
+                                    caller_ip,
+                                    call_result,
+                                )?;
+                            }
                         }
                         other => {
                             if quickened_one_arg {
@@ -3000,6 +3053,31 @@ impl Vm {
                             &method_obj,
                             arg0,
                         )?;
+                    }
+                    Value::Builtin(builtin) => {
+                        if let Some(result) =
+                            self.try_fast_builtin_single_arg_no_kwargs(builtin, &arg0)?
+                        {
+                            self.push_value(result);
+                        } else {
+                            let caller_depth = self.frames.len();
+                            let caller_idx = caller_depth.saturating_sub(1);
+                            let caller_ip = self
+                                .frames
+                                .get(caller_idx)
+                                .map(|frame| frame.ip)
+                                .unwrap_or(0);
+                            let call_result = self.call_builtin(
+                                builtin,
+                                vec![arg0],
+                                HashMap::new(),
+                            );
+                            self.finalize_builtin_opcode_call(
+                                caller_depth,
+                                caller_ip,
+                                call_result,
+                            )?;
+                        }
                     }
                     other => {
                         self.dispatch_call_no_kwargs(other, vec![arg0])?
