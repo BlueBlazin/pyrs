@@ -319,6 +319,8 @@ struct LoadFastSiteCacheEntry {
 enum LoadAttrSiteCacheKind {
     InstanceFunction { function: ObjRef },
     InstanceBuiltin { builtin: BuiltinFunction },
+    InstanceClassMethod { descriptor: ObjRef },
+    InstanceStaticMethod { descriptor: ObjRef },
 }
 
 #[derive(Clone)]
@@ -329,6 +331,8 @@ struct LoadAttrSiteCacheEntry {
     owner_class_version: u64,
     kind: LoadAttrSiteCacheKind,
 }
+
+const LOAD_ATTR_CACHE_WAYS: usize = 2;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(debug_assertions, allow(dead_code))]
@@ -380,7 +384,7 @@ struct Frame {
     yield_from_iter: Option<Value>,
     quickened_sites: Vec<QuickenedSiteKind>,
     load_fast_inline_cache: Vec<Option<LoadFastSiteCacheEntry>>,
-    load_attr_inline_cache: Vec<Option<LoadAttrSiteCacheEntry>>,
+    load_attr_inline_cache: Vec<[Option<LoadAttrSiteCacheEntry>; LOAD_ATTR_CACHE_WAYS]>,
     one_arg_inline_cache: Vec<Option<OneArgCallSiteCacheEntry>>,
     load_global_inline_cache: Vec<Option<LoadGlobalSiteCacheEntry>>,
     simple_one_arg_no_cells: bool,
@@ -431,7 +435,9 @@ impl Frame {
             yield_from_iter: None,
             quickened_sites: vec![QuickenedSiteKind::None; instruction_len],
             load_fast_inline_cache: vec![None; instruction_len],
-            load_attr_inline_cache: vec![None; instruction_len],
+            load_attr_inline_cache: (0..instruction_len)
+                .map(|_| [None, None])
+                .collect(),
             one_arg_inline_cache: vec![None; instruction_len],
             load_global_inline_cache: vec![None; instruction_len],
             simple_one_arg_no_cells: false,
@@ -490,7 +496,9 @@ impl Frame {
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
             self.load_fast_inline_cache = vec![None; instruction_len];
-            self.load_attr_inline_cache = vec![None; instruction_len];
+            self.load_attr_inline_cache = (0..instruction_len)
+                .map(|_| [None, None])
+                .collect();
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
             let fast_locals_len = self.code.fast_local_count;
@@ -562,7 +570,9 @@ impl Frame {
         if !same_code {
             self.quickened_sites = vec![QuickenedSiteKind::None; instruction_len];
             self.load_fast_inline_cache = vec![None; instruction_len];
-            self.load_attr_inline_cache = vec![None; instruction_len];
+            self.load_attr_inline_cache = (0..instruction_len)
+                .map(|_| [None, None])
+                .collect();
             self.one_arg_inline_cache = vec![None; instruction_len];
             self.load_global_inline_cache = vec![None; instruction_len];
             let fast_locals_len = self.code.fast_local_count;

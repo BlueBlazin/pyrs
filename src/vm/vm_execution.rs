@@ -2768,7 +2768,28 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing call argument"))?
                     as usize;
-                if argc == 1 {
+                if argc == 0 {
+                    let func = {
+                        let frame = self.frames.last_mut().expect("frame exists");
+                        frame
+                            .stack
+                            .pop()
+                            .ok_or_else(|| RuntimeError::new("stack underflow (CallFunction func)"))?
+                    };
+                    match func {
+                        Value::Function(func_obj) => {
+                            self.push_function_call_from_obj(
+                                &func_obj,
+                                Vec::new(),
+                                HashMap::new(),
+                            )?;
+                        }
+                        Value::BoundMethod(method_obj) => {
+                            self.push_bound_method_call_zero_args_from_obj(&method_obj)?;
+                        }
+                        other => self.dispatch_call_no_kwargs(other, Vec::new())?,
+                    }
+                } else if argc == 1 {
                     let site_index = self.current_site_index();
                     let quickened_one_arg = self
                         .is_quickened_site(site_index, QuickenedSiteKind::CallFunctionOneArg);
@@ -5459,7 +5480,7 @@ impl Vm {
     fn clear_load_attr_site_cache(&mut self, site_index: usize) {
         if let Some(frame) = self.frames.last_mut() {
             if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
-                *slot = None;
+                *slot = [None, None];
             }
         }
     }
@@ -5484,47 +5505,110 @@ impl Vm {
         instance: &ObjRef,
         attr_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
-        let cached = self
-            .frames
-            .last()
-            .and_then(|frame| frame.load_attr_inline_cache.get(site_index))
-            .and_then(|slot| slot.as_ref())
-            .cloned();
-        let Some(cached) = cached else {
-            return Ok(None);
-        };
-
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return Ok(None),
         };
-        if class_ref.id() != cached.class_id {
-            return Ok(None);
-        }
-        if self.class_attr_version(&class_ref) != cached.class_version {
-            self.clear_load_attr_site_cache(site_index);
-            return Ok(None);
-        }
-        if cached.owner_class.id() != class_ref.id() {
-            if self.class_attr_version(&cached.owner_class) != cached.owner_class_version {
-                self.clear_load_attr_site_cache(site_index);
-                return Ok(None);
-            }
-        }
         if self.instance_has_attr_shadow(instance, attr_name) {
             return Ok(None);
         }
 
-        let value = match cached.kind {
-            LoadAttrSiteCacheKind::InstanceFunction { function } => {
-                self.heap
-                    .alloc_bound_method(BoundMethod::new(function, instance.clone()))
-            }
-            LoadAttrSiteCacheKind::InstanceBuiltin { builtin } => {
-                self.alloc_builtin_bound_method(builtin, instance.clone())
-            }
+        let ways = self
+            .frames
+            .last()
+            .and_then(|frame| frame.load_attr_inline_cache.get(site_index))
+            .cloned();
+        let Some(ways) = ways else {
+            return Ok(None);
         };
-        Ok(Some(value))
+        for (way_idx, cached) in ways.into_iter().enumerate() {
+            let Some(cached) = cached else {
+                continue;
+            };
+            if class_ref.id() != cached.class_id {
+                continue;
+            }
+            if self.class_attr_version(&class_ref) != cached.class_version {
+                if let Some(frame) = self.frames.last_mut() {
+                    if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
+                        slot[way_idx] = None;
+                    }
+                }
+                continue;
+            }
+            if cached.owner_class.id() != class_ref.id()
+                && self.class_attr_version(&cached.owner_class)
+                    != cached.owner_class_version
+            {
+                if let Some(frame) = self.frames.last_mut() {
+                    if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
+                        slot[way_idx] = None;
+                    }
+                }
+                continue;
+            }
+
+            let value = match cached.kind {
+                LoadAttrSiteCacheKind::InstanceFunction { function } => self
+                    .heap
+                    .alloc_bound_method(BoundMethod::new(function, instance.clone())),
+                LoadAttrSiteCacheKind::InstanceBuiltin { builtin } => {
+                    self.alloc_builtin_bound_method(builtin, instance.clone())
+                }
+                LoadAttrSiteCacheKind::InstanceClassMethod { descriptor } => {
+                    match self.bind_classmethod_attr(&class_ref, &Value::Module(descriptor))
+                    {
+                        Some(bound) => bound,
+                        None => continue,
+                    }
+                }
+                LoadAttrSiteCacheKind::InstanceStaticMethod { descriptor } => {
+                    match self.unwrap_staticmethod_attr(&Value::Module(descriptor)) {
+                        Some(unwrapped) => unwrapped,
+                        None => continue,
+                    }
+                }
+            };
+            return Ok(Some(value));
+        }
+        Ok(None)
+    }
+
+    fn insert_load_attr_instance_site_cache_entry(
+        &mut self,
+        site_index: usize,
+        entry: LoadAttrSiteCacheEntry,
+    ) {
+        let Some(frame) = self.frames.last_mut() else {
+            return;
+        };
+        let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) else {
+            return;
+        };
+        if let Some(existing) = slot[0].as_ref() {
+            if existing.class_id == entry.class_id
+                && existing.owner_class.id() == entry.owner_class.id()
+            {
+                slot[0] = Some(entry);
+                return;
+            }
+        } else {
+            slot[0] = Some(entry);
+            return;
+        }
+        if let Some(existing) = slot[1].as_ref() {
+            if existing.class_id == entry.class_id
+                && existing.owner_class.id() == entry.owner_class.id()
+            {
+                slot[1] = Some(entry);
+                return;
+            }
+        } else {
+            slot[1] = Some(entry);
+            return;
+        }
+        // Preserve the first way as most-recently-hot and use way-1 as replacement.
+        slot[1] = Some(entry);
     }
 
     fn update_load_attr_instance_site_cache(
@@ -5589,6 +5673,21 @@ impl Vm {
                     Some(LoadAttrSiteCacheKind::InstanceBuiltin { builtin })
                 }
             }
+            Some(Value::Module(descriptor)) => {
+                let descriptor_module_name = match &*descriptor.kind() {
+                    Object::Module(module_data) => Some(module_data.name.clone()),
+                    _ => None,
+                };
+                match descriptor_module_name.as_deref() {
+                    Some("__classmethod__") => {
+                        Some(LoadAttrSiteCacheKind::InstanceClassMethod { descriptor })
+                    }
+                    Some("__staticmethod__") => {
+                        Some(LoadAttrSiteCacheKind::InstanceStaticMethod { descriptor })
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         };
 
@@ -5600,11 +5699,7 @@ impl Vm {
                 owner_class_version: self.class_attr_version(&owner_class),
                 kind,
             };
-            if let Some(frame) = self.frames.last_mut() {
-                if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
-                    *slot = Some(entry);
-                }
-            }
+            self.insert_load_attr_instance_site_cache_entry(site_index, entry);
         } else {
             self.clear_load_attr_site_cache(site_index);
         }
@@ -5947,6 +6042,14 @@ impl Vm {
     ) -> Result<bool, RuntimeError> {
         match func {
             Value::Function(func_obj) => match args.len() {
+                0 => {
+                    self.push_function_call_from_obj(
+                        func_obj,
+                        Vec::new(),
+                        HashMap::new(),
+                    )?;
+                    Ok(true)
+                }
                 1 => {
                     let arg0 = args.pop().expect("len checked");
                     self.push_function_call_one_arg_from_obj(func_obj, arg0)?;
@@ -5970,6 +6073,10 @@ impl Vm {
                 _ => Ok(false),
             },
             Value::BoundMethod(method_obj) => match args.len() {
+                0 => {
+                    self.push_bound_method_call_zero_args_from_obj(method_obj)?;
+                    Ok(true)
+                }
                 1 => {
                     let arg0 = args.pop().expect("len checked");
                     self.push_bound_method_call_one_arg_from_obj(method_obj, arg0)?;
@@ -5999,7 +6106,45 @@ impl Vm {
     }
 
     #[inline]
-    fn push_bound_method_call_one_arg_from_obj(
+    pub(super) fn push_bound_method_call_zero_args_from_obj(
+        &mut self,
+        method: &ObjRef,
+    ) -> Result<(), RuntimeError> {
+        let (function, receiver) = {
+            let method_kind = method.kind();
+            let method_data = match &*method_kind {
+                Object::BoundMethod(data) => data,
+                _ => return Err(RuntimeError::new("attempted to call non-function")),
+            };
+            (method_data.function.clone(), method_data.receiver.clone())
+        };
+        match &*function.kind() {
+            Object::Function(_) => {
+                let receiver_value = self.receiver_value(&receiver)?;
+                self.push_function_call_one_arg_from_obj(&function, receiver_value)
+            }
+            Object::NativeMethod(native) => {
+                let caller_depth = self.frames.len();
+                let caller_idx = caller_depth.saturating_sub(1);
+                let caller_ip = self
+                    .frames
+                    .get(caller_idx)
+                    .map(|frame| frame.ip)
+                    .unwrap_or(0);
+                let call_result = self.call_native_method(
+                    native.kind,
+                    receiver,
+                    Vec::new(),
+                    HashMap::new(),
+                );
+                self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
+            }
+            _ => Err(RuntimeError::new("attempted to call non-function")),
+        }
+    }
+
+    #[inline]
+    pub(super) fn push_bound_method_call_one_arg_from_obj(
         &mut self,
         method: &ObjRef,
         arg0: Value,
@@ -6038,7 +6183,7 @@ impl Vm {
     }
 
     #[inline]
-    fn push_bound_method_call_two_args_from_obj(
+    pub(super) fn push_bound_method_call_two_args_from_obj(
         &mut self,
         method: &ObjRef,
         arg0: Value,
@@ -6083,7 +6228,7 @@ impl Vm {
     }
 
     #[inline]
-    fn push_bound_method_call_three_args_from_obj(
+    pub(super) fn push_bound_method_call_three_args_from_obj(
         &mut self,
         method: &ObjRef,
         arg0: Value,
@@ -6127,7 +6272,7 @@ impl Vm {
         }
     }
 
-    fn push_function_call_one_arg_from_obj(
+    pub(super) fn push_function_call_one_arg_from_obj(
         &mut self,
         func: &ObjRef,
         arg0: Value,
@@ -6504,7 +6649,7 @@ impl Vm {
         )
     }
 
-    fn push_function_call_two_args_from_obj(
+    pub(super) fn push_function_call_two_args_from_obj(
         &mut self,
         func: &ObjRef,
         arg0: Value,
@@ -6532,7 +6677,7 @@ impl Vm {
         self.push_function_call_from_obj(func, vec![arg0, arg1], HashMap::new())
     }
 
-    fn push_function_call_three_args_from_obj(
+    pub(super) fn push_function_call_three_args_from_obj(
         &mut self,
         func: &ObjRef,
         arg0: Value,

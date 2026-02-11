@@ -19,7 +19,7 @@ Latest local snapshot (2026-02-11):
 - `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.50s` user (`~1.08x`)
 - Dispatch hotpath: `pyrs ~0.54-0.65s` vs `python3.10 ~0.058-0.061s` (`~9-11x`)
 - Dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01-0.02s`
-- Pickle hotspot: `pyrs ~4.88s` vs `python3.10 ~0.41s` (`~12x`)
+- Pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 
 Interpretation:
 - Recursive arithmetic is no longer the dominant performance blocker.

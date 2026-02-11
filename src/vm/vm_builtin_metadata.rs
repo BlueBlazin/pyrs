@@ -1559,7 +1559,44 @@ impl Vm {
         let needs_run = match callable {
             Value::Function(func) => {
                 let depth_before = self.frames.len();
-                self.push_function_call_from_obj(&func, args, kwargs)?;
+                if kwargs.is_empty() {
+                    let mut args = args;
+                    match args.len() {
+                        0 => self.push_function_call_from_obj(
+                            &func,
+                            Vec::new(),
+                            HashMap::new(),
+                        )?,
+                        1 => {
+                            let arg0 = args.pop().expect("len checked");
+                            self.push_function_call_one_arg_from_obj(&func, arg0)?
+                        }
+                        2 => {
+                            let arg1 = args.pop().expect("len checked");
+                            let arg0 = args.pop().expect("len checked");
+                            self.push_function_call_two_args_from_obj(
+                                &func, arg0, arg1,
+                            )?
+                        }
+                        3 => {
+                            let arg2 = args.pop().expect("len checked");
+                            let arg1 = args.pop().expect("len checked");
+                            let arg0 = args.pop().expect("len checked");
+                            self.push_function_call_three_args_from_obj(
+                                &func, arg0, arg1, arg2,
+                            )?
+                        }
+                        _ => {
+                            self.push_function_call_from_obj(
+                                &func,
+                                args,
+                                HashMap::new(),
+                            )?;
+                        }
+                    }
+                } else {
+                    self.push_function_call_from_obj(&func, args, kwargs)?;
+                }
                 self.frames.len() > depth_before
             }
             Value::BoundMethod(method) => {
@@ -1569,11 +1606,55 @@ impl Vm {
                 };
                 match &*method_data.function.kind() {
                     Object::Function(_) => {
-                        let mut bound_args = Vec::with_capacity(args.len() + 1);
-                        bound_args.push(self.receiver_value(&method_data.receiver)?);
-                        bound_args.extend(args);
                         let depth_before = self.frames.len();
-                        self.push_function_call_from_obj(&method_data.function, bound_args, kwargs)?;
+                        if kwargs.is_empty() {
+                            let mut args = args;
+                            match args.len() {
+                                0 => self
+                                    .push_bound_method_call_zero_args_from_obj(&method)?,
+                                1 => {
+                                    let arg0 = args.pop().expect("len checked");
+                                    self.push_bound_method_call_one_arg_from_obj(
+                                        &method, arg0,
+                                    )?
+                                }
+                                2 => {
+                                    let arg1 = args.pop().expect("len checked");
+                                    let arg0 = args.pop().expect("len checked");
+                                    self.push_bound_method_call_two_args_from_obj(
+                                        &method, arg0, arg1,
+                                    )?
+                                }
+                                3 => {
+                                    let arg2 = args.pop().expect("len checked");
+                                    let arg1 = args.pop().expect("len checked");
+                                    let arg0 = args.pop().expect("len checked");
+                                    self.push_bound_method_call_three_args_from_obj(
+                                        &method, arg0, arg1, arg2,
+                                    )?
+                                }
+                                _ => {
+                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                    bound_args
+                                        .push(self.receiver_value(&method_data.receiver)?);
+                                    bound_args.extend(args);
+                                    self.push_function_call_from_obj(
+                                        &method_data.function,
+                                        bound_args,
+                                        HashMap::new(),
+                                    )?;
+                                }
+                            }
+                        } else {
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(self.receiver_value(&method_data.receiver)?);
+                            bound_args.extend(args);
+                            self.push_function_call_from_obj(
+                                &method_data.function,
+                                bound_args,
+                                kwargs,
+                            )?;
+                        }
                         self.frames.len() > depth_before
                     }
                     Object::NativeMethod(native) => {

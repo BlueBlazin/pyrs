@@ -37,6 +37,18 @@ jobs:
       - name: Run full test suite
         run: cargo test -q
 
+      - name: Dispatch hotpath benchmark smoke (non-blocking)
+        continue-on-error: true
+        run: ./scripts/bench_dispatch_hotpath.sh 5
+
+      - name: Upload dispatch benchmark artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dispatch-hotpath-bench
+          path: perf/dispatch_hotpath_bench.txt
+          if-no-files-found: ignore
+
       - name: Run parity gate profile
         run: ./scripts/run_parity_gate.sh
 

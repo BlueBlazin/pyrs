@@ -21,15 +21,15 @@ Source: `perf/dict_backend_bench.txt`
 
 1. `pyrs_dict_microbench_sec=0.28`
 2. `cpython_dict_microbench_sec=0.02`
-3. `pyrs_pickle_hotspot_sec=4.88`
-4. `cpython_pickle_hotspot_sec=0.41`
-5. `pyrs_vs_cpython_pickle_ratio=11.9024`
-6. `pickle_delta_vs_prev_sec=-34.9900`
+3. `pyrs_pickle_hotspot_sec=5.19`
+4. `cpython_pickle_hotspot_sec=0.45`
+5. `pyrs_vs_cpython_pickle_ratio=11.5333`
+6. `pickle_delta_vs_prev_sec=-34.6800`
 
 ## Interpretation
 
 1. The new dict backend removed the previous major pickle bottleneck.
-2. Pickle hotspot runtime improved from `39.87s` baseline to `4.88s` (`-34.99s`).
+2. Pickle hotspot runtime improved from `39.87s` baseline to `5.19s` (`-34.68s`).
 3. Significant gap to CPython remains and is now dominated by VM call/attribute and clone-heavy paths.
 
 ## Profiling Artifact

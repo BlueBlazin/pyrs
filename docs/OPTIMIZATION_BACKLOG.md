@@ -24,7 +24,7 @@ Latest local snapshot (2026-02-11):
 - `fib(29)x5`: `pyrs ~0.54s` user vs `python3.10 ~0.50s` user (`~1.08x`)
 - dispatch hotpath: `pyrs ~0.54-0.65s` vs `python3.10 ~0.058-0.061s` (`~9-11x`)
 - dict microbench: `pyrs ~0.28s` vs `python3.10 ~0.01-0.02s`
-- pickle hotspot: `pyrs ~4.88s` vs `python3.10 ~0.41s` (`~12x`)
+- pickle hotspot: `pyrs ~5.1-5.2s` vs `python3.10 ~0.42-0.45s` (`~11-12x`)
 
 ## CPython Reference Map
 
@@ -89,12 +89,16 @@ Latest local snapshot (2026-02-11):
 
 - Latest optimization checkpoint:
   - `load_attr_instance` now bypasses generic bound-method invocation when `__getattribute__` resolves to builtin `object.__getattribute__`, routing directly to default slot-style attribute resolution.
-  - Added guarded per-site `LOAD_ATTR` instance cache for function/builtin method descriptors with class/version invalidation (receiver + owner class versions).
+  - Added guarded per-site `LOAD_ATTR` instance cache for function/builtin/classmethod/staticmethod descriptors with class/version invalidation (receiver + owner class versions).
+  - Upgraded load-attr inline cache to two-way polymorphic slots per site.
   - Added class attribute version tracking and mutation bump points (`STORE_ATTR` / `DELETE_ATTR` / `setattr` / `delattr` class targets).
 - Additional checkpoint:
   - `CALL_FUNCTION` now has one/two/three-argument bound-method fast paths that inject the receiver directly into function fast-call lanes instead of routing through generic call dispatch.
-  - Extended no-keyword small-arity fast dispatch into `CallCpython`, `CallCpythonKwStack`, and `CallFunctionKw` lanes.
+  - Extended no-keyword small-arity fast dispatch into `CallCpython`, `CallCpythonKwStack`, and `CallFunctionKw` lanes (including arity-0).
+  - Added no-keyword small-arity internal-call fast paths in `call_internal` to reduce call/arg churn in stdlib-heavy paths (notably pickle stack).
   - Dispatch benchmark now sits around `~0.54-0.65s` in current local runs while preserving vm + curated harness parity.
+- CI checkpoint:
+  - parity workflow now runs `scripts/bench_dispatch_hotpath.sh` in non-blocking mode and uploads the perf artifact for regression visibility.
 - Fib recursion gate is near `python3.10` on this machine and now serves as a regression smoke, not the sole optimization target.
 - Largest remaining throughput gaps are dispatch hotpath and pickle/container-heavy workloads.
 - Active foundational items for closure: `OPT-022`, `OPT-023`, `OPT-024`, `OPT-025`, `OPT-026`.
