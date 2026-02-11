@@ -499,8 +499,14 @@ impl Vm {
                         #[cfg(not(debug_assertions))]
                         let mut fused_from_cached_direct = false;
                         #[cfg(not(debug_assertions))]
-                        let mut cached_direct_call: Option<(usize, usize, Option<i64>, ObjRef)> =
-                            None;
+                        let mut cached_direct_call: Option<(
+                            usize,
+                            usize,
+                            Option<i64>,
+                            Rc<CodeObject>,
+                            ObjRef,
+                            Option<ObjRef>,
+                        )> = None;
                         if let Some(frame) = self.frames.last() {
                             if let Some(entry) = frame.load_global_inline_cache.get(site_index) {
                                 if let Some(cached) = entry {
@@ -513,17 +519,25 @@ impl Vm {
                                             if !push_null
                                                 && cached.fused_direct_one_arg_no_cells
                                             {
-                                                if let (Some(local_idx), Some(const_idx)) =
-                                                    (cached.fused_local_idx, cached.fused_const_idx)
-                                                {
-                                                    if let Value::Function(func_obj) = &cached.value {
-                                                        cached_direct_call = Some((
-                                                            local_idx as usize,
-                                                            const_idx as usize,
-                                                            cached.fused_const_small_int,
-                                                            func_obj.clone(),
-                                                        ));
-                                                    }
+                                                if let (
+                                                    Some(local_idx),
+                                                    Some(const_idx),
+                                                    Some(code),
+                                                    Some(module),
+                                                ) = (
+                                                    cached.fused_local_idx,
+                                                    cached.fused_const_idx,
+                                                    cached.fused_direct_code.as_ref(),
+                                                    cached.fused_direct_module.as_ref(),
+                                                ) {
+                                                    cached_direct_call = Some((
+                                                        local_idx as usize,
+                                                        const_idx as usize,
+                                                        cached.fused_const_small_int,
+                                                        code.clone(),
+                                                        module.clone(),
+                                                        cached.fused_direct_owner_class.clone(),
+                                                    ));
                                                 }
                                             }
                                             if cached_direct_call.is_none() {
@@ -565,7 +579,9 @@ impl Vm {
                             local_idx,
                             const_idx,
                             cached_small_int,
-                            func_obj,
+                            code,
+                            module,
+                            owner_class,
                         )) = cached_direct_call
                         {
                             let arg = if let Some(right_int) = cached_small_int {
@@ -600,8 +616,11 @@ impl Vm {
                                 let caller = self.frames.last_mut().expect("frame exists");
                                 caller.ip += 3;
                             }
-                            self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
-                                &func_obj, arg,
+                            self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
+                                &code,
+                                &module,
+                                owner_class.as_ref(),
+                                arg,
                             )?;
                             fused_from_cached_direct = true;
                         }
