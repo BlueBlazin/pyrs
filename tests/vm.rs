@@ -7228,6 +7228,83 @@ fn _io_bufferedreader_seek_cur_uses_logical_position_with_prefetch_cache() {
 }
 
 #[test]
+fn _io_bufferedreader_close_prefers_close_error_with_flush_context() {
+    let source = r#"import _io
+class Raw(_io.RawIOBase):
+    def readinto(self, b): return 0
+    def readable(self): return True
+    def read(self, n=-1): return b""
+    def readline(self, n=-1): return b""
+    def write(self, b): return len(b)
+    def seek(self, o, w=0): return 0
+    def tell(self): return 0
+raw = Raw()
+def bad_flush():
+    raise OSError("flush")
+def bad_close():
+    raise OSError("close")
+raw.close = bad_close
+buf = _io.BufferedReader(raw)
+buf.flush = bad_flush
+args_ok = False
+context_ok = False
+closed_ok = False
+try:
+    buf.close()
+except OSError as exc:
+    args_ok = (exc.args == ("close",))
+    context_ok = isinstance(exc.__context__, OSError) and exc.__context__.args == ("flush",)
+    closed_ok = (buf.closed is False)
+ok = args_ok and context_ok and closed_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_bufferedreader_flush_error_on_close_still_closes_raw_and_buffered() {
+    let source = r#"import _io
+class Raw(_io.RawIOBase):
+    def __init__(self):
+        self.closed = False
+    def readinto(self, b): return 0
+    def readable(self): return True
+    def read(self, n=-1): return b""
+    def readline(self, n=-1): return b""
+    def write(self, b): return len(b)
+    def seek(self, o, w=0): return 0
+    def tell(self): return 0
+    def close(self):
+        self.closed = True
+raw = Raw()
+buf = _io.BufferedReader(raw)
+state = []
+def bad_flush():
+    state.append((buf.closed, raw.closed))
+    raise OSError("flush")
+buf.flush = bad_flush
+caught = False
+args_ok = False
+closed_ok = False
+try:
+    buf.close()
+except OSError as exc:
+    caught = True
+    args_ok = (exc.args == ("flush",))
+    closed_ok = (buf.closed is True and raw.closed is True and state == [(False, False)])
+ok = caught and args_ok and closed_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn _io_base_destructor_closes_and_flushes_receiver() {
     let source = r#"import _io, gc
 record = []

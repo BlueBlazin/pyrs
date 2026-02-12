@@ -2450,6 +2450,10 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedRead),
                             );
                             class_data.attrs.insert(
+                                "read1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                            );
+                            class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadLine),
                             );
@@ -2464,6 +2468,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "close".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedClose),
+                            );
+                            class_data.attrs.insert(
+                                "detach".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
                             );
                             class_data.attrs.insert(
                                 "fileno".to_string(),
@@ -2488,6 +2496,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "readinto1".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
+                            class_data.attrs.insert(
+                                "peek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
                             );
                             class_data.attrs.insert(
                                 "read".to_string(),
@@ -2529,6 +2541,10 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedRead),
                             );
                             class_data.attrs.insert(
+                                "read1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                            );
+                            class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadLine),
                             );
@@ -2543,6 +2559,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "close".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedClose),
+                            );
+                            class_data.attrs.insert(
+                                "detach".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
                             );
                             class_data.attrs.insert(
                                 "fileno".to_string(),
@@ -2567,6 +2587,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "readinto1".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
+                            class_data.attrs.insert(
+                                "peek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
                             );
                             class_data.attrs.insert(
                                 "read".to_string(),
@@ -2608,6 +2632,10 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedRead),
                             );
                             class_data.attrs.insert(
+                                "read1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                            );
+                            class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadLine),
                             );
@@ -2622,6 +2650,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "close".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedClose),
+                            );
+                            class_data.attrs.insert(
+                                "detach".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
                             );
                             class_data.attrs.insert(
                                 "fileno".to_string(),
@@ -2646,6 +2678,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "readinto1".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
+                            class_data.attrs.insert(
+                                "peek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
                             );
                             class_data.attrs.insert(
                                 "read".to_string(),
@@ -2798,6 +2834,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "readinto1".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
+                            class_data.attrs.insert(
+                                "peek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
                             );
                             class_data.attrs.insert(
                                 "read".to_string(),
@@ -3028,6 +3068,10 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedRead),
                             );
                             class_data.attrs.insert(
+                                "read1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                            );
+                            class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadLine),
                             );
@@ -3042,6 +3086,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "close".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedClose),
+                            );
+                            class_data.attrs.insert(
+                                "detach".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
                             );
                             class_data.attrs.insert(
                                 "fileno".to_string(),
@@ -3066,6 +3114,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "readinto1".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
+                            class_data.attrs.insert(
+                                "peek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
                             );
                             class_data.attrs.insert(
                                 "readable".to_string(),
@@ -3099,6 +3151,10 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedRead),
                             );
                             class_data.attrs.insert(
+                                "read1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                            );
+                            class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadLine),
                             );
@@ -3113,6 +3169,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "close".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedClose),
+                            );
+                            class_data.attrs.insert(
+                                "detach".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
                             );
                             class_data.attrs.insert(
                                 "fileno".to_string(),
@@ -3137,6 +3197,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "readinto1".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                            );
+                            class_data.attrs.insert(
+                                "peek".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
                             );
                             class_data.attrs.insert(
                                 "readable".to_string(),
@@ -3170,6 +3234,10 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedRead),
                             );
                             class_data.attrs.insert(
+                                "read1".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                            );
+                            class_data.attrs.insert(
                                 "readline".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedReadLine),
                             );
@@ -3184,6 +3252,10 @@ impl Vm {
                             class_data.attrs.insert(
                                 "close".to_string(),
                                 Value::Builtin(BuiltinFunction::IoBufferedClose),
+                            );
+                            class_data.attrs.insert(
+                                "detach".to_string(),
+                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
                             );
                             class_data.attrs.insert(
                                 "fileno".to_string(),

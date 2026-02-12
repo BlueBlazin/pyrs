@@ -2997,6 +2997,23 @@ impl Vm {
             }
         }
 
+        if attr_name == "closed" {
+            let is_iobase_instance = class_attr_walk(&class_ref).into_iter().any(|candidate| {
+                matches!(&*candidate.kind(), Object::Class(class_data) if class_data.name == "IOBase")
+            });
+            if is_iobase_instance {
+                if let Object::Instance(instance_data) = &*instance.kind() {
+                    let closed = matches!(instance_data.attrs.get("closed"), Some(Value::Bool(true)))
+                        || matches!(
+                            instance_data.attrs.get("__IOBase_closed"),
+                            Some(Value::Bool(true))
+                        )
+                        || matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true)));
+                    return Ok(AttrAccessOutcome::Value(Value::Bool(closed)));
+                }
+            }
+        }
+
         let reduce_attr = attr_name == "__reduce_ex__" || attr_name == "__reduce__";
         if let Some(backing_list) = self.instance_backing_list(instance) {
             if !reduce_attr {
@@ -3447,6 +3464,22 @@ impl Vm {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
         };
+        let mro_class_names = class_attr_walk(&class_ref)
+            .into_iter()
+            .filter_map(|candidate| match &*candidate.kind() {
+                Object::Class(class_data) => Some(class_data.name.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let raw_is_readonly = attr_name == "raw"
+            && mro_class_names
+                .iter()
+                .any(|name| name == "BufferedIOBase" || name == "BufferedReader");
+        let buffer_is_readonly =
+            attr_name == "buffer" && mro_class_names.iter().any(|name| name == "TextIOWrapper");
+        if raw_is_readonly || buffer_is_readonly {
+            return Err(RuntimeError::new("AttributeError: readonly attribute"));
+        }
         if matches!(
             &*class_ref.kind(),
             Object::Class(class_data) if class_data.name == "__csv_dialect__"

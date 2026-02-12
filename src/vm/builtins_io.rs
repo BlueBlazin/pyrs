@@ -1363,6 +1363,13 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("buffered stream is uninitialized"))
     }
 
+    fn io_buffered_is_uninitialized(instance: &ObjRef) -> bool {
+        matches!(
+            Self::instance_attr_get(instance, "raw"),
+            None | Some(Value::None)
+        )
+    }
+
     fn io_buffered_read_buffer(instance: &ObjRef) -> Result<Vec<u8>, RuntimeError> {
         let Some(value) = Self::instance_attr_get(instance, IO_BUFFERED_ATTR_READ_BUF) else {
             return Ok(Vec::new());
@@ -1396,6 +1403,68 @@ impl Vm {
         }
     }
 
+    fn io_value_is_user_rawio_instance(value: &Value) -> bool {
+        let Value::Instance(instance) = value else {
+            return false;
+        };
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return false;
+        };
+        let Object::Class(class_data) = &*instance_data.class.kind() else {
+            return false;
+        };
+        let is_user_class = matches!(
+            class_data.attrs.get("__pyrs_user_class__"),
+            Some(Value::Bool(true))
+        );
+        if !is_user_class {
+            return false;
+        }
+        class_attr_walk(&instance_data.class)
+            .into_iter()
+            .any(|candidate| matches!(&*candidate.kind(), Object::Class(class_data) if class_data.name == "RawIOBase"))
+    }
+
+    fn io_buffered_readinto_chunk(
+        &mut self,
+        instance: &ObjRef,
+        read_size: usize,
+    ) -> Result<Option<Vec<u8>>, RuntimeError> {
+        let target = self.heap.alloc_bytearray(vec![0; read_size]);
+        let read_result = self.io_buffered_delegate_method(
+            instance,
+            "readinto",
+            vec![target.clone()],
+            HashMap::new(),
+            "buffered read failed",
+        )?;
+        let count = match read_result {
+            Value::None => return Ok(None),
+            Value::Int(value) => value,
+            Value::Bool(value) => i64::from(value),
+            Value::BigInt(value) => value
+                .to_i64()
+                .ok_or_else(|| RuntimeError::new("OSError: raw readinto() returned invalid length"))?,
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: readinto() should return integer or None, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        if count < 0 || (count as usize) > read_size {
+            return Err(RuntimeError::new("OSError: raw readinto() returned invalid length"));
+        }
+        let bytes = match target {
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => values[..count as usize].to_vec(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        Ok(Some(bytes))
+    }
+
     fn io_buffered_mark_closed(instance: &ObjRef) -> Result<(), RuntimeError> {
         Self::instance_attr_set(instance, "__IOBase_closed", Value::Bool(true))?;
         Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
@@ -1421,7 +1490,7 @@ impl Vm {
             vec![raw, Value::Str(method_name.to_string())],
             HashMap::new(),
         )?;
-        match self.call_internal(method, args, kwargs)? {
+        match self.call_internal_preserving_caller(method, args, kwargs)? {
             InternalCallOutcome::Value(value) => Ok(value),
             InternalCallOutcome::CallerExceptionHandled => {
                 Err(self.runtime_error_from_active_exception(error_context))
@@ -1573,6 +1642,41 @@ impl Vm {
         Ok(exception)
     }
 
+    fn io_exception_value_from_runtime_error(
+        &mut self,
+        err: RuntimeError,
+    ) -> Result<Value, RuntimeError> {
+        Ok(Value::Exception(Box::new(
+            self.io_exception_object_from_runtime_error(err)?,
+        )))
+    }
+
+    fn io_take_active_exception_value(&mut self, fallback: &str) -> Result<Value, RuntimeError> {
+        let value = self
+            .frames
+            .last_mut()
+            .and_then(|frame| frame.active_exception.take())
+            .ok_or_else(|| RuntimeError::new(fallback))?;
+        self.normalize_exception_value(value)
+            .map_err(|_| RuntimeError::new(fallback))
+    }
+
+    fn io_runtime_error_from_exception_value(&self, exc: &Value, fallback: &str) -> RuntimeError {
+        match exc {
+            Value::Exception(exception) => {
+                let mut line = exception.name.clone();
+                if let Some(message) = &exception.message {
+                    if !message.is_empty() {
+                        line.push_str(": ");
+                        line.push_str(message);
+                    }
+                }
+                RuntimeError::new(line)
+            }
+            _ => RuntimeError::new(fallback),
+        }
+    }
+
     pub(super) fn builtin_io_buffered_init(
         &mut self,
         mut args: Vec<Value>,
@@ -1599,6 +1703,8 @@ impl Vm {
             buffer_size = self.io_index_arg_to_int(args.remove(0))?;
         }
         if buffer_size <= 0 {
+            let _ = Self::instance_attr_set(&instance, "raw", Value::None);
+            let _ = self.io_buffered_store_read_buffer(&instance, Vec::new());
             return Err(RuntimeError::new(
                 "ValueError: buffer_size must be positive",
             ));
@@ -1620,6 +1726,9 @@ impl Vm {
             }
         }
         Self::instance_attr_set(&instance, "raw", raw)?;
+        Self::instance_attr_set(&instance, "__IOBase_closed", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "_closed", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "closed", Value::Bool(false))?;
         Self::instance_attr_set(
             &instance,
             IO_BUFFERED_ATTR_BUF_SIZE,
@@ -1640,6 +1749,14 @@ impl Vm {
             ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.read")?;
+        if Self::io_buffered_is_uninitialized(&instance) {
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on uninitialized object",
+            ));
+        }
+        if Self::iobase_is_closed(&instance) {
+            return Err(RuntimeError::new("ValueError: read of closed file"));
+        }
         let readable = self.builtin_io_buffered_readable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
@@ -1706,8 +1823,31 @@ impl Vm {
         }
 
         let buffer_size = Self::io_buffered_buffer_size(&instance).max(1);
+        let use_rawio_readinto = Self::io_buffered_raw_from_instance(&instance)
+            .map(|raw| Self::io_value_is_user_rawio_instance(&raw))
+            .unwrap_or(false);
         while output.len() < requested {
             let remaining = requested - output.len();
+            if use_rawio_readinto {
+                let read_size = buffer_size.max(remaining);
+                let Some(chunk) = self.io_buffered_readinto_chunk(&instance, read_size)? else {
+                    if output.is_empty() {
+                        self.io_buffered_store_read_buffer(&instance, cached)?;
+                        return Ok(Value::None);
+                    }
+                    break;
+                };
+                if chunk.is_empty() {
+                    break;
+                }
+                if chunk.len() <= remaining {
+                    output.extend_from_slice(&chunk);
+                    continue;
+                }
+                output.extend_from_slice(&chunk[..remaining]);
+                cached.extend_from_slice(&chunk[remaining..]);
+                break;
+            }
             let read_size = buffer_size.max(remaining);
             let value = self.io_buffered_delegate_method(
                 &instance,
@@ -1725,6 +1865,11 @@ impl Vm {
             }
             let chunk = bytes_like_from_value(value)
                 .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+            if chunk.len() > read_size {
+                return Err(RuntimeError::new(
+                    "OSError: raw read() returned invalid length",
+                ));
+            }
             if chunk.is_empty() {
                 break;
             }
@@ -1738,6 +1883,172 @@ impl Vm {
         }
         self.io_buffered_store_read_buffer(&instance, cached)?;
         Ok(self.heap.alloc_bytes(output))
+    }
+
+    pub(super) fn builtin_io_buffered_read1(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "BufferedIOBase.read1 expects 0-1 arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.read1")?;
+        if Self::io_buffered_is_uninitialized(&instance) {
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on uninitialized object",
+            ));
+        }
+        if Self::iobase_is_closed(&instance) {
+            return Err(RuntimeError::new("ValueError: read of closed file"));
+        }
+        let readable = self.builtin_io_buffered_readable(
+            vec![Value::Instance(instance.clone())],
+            HashMap::new(),
+        )?;
+        if !is_truthy(&readable) {
+            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+        }
+        let size = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
+        if size < -1 {
+            return Err(RuntimeError::new(
+                "ValueError: read length must be non-negative",
+            ));
+        }
+        if size == 0 {
+            return Ok(self.heap.alloc_bytes(Vec::new()));
+        }
+
+        let mut cached = Self::io_buffered_read_buffer(&instance)?;
+        if !cached.is_empty() {
+            if size < 0 || cached.len() <= size as usize {
+                self.io_buffered_store_read_buffer(&instance, Vec::new())?;
+                return Ok(self.heap.alloc_bytes(cached));
+            }
+            let requested = size as usize;
+            let remainder = cached.split_off(requested);
+            self.io_buffered_store_read_buffer(&instance, remainder)?;
+            return Ok(self.heap.alloc_bytes(cached));
+        }
+
+        let read_size = if size < 0 {
+            Self::io_buffered_buffer_size(&instance).max(1)
+        } else {
+            size as usize
+        };
+        let use_rawio_readinto = Self::io_buffered_raw_from_instance(&instance)
+            .map(|raw| Self::io_value_is_user_rawio_instance(&raw))
+            .unwrap_or(false);
+        let chunk = if use_rawio_readinto {
+            match self.io_buffered_readinto_chunk(&instance, read_size)? {
+                Some(chunk) => chunk,
+                None => return Ok(self.heap.alloc_bytes(Vec::new())),
+            }
+        } else {
+            let value = self.io_buffered_delegate_method(
+                &instance,
+                "read",
+                vec![Value::Int(read_size as i64)],
+                HashMap::new(),
+                "buffered read failed",
+            )?;
+            if matches!(value, Value::None) {
+                return Ok(self.heap.alloc_bytes(Vec::new()));
+            }
+            let chunk = bytes_like_from_value(value)
+                .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+            if chunk.len() > read_size {
+                return Err(RuntimeError::new(
+                    "OSError: raw read() returned invalid length",
+                ));
+            }
+            chunk
+        };
+
+        if chunk.is_empty() {
+            return Ok(self.heap.alloc_bytes(Vec::new()));
+        }
+
+        if size >= 0 && chunk.len() > size as usize {
+            let requested = size as usize;
+            self.io_buffered_store_read_buffer(&instance, chunk[requested..].to_vec())?;
+            return Ok(self.heap.alloc_bytes(chunk[..requested].to_vec()));
+        }
+
+        Ok(self.heap.alloc_bytes(chunk))
+    }
+
+    pub(super) fn builtin_io_buffered_peek(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "BufferedIOBase.peek expects 0-1 arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.peek")?;
+        if Self::io_buffered_is_uninitialized(&instance) {
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on uninitialized object",
+            ));
+        }
+        if Self::iobase_is_closed(&instance) {
+            return Err(RuntimeError::new("ValueError: peek of closed file"));
+        }
+        let readable = self.builtin_io_buffered_readable(
+            vec![Value::Instance(instance.clone())],
+            HashMap::new(),
+        )?;
+        if !is_truthy(&readable) {
+            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+        }
+        let hint = match args.pop() {
+            None | Some(Value::None) => 0,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
+        let min_read = if hint <= 0 { 1 } else { hint as usize };
+        let mut cached = Self::io_buffered_read_buffer(&instance)?;
+        if cached.is_empty() {
+            let read_size = Self::io_buffered_buffer_size(&instance).max(min_read).max(1);
+            let use_rawio_readinto = Self::io_buffered_raw_from_instance(&instance)
+                .map(|raw| Self::io_value_is_user_rawio_instance(&raw))
+                .unwrap_or(false);
+            let chunk = if use_rawio_readinto {
+                self.io_buffered_readinto_chunk(&instance, read_size)?
+            } else {
+                let value = self.io_buffered_delegate_method(
+                    &instance,
+                    "read",
+                    vec![Value::Int(read_size as i64)],
+                    HashMap::new(),
+                    "buffered peek failed",
+                )?;
+                if matches!(value, Value::None) {
+                    None
+                } else {
+                    let chunk = bytes_like_from_value(value)
+                        .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                    if chunk.len() > read_size {
+                        return Err(RuntimeError::new(
+                            "OSError: raw read() returned invalid length",
+                        ));
+                    }
+                    Some(chunk)
+                }
+            };
+            if let Some(bytes) = chunk {
+                cached.extend_from_slice(&bytes);
+            }
+            self.io_buffered_store_read_buffer(&instance, cached.clone())?;
+        }
+        Ok(self.heap.alloc_bytes(cached))
     }
 
     pub(super) fn builtin_io_buffered_readline(
@@ -1845,43 +2156,103 @@ impl Vm {
             ],
             HashMap::new(),
         )?;
-        let flush_error = match self.call_internal(flush_method, Vec::new(), HashMap::new()) {
-            Ok(InternalCallOutcome::Value(_)) => None,
-            Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                Some(self.runtime_error_from_active_exception("buffered close failed"))
-            }
-            Err(err) => Some(err),
-        };
-        let raw = Self::io_buffered_raw_from_instance(&instance)?;
-        let close_method =
-            self.builtin_getattr(vec![raw, Value::Str("close".to_string())], HashMap::new())?;
-        let close_error = match self.call_internal(close_method, Vec::new(), HashMap::new()) {
-            Ok(InternalCallOutcome::Value(_)) => None,
-            Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                Some(self.runtime_error_from_active_exception("buffered close failed"))
-            }
-            Err(err) => Some(err),
-        };
-        if let Some(err) = close_error {
-            if let Some(flush_err) = flush_error {
-                let flush_exception = self.io_exception_object_from_runtime_error(flush_err)?;
-                let close_exception = self.io_exception_object_from_runtime_error(err)?;
-                let close_message = close_exception
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| "close".to_string());
-                if let Some(frame) = self.frames.last_mut() {
-                    frame.active_exception = Some(Value::Exception(Box::new(flush_exception)));
+        let flush_error =
+            match self.call_internal_preserving_caller(flush_method, Vec::new(), HashMap::new()) {
+                Ok(InternalCallOutcome::Value(_)) => None,
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    Some(self.io_take_active_exception_value("buffered close failed")?)
                 }
-                return Err(RuntimeError::new(format!("close failed: {close_message}")));
-            }
-            return Err(err);
+                Err(err) => Some(self.io_exception_value_from_runtime_error(err)?),
+            };
+        let raw = Self::io_buffered_raw_from_instance(&instance)?;
+        let close_method = self.builtin_getattr(
+            vec![raw.clone(), Value::Str("close".to_string())],
+            HashMap::new(),
+        )?;
+        let close_error =
+            match self.call_internal_preserving_caller(close_method, Vec::new(), HashMap::new()) {
+                Ok(InternalCallOutcome::Value(_)) => None,
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    Some(self.io_take_active_exception_value("buffered close failed")?)
+                }
+                Err(err) => Some(self.io_exception_value_from_runtime_error(err)?),
+            };
+        let raw_closed = self
+            .builtin_getattr(
+                vec![raw.clone(), Value::Str("closed".to_string())],
+                HashMap::new(),
+            )
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        if raw_closed {
+            Self::io_buffered_mark_closed(&instance)?;
         }
-        Self::io_buffered_mark_closed(&instance)?;
-        if let Some(err) = flush_error {
-            return Err(err);
+        if let Some(mut close_exc) = close_error {
+            if let (Value::Exception(close_exception), Some(Value::Exception(flush_exception))) =
+                (&mut close_exc, flush_error.clone())
+            {
+                close_exception.context = Some(flush_exception);
+            }
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = Some(close_exc.clone());
+            }
+            return Err(self.io_runtime_error_from_exception_value(
+                &close_exc,
+                "buffered close failed",
+            ));
+        }
+        if !raw_closed {
+            Self::io_buffered_mark_closed(&instance)?;
+        }
+        if let Some(flush_exc) = flush_error {
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = Some(flush_exc.clone());
+            }
+            return Err(self.io_runtime_error_from_exception_value(
+                &flush_exc,
+                "buffered close failed",
+            ));
         }
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_io_buffered_detach(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "BufferedIOBase.detach expects no arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.detach")?;
+        let raw = match Self::instance_attr_get(&instance, "raw") {
+            Some(Value::None) => {
+                return Err(RuntimeError::new("ValueError: raw stream already detached"));
+            }
+            Some(value) => value,
+            None => return Err(RuntimeError::new("buffered stream is uninitialized")),
+        };
+        let flush_method = self.builtin_getattr(
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str("flush".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        match self.call_internal_preserving_caller(flush_method, Vec::new(), HashMap::new()) {
+            Ok(InternalCallOutcome::Value(_)) => {}
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                return Err(self.runtime_error_from_active_exception(
+                    "buffered detach failed",
+                ));
+            }
+            Err(err) => return Err(err),
+        }
+        Self::instance_attr_set(&instance, "raw", Value::None)?;
+        self.io_buffered_store_read_buffer(&instance, Vec::new())?;
+        Ok(raw)
     }
 
     pub(super) fn builtin_io_buffered_fileno(
@@ -1913,6 +2284,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.seek")?;
+        if Self::iobase_is_closed(&instance) {
+            return Err(RuntimeError::new("ValueError: I/O operation on closed file."));
+        }
         let seekable = self.builtin_io_buffered_seekable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
@@ -1920,17 +2294,20 @@ impl Vm {
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("OSError: not seekable"));
         }
-        if !args.is_empty() {
-            let whence = if args.len() >= 2 {
-                value_to_int(args[1].clone())?
-            } else {
-                0
-            };
-            if whence == 1 {
-                let offset = value_to_int(args[0].clone())?;
-                let cached = Self::io_buffered_read_buffer(&instance)?;
-                args[0] = Value::Int(offset - cached.len() as i64);
-            }
+        if args.is_empty() {
+            return Err(RuntimeError::new("TypeError: seek expected at least 1 argument"));
+        }
+        if args.len() == 1 {
+            args.push(Value::Int(0));
+        }
+        let whence = value_to_int(args[1].clone())?;
+        if !matches!(whence, 0..=2) {
+            return Err(RuntimeError::new("ValueError: invalid whence"));
+        }
+        if whence == 1 {
+            let offset = value_to_int(args[0].clone())?;
+            let cached = Self::io_buffered_read_buffer(&instance)?;
+            args[0] = Value::Int(offset - cached.len() as i64);
         }
         let value = self.io_buffered_delegate_method(
             &instance,
@@ -1939,8 +2316,13 @@ impl Vm {
             kwargs,
             "buffered seek failed",
         )?;
+        let position = value_to_int(value)
+            .map_err(|_| RuntimeError::new("OSError: seek() returned an invalid position"))?;
+        if position < 0 {
+            return Err(RuntimeError::new("OSError: seek() returned an invalid position"));
+        }
         self.io_buffered_store_read_buffer(&instance, Vec::new())?;
-        Ok(value)
+        Ok(Value::Int(position))
     }
 
     pub(super) fn builtin_io_buffered_tell(
@@ -1949,6 +2331,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.tell")?;
+        if Self::iobase_is_closed(&instance) {
+            return Err(RuntimeError::new("ValueError: I/O operation on closed file."));
+        }
         let seekable = self.builtin_io_buffered_seekable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
@@ -1963,12 +2348,14 @@ impl Vm {
             kwargs,
             "buffered tell failed",
         )?;
-        let Value::Int(raw_pos) = raw_position else {
-            return Ok(raw_position);
-        };
+        let raw_pos = value_to_int(raw_position)
+            .map_err(|_| RuntimeError::new("OSError: tell() returned an invalid position"))?;
+        if raw_pos < 0 {
+            return Err(RuntimeError::new("OSError: tell() returned an invalid position"));
+        }
         let cached = Self::io_buffered_read_buffer(&instance)?;
-        let adjusted = raw_pos.saturating_sub(cached.len() as i64);
-        Ok(Value::Int(adjusted))
+        let adjusted = raw_pos - cached.len() as i64;
+        Ok(Value::Int(adjusted.max(0)))
     }
 
     pub(super) fn builtin_io_buffered_truncate(
@@ -1977,6 +2364,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.truncate")?;
+        if Self::iobase_is_closed(&instance) {
+            return Err(RuntimeError::new("ValueError: I/O operation on closed file."));
+        }
         let seekable = self.builtin_io_buffered_seekable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
@@ -2627,6 +3017,11 @@ impl Vm {
         if request == 0 {
             return Ok(Value::Int(0));
         }
+        if method_name == "read1" && !Self::io_buffered_is_uninitialized(&instance) {
+            let payload = self.io_buffered_readinto1_payload(&instance, request)?;
+            let copied = self.io_copy_into_writable_buffer(target, &payload)?;
+            return Ok(Value::Int(copied as i64));
+        }
         let read_method = match self.builtin_getattr(
             vec![
                 Value::Instance(instance.clone()),
@@ -2657,6 +3052,81 @@ impl Vm {
             .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
         let copied = self.io_copy_into_writable_buffer(target, &payload)?;
         Ok(Value::Int(copied as i64))
+    }
+
+    fn io_buffered_readinto1_payload(
+        &mut self,
+        instance: &ObjRef,
+        request: usize,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let mut payload = Vec::new();
+        let mut cached = Self::io_buffered_read_buffer(instance)?;
+        if !cached.is_empty() {
+            let take = cached.len().min(request);
+            payload.extend_from_slice(&cached[..take]);
+            cached.drain(..take);
+            self.io_buffered_store_read_buffer(instance, cached)?;
+            if payload.len() == request {
+                return Ok(payload);
+            }
+        }
+
+        let remaining = request - payload.len();
+        if remaining == 0 {
+            return Ok(payload);
+        }
+
+        let buffer_size = Self::io_buffered_buffer_size(instance).max(1);
+        let use_rawio_readinto = Self::io_buffered_raw_from_instance(instance)
+            .map(|raw| Self::io_value_is_user_rawio_instance(&raw))
+            .unwrap_or(false);
+
+        let read_from_raw =
+            |vm: &mut Self, read_size: usize| -> Result<Option<Vec<u8>>, RuntimeError> {
+                if use_rawio_readinto {
+                    return vm.io_buffered_readinto_chunk(instance, read_size);
+                }
+                let value = vm.io_buffered_delegate_method(
+                    instance,
+                    "read",
+                    vec![Value::Int(read_size as i64)],
+                    HashMap::new(),
+                    "buffered readinto1 failed",
+                )?;
+                if matches!(value, Value::None) {
+                    return Ok(None);
+                }
+                let chunk = bytes_like_from_value(value)
+                    .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                if chunk.len() > read_size {
+                    return Err(RuntimeError::new(
+                        "OSError: raw read() returned invalid length",
+                    ));
+                }
+                Ok(Some(chunk))
+            };
+
+        if remaining > buffer_size {
+            if let Some(chunk) = read_from_raw(self, remaining)? {
+                payload.extend_from_slice(&chunk);
+            }
+            return Ok(payload);
+        }
+
+        if payload.is_empty() {
+            let Some(chunk) = read_from_raw(self, buffer_size)? else {
+                return Ok(payload);
+            };
+            if !chunk.is_empty() {
+                let take = chunk.len().min(remaining);
+                payload.extend_from_slice(&chunk[..take]);
+                if chunk.len() > take {
+                    self.io_buffered_store_read_buffer(instance, chunk[take..].to_vec())?;
+                }
+            }
+        }
+
+        Ok(payload)
     }
 
     pub(super) fn builtin_io_buffered_readinto(
@@ -3976,7 +4446,12 @@ impl Vm {
     }
 
     fn iobase_emit_unclosed_resource_warning(&mut self, receiver: &ObjRef) {
-        if Self::instance_attr_get(receiver, "_fd").is_none() {
+        let has_direct_fd = Self::instance_attr_get(receiver, "_fd").is_some();
+        let has_raw_fd = match Self::instance_attr_get(receiver, "raw") {
+            Some(Value::Instance(raw)) => Self::instance_attr_get(&raw, "_fd").is_some(),
+            _ => false,
+        };
+        if !has_direct_fd && !has_raw_fd {
             return;
         }
         let Some(warnings_module) = self.modules.get("warnings").cloned() else {
@@ -4038,7 +4513,7 @@ impl Vm {
             ],
             HashMap::new(),
         )?;
-        let flush_error = match self.call_internal(flush, Vec::new(), HashMap::new()) {
+        let flush_error = match self.call_internal_preserving_caller(flush, Vec::new(), HashMap::new()) {
             Ok(InternalCallOutcome::Value(_)) => None,
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
                 Some(self.runtime_error_from_active_exception("close() failed"))
@@ -4075,8 +4550,13 @@ impl Vm {
             Ok(value) => value,
             Err(_) => return Ok(Value::None),
         };
-        let _ = self.call_internal(close, Vec::new(), HashMap::new());
-        Ok(Value::None)
+        match self.call_internal_preserving_caller(close, Vec::new(), HashMap::new()) {
+            Ok(InternalCallOutcome::Value(_)) => Ok(Value::None),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                Err(self.runtime_error_from_active_exception("__del__() close failed"))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub(super) fn builtin_iobase_next(

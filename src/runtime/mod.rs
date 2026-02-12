@@ -1916,6 +1916,16 @@ fn bytes_payload(obj: &ObjRef) -> Option<Vec<u8>> {
     }
 }
 
+fn memoryview_payload(obj: &ObjRef) -> Option<Vec<u8>> {
+    match &*obj.kind() {
+        Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+            let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+            values[start..end].to_vec()
+        }),
+        _ => None,
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -1986,7 +1996,41 @@ impl PartialEq for Value {
                     _ => false,
                 }
             }
-            (Value::MemoryView(a), Value::MemoryView(b)) => a.id() == b.id(),
+            (Value::MemoryView(a), Value::MemoryView(b)) => {
+                if let (Some(left), Some(right)) = (memoryview_payload(a), memoryview_payload(b)) {
+                    left == right
+                } else {
+                    a.id() == b.id()
+                }
+            }
+            (Value::MemoryView(view), Value::Bytes(obj))
+            | (Value::Bytes(obj), Value::MemoryView(view)) => {
+                if let (Some(left), Some(right)) = (memoryview_payload(view), bytes_payload(obj)) {
+                    left == right
+                } else {
+                    false
+                }
+            }
+            (Value::MemoryView(view), Value::ByteArray(obj))
+            | (Value::ByteArray(obj), Value::MemoryView(view)) => {
+                if let (Some(left), Some(right)) =
+                    (memoryview_payload(view), bytearray_payload(obj))
+                {
+                    left == right
+                } else {
+                    false
+                }
+            }
+            (Value::MemoryView(view), Value::Instance(instance))
+            | (Value::Instance(instance), Value::MemoryView(view)) => {
+                if let (Some(left), Some(right)) =
+                    (memoryview_payload(view), instance_bytes_storage(instance))
+                {
+                    left == right
+                } else {
+                    false
+                }
+            }
             (Value::Iterator(a), Value::Iterator(b)) => a.id() == b.id(),
             (Value::Generator(a), Value::Generator(b)) => a.id() == b.id(),
             (Value::Module(a), Value::Module(b))
@@ -2554,16 +2598,19 @@ pub enum BuiltinFunction {
     IoFileSeekable,
     IoBufferedInit,
     IoBufferedRead,
+    IoBufferedRead1,
     IoBufferedReadLine,
     IoBufferedWrite,
     IoBufferedFlush,
     IoBufferedClose,
+    IoBufferedDetach,
     IoBufferedFileno,
     IoBufferedSeek,
     IoBufferedTell,
     IoBufferedTruncate,
     IoBufferedReadInto,
     IoBufferedReadInto1,
+    IoBufferedPeek,
     IoBufferedReadable,
     IoBufferedWritable,
     IoBufferedSeekable,
@@ -2877,16 +2924,19 @@ impl BuiltinFunction {
             | BuiltinFunction::IoFileDetach
             | BuiltinFunction::IoBufferedInit
             | BuiltinFunction::IoBufferedRead
+            | BuiltinFunction::IoBufferedRead1
             | BuiltinFunction::IoBufferedReadLine
             | BuiltinFunction::IoBufferedWrite
             | BuiltinFunction::IoBufferedFlush
             | BuiltinFunction::IoBufferedClose
+            | BuiltinFunction::IoBufferedDetach
             | BuiltinFunction::IoBufferedFileno
             | BuiltinFunction::IoBufferedSeek
             | BuiltinFunction::IoBufferedTell
             | BuiltinFunction::IoBufferedTruncate
             | BuiltinFunction::IoBufferedReadInto
             | BuiltinFunction::IoBufferedReadInto1
+            | BuiltinFunction::IoBufferedPeek
             | BuiltinFunction::IoBufferedReadable
             | BuiltinFunction::IoBufferedWritable
             | BuiltinFunction::IoBufferedSeekable
@@ -3001,7 +3051,22 @@ impl BuiltinFunction {
                         Object::Module(module_data) if module_data.name == "__array__" => {
                             match module_data.globals.get("values") {
                                 Some(Value::List(values)) => match &*values.kind() {
-                                    Object::List(items) => Ok(Value::Int(items.len() as i64)),
+                                    Object::List(items) => {
+                                        let itemsize = match module_data.globals.get("itemsize") {
+                                            Some(Value::Int(value)) if *value > 0 => *value as usize,
+                                            _ => 1usize,
+                                        };
+                                        let from_bytes_initializer = matches!(
+                                            module_data.globals.get("__pyrs_array_frombytes__"),
+                                            Some(Value::Bool(true))
+                                        );
+                                        let logical_len = if from_bytes_initializer && itemsize > 1 {
+                                            items.len() / itemsize
+                                        } else {
+                                            items.len()
+                                        };
+                                        Ok(Value::Int(logical_len as i64))
+                                    }
                                     _ => Err(RuntimeError::new("len() unsupported type")),
                                 },
                                 _ => Err(RuntimeError::new("len() unsupported type")),
@@ -4772,6 +4837,7 @@ impl BuiltinFunction {
                 };
                 let is_wide_char = typecode.starts_with('w');
                 let mut values = Vec::new();
+                let mut from_bytes_initializer = false;
                 if let Some(initializer) = args.get(1) {
                     match initializer {
                         Value::List(obj) => match &*obj.kind() {
@@ -4792,6 +4858,7 @@ impl BuiltinFunction {
                         },
                         Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
                             Object::Bytes(bytes) | Object::ByteArray(bytes) => {
+                                from_bytes_initializer = true;
                                 values.extend(bytes.iter().map(|value| Value::Int(*value as i64)));
                             }
                             _ => {
@@ -4823,6 +4890,10 @@ impl BuiltinFunction {
                     module_data
                         .globals
                         .insert("itemsize".to_string(), Value::Int(itemsize));
+                    module_data.globals.insert(
+                        "__pyrs_array_frombytes__".to_string(),
+                        Value::Bool(from_bytes_initializer),
+                    );
                     module_data.globals.insert("values".to_string(), values);
                 }
                 Ok(Value::Module(module))

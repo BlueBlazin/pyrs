@@ -371,12 +371,116 @@ impl Vm {
                 }
                 Ok(Value::Str(format!("frozenset({{{}}})", parts.join(", "))))
             }
+            Value::Instance(instance) => {
+                if let Some(rendered) = self.io_instance_repr(&instance)? {
+                    Ok(Value::Str(rendered))
+                } else {
+                    Ok(Value::Str(format_repr(&Value::Instance(instance))))
+                }
+            }
             other => Ok(Value::Str(format_repr(&other))),
         };
         if repr_guard.is_some() {
             self.repr_in_progress.pop();
         }
         rendered
+    }
+
+    fn io_instance_repr(&mut self, instance: &ObjRef) -> Result<Option<String>, RuntimeError> {
+        let (class_ref, class_name) = match &*instance.kind() {
+            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                Object::Class(class_data) => (instance_data.class.clone(), class_data.name.clone()),
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let mro_names = class_attr_walk(&class_ref)
+            .into_iter()
+            .filter_map(|candidate| match &*candidate.kind() {
+                Object::Class(class_data) => Some(class_data.name.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let has_mro = |needle: &str| mro_names.iter().any(|name| name == needle);
+        let try_getattr = |vm: &mut Vm,
+                           target: Value,
+                           name: &str|
+         -> Result<Option<Value>, RuntimeError> {
+            match vm.builtin_getattr(
+                vec![target, Value::Str(name.to_string())],
+                HashMap::new(),
+            ) {
+                Ok(value) => Ok(Some(value)),
+                Err(err) if is_missing_attribute_error(&err) => Ok(None),
+                Err(err) => Err(err),
+            }
+        };
+        let repr_text = |vm: &mut Vm, value: Value| -> Result<String, RuntimeError> {
+            match vm.builtin_repr(vec![value], HashMap::new())? {
+                Value::Str(text) => Ok(text),
+                _ => Err(RuntimeError::new("__repr__ returned non-string")),
+            }
+        };
+
+        if has_mro("BufferedReader")
+            || has_mro("BufferedWriter")
+            || has_mro("BufferedRandom")
+            || has_mro("BufferedRWPair")
+        {
+            let mut parts = Vec::new();
+            if let Some(raw) = try_getattr(self, Value::Instance(instance.clone()), "raw")? {
+                if !matches!(raw, Value::None) {
+                    if let Some(name_value) = try_getattr(self, raw, "name")? {
+                        if matches!(&name_value, Value::Instance(name_obj) if name_obj.id() == instance.id())
+                        {
+                            return Err(RuntimeError::new(
+                                "maximum recursion depth exceeded while getting the repr of an object",
+                            ));
+                        }
+                        parts.push(format!("name={}", repr_text(self, name_value)?));
+                    }
+                }
+            }
+            let suffix = if parts.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", parts.join(" "))
+            };
+            return Ok(Some(format!("<{}{suffix}>", class_name)));
+        }
+
+        if has_mro("TextIOWrapper") {
+            let mut parts = Vec::new();
+            if let Some(raw) = try_getattr(self, Value::Instance(instance.clone()), "raw")? {
+                if !matches!(raw, Value::None) {
+                    if let Some(name_value) = try_getattr(self, raw, "name")? {
+                        if matches!(&name_value, Value::Instance(name_obj) if name_obj.id() == instance.id())
+                        {
+                            return Err(RuntimeError::new(
+                                "maximum recursion depth exceeded while getting the repr of an object",
+                            ));
+                        }
+                        parts.push(format!("name={}", repr_text(self, name_value)?));
+                    }
+                }
+            }
+            if let Some(mode_value) = try_getattr(self, Value::Instance(instance.clone()), "mode")? {
+                parts.push(format!("mode={}", repr_text(self, mode_value)?));
+            }
+            if let Some(encoding_value) =
+                try_getattr(self, Value::Instance(instance.clone()), "encoding")?
+            {
+                parts.push(format!("encoding={}", repr_text(self, encoding_value)?));
+            }
+            let suffix = if parts.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", parts.join(" "))
+            };
+            return Ok(Some(format!("<{}{suffix}>", class_name)));
+        }
+
+        Ok(None)
     }
 
     pub(super) fn builtin_ascii(
@@ -3171,12 +3275,24 @@ impl Vm {
                 ));
             }
         };
+        let mut from_bytes_initializer = false;
         let mut values = if args.is_empty() {
             Vec::new()
         } else {
             let initializer = args.remove(0);
             match initializer {
                 Value::None => Vec::new(),
+                Value::Bytes(obj) | Value::ByteArray(obj) => {
+                    from_bytes_initializer = true;
+                    let bytes = match &*obj.kind() {
+                        Object::Bytes(bytes) | Object::ByteArray(bytes) => bytes.clone(),
+                        _ => Vec::new(),
+                    };
+                    bytes
+                        .iter()
+                        .map(|byte| Value::Int(*byte as i64))
+                        .collect()
+                }
                 Value::Str(text) => {
                     if !wide_char_typecode {
                         return Err(RuntimeError::new(format!(
@@ -3223,6 +3339,10 @@ impl Vm {
             module_data
                 .globals
                 .insert("itemsize".to_string(), Value::Int(itemsize));
+            module_data.globals.insert(
+                "__pyrs_array_frombytes__".to_string(),
+                Value::Bool(from_bytes_initializer),
+            );
             module_data.globals.insert("values".to_string(), values);
         }
         Ok(Value::Module(module))

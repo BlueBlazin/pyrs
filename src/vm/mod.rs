@@ -1290,6 +1290,109 @@ impl Vm {
         }
     }
 
+    fn runtime_error_to_exception_value(&mut self, err: RuntimeError) -> Value {
+        let classified = classify_runtime_error(&err.message);
+        let exception_type = if classified == "RuntimeError" {
+            extract_runtime_error_exception_name(&err.message)
+                .unwrap_or_else(|| classified.to_string())
+        } else {
+            classified.to_string()
+        };
+        let mut exception_message = Some(err.message.clone());
+        if let Some(from_traceback) =
+            extract_runtime_error_final_message(&err.message, &exception_type)
+        {
+            exception_message = from_traceback;
+        } else if let Some(from_prefixed) =
+            extract_prefixed_exception_message(&err.message, &exception_type)
+        {
+            exception_message = from_prefixed;
+        }
+        let exception = ExceptionObject::new(exception_type, exception_message);
+        let args = if let Some(message) = &exception.message {
+            self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+        } else {
+            self.heap.alloc_tuple(Vec::new())
+        };
+        exception
+            .attrs
+            .borrow_mut()
+            .insert("args".to_string(), args);
+        Value::Exception(Box::new(exception))
+    }
+
+    fn emit_unraisable_exception(
+        &mut self,
+        exception: Value,
+        object: Option<Value>,
+        err_msg: Option<&str>,
+    ) {
+        let exc_type = match &exception {
+            Value::Exception(exc) => self
+                .builtins
+                .get(&exc.name)
+                .cloned()
+                .unwrap_or_else(|| Value::ExceptionType(exc.name.clone())),
+            Value::ExceptionType(name) => self
+                .builtins
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| Value::ExceptionType(name.clone())),
+            Value::Class(class) => Value::Class(class.clone()),
+            _ => self
+                .builtins
+                .get("RuntimeError")
+                .cloned()
+                .unwrap_or_else(|| Value::ExceptionType("RuntimeError".to_string())),
+        };
+        let record = match self
+            .heap
+            .alloc_module(ModuleObject::new("__unraisable__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => return,
+        };
+        if let Object::Module(module_data) = &mut *record.kind_mut() {
+            module_data.globals.insert("exc_type".to_string(), exc_type);
+            module_data
+                .globals
+                .insert("exc_value".to_string(), exception.clone());
+            module_data
+                .globals
+                .insert("exc_traceback".to_string(), Value::None);
+            module_data.globals.insert(
+                "err_msg".to_string(),
+                err_msg
+                    .map(|value| Value::Str(value.to_string()))
+                    .unwrap_or(Value::None),
+            );
+            module_data
+                .globals
+                .insert("object".to_string(), object.unwrap_or(Value::None));
+        }
+        let hook = self.modules.get("sys").and_then(|sys_module| {
+            let Object::Module(module_data) = &*sys_module.kind() else {
+                return None;
+            };
+            module_data
+                .globals
+                .get("unraisablehook")
+                .cloned()
+                .or_else(|| module_data.globals.get("__unraisablehook__").cloned())
+        });
+        let Some(hook) = hook else {
+            return;
+        };
+        let _ = self.call_internal_preserving_caller(
+            hook,
+            vec![Value::Module(record)],
+            HashMap::new(),
+        );
+        if let Some(frame) = self.frames.last_mut() {
+            frame.active_exception = None;
+        }
+    }
+
     fn run_pending_del_finalizers(&mut self) {
         let mut ready = Vec::new();
         for (id, instance) in &self.pending_del_instances {
@@ -1309,7 +1412,33 @@ impl Vm {
                 _ => continue,
             };
             self.finalized_del_objects.insert(obj_id);
-            let _ = self.call_internal_preserving_caller(del_method, Vec::new(), HashMap::new());
+            match self.call_internal_preserving_caller(del_method, Vec::new(), HashMap::new()) {
+                Ok(InternalCallOutcome::Value(_)) => {}
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    let active_exception = self
+                        .frames
+                        .last_mut()
+                        .and_then(|frame| frame.active_exception.take())
+                        .unwrap_or_else(|| {
+                            self.runtime_error_to_exception_value(RuntimeError::new(
+                                "RuntimeError: __del__ finalizer failed",
+                            ))
+                        });
+                    self.emit_unraisable_exception(
+                        active_exception,
+                        Some(receiver.clone()),
+                        Some("Exception ignored in __del__"),
+                    );
+                }
+                Err(err) => {
+                    let exception = self.runtime_error_to_exception_value(err);
+                    self.emit_unraisable_exception(
+                        exception,
+                        Some(receiver.clone()),
+                        Some("Exception ignored in __del__"),
+                    );
+                }
+            }
             if let Some(frame) = self.frames.last_mut() {
                 frame.active_exception = None;
             }

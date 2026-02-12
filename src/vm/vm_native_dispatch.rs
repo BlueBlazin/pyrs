@@ -5313,10 +5313,12 @@ impl Vm {
             BuiltinFunction::IoFileSeekable => self.builtin_io_file_seekable(args, kwargs),
             BuiltinFunction::IoBufferedInit => self.builtin_io_buffered_init(args, kwargs),
             BuiltinFunction::IoBufferedRead => self.builtin_io_buffered_read(args, kwargs),
+            BuiltinFunction::IoBufferedRead1 => self.builtin_io_buffered_read1(args, kwargs),
             BuiltinFunction::IoBufferedReadLine => self.builtin_io_buffered_readline(args, kwargs),
             BuiltinFunction::IoBufferedWrite => self.builtin_io_buffered_write(args, kwargs),
             BuiltinFunction::IoBufferedFlush => self.builtin_io_buffered_flush(args, kwargs),
             BuiltinFunction::IoBufferedClose => self.builtin_io_buffered_close(args, kwargs),
+            BuiltinFunction::IoBufferedDetach => self.builtin_io_buffered_detach(args, kwargs),
             BuiltinFunction::IoBufferedFileno => self.builtin_io_buffered_fileno(args, kwargs),
             BuiltinFunction::IoBufferedSeek => self.builtin_io_buffered_seek(args, kwargs),
             BuiltinFunction::IoBufferedTell => self.builtin_io_buffered_tell(args, kwargs),
@@ -5325,6 +5327,7 @@ impl Vm {
             BuiltinFunction::IoBufferedReadInto1 => {
                 self.builtin_io_buffered_readinto1(args, kwargs)
             }
+            BuiltinFunction::IoBufferedPeek => self.builtin_io_buffered_peek(args, kwargs),
             BuiltinFunction::IoBufferedReadable => self.builtin_io_buffered_readable(args, kwargs),
             BuiltinFunction::IoBufferedWritable => self.builtin_io_buffered_writable(args, kwargs),
             BuiltinFunction::IoBufferedSeekable => self.builtin_io_buffered_seekable(args, kwargs),
