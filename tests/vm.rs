@@ -2983,6 +2983,41 @@ ok = (bytes(buf) == b"pd")
 }
 
 #[test]
+fn bytearray_extend_accepts_bytes_like_and_integer_iterables() {
+    let source = r#"buf = bytearray(b"ab")
+buf.extend([99, 100])
+buf.extend(memoryview(b"ef"))
+ok = (bytes(buf) == b"abcdef")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytearray_extend_rejects_int_and_str_sources_with_cpython_messages() {
+    let source = r#"err_int = False
+err_str = False
+try:
+    bytearray().extend(1)
+except TypeError as exc:
+    err_int = ("can't extend bytearray with int" in str(exc))
+try:
+    bytearray().extend("x")
+except TypeError as exc:
+    err_str = ("expected iterable of integers" in str(exc))
+ok = err_int and err_str
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn classmethod_bound_method_reduce_ex_returns_getattr_tuple() {
     let source = r#"class C:
     @classmethod
@@ -6439,6 +6474,26 @@ fn imports_gc_errno_weakref_and_array_modules() {
 }
 
 #[test]
+fn array_constructor_accepts_range_initializer() {
+    let source = "import array\nvals = array.array('i', range(10))\nout = []\nfor value in vals:\n    out.append(value)\nok = vals.itemsize == 4 and out == list(range(10))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn array_constructor_rejects_str_initializer_for_numeric_typecode() {
+    let source = "import array\nok = False\ntry:\n    array.array('i', 'abc')\nexcept Exception:\n    ok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn weakref_finalize_exposes_detach_tuple_contract() {
     let source = r#"import weakref
 class Box:
@@ -7592,11 +7647,19 @@ is_tty = os.isatty(fd)\n\
 os.close(fd)\n\
 fdw = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)\n\
 written = os.write(fdw, b'xyz')\n\
+os.ftruncate(fdw, 2)\n\
 os.close(fdw)\n\
 fdr = os.open(out, os.O_RDONLY)\n\
+start = os.lseek(fdr, 0, os.SEEK_CUR)\n\
+end = os.lseek(fdr, 0, os.SEEK_END)\n\
+os.lseek(fdr, 0, os.SEEK_SET)\n\
 written_bytes = os.read(fdr, 16)\n\
 os.close(fdr)\n\
-written_ok = (written == 3 and written_bytes == b'xyz')\n\
+fdr2 = os.open(out, os.O_RDONLY)\n\
+sink = bytearray(b'zzzz')\n\
+readinto_n = os.readinto(fdr2, sink)\n\
+os.close(fdr2)\n\
+written_ok = (written == 3 and start == 0 and end == 2 and written_bytes == b'xy' and readinto_n == 2 and sink[:2] == b'xy')\n\
 st = os.stat(path)\n\
 lst = os.lstat(path)\n\
 pst = posix.stat(path)\n\

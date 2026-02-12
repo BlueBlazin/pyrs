@@ -624,6 +624,11 @@ impl Vm {
         receiver_value: Value,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        let type_name = if matches!(receiver_value, Value::ByteArray(_)) {
+            "bytearray"
+        } else {
+            "bytes"
+        };
         let kind = match attr_name {
             "decode" => NativeMethodKind::BytesDecode,
             "startswith" => NativeMethodKind::BytesStartsWith,
@@ -631,6 +636,9 @@ impl Vm {
             "find" => NativeMethodKind::BytesFind,
             "translate" => NativeMethodKind::BytesTranslate,
             "join" => NativeMethodKind::BytesJoin,
+            "extend" if matches!(receiver_value, Value::ByteArray(_)) => {
+                NativeMethodKind::ByteArrayExtend
+            }
             "clear" if matches!(receiver_value, Value::ByteArray(_)) => {
                 NativeMethodKind::ByteArrayClear
             }
@@ -639,7 +647,8 @@ impl Vm {
             }
             _ => {
                 return Err(RuntimeError::new(format!(
-                    "bytes has no attribute '{}'",
+                    "{} has no attribute '{}'",
+                    type_name,
                     attr_name
                 )));
             }
@@ -761,7 +770,9 @@ impl Vm {
             "nbytes" => match &*view.kind() {
                 Object::MemoryView(view_data) => {
                     with_bytes_like_source(&view_data.source, |values| {
-                        Value::Int(values.len() as i64)
+                        let (start, end) =
+                            memoryview_bounds(view_data.start, view_data.length, values.len());
+                        Value::Int(end.saturating_sub(start) as i64)
                     })
                     .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
                 }

@@ -1637,6 +1637,42 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
+            NativeMethodKind::ByteArrayExtend => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("extend() takes exactly one argument"));
+                }
+                let source = args.remove(0);
+                let mut extension = if matches!(source, Value::Int(_)) {
+                    return Err(RuntimeError::new("TypeError: can't extend bytearray with int"));
+                } else if matches!(source, Value::Str(_)) {
+                    return Err(RuntimeError::new(
+                        "TypeError: expected iterable of integers; got: 'str'",
+                    ));
+                } else {
+                    self.value_to_bytes_payload(source)?
+                };
+                if extension.is_empty() {
+                    return Ok(NativeCallResult::Value(Value::None));
+                }
+                let buffer = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::ByteArray(obj)) => obj.clone(),
+                        _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                };
+                let has_exports = self.heap.count_live_memoryviews_for_source(&buffer) > 0;
+                let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
+                    return Err(RuntimeError::new("bytearray receiver is invalid"));
+                };
+                if has_exports {
+                    return Err(RuntimeError::new(
+                        "BufferError: Existing exports of data: object cannot be re-sized",
+                    ));
+                }
+                values.append(&mut extension);
+                Ok(NativeCallResult::Value(Value::None))
+            }
             NativeMethodKind::ByteArrayClear => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("clear() expects no arguments"));
@@ -1711,16 +1747,21 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("toreadonly() expects no arguments"));
                 }
-                let (source, itemsize, format) = match &*receiver.kind() {
+                let (source, itemsize, format, start, length) = match &*receiver.kind() {
                     Object::MemoryView(view_data) => (
                         view_data.source.clone(),
                         view_data.itemsize,
                         view_data.format.clone(),
+                        view_data.start,
+                        view_data.length,
                     ),
                     _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
                 };
-                let bytes = with_bytes_like_source(&source, |values| values.to_vec())
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                let bytes = with_bytes_like_source(&source, |values| {
+                    let (start, end) = memoryview_bounds(start, length, values.len());
+                    values[start..end].to_vec()
+                })
+                .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
                 let source = match self.heap.alloc_bytes(bytes) {
                     Value::Bytes(obj) => obj,
                     _ => unreachable!(),
@@ -1753,37 +1794,54 @@ impl Vm {
                         return Err(RuntimeError::new("memoryview.cast() unsupported format"));
                     }
                 };
-                let source = match &*receiver.kind() {
-                    Object::MemoryView(view_data) => view_data.source.clone(),
+                let (source, start, length) = match &*receiver.kind() {
+                    Object::MemoryView(view_data) => {
+                        (view_data.source.clone(), view_data.start, view_data.length)
+                    }
                     _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
                 };
-                let byte_len = with_bytes_like_source(&source, |values| values.len())
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                let byte_len = with_bytes_like_source(&source, |values| {
+                    let (start, end) = memoryview_bounds(start, length, values.len());
+                    end.saturating_sub(start)
+                })
+                .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
                 if byte_len % itemsize != 0 {
                     return Err(RuntimeError::new(
                         "memoryview.cast() length is not a multiple of itemsize",
                     ));
                 }
-                Ok(NativeCallResult::Value(self.heap.alloc_memoryview_with(
+                let view = self.heap.alloc_memoryview_with(
                     source,
                     itemsize,
                     Some(format),
-                )))
+                );
+                if let Value::MemoryView(view_obj) = &view {
+                    if let Object::MemoryView(view_data) = &mut *view_obj.kind_mut() {
+                        view_data.start = start;
+                        view_data.length = length;
+                    }
+                }
+                Ok(NativeCallResult::Value(view))
             }
             NativeMethodKind::MemoryViewToList => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("tolist() expects no arguments"));
                 }
-                let (source, itemsize, format) = match &*receiver.kind() {
+                let (source, itemsize, format, start, length) = match &*receiver.kind() {
                     Object::MemoryView(view_data) => (
                         view_data.source.clone(),
                         view_data.itemsize.max(1),
                         view_data.format.clone(),
+                        view_data.start,
+                        view_data.length,
                     ),
                     _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
                 };
-                let bytes = with_bytes_like_source(&source, |values| values.to_vec())
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                let bytes = with_bytes_like_source(&source, |values| {
+                    let (start, end) = memoryview_bounds(start, length, values.len());
+                    values[start..end].to_vec()
+                })
+                .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
                 if bytes.len() % itemsize != 0 {
                     return Err(RuntimeError::new(
                         "memoryview length is not a multiple of itemsize",
@@ -4729,6 +4787,7 @@ impl Vm {
             BuiltinFunction::ObjectDelAttr => self.builtin_object_delattr(args, kwargs),
             BuiltinFunction::List => self.builtin_list(args, kwargs),
             BuiltinFunction::Tuple => self.builtin_tuple(args, kwargs),
+            BuiltinFunction::ArrayArray => self.builtin_array_array(args, kwargs),
             BuiltinFunction::Dict => self.builtin_dict(args, kwargs),
             BuiltinFunction::DictFromKeys => self.builtin_dict_fromkeys(args, kwargs),
             BuiltinFunction::Set => self.builtin_set(args, kwargs),
@@ -4856,11 +4915,16 @@ impl Vm {
             BuiltinFunction::OsOpen => self.builtin_os_open(args, kwargs),
             BuiltinFunction::OsPipe => self.builtin_os_pipe(args, kwargs),
             BuiltinFunction::OsRead => self.builtin_os_read(args, kwargs),
+            BuiltinFunction::OsReadInto => self.builtin_os_readinto(args, kwargs),
             BuiltinFunction::OsWrite => self.builtin_os_write(args, kwargs),
             BuiltinFunction::OsDup => self.builtin_os_dup(args, kwargs),
+            BuiltinFunction::OsLSeek => self.builtin_os_lseek(args, kwargs),
+            BuiltinFunction::OsFTruncate => self.builtin_os_ftruncate(args, kwargs),
             BuiltinFunction::OsClose => self.builtin_os_close(args, kwargs),
             BuiltinFunction::OsKill => self.builtin_os_kill(args, kwargs),
             BuiltinFunction::OsIsATty => self.builtin_os_isatty(args, kwargs),
+            BuiltinFunction::OsSetInheritable => self.builtin_os_set_inheritable(args, kwargs),
+            BuiltinFunction::OsGetInheritable => self.builtin_os_get_inheritable(args, kwargs),
             BuiltinFunction::OsURandom => self.builtin_os_urandom(args, kwargs),
             BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
             BuiltinFunction::OsLStat => self.builtin_os_lstat(args, kwargs),
@@ -5229,6 +5293,7 @@ impl Vm {
             BuiltinFunction::IoFileInit => self.builtin_io_file_init(args, kwargs),
             BuiltinFunction::IoFileRead => self.builtin_io_file_read(args, kwargs),
             BuiltinFunction::IoFileReadLine => self.builtin_io_file_readline(args, kwargs),
+            BuiltinFunction::IoFileReadInto => self.builtin_io_file_readinto(args, kwargs),
             BuiltinFunction::IoFileReadLines => self.builtin_io_file_readlines(args, kwargs),
             BuiltinFunction::IoFileWrite => self.builtin_io_file_write(args, kwargs),
             BuiltinFunction::IoFileWriteLines => self.builtin_io_file_writelines(args, kwargs),
@@ -5250,14 +5315,70 @@ impl Vm {
             BuiltinFunction::IoBufferedRead => self.builtin_io_buffered_read(args, kwargs),
             BuiltinFunction::IoBufferedReadLine => self.builtin_io_buffered_readline(args, kwargs),
             BuiltinFunction::IoBufferedWrite => self.builtin_io_buffered_write(args, kwargs),
+            BuiltinFunction::IoBufferedFlush => self.builtin_io_buffered_flush(args, kwargs),
+            BuiltinFunction::IoBufferedClose => self.builtin_io_buffered_close(args, kwargs),
+            BuiltinFunction::IoBufferedFileno => self.builtin_io_buffered_fileno(args, kwargs),
             BuiltinFunction::IoBufferedSeek => self.builtin_io_buffered_seek(args, kwargs),
             BuiltinFunction::IoBufferedTell => self.builtin_io_buffered_tell(args, kwargs),
+            BuiltinFunction::IoBufferedTruncate => {
+                self.builtin_io_buffered_truncate(args, kwargs)
+            }
             BuiltinFunction::IoBufferedReadInto => self.builtin_io_buffered_readinto(args, kwargs),
             BuiltinFunction::IoBufferedReadInto1 => {
                 self.builtin_io_buffered_readinto1(args, kwargs)
             }
+            BuiltinFunction::IoBufferedReadable => self.builtin_io_buffered_readable(args, kwargs),
+            BuiltinFunction::IoBufferedWritable => self.builtin_io_buffered_writable(args, kwargs),
+            BuiltinFunction::IoBufferedSeekable => self.builtin_io_buffered_seekable(args, kwargs),
+            BuiltinFunction::IoBufferedRWPairInit => {
+                self.builtin_io_buffered_rwpair_init(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairRead => {
+                self.builtin_io_buffered_rwpair_read(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairReadLine => {
+                self.builtin_io_buffered_rwpair_readline(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairRead1 => {
+                self.builtin_io_buffered_rwpair_read1(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairReadInto => {
+                self.builtin_io_buffered_rwpair_readinto(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairReadInto1 => {
+                self.builtin_io_buffered_rwpair_readinto1(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairWrite => {
+                self.builtin_io_buffered_rwpair_write(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairFlush => {
+                self.builtin_io_buffered_rwpair_flush(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairClose => {
+                self.builtin_io_buffered_rwpair_close(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairReadable => {
+                self.builtin_io_buffered_rwpair_readable(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairWritable => {
+                self.builtin_io_buffered_rwpair_writable(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairSeekable => {
+                self.builtin_io_buffered_rwpair_seekable(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairDetach => {
+                self.builtin_io_buffered_rwpair_detach(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairPeek => {
+                self.builtin_io_buffered_rwpair_peek(args, kwargs)
+            }
             BuiltinFunction::IoRawRead => self.builtin_io_raw_read(args, kwargs),
             BuiltinFunction::IoRawReadAll => self.builtin_io_raw_readall(args, kwargs),
+            BuiltinFunction::IoBaseReadLine => self.builtin_iobase_readline(args, kwargs),
+            BuiltinFunction::IoBaseReadLines => self.builtin_iobase_readlines(args, kwargs),
+            BuiltinFunction::IoBaseWriteLines => self.builtin_iobase_writelines(args, kwargs),
+            BuiltinFunction::IoBaseEnter => self.builtin_iobase_enter(args, kwargs),
+            BuiltinFunction::IoBaseExit => self.builtin_iobase_exit(args, kwargs),
             BuiltinFunction::IoBaseIter => self.builtin_iobase_iter(args, kwargs),
             BuiltinFunction::IoBaseNext => self.builtin_iobase_next(args, kwargs),
             BuiltinFunction::IoBaseClose => self.builtin_iobase_close(args, kwargs),
@@ -5283,6 +5404,7 @@ impl Vm {
             BuiltinFunction::StringIOClose => self.builtin_stringio_close(args, kwargs),
             BuiltinFunction::StringIOFlush => self.builtin_stringio_flush(args, kwargs),
             BuiltinFunction::StringIOIsAtty => self.builtin_stringio_isatty(args, kwargs),
+            BuiltinFunction::StringIOFileno => self.builtin_stringio_fileno(args, kwargs),
             BuiltinFunction::StringIOReadable => self.builtin_stringio_readable(args, kwargs),
             BuiltinFunction::StringIOWritable => self.builtin_stringio_writable(args, kwargs),
             BuiltinFunction::StringIOSeekable => self.builtin_stringio_seekable(args, kwargs),
@@ -5312,6 +5434,7 @@ impl Vm {
             BuiltinFunction::BytesIOReadable => self.builtin_bytesio_readable(args, kwargs),
             BuiltinFunction::BytesIOWritable => self.builtin_bytesio_writable(args, kwargs),
             BuiltinFunction::BytesIOSeekable => self.builtin_bytesio_seekable(args, kwargs),
+            BuiltinFunction::BytesIOFileno => self.builtin_bytesio_fileno(args, kwargs),
             BuiltinFunction::StructCalcSize => self.builtin_struct_calcsize(args, kwargs),
             BuiltinFunction::StructPack => self.builtin_struct_pack(args, kwargs),
             BuiltinFunction::StructUnpack => self.builtin_struct_unpack(args, kwargs),
@@ -5343,6 +5466,7 @@ impl Vm {
             BuiltinFunction::AsyncioSleep => self.builtin_asyncio_sleep(args, kwargs),
             BuiltinFunction::AsyncioCreateTask => self.builtin_asyncio_create_task(args, kwargs),
             BuiltinFunction::AsyncioGather => self.builtin_asyncio_gather(args, kwargs),
+            BuiltinFunction::ThreadingExcepthook => self.builtin_threading_excepthook(args, kwargs),
             BuiltinFunction::ThreadingGetIdent => self.builtin_threading_get_ident(args, kwargs),
             BuiltinFunction::ThreadStartNewThread => {
                 self.builtin_thread_start_new_thread(args, kwargs)

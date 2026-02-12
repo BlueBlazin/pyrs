@@ -246,6 +246,7 @@ pub enum NativeMethodKind {
     BytesFind,
     BytesTranslate,
     BytesJoin,
+    ByteArrayExtend,
     ByteArrayClear,
     ByteArrayResize,
     MemoryViewEnter,
@@ -1104,6 +1105,8 @@ pub struct MemoryViewObject {
     pub format: Option<String>,
     pub export_owner: Option<ObjRef>,
     pub released: bool,
+    pub start: usize,
+    pub length: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -1205,6 +1208,8 @@ impl Heap {
             format: None,
             export_owner: None,
             released: false,
+            start: 0,
+            length: None,
         })))
     }
 
@@ -1220,6 +1225,8 @@ impl Heap {
             format,
             export_owner: None,
             released: false,
+            start: 0,
+            length: None,
         })))
     }
 
@@ -2240,11 +2247,16 @@ pub enum BuiltinFunction {
     OsOpen,
     OsPipe,
     OsRead,
+    OsReadInto,
     OsWrite,
     OsDup,
+    OsLSeek,
+    OsFTruncate,
     OsClose,
     OsKill,
     OsIsATty,
+    OsSetInheritable,
+    OsGetInheritable,
     OsURandom,
     OsStat,
     OsLStat,
@@ -2522,6 +2534,7 @@ pub enum BuiltinFunction {
     IoFileInit,
     IoFileRead,
     IoFileReadLine,
+    IoFileReadInto,
     IoFileReadLines,
     IoFileWrite,
     IoFileWriteLines,
@@ -2543,12 +2556,38 @@ pub enum BuiltinFunction {
     IoBufferedRead,
     IoBufferedReadLine,
     IoBufferedWrite,
+    IoBufferedFlush,
+    IoBufferedClose,
+    IoBufferedFileno,
     IoBufferedSeek,
     IoBufferedTell,
+    IoBufferedTruncate,
     IoBufferedReadInto,
     IoBufferedReadInto1,
+    IoBufferedReadable,
+    IoBufferedWritable,
+    IoBufferedSeekable,
+    IoBufferedRWPairInit,
+    IoBufferedRWPairRead,
+    IoBufferedRWPairReadLine,
+    IoBufferedRWPairRead1,
+    IoBufferedRWPairReadInto,
+    IoBufferedRWPairReadInto1,
+    IoBufferedRWPairWrite,
+    IoBufferedRWPairFlush,
+    IoBufferedRWPairClose,
+    IoBufferedRWPairReadable,
+    IoBufferedRWPairWritable,
+    IoBufferedRWPairSeekable,
+    IoBufferedRWPairDetach,
+    IoBufferedRWPairPeek,
     IoRawRead,
     IoRawReadAll,
+    IoBaseReadLine,
+    IoBaseReadLines,
+    IoBaseWriteLines,
+    IoBaseEnter,
+    IoBaseExit,
     IoBaseIter,
     IoBaseNext,
     IoBaseClose,
@@ -2574,6 +2613,7 @@ pub enum BuiltinFunction {
     StringIOClose,
     StringIOFlush,
     StringIOIsAtty,
+    StringIOFileno,
     StringIOReadable,
     StringIOWritable,
     StringIOSeekable,
@@ -2600,6 +2640,7 @@ pub enum BuiltinFunction {
     BytesIOClose,
     BytesIOFlush,
     BytesIOIsAtty,
+    BytesIOFileno,
     BytesIOReadable,
     BytesIOWritable,
     BytesIOSeekable,
@@ -2610,6 +2651,7 @@ pub enum BuiltinFunction {
     AsyncioSleep,
     AsyncioCreateTask,
     AsyncioGather,
+    ThreadingExcepthook,
     ThreadingGetIdent,
     ThreadingCurrentThread,
     ThreadingMainThread,
@@ -2787,6 +2829,7 @@ impl BuiltinFunction {
             | BuiltinFunction::StringIOClose
             | BuiltinFunction::StringIOFlush
             | BuiltinFunction::StringIOIsAtty
+            | BuiltinFunction::StringIOFileno
             | BuiltinFunction::StringIOReadable
             | BuiltinFunction::StringIOWritable
             | BuiltinFunction::StringIOSeekable
@@ -2811,12 +2854,19 @@ impl BuiltinFunction {
             | BuiltinFunction::BytesIOClose
             | BuiltinFunction::BytesIOFlush
             | BuiltinFunction::BytesIOIsAtty
+            | BuiltinFunction::BytesIOFileno
             | BuiltinFunction::BytesIOReadable
             | BuiltinFunction::BytesIOWritable
             | BuiltinFunction::BytesIOSeekable
             | BuiltinFunction::IoFileInit
+            | BuiltinFunction::IoFileReadInto
             | BuiltinFunction::IoFileWriteLines
             | BuiltinFunction::IoFileTruncate
+            | BuiltinFunction::IoBaseReadLine
+            | BuiltinFunction::IoBaseReadLines
+            | BuiltinFunction::IoBaseWriteLines
+            | BuiltinFunction::IoBaseEnter
+            | BuiltinFunction::IoBaseExit
             | BuiltinFunction::IoBaseIter
             | BuiltinFunction::IoBaseNext
             | BuiltinFunction::IoBaseClose
@@ -2829,10 +2879,31 @@ impl BuiltinFunction {
             | BuiltinFunction::IoBufferedRead
             | BuiltinFunction::IoBufferedReadLine
             | BuiltinFunction::IoBufferedWrite
+            | BuiltinFunction::IoBufferedFlush
+            | BuiltinFunction::IoBufferedClose
+            | BuiltinFunction::IoBufferedFileno
             | BuiltinFunction::IoBufferedSeek
             | BuiltinFunction::IoBufferedTell
+            | BuiltinFunction::IoBufferedTruncate
             | BuiltinFunction::IoBufferedReadInto
             | BuiltinFunction::IoBufferedReadInto1
+            | BuiltinFunction::IoBufferedReadable
+            | BuiltinFunction::IoBufferedWritable
+            | BuiltinFunction::IoBufferedSeekable
+            | BuiltinFunction::IoBufferedRWPairInit
+            | BuiltinFunction::IoBufferedRWPairRead
+            | BuiltinFunction::IoBufferedRWPairReadLine
+            | BuiltinFunction::IoBufferedRWPairRead1
+            | BuiltinFunction::IoBufferedRWPairReadInto
+            | BuiltinFunction::IoBufferedRWPairReadInto1
+            | BuiltinFunction::IoBufferedRWPairWrite
+            | BuiltinFunction::IoBufferedRWPairFlush
+            | BuiltinFunction::IoBufferedRWPairClose
+            | BuiltinFunction::IoBufferedRWPairReadable
+            | BuiltinFunction::IoBufferedRWPairWritable
+            | BuiltinFunction::IoBufferedRWPairSeekable
+            | BuiltinFunction::IoBufferedRWPairDetach
+            | BuiltinFunction::IoBufferedRWPairPeek
             | BuiltinFunction::IoRawRead
             | BuiltinFunction::IoRawReadAll
             | BuiltinFunction::RePatternFindAll
@@ -2918,7 +2989,9 @@ impl BuiltinFunction {
                         Object::MemoryView(view) => {
                             let itemsize = view.itemsize.max(1);
                             with_bytes_like_source(&view.source, |values| {
-                                Ok(Value::Int((values.len() / itemsize) as i64))
+                                let (start, end) =
+                                    memoryview_bounds(view.start, view.length, values.len());
+                                Ok(Value::Int((end.saturating_sub(start) / itemsize) as i64))
                             })
                             .unwrap_or_else(|| Err(RuntimeError::new("len() unsupported type")))
                         }
@@ -3435,8 +3508,13 @@ impl BuiltinFunction {
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => {
                             with_bytes_like_source(&view.source, |values| {
+                                let (start, end) =
+                                    memoryview_bounds(view.start, view.length, values.len());
                                 Ok(heap.alloc_list(
-                                    values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                                    values[start..end]
+                                        .iter()
+                                        .map(|byte| Value::Int(*byte as i64))
+                                        .collect(),
                                 ))
                             })
                             .unwrap_or_else(|| Err(RuntimeError::new("list() unsupported type")))
@@ -3513,8 +3591,13 @@ impl BuiltinFunction {
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => {
                             with_bytes_like_source(&view.source, |values| {
+                                let (start, end) =
+                                    memoryview_bounds(view.start, view.length, values.len());
                                 Ok(heap.alloc_tuple(
-                                    values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
+                                    values[start..end]
+                                        .iter()
+                                        .map(|byte| Value::Int(*byte as i64))
+                                        .collect(),
                                 ))
                             })
                             .unwrap_or_else(|| Err(RuntimeError::new("tuple() unsupported type")))
@@ -4876,11 +4959,16 @@ impl BuiltinFunction {
             | BuiltinFunction::OsOpen
             | BuiltinFunction::OsPipe
             | BuiltinFunction::OsRead
+            | BuiltinFunction::OsReadInto
             | BuiltinFunction::OsWrite
             | BuiltinFunction::OsDup
+            | BuiltinFunction::OsLSeek
+            | BuiltinFunction::OsFTruncate
             | BuiltinFunction::OsClose
             | BuiltinFunction::OsKill
             | BuiltinFunction::OsIsATty
+            | BuiltinFunction::OsSetInheritable
+            | BuiltinFunction::OsGetInheritable
             | BuiltinFunction::OsURandom
             | BuiltinFunction::OsStat
             | BuiltinFunction::OsLStat
@@ -5090,6 +5178,7 @@ impl BuiltinFunction {
             | BuiltinFunction::AsyncioSleep
             | BuiltinFunction::AsyncioCreateTask
             | BuiltinFunction::AsyncioGather
+            | BuiltinFunction::ThreadingExcepthook
             | BuiltinFunction::ThreadingGetIdent
             | BuiltinFunction::ThreadStartNewThread
             | BuiltinFunction::ThreadingCurrentThread
@@ -5505,7 +5594,11 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
+                let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+                Ok(values[start..end]
+                    .iter()
+                    .map(|byte| Value::Int(*byte as i64))
+                    .collect())
             })
             .unwrap_or_else(|| Err(RuntimeError::new("expected iterable"))),
             _ => Err(RuntimeError::new("expected iterable")),
@@ -5593,12 +5686,15 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 },
                 IteratorKind::MemoryView(memory_obj) => match &*memory_obj.kind() {
                     Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                        let start = iterator.index.min(values.len());
-                        let out = values[start..]
+                        let (view_start, view_end) =
+                            memoryview_bounds(view.start, view.length, values.len());
+                        let view_len = view_end.saturating_sub(view_start);
+                        let start = iterator.index.min(view_len);
+                        let out = values[view_start + start..view_end]
                             .iter()
                             .map(|byte| Value::Int(*byte as i64))
                             .collect::<Vec<_>>();
-                        iterator.index = values.len();
+                        iterator.index = view_len;
                         Ok(out)
                     })
                     .unwrap_or_else(|| Err(RuntimeError::new("expected iterable"))),
@@ -5807,8 +5903,11 @@ fn value_to_bytes_with_encoding(
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => {
-                with_bytes_like_source(&view.source, |values| values.to_vec())
-                    .ok_or_else(|| RuntimeError::new("bytes() unsupported type"))
+                with_bytes_like_source(&view.source, |values| {
+                    let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+                    values[start..end].to_vec()
+                })
+                .ok_or_else(|| RuntimeError::new("bytes() unsupported type"))
             }
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
@@ -5882,6 +5981,15 @@ fn with_bytes_like_source<R>(source: &ObjRef, map: impl FnOnce(&[u8]) -> R) -> O
         }
         _ => None,
     }
+}
+
+fn memoryview_bounds(start: usize, length: Option<usize>, source_len: usize) -> (usize, usize) {
+    let start = start.min(source_len);
+    let end = match length {
+        Some(length) => start.saturating_add(length).min(source_len),
+        None => source_len,
+    };
+    (start, end)
 }
 
 #[derive(Clone, Copy)]
@@ -6358,6 +6466,9 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method bytes.translate>".to_string()
                     }
                     NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
+                    NativeMethodKind::ByteArrayExtend => {
+                        "<bound method bytearray.extend>".to_string()
+                    }
                     NativeMethodKind::ByteArrayClear => {
                         "<bound method bytearray.clear>".to_string()
                     }
@@ -6791,6 +6902,8 @@ mod tests {
             format: None,
             export_owner: None,
             released: false,
+            start: 0,
+            length: None,
         }));
         if let Object::MemoryView(data) = &mut *view.kind_mut() {
             data.source = view.clone();

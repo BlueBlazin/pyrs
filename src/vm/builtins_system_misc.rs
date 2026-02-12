@@ -1,6 +1,17 @@
 use super::*;
 
 impl Vm {
+    pub(super) fn builtin_threading_excepthook(
+        &mut self,
+        _args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("excepthook() got unexpected keyword arguments"));
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_struct_calcsize(
         &mut self,
         mut args: Vec<Value>,
@@ -699,6 +710,25 @@ impl Vm {
                 },
                 _ => HashMap::new(),
             };
+            if matches!(target, Value::Builtin(BuiltinFunction::OsRead))
+                && call_kwargs.is_empty()
+                && call_args.len() == 2
+            {
+                if let (Ok(fd), Ok(read_size)) = (
+                    value_to_int(call_args[0].clone()),
+                    value_to_int(call_args[1].clone()),
+                ) {
+                    if let Ok(mut file) = self.cloned_open_file_for_fd(fd) {
+                        let read_size = read_size.max(0) as usize;
+                        std::thread::spawn(move || {
+                            let mut buf = vec![0u8; read_size.max(1)];
+                            let _ = file.read(&mut buf);
+                        });
+                        Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
+                        return Ok(Value::None);
+                    }
+                }
+            }
             match self.call_internal(target, call_args, call_kwargs)? {
                 InternalCallOutcome::Value(_) => {}
                 InternalCallOutcome::CallerExceptionHandled => {

@@ -606,6 +606,7 @@ pub struct Vm {
     signal_handlers: HashMap<i64, Value>,
     socket_default_timeout: Option<f64>,
     open_files: HashMap<i64, fs::File>,
+    fd_inheritable: HashMap<i64, bool>,
     next_fd: i64,
     child_processes: HashMap<i64, Child>,
     child_exit_status: HashMap<i64, i64>,
@@ -672,6 +673,7 @@ impl Vm {
             signal_handlers: HashMap::new(),
             socket_default_timeout: None,
             open_files: HashMap::new(),
+            fd_inheritable: HashMap::new(),
             next_fd: 3,
             child_processes: HashMap::new(),
             child_exit_status: HashMap::new(),
@@ -3666,6 +3668,15 @@ fn with_bytes_like_source<R>(source: &ObjRef, map: impl FnOnce(&[u8]) -> R) -> O
     }
 }
 
+fn memoryview_bounds(start: usize, length: Option<usize>, source_len: usize) -> (usize, usize) {
+    let start = start.min(source_len);
+    let end = match length {
+        Some(length) => start.saturating_add(length).min(source_len),
+        None => source_len,
+    };
+    (start, end)
+}
+
 fn bytes_like_source_is_readonly(source: &ObjRef) -> Option<bool> {
     match &*source.kind() {
         Object::Bytes(_) => Some(true),
@@ -3694,8 +3705,11 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => {
-                with_bytes_like_source(&view.source, |values| values.to_vec())
-                    .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
+                with_bytes_like_source(&view.source, |values| {
+                    let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+                    values[start..end].to_vec()
+                })
+                .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
             }
             _ => Err(RuntimeError::new("expected bytes-like payload")),
         },
@@ -3774,12 +3788,15 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 },
                 IteratorKind::MemoryView(memory_obj) => match &*memory_obj.kind() {
                     Object::MemoryView(view) => with_bytes_like_source(&view.source, |items| {
-                        let start = iterator.index.min(items.len());
-                        let out = items[start..]
+                        let (view_start, view_end) =
+                            memoryview_bounds(view.start, view.length, items.len());
+                        let view_len = view_end.saturating_sub(view_start);
+                        let start = iterator.index.min(view_len);
+                        let out = items[view_start + start..view_end]
                             .iter()
                             .map(|byte| Value::Int(*byte as i64))
                             .collect::<Vec<_>>();
-                        iterator.index = items.len();
+                        iterator.index = view_len;
                         out
                     })
                     .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))?,
@@ -6503,7 +6520,16 @@ fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
     };
 
     if !class_data.mro.is_empty() {
-        return class_data.mro.clone();
+        let mut mro = class_data.mro.clone();
+        if let Some(object_idx) = mro.iter().position(|entry| {
+            matches!(&*entry.kind(), Object::Class(candidate) if candidate.name == "object")
+        }) {
+            if object_idx + 1 != mro.len() {
+                let object_entry = mro.remove(object_idx);
+                mro.push(object_entry);
+            }
+        }
+        return mro;
     }
 
     let mut out = vec![class.clone()];

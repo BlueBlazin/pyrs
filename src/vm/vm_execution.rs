@@ -2181,8 +2181,8 @@ impl Vm {
                     },
                     target => match (target, index) {
                         (Value::MemoryView(obj), Value::Slice(slice)) => {
-                            let source = match &*obj.kind() {
-                                Object::MemoryView(view) => view.source.clone(),
+                            let (source, view_start, view_length) = match &*obj.kind() {
+                                Object::MemoryView(view) => (view.source.clone(), view.start, view.length),
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "store subscript unsupported type",
@@ -2192,13 +2192,18 @@ impl Vm {
                             let replacement = self.value_to_bytes_payload(value)?;
                             match &mut *source.kind_mut() {
                                 Object::ByteArray(values) => {
+                                    let (range_start, range_end) =
+                                        memoryview_bounds(view_start, view_length, values.len());
+                                    let range_len = range_end.saturating_sub(range_start);
                                     let lower = slice.lower;
                                     let upper = slice.upper;
                                     let step = slice.step;
                                     let step_value = step.unwrap_or(1);
                                     if step_value == 1 {
-                                        let (start, stop) =
-                                            slice_bounds_for_step_one(values.len(), lower, upper);
+                                        let (start_rel, stop_rel) =
+                                            slice_bounds_for_step_one(range_len, lower, upper);
+                                        let start = range_start.saturating_add(start_rel);
+                                        let stop = range_start.saturating_add(stop_rel);
                                         if replacement.len() != stop.saturating_sub(start) {
                                             return Err(RuntimeError::new(
                                                 "memoryview assignment: lvalue and rvalue have different structures",
@@ -2206,15 +2211,14 @@ impl Vm {
                                         }
                                         values[start..stop].copy_from_slice(&replacement);
                                     } else {
-                                        let indices =
-                                            slice_indices(values.len(), lower, upper, step)?;
+                                        let indices = slice_indices(range_len, lower, upper, step)?;
                                         if indices.len() != replacement.len() {
                                             return Err(RuntimeError::new(
                                                 "memoryview assignment: lvalue and rvalue have different structures",
                                             ));
                                         }
                                         for (idx, item) in indices.into_iter().zip(replacement) {
-                                            values[idx] = item;
+                                            values[range_start + idx] = item;
                                         }
                                     }
                                 }
@@ -2231,13 +2235,18 @@ impl Vm {
                                             "store subscript unsupported type",
                                         ));
                                     };
+                                    let (range_start, range_end) =
+                                        memoryview_bounds(view_start, view_length, values.len());
+                                    let range_len = range_end.saturating_sub(range_start);
                                     let lower = slice.lower;
                                     let upper = slice.upper;
                                     let step = slice.step;
                                     let step_value = step.unwrap_or(1);
                                     if step_value == 1 {
-                                        let (start, stop) =
-                                            slice_bounds_for_step_one(values.len(), lower, upper);
+                                        let (start_rel, stop_rel) =
+                                            slice_bounds_for_step_one(range_len, lower, upper);
+                                        let start = range_start.saturating_add(start_rel);
+                                        let stop = range_start.saturating_add(stop_rel);
                                         if replacement.len() != stop.saturating_sub(start) {
                                             return Err(RuntimeError::new(
                                                 "memoryview assignment: lvalue and rvalue have different structures",
@@ -2247,15 +2256,14 @@ impl Vm {
                                             values[start + offset] = Value::Int(*item as i64);
                                         }
                                     } else {
-                                        let indices =
-                                            slice_indices(values.len(), lower, upper, step)?;
+                                        let indices = slice_indices(range_len, lower, upper, step)?;
                                         if indices.len() != replacement.len() {
                                             return Err(RuntimeError::new(
                                                 "memoryview assignment: lvalue and rvalue have different structures",
                                             ));
                                         }
                                         for (idx, item) in indices.into_iter().zip(replacement) {
-                                            values[idx] = Value::Int(item as i64);
+                                            values[range_start + idx] = Value::Int(item as i64);
                                         }
                                     }
                                 }
@@ -2277,8 +2285,8 @@ impl Vm {
                             self.push_value(Value::Dict(obj));
                         }
                         (Value::MemoryView(obj), index) => {
-                            let source = match &*obj.kind() {
-                                Object::MemoryView(view) => view.source.clone(),
+                            let (source, view_start, view_length) = match &*obj.kind() {
+                                Object::MemoryView(view) => (view.source.clone(), view.start, view.length),
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "store subscript unsupported type",
@@ -2287,11 +2295,14 @@ impl Vm {
                             };
                             match &mut *source.kind_mut() {
                                 Object::ByteArray(values) => {
+                                    let (range_start, range_end) =
+                                        memoryview_bounds(view_start, view_length, values.len());
+                                    let range_len = range_end.saturating_sub(range_start);
                                     let mut idx = value_to_int(index)? as isize;
                                     if idx < 0 {
-                                        idx += values.len() as isize;
+                                        idx += range_len as isize;
                                     }
-                                    if idx < 0 || idx as usize >= values.len() {
+                                    if idx < 0 || idx as usize >= range_len {
                                         return Err(RuntimeError::new("index out of range"));
                                     }
                                     let byte = value_to_int(value)?;
@@ -2300,7 +2311,7 @@ impl Vm {
                                             "byte must be in range(0, 256)",
                                         ));
                                     }
-                                    values[idx as usize] = byte as u8;
+                                    values[range_start + idx as usize] = byte as u8;
                                 }
                                 Object::Module(module_data) if module_data.name == "__array__" => {
                                     let Some(Value::List(values_obj)) =
@@ -2315,11 +2326,14 @@ impl Vm {
                                             "store subscript unsupported type",
                                         ));
                                     };
+                                    let (range_start, range_end) =
+                                        memoryview_bounds(view_start, view_length, values.len());
+                                    let range_len = range_end.saturating_sub(range_start);
                                     let mut idx = value_to_int(index)? as isize;
                                     if idx < 0 {
-                                        idx += values.len() as isize;
+                                        idx += range_len as isize;
                                     }
-                                    if idx < 0 || idx as usize >= values.len() {
+                                    if idx < 0 || idx as usize >= range_len {
                                         return Err(RuntimeError::new("index out of range"));
                                     }
                                     let byte = value_to_int(value)?;
@@ -2328,7 +2342,7 @@ impl Vm {
                                             "byte must be in range(0, 256)",
                                         ));
                                     }
-                                    values[idx as usize] = Value::Int(byte);
+                                    values[range_start + idx as usize] = Value::Int(byte);
                                 }
                                 Object::Bytes(_) => {
                                     return Err(RuntimeError::new(
@@ -5255,11 +5269,30 @@ impl Vm {
     }
 
     pub(super) fn class_mro_entries(&self, class: &ObjRef) -> Vec<ObjRef> {
-        match &*class.kind() {
+        let mut entries = match &*class.kind() {
             Object::Class(class_data) if !class_data.mro.is_empty() => class_data.mro.clone(),
-            Object::Class(_) => vec![class.clone()],
+            Object::Class(class_data) => {
+                let mut entries = vec![class.clone()];
+                for base in &class_data.bases {
+                    for candidate in self.class_mro_entries(base) {
+                        if !entries.iter().any(|entry| entry.id() == candidate.id()) {
+                            entries.push(candidate);
+                        }
+                    }
+                }
+                entries
+            }
             _ => Vec::new(),
+        };
+        if let Some(object_idx) = entries.iter().position(|entry| {
+            matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "object")
+        }) {
+            if object_idx + 1 != entries.len() {
+                let object_entry = entries.remove(object_idx);
+                entries.push(object_entry);
+            }
         }
+        entries
     }
 
     pub(super) fn build_class_mro(

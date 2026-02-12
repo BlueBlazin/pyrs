@@ -172,12 +172,37 @@ impl Vm {
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => {
                             with_bytes_like_source(&view.source, |values| {
-                                let indices = slice_indices(values.len(), lower, upper, step)?;
-                                let mut result = Vec::with_capacity(indices.len());
-                                for idx in indices {
-                                    result.push(values[idx]);
+                                let (view_start, view_end) =
+                                    memoryview_bounds(view.start, view.length, values.len());
+                                let view_len = view_end.saturating_sub(view_start);
+                                let step_value = step.unwrap_or(1);
+                                if step_value == 1 {
+                                    let (start, stop) =
+                                        slice_bounds_for_step_one(view_len, lower, upper);
+                                    let sliced = self.heap.alloc_memoryview_with(
+                                        view.source.clone(),
+                                        view.itemsize,
+                                        view.format.clone(),
+                                    );
+                                    if let Value::MemoryView(sliced_obj) = &sliced {
+                                        if let Object::MemoryView(sliced_view) =
+                                            &mut *sliced_obj.kind_mut()
+                                        {
+                                            sliced_view.start = view_start.saturating_add(start);
+                                            sliced_view.length = Some(stop.saturating_sub(start));
+                                            sliced_view.export_owner = view.export_owner.clone();
+                                            sliced_view.released = view.released;
+                                        }
+                                    }
+                                    Ok(sliced)
+                                } else {
+                                    let indices = slice_indices(view_len, lower, upper, step)?;
+                                    let mut result = Vec::with_capacity(indices.len());
+                                    for idx in indices {
+                                        result.push(values[view_start + idx]);
+                                    }
+                                    Ok(self.heap.alloc_bytes(result))
                                 }
-                                Ok(self.heap.alloc_bytes(result))
                             })
                             .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type")))
                         }
@@ -338,14 +363,16 @@ impl Vm {
                 },
                 Value::MemoryView(obj) => match &*obj.kind() {
                     Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                        let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+                        let span_len = end.saturating_sub(start);
                         let mut index_int = value_to_int(index)? as isize;
                         if index_int < 0 {
-                            index_int += values.len() as isize;
+                            index_int += span_len as isize;
                         }
-                        if index_int < 0 || index_int as usize >= values.len() {
+                        if index_int < 0 || index_int as usize >= span_len {
                             return Err(RuntimeError::new("index out of range"));
                         }
-                        Ok(Value::Int(values[index_int as usize] as i64))
+                        Ok(Value::Int(values[start + index_int as usize] as i64))
                     })
                     .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type"))),
                     _ => Err(RuntimeError::new("subscript unsupported type")),

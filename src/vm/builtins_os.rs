@@ -179,6 +179,7 @@ impl Vm {
         let fd = self.next_fd;
         self.next_fd += 1;
         self.open_files.insert(fd, file);
+        self.fd_inheritable.insert(fd, true);
         fd
     }
 
@@ -209,6 +210,22 @@ impl Vm {
                 .open_files
                 .values()
                 .find(|file| file.as_raw_fd() == raw_fd);
+        }
+        #[allow(unreachable_code)]
+        None
+    }
+
+    pub(super) fn resolve_open_file_fd(&self, fd: i64) -> Option<i64> {
+        if self.open_files.contains_key(&fd) {
+            return Some(fd);
+        }
+        #[cfg(unix)]
+        {
+            let raw_fd = i32::try_from(fd).ok()?;
+            return self
+                .open_files
+                .iter()
+                .find_map(|(virtual_fd, file)| (file.as_raw_fd() == raw_fd).then_some(*virtual_fd));
         }
         #[allow(unreachable_code)]
         None
@@ -365,6 +382,7 @@ impl Vm {
             return Ok(Value::None);
         }
         if self.open_files.remove(&fd).is_some() {
+            self.fd_inheritable.remove(&fd);
             return Ok(Value::None);
         }
         #[cfg(unix)]
@@ -376,6 +394,7 @@ impl Vm {
             {
                 let key = *key;
                 self.open_files.remove(&key);
+                self.fd_inheritable.remove(&key);
                 return Ok(Value::None);
             }
         }
@@ -411,6 +430,36 @@ impl Vm {
         Ok(self.heap.alloc_bytes(buffer))
     }
 
+    pub(super) fn builtin_os_readinto(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("readinto() expects fd and buffer"));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        let target = args[1].clone();
+        let request = self.io_writable_buffer_len(&target)?;
+        if request == 0 {
+            return Ok(Value::Int(0));
+        }
+        let mut buffer = vec![0u8; request];
+        let read_len = if fd == 0 {
+            std::io::stdin()
+                .read(&mut buffer)
+                .map_err(|err| RuntimeError::new(format!("readinto failed: {err}")))?
+        } else {
+            let file = self
+                .find_open_file_mut(fd)
+                .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            file.read(&mut buffer)
+                .map_err(|err| RuntimeError::new(format!("readinto failed: {err}")))?
+        };
+        let copied = self.io_copy_into_writable_buffer(target, &buffer[..read_len])?;
+        Ok(Value::Int(copied as i64))
+    }
+
     pub(super) fn builtin_os_dup(
         &mut self,
         args: Vec<Value>,
@@ -422,7 +471,64 @@ impl Vm {
         let fd = value_to_int(args[0].clone())?;
         let cloned = self.cloned_open_file_for_fd(fd)?;
         let new_fd = self.alloc_open_fd(cloned);
+        let inheritable = self
+            .resolve_open_file_fd(fd)
+            .and_then(|resolved| self.fd_inheritable.get(&resolved).copied())
+            .unwrap_or(true);
+        self.fd_inheritable.insert(new_fd, inheritable);
         Ok(Value::Int(new_fd))
+    }
+
+    pub(super) fn builtin_os_lseek(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(RuntimeError::new("lseek() expects fd, position, and whence"));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        let position = value_to_int(args[1].clone())?;
+        let whence = value_to_int(args[2].clone())?;
+        let seek_from = match whence {
+            0 => {
+                if position < 0 {
+                    return Err(RuntimeError::new("OSError: [Errno 22] Invalid argument"));
+                }
+                SeekFrom::Start(position as u64)
+            }
+            1 => SeekFrom::Current(position),
+            2 => SeekFrom::End(position),
+            _ => return Err(RuntimeError::new("OSError: [Errno 22] Invalid argument")),
+        };
+        let file = self
+            .find_open_file_mut(fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        let offset = file
+            .seek(seek_from)
+            .map_err(|_| RuntimeError::new("OSError: [Errno 22] Invalid argument"))?;
+        Ok(Value::Int(offset as i64))
+    }
+
+    pub(super) fn builtin_os_ftruncate(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("ftruncate() expects fd and length"));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        let length = value_to_int(args[1].clone())?;
+        if length < 0 {
+            return Err(RuntimeError::new("OSError: [Errno 22] Invalid argument"));
+        }
+        let file = self
+            .find_open_file_mut(fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        file.set_len(length as u64)
+            .map_err(|err| RuntimeError::new(format!("ftruncate failed: {err}")))?;
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_os_kill(
@@ -491,6 +597,45 @@ impl Vm {
             _ => false,
         };
         Ok(Value::Bool(isatty))
+    }
+
+    pub(super) fn builtin_os_set_inheritable(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "set_inheritable() expects fd and inheritable flag",
+            ));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        let inheritable = is_truthy(&args[1]);
+        let resolved = self
+            .resolve_open_file_fd(fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        self.fd_inheritable.insert(resolved, inheritable);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_os_get_inheritable(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("get_inheritable() expects one argument"));
+        }
+        let fd = value_to_int(args[0].clone())?;
+        if (0..=2).contains(&fd) {
+            return Ok(Value::Bool(true));
+        }
+        let resolved = self
+            .resolve_open_file_fd(fd)
+            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+        Ok(Value::Bool(
+            self.fd_inheritable.get(&resolved).copied().unwrap_or(true),
+        ))
     }
 
     pub(super) fn builtin_os_urandom(
@@ -1276,16 +1421,18 @@ impl Vm {
             _ => {
                 let Some(fspath) = self.lookup_bound_special_method(&value, "__fspath__")? else {
                     return Err(RuntimeError::new(
-                        "expected str, bytes or os.PathLike object",
+                        "TypeError: expected str, bytes or os.PathLike object",
                     ));
                 };
                 match self.call_internal(fspath, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(path) => match path {
                         Value::Str(_) | Value::Bytes(_) => Ok(path),
-                        _ => Err(RuntimeError::new("__fspath__() must return str or bytes")),
+                        _ => Err(RuntimeError::new(
+                            "TypeError: __fspath__() must return str or bytes",
+                        )),
                     },
                     InternalCallOutcome::CallerExceptionHandled => {
-                        Err(RuntimeError::new("__fspath__() raised an exception"))
+                        Err(self.runtime_error_from_active_exception("__fspath__() failed"))
                     }
                 }
             }

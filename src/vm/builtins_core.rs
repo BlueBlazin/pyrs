@@ -3129,6 +3129,102 @@ impl Vm {
         Ok(self.heap.alloc_tuple(values))
     }
 
+    pub(super) fn builtin_array_array(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("array.array() expects 1-2 arguments"));
+        }
+        let typecode_text = match args.remove(0) {
+            Value::Str(text) => text,
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "array() argument 1 must be a unicode character, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        let mut typecode_chars = typecode_text.chars();
+        let typecode = match (typecode_chars.next(), typecode_chars.next()) {
+            (Some(ch), None) => ch,
+            _ => {
+                return Err(RuntimeError::new(format!(
+                    "array() argument 1 must be a unicode character, not a string of length {}",
+                    typecode_text.chars().count()
+                )));
+            }
+        };
+        let (itemsize, wide_char_typecode) = match typecode {
+            'b' | 'B' => (1, false),
+            'h' | 'H' => (2, false),
+            'i' | 'I' | 'l' | 'L' | 'f' => (4, false),
+            'q' | 'Q' | 'd' => (8, false),
+            'u' | 'w' => (4, true),
+            _ => {
+                return Err(RuntimeError::new(
+                    "bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, f or d)",
+                ));
+            }
+        };
+        let mut values = if args.is_empty() {
+            Vec::new()
+        } else {
+            let initializer = args.remove(0);
+            match initializer {
+                Value::None => Vec::new(),
+                Value::Str(text) => {
+                    if !wide_char_typecode {
+                        return Err(RuntimeError::new(format!(
+                            "cannot use a str to initialize an array with typecode '{}'",
+                            typecode
+                        )));
+                    }
+                    text.chars().map(|ch| Value::Str(ch.to_string())).collect()
+                }
+                other => self.collect_iterable_values(other)?,
+            }
+        };
+        if wide_char_typecode {
+            let mut normalized = Vec::with_capacity(values.len());
+            for value in values {
+                match value {
+                    Value::Str(text) => {
+                        if text.chars().count() != 1 {
+                            return Err(RuntimeError::new(
+                                "array item must be a unicode character",
+                            ));
+                        }
+                        normalized.push(Value::Str(text));
+                    }
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "array item must be a unicode character, not {}",
+                            self.value_type_name_for_error(&other)
+                        )));
+                    }
+                }
+            }
+            values = normalized;
+        }
+        let values = self.heap.alloc_list(values);
+        let module = match self.heap.alloc_module(ModuleObject::new("__array__")) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .insert("typecode".to_string(), Value::Str(typecode.to_string()));
+            module_data
+                .globals
+                .insert("itemsize".to_string(), Value::Int(itemsize));
+            module_data.globals.insert("values".to_string(), values);
+        }
+        Ok(Value::Module(module))
+    }
+
     pub(super) fn builtin_dict(
         &mut self,
         mut args: Vec<Value>,

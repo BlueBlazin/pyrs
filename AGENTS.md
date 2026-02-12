@@ -121,7 +121,7 @@ Milestone 13 completion is blocked on P0 closure of:
   - `BufferedIOBase` default `readinto`/`readinto1`.
 - Compiler correctness checkpoint landed this round:
   - temporary assignment carrier names (`__pyrs_assign_*`) are deleted after attribute/subscript stores, and module-scope `DELETE_NAME` now clears fast-local-only names; this removed a hidden ref-retention path that affected GC-sensitive flows.
-- `test.test_io` failfast probe has advanced through base-destructor/raw-read/default-readinto coverage; current first blocker is `test_array_writes` (`array.array` initializer parity), which is outside the `_io` core itself.
+- `test.test_io` failfast probe now clears CIOTest and reaches deeper PyIOTest coverage; current first blocker is `PyIOTest.test_garbage_collection` (weakref/GC lifetime parity on `_pyio.FileIO` cleanup).
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
 - Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.
 - If optimization work is resumed as primary focus, it must explicitly close foundational missing surfaces tracked in backlog (`OPT-022` string interning strategy and remaining `OPT-023+` dispatch/call/container items).
