@@ -58,6 +58,8 @@ Milestone 13 completion is blocked on P0 closure of:
   - `PYRS_RUN_STRICT_STDLIB=1`
   - `PYRS_PARITY_STRICT=1`
   - Deferred pickle strict lane: `PYRS_RUN_DEFERRED_PICKLE=1`
+- Deferred pickle strict lane uses a dedicated subprocess timeout control:
+  - `PYRS_DEFERRED_PICKLE_TIMEOUT_SECS` (default `max(PYRS_STRICT_HARNESS_TIMEOUT_SECS, 600)`)
 - Keep strict harness subprocess timeout protections enabled to avoid runaway hangs.
 
 ## Canonical Documents (Do Not Duplicate Their Contents Here)

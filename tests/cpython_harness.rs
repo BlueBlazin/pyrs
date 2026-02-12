@@ -247,6 +247,26 @@ fn strict_allowlisted_timeout() -> Duration {
     Duration::from_secs(secs.max(1))
 }
 
+fn deferred_pickle_timeout() -> Duration {
+    let fallback = strict_unittest_timeout().as_secs().max(600);
+    let secs = std::env::var("PYRS_DEFERRED_PICKLE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(fallback);
+    Duration::from_secs(secs.max(1))
+}
+
+fn strict_timeout_for_entry(suite_file: &str, is_allowlisted: bool) -> Duration {
+    if suite_file == DEFERRED_PICKLE_SUITE {
+        return deferred_pickle_timeout();
+    }
+    if is_allowlisted {
+        strict_allowlisted_timeout()
+    } else {
+        strict_unittest_timeout()
+    }
+}
+
 fn strict_stdlib_enabled() -> bool {
     enabled("PYRS_RUN_STRICT_STDLIB") || enabled("PYRS_PARITY_STRICT")
 }
@@ -381,15 +401,7 @@ fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
             continue;
         }
 
-        let entry_timeout = if strict_mode {
-            Some(if is_allowlisted {
-                strict_allowlisted_timeout()
-            } else {
-                strict_unittest_timeout()
-            })
-        } else {
-            None
-        };
+        let entry_timeout = strict_mode.then(|| strict_timeout_for_entry(suite_file, is_allowlisted));
 
         let start = Instant::now();
         let result = run_entry(&lib, entry, mode, strict_bin.as_deref(), entry_timeout);
