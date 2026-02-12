@@ -21,8 +21,8 @@ Scope list (user-priority):
 
 ## Baseline Snapshot (2026-02-12 local probe, debug build)
 - Import pass: `25/26`
-- Common-workflow smoke pass: `24/26`
-- Remaining blockers are concentrated in two native/core surfaces: `_sqlite3` and `hashlib` backends.
+- Common-workflow smoke pass: `25/26`
+- Remaining blocker is concentrated in one native/core surface: `_sqlite3`.
 
 ## Checklist (Common Functionality)
 
@@ -52,7 +52,7 @@ Scope list (user-priority):
 | `sqlite3` | P0 | RED | in-memory connect/execute/fetch/close | `_sqlite3` missing |
 | `urllib` | P0 | GREEN | URL parse/join/quote basics used by apps | Extended URL policy/IDNA edge parity pending |
 | `http` | P0 | GREEN | `http.client` import + request object baseline | deeper enum-member semantics still pending before enum shim retirement |
-| `hashlib` | P0 | YELLOW | `sha256/md5` digest baseline + constructor paths | module import works, but md5/sha256 constructors are still missing |
+| `hashlib` | P0 | GREEN | `sha256/md5` digest baseline + constructor paths | md5/sha2 native backends are active; broader algorithm surface remains tracked separately |
 | `dataclasses` | P0 | GREEN | decorator, generated `__init__`, defaults, repr/eq baseline | Advanced slots/frozen/post-init edge behavior tracked separately |
 
 ## Closure Criteria (Module-Level Definition of Done)
@@ -66,7 +66,7 @@ For each module above:
 ## Delivery Plan (Non-Hacky, Foundational First)
 
 ### Wave 1 (P0 foundation unlockers)
-1. Land native crypto substrates for `hashlib` (`md5`, `sha256` minimum) with parity tests.
+1. `hashlib` native crypto substrates (`md5`, `sha2`) are landed with parity tests.
 2. Implement `_sqlite3` baseline import/connect/execute/fetch path with parity tests.
 3. Keep enum/http behavior closure tracked until shim retirement (`Lib/enum.py` path).
 4. Keep constructor/object-model and iterator fixes covered with targeted regressions (no regressions to resolved rows).

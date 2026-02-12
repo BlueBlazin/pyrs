@@ -33,7 +33,7 @@ Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 
 | Area | Status | Notes |
 |---|---|---|
-| Top stdlib common-functionality coverage (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`) | `[~]` | Baseline snapshot (2026-02-12): `23/26` imports pass, `13/26` common-usecase smokes pass. Must reach full closure for listed module set before Milestone 13 closeout. |
+| Top stdlib common-functionality coverage (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`) | `[~]` | Baseline snapshot (2026-02-12): `25/26` imports pass, `25/26` common-usecase smokes pass; remaining blocker is `sqlite3` (`_sqlite3` missing). Must reach full closure for listed module set before Milestone 13 closeout. |
 | `json` parity and hardening | `[~]` | Full semantic, malformed-input, and perf closure still required |
 | `_csv`/`csv` parity and hardening | `[~]` | Full parser/writer semantic and perf closure still required |
 | `pickle`/`pickletools`/`copyreg` parity and hardening | `[~]` | Still open; deferred strict pickle lane remains open |
@@ -74,6 +74,7 @@ Milestone 13 stdlib closure proceeds in this order:
 - `[~]` `csv`: native `_csv` substrate in place; full parity/perf closure pending
 - `[~]` `pickle`: native substrate partially in place; strict deferred lane still open
 - `[~]` `re`: `_sre` substrate partially in place; pure `Lib/re/*` default closure pending
+- `[x]` `hashlib` md5/sha2 minimum path (`_md5`, `_sha2`) with parity tests (`digest`/`hexdigest`/`update`/`copy`)
 
 ## Test and Quality Gates
 - `[x]` Curated language/import CPython harness suites green with empty allowlist

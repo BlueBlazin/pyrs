@@ -17,7 +17,6 @@ No partially implemented surface is allowed to remain untracked.
 | Surface | Current state | Closure criteria | Milestone |
 |---|---|---|---|
 | `_sqlite3`/`sqlite3` | Not implemented (`sqlite3` import fails) | `_sqlite3` baseline module with connect/execute/fetch/close parity for common DB-API paths | 13 |
-| `hashlib` (`_md5`/`_sha2`/`_hashlib`) | `hashlib` imports, but md5/sha256 constructors are missing (common digest paths fail) | Land md5/sha256 minimum native backends + digest/update/hexdigest parity tests | 13 |
 | `pickle`/`pickletools`/`copyreg` | Deferred strict lane mostly green; remaining blocker is `_pickle.Pickler` vs `pickle._Pickler` parity in `CPicklingErrorTests.test_bad_newobj_ex_args` (proto>=4), with temporary dump-error remap logic in place | Remove temporary `_pickle.Pickler.dump` remap path, land full `__newobj_ex__` CPython C-path parity for proto>=4, and close deferred strict lane | 13 |
 | `_io` | Core mode/newline/validation behavior implemented; strict memoryio lane is green; remaining long-tail behavior exists in full strict stdlib execution | Complete remaining `_io` long-tail behavior required by full strict stdlib execution | 13 |
 | `json` | Common `dumps`/`loads` workflows are green in top-stdlib gate; pure-stdlib JSON path is still partial | Full CPython semantic parity (pure + native accelerator paths), malformed-input differential coverage, perf baseline | 13 |
@@ -35,6 +34,7 @@ No partially implemented surface is allowed to remain untracked.
 | `socket`/`_socket` | Baseline methods/helpers implemented | Full in-scope API and behavior parity | 13 |
 | `uuid` | Foundations implemented | Full in-scope API parity | 13 |
 | `dataclasses`/`typing`/`enum`/`contextvars` | Common dataclasses/typing paths are green; enum remains shim-backed and partial | Full in-scope semantics for modern pure-Python apps; retire shim enum for pure `Lib/enum.py` path | 13 |
+| `hashlib` extended algorithms (`_sha1`/`_blake2`/`_sha3`/`_hashlib`) | md5/sha2 minimum path is now green; broader algorithm coverage is still partial | Full CPython algorithm surface (or explicit in-scope exclusions) with differential tests and stdlib consumers passing | 13/14 |
 | Object-model protocol dispatch (`__contains__`/iterator fallback, slot edge parity) | Truthiness + baseline membership fallback order landed; long-tail slot/error edge parity still partial | Align remaining membership/slot edge semantics with CPython data model/tests | 13 |
 | VM/module decomposition | `src/vm/mod.rs` remains large | Move critical paths into focused modules with regression proof | 14 |
 

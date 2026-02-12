@@ -518,6 +518,98 @@ impl Vm {
             ],
             Vec::new(),
         );
+        let md5_type = match self
+            .heap
+            .alloc_class(ClassObject::new("md5".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *md5_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_md5".to_string()));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "update".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHashUpdate),
+            );
+            class_data.attrs.insert(
+                "digest".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHashDigest),
+            );
+            class_data.attrs.insert(
+                "hexdigest".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHashHexDigest),
+            );
+            class_data.attrs.insert(
+                "copy".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHashCopy),
+            );
+        }
+        self.install_builtin_module(
+            "_md5",
+            &[("md5", BuiltinFunction::HashlibMd5)],
+            vec![("MD5Type", Value::Class(md5_type))],
+        );
+
+        let build_sha2_type = |name: &str| {
+            let class = match self
+                .heap
+                .alloc_class(ClassObject::new(name.to_string(), Vec::new()))
+            {
+                Value::Class(class) => class,
+                _ => unreachable!(),
+            };
+            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("_sha2".to_string()));
+                class_data.attrs.insert(
+                    "__pyrs_disallow_instantiation__".to_string(),
+                    Value::Bool(true),
+                );
+                class_data.attrs.insert(
+                    "update".to_string(),
+                    Value::Builtin(BuiltinFunction::HashlibHashUpdate),
+                );
+                class_data.attrs.insert(
+                    "digest".to_string(),
+                    Value::Builtin(BuiltinFunction::HashlibHashDigest),
+                );
+                class_data.attrs.insert(
+                    "hexdigest".to_string(),
+                    Value::Builtin(BuiltinFunction::HashlibHashHexDigest),
+                );
+                class_data.attrs.insert(
+                    "copy".to_string(),
+                    Value::Builtin(BuiltinFunction::HashlibHashCopy),
+                );
+            }
+            class
+        };
+        let sha224_type = build_sha2_type("SHA224Type");
+        let sha256_type = build_sha2_type("SHA256Type");
+        let sha384_type = build_sha2_type("SHA384Type");
+        let sha512_type = build_sha2_type("SHA512Type");
+        self.install_builtin_module(
+            "_sha2",
+            &[
+                ("sha224", BuiltinFunction::HashlibSha224),
+                ("sha256", BuiltinFunction::HashlibSha256),
+                ("sha384", BuiltinFunction::HashlibSha384),
+                ("sha512", BuiltinFunction::HashlibSha512),
+            ],
+            vec![
+                ("SHA224Type", Value::Class(sha224_type)),
+                ("SHA256Type", Value::Class(sha256_type)),
+                ("SHA384Type", Value::Class(sha384_type)),
+                ("SHA512Type", Value::Class(sha512_type)),
+            ],
+        );
         let pickle_buffer_class = match self
             .heap
             .alloc_class(ClassObject::new("PickleBuffer".to_string(), Vec::new()))

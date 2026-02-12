@@ -32,7 +32,6 @@ Build a production-grade Python interpreter in Rust with full source + bytecode 
 
 Milestone 13 completion is blocked on P0 closure of:
 - `_sqlite3` baseline surface (`sqlite3` import + connect/execute/fetch path)
-- `hashlib` native hash backends (`md5`/`sha256` minimum)
 - deferred strict pickle blocker (`CPicklingErrorTests.test_bad_newobj_ex_args`)
 
 ## Execution Policy
@@ -88,8 +87,8 @@ Milestone 13 completion is blocked on P0 closure of:
 - Active top priority: Milestone 13 closure via top-stdlib common-usecase coverage first (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`), with benchmark-guarded performance maintenance.
 - Top-stdlib common-usecase gate current snapshot (local debug, 2026-02-12):
   - import pass: `25/26`
-  - smoke pass: `24/26`
-  - remaining red modules: `sqlite3`, `hashlib`
+  - smoke pass: `25/26`
+  - remaining red module: `sqlite3`
 - Performance suite (canonical):
   - `scripts/bench_fib_gate.sh 5`
   - `scripts/bench_dispatch_hotpath.sh 5`
@@ -116,6 +115,9 @@ Milestone 13 completion is blocked on P0 closure of:
   - `test/test_pickletools.py` is passing in strict subprocess mode.
   - `test/test_pickle.py` is down to one blocker (`CPicklingErrorTests.test_bad_newobj_ex_args`, proto>=4 C-pickler parity).
   - `_pickle.Pickler.dump` currently carries a temporary error-remap shim for `__newobj_ex__` C-path mismatch; removal is required before Milestone 13 closure.
+- Hashlib checkpoint:
+  - native `_md5` and `_sha2` backends are wired using Rust crypto crates with constructor/update/digest/hexdigest/copy parity tests.
+  - common `hashlib.md5` and `hashlib.sha256` stdlib paths are now green.
 - Enum shim policy:
   - local `shims/enum.py` remains active and currently precedes CPython `Lib/enum.py` on `sys.path` to avoid known pure-enum bootstrap incompatibilities.
   - `http.client` import-chain baseline is now green; full enum-member parity closure is still required before this shim can be retired.

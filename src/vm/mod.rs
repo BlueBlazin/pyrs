@@ -46,6 +46,7 @@ use self::ops::{
     mod_values, mul_values, neg_value, or_values, ordering_from_cmp_value, pos_value, pow_values,
     rshift_values, sub_values, xor_values,
 };
+use self::stdlib::hashlib::HashState;
 use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
@@ -612,6 +613,7 @@ pub struct Vm {
     child_exit_status: HashMap<i64, i64>,
     csv_dialects: HashMap<String, Value>,
     csv_field_size_limit: i64,
+    hash_states: HashMap<u64, HashState>,
     pickle_copyreg_cache: HashMap<String, Value>,
     pickle_symbol_cache: HashMap<String, Value>,
     defaultdict_factories: HashMap<u64, Value>,
@@ -685,6 +687,7 @@ impl Vm {
             child_exit_status: HashMap::new(),
             csv_dialects: HashMap::new(),
             csv_field_size_limit: 131_072,
+            hash_states: HashMap::new(),
             pickle_copyreg_cache: HashMap::new(),
             pickle_symbol_cache: HashMap::new(),
             defaultdict_factories: HashMap::new(),
@@ -1682,6 +1685,7 @@ impl Vm {
         for obj in unreachable {
             let obj_id = obj.id();
             self.pending_del_instances.remove(&obj_id);
+            self.hash_states.remove(&obj_id);
             if self.finalized_del_objects.contains(&obj_id) {
                 continue;
             }

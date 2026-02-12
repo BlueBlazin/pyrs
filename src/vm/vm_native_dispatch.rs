@@ -5208,6 +5208,17 @@ impl Vm {
             BuiltinFunction::JsonMakeEncoderCall => {
                 self.builtin_json_make_encoder_call(args, kwargs)
             }
+            BuiltinFunction::HashlibMd5 => self.builtin_hashlib_md5(args, kwargs),
+            BuiltinFunction::HashlibSha224 => self.builtin_hashlib_sha224(args, kwargs),
+            BuiltinFunction::HashlibSha256 => self.builtin_hashlib_sha256(args, kwargs),
+            BuiltinFunction::HashlibSha384 => self.builtin_hashlib_sha384(args, kwargs),
+            BuiltinFunction::HashlibSha512 => self.builtin_hashlib_sha512(args, kwargs),
+            BuiltinFunction::HashlibHashUpdate => self.builtin_hashlib_hash_update(args, kwargs),
+            BuiltinFunction::HashlibHashDigest => self.builtin_hashlib_hash_digest(args, kwargs),
+            BuiltinFunction::HashlibHashHexDigest => {
+                self.builtin_hashlib_hash_hexdigest(args, kwargs)
+            }
+            BuiltinFunction::HashlibHashCopy => self.builtin_hashlib_hash_copy(args, kwargs),
             BuiltinFunction::PickleDump => self.builtin_pickle_dump(args, kwargs),
             BuiltinFunction::PickleDumps => self.builtin_pickle_dumps(args, kwargs),
             BuiltinFunction::PickleLoad => self.builtin_pickle_load(args, kwargs),

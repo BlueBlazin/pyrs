@@ -2386,6 +2386,15 @@ pub enum BuiltinFunction {
     JsonEncodeBaseStringAscii,
     JsonMakeEncoder,
     JsonMakeEncoderCall,
+    HashlibMd5,
+    HashlibSha224,
+    HashlibSha256,
+    HashlibSha384,
+    HashlibSha512,
+    HashlibHashUpdate,
+    HashlibHashDigest,
+    HashlibHashHexDigest,
+    HashlibHashCopy,
     PickleDump,
     PickleDumps,
     PickleLoad,
@@ -5137,6 +5146,15 @@ impl BuiltinFunction {
             | BuiltinFunction::JsonEncodeBaseStringAscii
             | BuiltinFunction::JsonMakeEncoder
             | BuiltinFunction::JsonMakeEncoderCall
+            | BuiltinFunction::HashlibMd5
+            | BuiltinFunction::HashlibSha224
+            | BuiltinFunction::HashlibSha256
+            | BuiltinFunction::HashlibSha384
+            | BuiltinFunction::HashlibSha512
+            | BuiltinFunction::HashlibHashUpdate
+            | BuiltinFunction::HashlibHashDigest
+            | BuiltinFunction::HashlibHashHexDigest
+            | BuiltinFunction::HashlibHashCopy
             | BuiltinFunction::JsonScannerMakeScanner
             | BuiltinFunction::JsonScannerPyMakeScanner
             | BuiltinFunction::JsonScannerScanOnce
