@@ -863,7 +863,10 @@ impl Vm {
             Ok(value) => Ok(value),
             Err(err) if err.message == "len() unsupported type" => {
                 let Some(method) = self.lookup_bound_special_method(&receiver, "__len__")? else {
-                    return Err(err);
+                    let type_name = self.value_type_name_for_error(&receiver);
+                    return Err(RuntimeError::new(format!(
+                        "TypeError: object of type '{type_name}' has no len()",
+                    )));
                 };
                 let result = match self.call_internal(method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(value) => value,
@@ -5349,6 +5352,12 @@ impl Vm {
                             Some(Value::Int(value)) if *value >= 0 => *value as u64,
                             _ => return Ok(Value::None),
                         };
+                        // CPython clears weakrefs when object finalization begins.
+                        // Keep weakrefs dead even if the object is still temporarily reachable
+                        // during __del__ side-effects (e.g. warnings source payloads).
+                        if self.finalized_del_objects.contains(&target_id) {
+                            return Ok(Value::None);
+                        }
                         let Some(obj) = self.heap.find_object_by_id(target_id) else {
                             return Ok(Value::None);
                         };

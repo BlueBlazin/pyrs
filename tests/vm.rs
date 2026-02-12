@@ -5480,6 +5480,98 @@ x = flag
 }
 
 #[test]
+fn with_statement_temp_locals_do_not_pin_context_manager_lifetimes() {
+    let source = r#"import gc
+import weakref
+
+class C:
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+def run():
+    c = C()
+    wr = weakref.ref(c)
+    with c as alias:
+        pass
+    del alias
+    del c
+    gc.collect()
+    return wr() is None
+
+ok = run()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn namedexpr_in_method_is_local_and_does_not_leak_to_module() {
+    let source = r#"class C:
+    def method(self):
+        if probe := 41:
+            return probe + 1
+        return 0
+
+c = C()
+result = c.method()
+leaked = "probe" in globals()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("result"), Some(Value::Int(42)));
+    assert_eq!(vm.get_global("leaked"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn pyio_fileio_del_namedexpr_does_not_leak_bound_method_or_pin_cycle() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping _pyio namedexpr/GC regression (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sys
+sys.path = [LIB_PATH]
+
+import gc
+import tempfile
+import warnings
+import weakref
+import _pyio
+
+warnings.simplefilter("ignore", ResourceWarning)
+name = tempfile.mktemp()
+f = _pyio.FileIO(name, "wb")
+f.write(b"abc")
+f.f = f
+wr = weakref.ref(f)
+del f
+gc.collect()
+collected = wr() is None
+dealloc_warn_leaked = hasattr(_pyio, "dealloc_warn")
+with open(name, "rb") as check:
+    flushed = check.read() == b"abc"
+ok = collected and (not dealloc_warn_leaked) and flushed
+"#
+    .replace("LIB_PATH", &format!("{lib_path:?}"));
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("collected"), Some(Value::Bool(true)));
+    assert_eq!(
+        vm.get_global("dealloc_warn_leaked"),
+        Some(Value::Bool(false))
+    );
+}
+
+#[test]
 fn with_assert_raises_handles_missing_attr_without_stack_underflow() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping with/assertRaises regression (CPython Lib path not available)");

@@ -120,8 +120,13 @@ Milestone 13 completion is blocked on P0 closure of:
   - `RawIOBase` default `read`/`readall` via `readinto`.
   - `BufferedIOBase` default `readinto`/`readinto1`.
 - Compiler correctness checkpoint landed this round:
+  - named-expression (`:=`) targets now participate in local-scope collection for statement/default-expression analysis, closing `_pyio.__del__` walrus leakage into module globals.
   - temporary assignment carrier names (`__pyrs_assign_*`) are deleted after attribute/subscript stores, and module-scope `DELETE_NAME` now clears fast-local-only names; this removed a hidden ref-retention path that affected GC-sensitive flows.
-- `test.test_io` failfast probe now clears CIOTest and reaches deeper PyIOTest coverage; current first blocker is `PyIOTest.test_garbage_collection` (weakref/GC lifetime parity on `_pyio.FileIO` cleanup).
+- Runtime parity checkpoint landed this round:
+  - weakrefs now stay dead once object finalization starts, matching CPython behavior during `__del__` side-effect windows (e.g. warning payloads).
+  - `len()` unsupported-type surfaces now raise `TypeError` classification with object type context.
+  - OS path helpers now raise `ValueError` for embedded NUL bytes before syscall dispatch.
+- `test.test_io` failfast probe now clears CIOTest and reaches deeper PyIOTest coverage; current first blocker is `PyIOTest.test_opener_invalid_fd` (`OSError.errno` attribute parity).
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
 - Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.
 - If optimization work is resumed as primary focus, it must explicitly close foundational missing surfaces tracked in backlog (`OPT-022` string interning strategy and remaining `OPT-023+` dispatch/call/container items).

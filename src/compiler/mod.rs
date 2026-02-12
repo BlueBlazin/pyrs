@@ -418,6 +418,7 @@ fn collect_locals_stmt(
         }
         _ => {}
     }
+    collect_locals_namedexpr_stmt(stmt, locals);
 }
 
 fn collect_pattern_locals(pattern: &Pattern, locals: &mut HashSet<String>) {
@@ -475,6 +476,292 @@ fn collect_locals_target(target: &AssignTarget, locals: &mut HashSet<String>) {
             }
         }
         AssignTarget::Subscript { .. } | AssignTarget::Attribute { .. } => {}
+    }
+}
+
+fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
+    match &stmt.node {
+        StmtKind::Expr(expr) => collect_locals_namedexpr_expr(expr, locals),
+        StmtKind::Assign { targets, value } => {
+            for target in targets {
+                collect_locals_namedexpr_target(target, locals);
+            }
+            collect_locals_namedexpr_expr(value, locals);
+        }
+        StmtKind::AugAssign { target, value, .. } => {
+            collect_locals_namedexpr_target(target, locals);
+            collect_locals_namedexpr_expr(value, locals);
+        }
+        StmtKind::AnnAssign {
+            target,
+            annotation,
+            value,
+        } => {
+            collect_locals_namedexpr_target(target, locals);
+            collect_locals_namedexpr_expr(annotation, locals);
+            if let Some(value) = value {
+                collect_locals_namedexpr_expr(value, locals);
+            }
+        }
+        StmtKind::Delete { targets } => {
+            for target in targets {
+                collect_locals_namedexpr_target(target, locals);
+            }
+        }
+        StmtKind::If { test, .. }
+        | StmtKind::While { test, .. }
+        | StmtKind::Assert { test, .. } => collect_locals_namedexpr_expr(test, locals),
+        StmtKind::For { target, iter, .. } => {
+            collect_locals_namedexpr_target(target, locals);
+            collect_locals_namedexpr_expr(iter, locals);
+        }
+        StmtKind::With {
+            context, target, ..
+        } => {
+            collect_locals_namedexpr_expr(context, locals);
+            if let Some(target) = target {
+                collect_locals_namedexpr_target(target, locals);
+            }
+        }
+        StmtKind::Return { value } => {
+            if let Some(value) = value {
+                collect_locals_namedexpr_expr(value, locals);
+            }
+        }
+        StmtKind::Raise { value, cause } => {
+            if let Some(value) = value {
+                collect_locals_namedexpr_expr(value, locals);
+            }
+            if let Some(cause) = cause {
+                collect_locals_namedexpr_expr(cause, locals);
+            }
+        }
+        StmtKind::Try { handlers, .. } => {
+            for handler in handlers {
+                if let Some(type_expr) = &handler.type_expr {
+                    collect_locals_namedexpr_expr(type_expr, locals);
+                }
+            }
+        }
+        StmtKind::FunctionDef {
+            posonly_params,
+            params,
+            vararg,
+            kwarg,
+            kwonly_params,
+            returns,
+            ..
+        } => {
+            collect_locals_namedexpr_params(
+                posonly_params,
+                params,
+                kwonly_params,
+                vararg.as_ref(),
+                kwarg.as_ref(),
+                locals,
+            );
+            if let Some(returns) = returns {
+                collect_locals_namedexpr_expr(returns, locals);
+            }
+        }
+        StmtKind::ClassDef {
+            bases,
+            metaclass,
+            keywords,
+            ..
+        } => {
+            for base in bases {
+                collect_locals_namedexpr_expr(base, locals);
+            }
+            if let Some(metaclass) = metaclass {
+                collect_locals_namedexpr_expr(metaclass, locals);
+            }
+            for (_, value) in keywords {
+                collect_locals_namedexpr_expr(value, locals);
+            }
+        }
+        StmtKind::Decorated { decorators, .. } => {
+            for decorator in decorators {
+                collect_locals_namedexpr_expr(decorator, locals);
+            }
+        }
+        StmtKind::Match { subject, cases } => {
+            collect_locals_namedexpr_expr(subject, locals);
+            for case in cases {
+                if let Some(guard) = &case.guard {
+                    collect_locals_namedexpr_expr(guard, locals);
+                }
+            }
+        }
+        StmtKind::Pass
+        | StmtKind::Import { .. }
+        | StmtKind::ImportFrom { .. }
+        | StmtKind::Global { .. }
+        | StmtKind::Nonlocal { .. }
+        | StmtKind::Break
+        | StmtKind::Continue => {}
+    }
+}
+
+fn collect_locals_namedexpr_params(
+    posonly_params: &[Parameter],
+    params: &[Parameter],
+    kwonly_params: &[Parameter],
+    vararg: Option<&Parameter>,
+    kwarg: Option<&Parameter>,
+    locals: &mut HashSet<String>,
+) {
+    for param in posonly_params
+        .iter()
+        .chain(params.iter())
+        .chain(kwonly_params.iter())
+    {
+        if let Some(default) = &param.default {
+            collect_locals_namedexpr_expr(default, locals);
+        }
+        if let Some(annotation) = &param.annotation {
+            collect_locals_namedexpr_expr(annotation, locals);
+        }
+    }
+    if let Some(param) = vararg {
+        if let Some(annotation) = &param.annotation {
+            collect_locals_namedexpr_expr(annotation, locals);
+        }
+    }
+    if let Some(param) = kwarg {
+        if let Some(annotation) = &param.annotation {
+            collect_locals_namedexpr_expr(annotation, locals);
+        }
+    }
+}
+
+fn collect_locals_namedexpr_target(target: &AssignTarget, locals: &mut HashSet<String>) {
+    match target {
+        AssignTarget::Name(_) => {}
+        AssignTarget::Starred(item) => collect_locals_namedexpr_target(item, locals),
+        AssignTarget::Tuple(items) | AssignTarget::List(items) => {
+            for item in items {
+                collect_locals_namedexpr_target(item, locals);
+            }
+        }
+        AssignTarget::Subscript { value, index } => {
+            collect_locals_namedexpr_expr(value, locals);
+            collect_locals_namedexpr_expr(index, locals);
+        }
+        AssignTarget::Attribute { value, .. } => {
+            collect_locals_namedexpr_expr(value, locals);
+        }
+    }
+}
+
+fn collect_locals_namedexpr_expr(expr: &Expr, locals: &mut HashSet<String>) {
+    match &expr.node {
+        ExprKind::Name(_) | ExprKind::Constant(_) => {}
+        ExprKind::NamedExpr { target, value } => {
+            locals.insert(target.clone());
+            collect_locals_namedexpr_expr(value, locals);
+        }
+        ExprKind::Binary { left, right, .. } | ExprKind::BoolOp { left, right, .. } => {
+            collect_locals_namedexpr_expr(left, locals);
+            collect_locals_namedexpr_expr(right, locals);
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Await { value: operand } => {
+            collect_locals_namedexpr_expr(operand, locals);
+        }
+        ExprKind::Call { func, args } => {
+            collect_locals_namedexpr_expr(func, locals);
+            for arg in args {
+                match arg {
+                    CallArg::Positional(expr)
+                    | CallArg::Keyword { value: expr, .. }
+                    | CallArg::Star(expr)
+                    | CallArg::DoubleStar(expr) => collect_locals_namedexpr_expr(expr, locals),
+                }
+            }
+        }
+        ExprKind::List(values) | ExprKind::Tuple(values) => {
+            for value in values {
+                collect_locals_namedexpr_expr(value, locals);
+            }
+        }
+        ExprKind::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    DictEntry::Pair(key, value) => {
+                        collect_locals_namedexpr_expr(key, locals);
+                        collect_locals_namedexpr_expr(value, locals);
+                    }
+                    DictEntry::Unpack(value) => collect_locals_namedexpr_expr(value, locals),
+                }
+            }
+        }
+        ExprKind::Subscript { value, index } => {
+            collect_locals_namedexpr_expr(value, locals);
+            collect_locals_namedexpr_expr(index, locals);
+        }
+        ExprKind::Attribute { value, .. } => collect_locals_namedexpr_expr(value, locals),
+        ExprKind::IfExpr { test, body, orelse } => {
+            collect_locals_namedexpr_expr(test, locals);
+            collect_locals_namedexpr_expr(body, locals);
+            collect_locals_namedexpr_expr(orelse, locals);
+        }
+        ExprKind::Lambda {
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg,
+            kwarg,
+            ..
+        } => collect_locals_namedexpr_params(
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg.as_ref(),
+            kwarg.as_ref(),
+            locals,
+        ),
+        ExprKind::ListComp { elt, clauses } | ExprKind::GeneratorExp { elt, clauses } => {
+            collect_locals_namedexpr_expr(elt, locals);
+            for clause in clauses {
+                collect_locals_namedexpr_target(&clause.target, locals);
+                collect_locals_namedexpr_expr(&clause.iter, locals);
+                for cond in &clause.ifs {
+                    collect_locals_namedexpr_expr(cond, locals);
+                }
+            }
+        }
+        ExprKind::DictComp {
+            key,
+            value,
+            clauses,
+        } => {
+            collect_locals_namedexpr_expr(key, locals);
+            collect_locals_namedexpr_expr(value, locals);
+            for clause in clauses {
+                collect_locals_namedexpr_target(&clause.target, locals);
+                collect_locals_namedexpr_expr(&clause.iter, locals);
+                for cond in &clause.ifs {
+                    collect_locals_namedexpr_expr(cond, locals);
+                }
+            }
+        }
+        ExprKind::Yield { value } => {
+            if let Some(value) = value {
+                collect_locals_namedexpr_expr(value, locals);
+            }
+        }
+        ExprKind::YieldFrom { value } => collect_locals_namedexpr_expr(value, locals),
+        ExprKind::Slice { lower, upper, step } => {
+            if let Some(lower) = lower {
+                collect_locals_namedexpr_expr(lower, locals);
+            }
+            if let Some(upper) = upper {
+                collect_locals_namedexpr_expr(upper, locals);
+            }
+            if let Some(step) = step {
+                collect_locals_namedexpr_expr(step, locals);
+            }
+        }
     }
 }
 
@@ -3423,6 +3710,8 @@ impl Compiler {
         let exc_temp = self.fresh_temp("ctx_exc");
         self.compile_expr(context)?;
         self.emit_store_name(&ctx_temp);
+        self.emit(Opcode::LoadConst, Some(0));
+        self.emit_store_name(&exc_temp);
 
         self.emit_load_name(&ctx_temp)?;
         let enter_idx = self.code.add_name("__enter__".to_string());
@@ -3466,6 +3755,8 @@ impl Compiler {
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
         self.patch_jump(suppressed_jump, end_target)?;
+        self.emit_delete_name(&exc_temp);
+        self.emit_delete_name(&ctx_temp);
         Ok(())
     }
 

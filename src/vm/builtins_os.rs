@@ -222,10 +222,9 @@ impl Vm {
         #[cfg(unix)]
         {
             let raw_fd = i32::try_from(fd).ok()?;
-            return self
-                .open_files
-                .iter()
-                .find_map(|(virtual_fd, file)| (file.as_raw_fd() == raw_fd).then_some(*virtual_fd));
+            return self.open_files.iter().find_map(|(virtual_fd, file)| {
+                (file.as_raw_fd() == raw_fd).then_some(*virtual_fd)
+            });
         }
         #[allow(unreachable_code)]
         None
@@ -485,7 +484,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 3 {
-            return Err(RuntimeError::new("lseek() expects fd, position, and whence"));
+            return Err(RuntimeError::new(
+                "lseek() expects fd, position, and whence",
+            ));
         }
         let fd = value_to_int(args[0].clone())?;
         let position = value_to_int(args[1].clone())?;
@@ -2352,14 +2353,25 @@ impl Vm {
         &mut self,
         value: Value,
     ) -> Result<(String, bool), RuntimeError> {
+        let validate_path =
+            |path: String, is_bytes: bool| -> Result<(String, bool), RuntimeError> {
+                if path.contains('\0') {
+                    return Err(RuntimeError::new(
+                        "ValueError: embedded null character in path",
+                    ));
+                }
+                Ok((path, is_bytes))
+            };
         let normalized = match value {
             Value::Str(_) | Value::Bytes(_) => value,
             other => self.builtin_os_fspath(vec![other], HashMap::new())?,
         };
         match normalized {
-            Value::Str(path) => Ok((path, false)),
+            Value::Str(path) => validate_path(path, false),
             Value::Bytes(obj) => match &*obj.kind() {
-                Object::Bytes(bytes) => Ok((String::from_utf8_lossy(bytes).into_owned(), true)),
+                Object::Bytes(bytes) => {
+                    validate_path(String::from_utf8_lossy(bytes).into_owned(), true)
+                }
                 _ => Err(RuntimeError::new("path must be string or bytes")),
             },
             _ => Err(RuntimeError::new("path must be string or bytes")),
