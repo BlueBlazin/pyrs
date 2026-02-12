@@ -17,7 +17,7 @@ No partially implemented surface is allowed to remain untracked.
 | Surface | Current state | Closure criteria | Milestone |
 |---|---|---|---|
 | `_sqlite3`/`sqlite3` | Not implemented (`sqlite3` import fails) | `_sqlite3` baseline module with connect/execute/fetch/close parity for common DB-API paths | 13 |
-| `pickle`/`pickletools`/`copyreg` | Deferred strict lane mostly green; remaining blocker is `_pickle.Pickler` vs `pickle._Pickler` parity in `CPicklingErrorTests.test_bad_newobj_ex_args` (proto>=4), with temporary dump-error remap logic in place | Remove temporary `_pickle.Pickler.dump` remap path, land full `__newobj_ex__` CPython C-path parity for proto>=4, and close deferred strict lane | 13 |
+| `pickle`/`pickletools`/`copyreg` | `_pickle.Pickler` `__newobj_ex__` C-path parity is landed (including proto>=4) and temporary remap shim is removed; deferred strict lane currently times out under subprocess harness (`test_pickle.py`/`test_pickletools.py`) | Eliminate deferred strict pickle subprocess timeouts, keep allowlist empty, and close deferred strict lane | 13 |
 | `_io` | Core mode/newline/validation behavior implemented; strict memoryio lane is green; remaining long-tail behavior exists in full strict stdlib execution | Complete remaining `_io` long-tail behavior required by full strict stdlib execution | 13 |
 | `json` | Common `dumps`/`loads` workflows are green in top-stdlib gate; pure-stdlib JSON path is still partial | Full CPython semantic parity (pure + native accelerator paths), malformed-input differential coverage, perf baseline | 13 |
 | `_csv`/`csv` | Top-level common workflows are green; long-tail dialect/error parity still partial | Full parser/writer parity (`test_csv` class), malformed-input hardening, perf baseline | 13 |

@@ -43,6 +43,7 @@ const PICKLER_FIX_IMPORTS_ATTR: &str = "__pyrs_pickle_fix_imports__";
 const PICKLER_BUFFER_CALLBACK_ATTR: &str = "__pyrs_pickle_buffer_callback__";
 const PICKLER_FALLBACK_ATTR: &str = "__pyrs_pickle_fallback__";
 const PICKLER_BUSY_ATTR: &str = "__pyrs_pickle_busy__";
+const PICKLER_SAVE_REDUCE_ORIG_ATTR: &str = "__pyrs_pickle_save_reduce_orig__";
 const UNPICKLER_FILE_ATTR: &str = "__pyrs_unpickle_file__";
 const UNPICKLER_FIX_IMPORTS_ATTR: &str = "__pyrs_unpickle_fix_imports__";
 const UNPICKLER_ENCODING_ATTR: &str = "__pyrs_unpickle_encoding__";
@@ -1344,6 +1345,7 @@ impl Vm {
     fn pickle_pickler_build_fallback(&mut self, instance: &ObjRef) -> Result<Value, RuntimeError> {
         if let Some(existing) = Self::pickle_get_instance_attr(instance, PICKLER_FALLBACK_ATTR) {
             if !matches!(existing, Value::None) {
+                self.pickle_install_c_pickler_save_reduce_hook(&existing)?;
                 if let Some(dispatch_table) = self.pickle_get_pickler_dispatch_table(instance) {
                     self.builtin_setattr(
                         vec![
@@ -1390,8 +1392,45 @@ impl Vm {
                 HashMap::new(),
             )?;
         }
+        self.pickle_install_c_pickler_save_reduce_hook(&pure)?;
         Self::pickle_store_instance_attr(instance, PICKLER_FALLBACK_ATTR, pure.clone())?;
         Ok(pure)
+    }
+
+    fn pickle_install_c_pickler_save_reduce_hook(
+        &mut self,
+        fallback: &Value,
+    ) -> Result<(), RuntimeError> {
+        let Value::Instance(fallback_instance) = fallback else {
+            return Ok(());
+        };
+        if Self::pickle_get_instance_attr(fallback_instance, PICKLER_SAVE_REDUCE_ORIG_ATTR)
+            .is_some()
+        {
+            return Ok(());
+        }
+        let save_reduce = self.builtin_getattr(
+            vec![fallback.clone(), Value::Str("save_reduce".to_string())],
+            HashMap::new(),
+        )?;
+        Self::pickle_store_instance_attr(
+            fallback_instance,
+            PICKLER_SAVE_REDUCE_ORIG_ATTR,
+            save_reduce,
+        )?;
+        let hook = self.alloc_builtin_bound_method(
+            BuiltinFunction::PickleCPicklerSaveReduceHook,
+            fallback_instance.clone(),
+        );
+        self.builtin_setattr(
+            vec![
+                fallback.clone(),
+                Value::Str("save_reduce".to_string()),
+                hook,
+            ],
+            HashMap::new(),
+        )?;
+        Ok(())
     }
 
     fn pickle_unpickler_build_fallback(
@@ -1457,32 +1496,6 @@ impl Vm {
 
     fn pickle_clear_fallback_instance_attr(&mut self, fallback: Value, attr: &str) {
         let _ = self.builtin_delattr(vec![fallback, Value::Str(attr.to_string())], HashMap::new());
-    }
-
-    fn pickle_rewrite_active_exception(&mut self, name: &str, message: &str) {
-        if let Some(frame) = self.frames.last_mut() {
-            if let Some(Value::Exception(exception)) = frame.active_exception.as_mut() {
-                exception.name = name.to_string();
-                exception.message = Some(message.to_string());
-            }
-        }
-    }
-
-    fn pickle_remap_c_pickler_dump_error(&mut self, err: &RuntimeError) -> Option<String> {
-        let message = err.message.as_str();
-        if message.contains("list extend expects iterable")
-            || message.contains("Value after * must be an iterable")
-            || message.contains("Value after * must be an iterable, not ")
-        {
-            return Some("second argument to __newobj_ex__() must be a tuple, not int".to_string());
-        }
-        if message.contains("call kwargs must be dict")
-            || message.contains("after ** must be a mapping")
-            || message.contains("keyword argument after ** must be a mapping")
-        {
-            return Some("third argument to __newobj_ex__() must be a dict, not list".to_string());
-        }
-        None
     }
 
     pub(in crate::vm) fn builtin_pickle_pickler_init(
@@ -1601,12 +1614,6 @@ impl Vm {
             ) {
                 let _ = Self::pickle_store_instance_attr(&instance, "memo", memo);
             }
-            if let Err(err) = &outcome {
-                if let Some(remapped) = self.pickle_remap_c_pickler_dump_error(err) {
-                    self.pickle_rewrite_active_exception("PicklingError", &remapped);
-                    return Err(RuntimeError::new(format!("PicklingError: {remapped}")));
-                }
-            }
             match outcome? {
                 InternalCallOutcome::Value(value) => Ok(value),
                 InternalCallOutcome::CallerExceptionHandled => Ok(Value::None),
@@ -1614,6 +1621,74 @@ impl Vm {
         })();
         let _ = Self::pickle_store_instance_attr(&instance, PICKLER_BUSY_ATTR, Value::Bool(false));
         result
+    }
+
+    pub(in crate::vm) fn builtin_pickle_c_pickler_save_reduce_hook(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "Pickler.save_reduce")?;
+        let protocol_value = self.builtin_getattr(
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str("proto".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        let protocol = value_to_int(protocol_value)?;
+        if protocol >= 2 {
+            let func = args
+                .first()
+                .cloned()
+                .or_else(|| kwargs.get("func").cloned())
+                .unwrap_or(Value::None);
+            let func_name = match self.builtin_getattr(
+                vec![
+                    func,
+                    Value::Str("__name__".to_string()),
+                    Value::Str("".to_string()),
+                ],
+                HashMap::new(),
+            ) {
+                Ok(Value::Str(name)) => name,
+                _ => String::new(),
+            };
+            if func_name == "__newobj_ex__" {
+                let reduce_args = args
+                    .get(1)
+                    .cloned()
+                    .or_else(|| kwargs.get("args").cloned())
+                    .unwrap_or(Value::None);
+                if let Value::Tuple(tuple_obj) = reduce_args {
+                    let tuple_values = match &*tuple_obj.kind() {
+                        Object::Tuple(values) => values.clone(),
+                        _ => Vec::new(),
+                    };
+                    if tuple_values.len() == 3 {
+                        if !matches!(tuple_values[1], Value::Tuple(_)) {
+                            let type_name = self.value_type_name_for_error(&tuple_values[1]);
+                            return Err(RuntimeError::new(format!(
+                                "PicklingError: second argument to __newobj_ex__() must be a tuple, not {type_name}"
+                            )));
+                        }
+                        if !matches!(tuple_values[2], Value::Dict(_)) {
+                            let type_name = self.value_type_name_for_error(&tuple_values[2]);
+                            return Err(RuntimeError::new(format!(
+                                "PicklingError: third argument to __newobj_ex__() must be a dict, not {type_name}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        let original = Self::pickle_get_instance_attr(&instance, PICKLER_SAVE_REDUCE_ORIG_ATTR)
+            .ok_or_else(|| RuntimeError::new("Pickler.save_reduce hook missing original"))?;
+        match self.call_internal(original, args, kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => Ok(Value::None),
+        }
     }
 
     pub(in crate::vm) fn builtin_pickle_pickler_clear_memo(

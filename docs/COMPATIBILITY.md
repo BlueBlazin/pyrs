@@ -43,12 +43,12 @@ Status:
 - `[~]` `_io` parity advanced (`io.FileIO` + `_io.FileIO.__init__`, `IOBase` close/flush/finalizer defaults, `RawIOBase` default `read`/`readall`, `BufferedIOBase` default `readinto`/`readinto1`, `_io.StringIO`/`_io.BytesIO` close/context/open-state/readable/writable/seekable, `read1`/`readlines`/`writelines`/`truncate`/`flush`/`isatty`, `getbuffer`/`detach`, `__getstate__`/`__setstate__`, buffer-export resize guards, and incremental codec factory/state support; buffered-reader close-ordering/context, detach/peek/read1/readinto1, readonly-attribute + recursive-repr behavior, char-device seek/tell sanity, threaded buffered reads, and readonly truncate semantics now covered); full pure-`_pyio` `test_memoryio` lane is green under `sys.implementation.name == 'pyrs'` (CPython-only tests skipped), and current failfast blocker is outside `_io` (regex alternation in `_sre`)
 - `[~]` Core bytes surface advanced (`bytes.count`/`bytearray.count` now implemented with start/end support), with remaining long-tail still pending
 - `[~]` Native-core-first parity work in progress (`_io`, `_csv`, `_sre`, `_pickle`)
-- `[~]` Strict stdlib lane active for non-pickle scope; deferred strict pickle lane still open
+- `[~]` Strict stdlib lane active for non-pickle scope; deferred strict pickle lane still open due subprocess timeout closure work (`test_pickle.py`, `test_pickletools.py`)
 
 ## Test and Gate Status
 - `[x]` Differential tests and fuzz foundations active
 - `[x]` Coverage gate and no-op inventory gates active
-- `[~]` Full strict stdlib closure remains pending due deferred pickle lane
+- `[~]` Full strict stdlib closure remains pending due deferred pickle lane timeout closure
 
 ## Notes
 - Active strict suite: `tests/cpython_suite_strict_stdlib.txt`

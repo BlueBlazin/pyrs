@@ -2731,6 +2731,49 @@ ok = raised
 }
 
 #[test]
+fn c_pickler_newobj_ex_argument_type_errors_match_cpython_protocols_2_through_5() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping C-pickler __newobj_ex__ argument validation test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = r#"import copyreg
+import io
+import _pickle
+from test.pickletester import REX
+
+ok = True
+for proto in (2, 3, 4, 5):
+    pickler = _pickle.Pickler(io.BytesIO(), proto)
+    try:
+        pickler.dump(REX((copyreg.__newobj_ex__, (REX, 42, {}))))
+        ok = False
+    except Exception as exc:
+        ok = ok and (
+            type(exc).__name__ == "PicklingError"
+            and str(exc) == "second argument to __newobj_ex__() must be a tuple, not int"
+        )
+
+    pickler = _pickle.Pickler(io.BytesIO(), proto)
+    try:
+        pickler.dump(REX((copyreg.__newobj_ex__, (REX, (), []))))
+        ok = False
+    except Exception as exc:
+        ok = ok and (
+            type(exc).__name__ == "PicklingError"
+            and str(exc) == "third argument to __newobj_ex__() must be a dict, not list"
+        )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn pickle_protocol4_preserves_bytes_alias_identity() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pickle bytes alias test (CPython Lib path not available)");

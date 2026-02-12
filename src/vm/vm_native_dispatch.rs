@@ -566,31 +566,30 @@ impl Vm {
                 let (values, mut remaining_args) = match &*receiver.kind() {
                     Object::Tuple(values) => (values.clone(), args),
                     Object::Module(module_data) => {
-                        let tuple_obj =
-                            if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
-                                tuple.clone()
-                            } else {
-                                if args.is_empty() {
+                        let tuple_obj = if let Some(Value::Tuple(tuple)) =
+                            module_data.globals.get("value")
+                        {
+                            tuple.clone()
+                        } else {
+                            if args.is_empty() {
+                                return Err(RuntimeError::new(
+                                    "tuple.index() expects one argument",
+                                ));
+                            }
+                            match args.remove(0) {
+                                Value::Tuple(tuple) => tuple,
+                                Value::Instance(instance) => {
+                                    self.instance_backing_tuple(&instance).ok_or_else(|| {
+                                        RuntimeError::new("tuple.index() receiver must be tuple")
+                                    })?
+                                }
+                                _ => {
                                     return Err(RuntimeError::new(
-                                        "tuple.index() expects one argument",
+                                        "tuple.index() receiver must be tuple",
                                     ));
                                 }
-                                match args.remove(0) {
-                                    Value::Tuple(tuple) => tuple,
-                                    Value::Instance(instance) => {
-                                        self.instance_backing_tuple(&instance).ok_or_else(|| {
-                                            RuntimeError::new(
-                                                "tuple.index() receiver must be tuple",
-                                            )
-                                        })?
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "tuple.index() receiver must be tuple",
-                                        ));
-                                    }
-                                }
-                            };
+                            }
+                        };
                         let tuple_kind = tuple_obj.kind();
                         let Object::Tuple(values) = &*tuple_kind else {
                             return Err(RuntimeError::new("tuple.index() receiver must be tuple"));
@@ -5228,6 +5227,9 @@ impl Vm {
             }
             BuiltinFunction::PicklePicklerInit => self.builtin_pickle_pickler_init(args, kwargs),
             BuiltinFunction::PicklePicklerDump => self.builtin_pickle_pickler_dump(args, kwargs),
+            BuiltinFunction::PickleCPicklerSaveReduceHook => {
+                self.builtin_pickle_c_pickler_save_reduce_hook(args, kwargs)
+            }
             BuiltinFunction::PicklePicklerClearMemo => {
                 self.builtin_pickle_pickler_clear_memo(args, kwargs)
             }

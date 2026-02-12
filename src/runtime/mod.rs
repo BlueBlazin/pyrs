@@ -2402,6 +2402,7 @@ pub enum BuiltinFunction {
     PickleModuleGetAttr,
     PicklePicklerInit,
     PicklePicklerDump,
+    PickleCPicklerSaveReduceHook,
     PicklePicklerClearMemo,
     PicklePicklerPersistentId,
     PickleUnpicklerInit,
@@ -3013,6 +3014,7 @@ impl BuiltinFunction {
             | BuiltinFunction::PickleModuleGetAttr
             | BuiltinFunction::PicklePicklerInit
             | BuiltinFunction::PicklePicklerDump
+            | BuiltinFunction::PickleCPicklerSaveReduceHook
             | BuiltinFunction::PicklePicklerClearMemo
             | BuiltinFunction::PicklePicklerPersistentId
             | BuiltinFunction::PickleUnpicklerInit

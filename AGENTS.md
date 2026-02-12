@@ -32,7 +32,7 @@ Build a production-grade Python interpreter in Rust with full source + bytecode 
 
 Milestone 13 completion is blocked on P0 closure of:
 - `_sqlite3` baseline surface (`sqlite3` import + connect/execute/fetch path)
-- deferred strict pickle blocker (`CPicklingErrorTests.test_bad_newobj_ex_args`)
+- deferred strict pickle lane timeout closure (`test/test_pickle.py`, `test/test_pickletools.py`)
 
 ## Execution Policy
 - Follow CPython source-of-truth for behavior:
@@ -112,9 +112,9 @@ Milestone 13 completion is blocked on P0 closure of:
 - Optimization phase-1 closeout is complete; unresolved throughput gaps remain tracked in `docs/OPTIMIZATION_BACKLOG.md` (`OPT-022` through `OPT-026` and related P1 items).
 - CI now runs `scripts/bench_dispatch_hotpath.sh` as non-blocking telemetry and uploads the benchmark artifact for regression tracking.
 - Deferred pickle strict lane status:
-  - `test/test_pickletools.py` is passing in strict subprocess mode.
-  - `test/test_pickle.py` is down to one blocker (`CPicklingErrorTests.test_bad_newobj_ex_args`, proto>=4 C-pickler parity).
-  - `_pickle.Pickler.dump` currently carries a temporary error-remap shim for `__newobj_ex__` C-path mismatch; removal is required before Milestone 13 closure.
+  - `CPicklingErrorTests.test_bad_newobj_ex_args` parity is landed across proto 2-5 for `_pickle.Pickler`.
+  - temporary `_pickle.Pickler.dump` error-remap shim has been removed; save-reduce hook now enforces C-path `__newobj_ex__` argument typing directly.
+  - deferred strict pickle suite currently times out in subprocess mode and remains open until timeout closure.
 - Hashlib checkpoint:
   - native `_md5` and `_sha2` backends are wired using Rust crypto crates with constructor/update/digest/hexdigest/copy parity tests.
   - common `hashlib.md5` and `hashlib.sha256` stdlib paths are now green.
