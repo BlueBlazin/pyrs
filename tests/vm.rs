@@ -7207,6 +7207,27 @@ ok = caught and cause_ok
 }
 
 #[test]
+fn _io_bufferedreader_seek_cur_uses_logical_position_with_prefetch_cache() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_seek_cache_{unique}.txt"));
+    std::fs::write(&temp, b"hello world\n").expect("write sample file");
+    let source = format!(
+        "import io\npath = {path:?}\nwith io.open(path, 'rb') as f:\n    first = f.read(5)\n    a = f.seek(-6, 2)\n    b = f.read(5)\n    c = f.seek(-6, 1)\n    d = f.read(5)\n    e = f.tell()\n    f.seek(0)\n    whole = f.read()\nok = (first == b'hello' and a == 6 and b == b'world' and c == 5 and d == b' worl' and e == 10 and whole == b'hello world\\n')\n",
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
 fn _io_base_destructor_closes_and_flushes_receiver() {
     let source = r#"import _io, gc
 record = []

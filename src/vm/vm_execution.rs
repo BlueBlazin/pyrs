@@ -4615,6 +4615,8 @@ impl Vm {
                     items.push(Value::Str(strerror));
                 }
                 self.heap.alloc_tuple(items)
+            } else if let Some(strerror) = os_strerror {
+                self.heap.alloc_tuple(vec![Value::Str(strerror)])
             } else if let Some(message) = &exception.message {
                 self.heap.alloc_tuple(vec![Value::Str(message.clone())])
             } else {

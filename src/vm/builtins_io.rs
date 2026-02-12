@@ -1,5 +1,9 @@
 use super::*;
 
+const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
+const IO_BUFFERED_ATTR_BUF_SIZE: &str = "__pyrs_buffer_size";
+const IO_BUFFERED_DEFAULT_SIZE: i64 = 8192;
+
 impl Vm {
     pub(super) fn builtin_io_open(
         &mut self,
@@ -399,6 +403,17 @@ impl Vm {
                 if let Value::Instance(raw_ref) = &raw_instance {
                     Self::instance_attr_set(buffer_ref, "raw", Value::Instance(raw_ref.clone()))?;
                 }
+                let buffer_size = if buffering > 0 {
+                    buffering
+                } else {
+                    IO_BUFFERED_DEFAULT_SIZE
+                };
+                Self::instance_attr_set(
+                    buffer_ref,
+                    IO_BUFFERED_ATTR_BUF_SIZE,
+                    Value::Int(buffer_size),
+                )?;
+                self.io_buffered_store_read_buffer(buffer_ref, Vec::new())?;
             }
             instance
         };
@@ -1348,6 +1363,39 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("buffered stream is uninitialized"))
     }
 
+    fn io_buffered_read_buffer(instance: &ObjRef) -> Result<Vec<u8>, RuntimeError> {
+        let Some(value) = Self::instance_attr_get(instance, IO_BUFFERED_ATTR_READ_BUF) else {
+            return Ok(Vec::new());
+        };
+        bytes_like_from_value(value)
+            .map_err(|_| RuntimeError::new("TypeError: internal buffered data must be bytes-like"))
+    }
+
+    fn io_buffered_store_read_buffer(
+        &mut self,
+        instance: &ObjRef,
+        bytes: Vec<u8>,
+    ) -> Result<(), RuntimeError> {
+        Self::instance_attr_set(
+            instance,
+            IO_BUFFERED_ATTR_READ_BUF,
+            self.heap.alloc_bytes(bytes),
+        )
+    }
+
+    fn io_buffered_buffer_size(instance: &ObjRef) -> usize {
+        match Self::instance_attr_get(instance, IO_BUFFERED_ATTR_BUF_SIZE) {
+            Some(Value::Int(value)) if value > 0 => value as usize,
+            Some(Value::Bool(true)) => 1,
+            Some(Value::BigInt(value)) => value
+                .to_i64()
+                .filter(|size| *size > 0)
+                .map(|size| size as usize)
+                .unwrap_or(IO_BUFFERED_DEFAULT_SIZE as usize),
+            _ => IO_BUFFERED_DEFAULT_SIZE as usize,
+        }
+    }
+
     fn io_buffered_mark_closed(instance: &ObjRef) -> Result<(), RuntimeError> {
         Self::instance_attr_set(instance, "__IOBase_closed", Value::Bool(true))?;
         Self::instance_attr_set(instance, "_closed", Value::Bool(true))?;
@@ -1463,6 +1511,68 @@ impl Vm {
         }
     }
 
+    fn io_exception_object_from_runtime_error(
+        &mut self,
+        err: RuntimeError,
+    ) -> Result<ExceptionObject, RuntimeError> {
+        let classified = classify_runtime_error(&err.message);
+        let exception_type = if classified == "RuntimeError" {
+            extract_runtime_error_exception_name(&err.message)
+                .unwrap_or_else(|| classified.to_string())
+        } else {
+            classified.to_string()
+        };
+        let mut exception_message = Some(err.message.clone());
+        if let Some(from_traceback) =
+            extract_runtime_error_final_message(&err.message, &exception_type)
+        {
+            exception_message = from_traceback;
+        } else if let Some(from_prefixed) =
+            extract_prefixed_exception_message(&err.message, &exception_type)
+        {
+            exception_message = from_prefixed;
+        }
+        let exception = ExceptionObject::new(exception_type.clone(), exception_message);
+        if is_os_error_family(exception_type.as_str()) {
+            if let Some(errno) =
+                extract_os_error_errno(&err.message).or_else(|| infer_os_error_errno(&err.message))
+            {
+                exception
+                    .attrs
+                    .borrow_mut()
+                    .insert("errno".to_string(), Value::Int(errno));
+            }
+            if let Some(strerror) = extract_os_error_strerror(&err.message) {
+                exception
+                    .attrs
+                    .borrow_mut()
+                    .insert("strerror".to_string(), Value::Str(strerror));
+            }
+        }
+        let args = if is_os_error_family(exception_type.as_str()) {
+            if let Some(errno) = exception.attrs.borrow().get("errno").cloned() {
+                let mut items = vec![errno];
+                if let Some(strerror) = exception.attrs.borrow().get("strerror").cloned() {
+                    items.push(strerror);
+                }
+                self.heap.alloc_tuple(items)
+            } else if let Some(message) = &exception.message {
+                self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+            } else {
+                self.heap.alloc_tuple(Vec::new())
+            }
+        } else if let Some(message) = &exception.message {
+            self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+        } else {
+            self.heap.alloc_tuple(Vec::new())
+        };
+        exception
+            .attrs
+            .borrow_mut()
+            .insert("args".to_string(), args);
+        Ok(exception)
+    }
+
     pub(super) fn builtin_io_buffered_init(
         &mut self,
         mut args: Vec<Value>,
@@ -1482,10 +1592,16 @@ impl Vm {
             )));
         }
         let raw = args.remove(0);
-        if let Some(buffer_size) = kwargs.remove("buffer_size") {
-            let _ = value_to_int(buffer_size)?;
+        let mut buffer_size = IO_BUFFERED_DEFAULT_SIZE;
+        if let Some(buffer_size_value) = kwargs.remove("buffer_size") {
+            buffer_size = self.io_index_arg_to_int(buffer_size_value)?;
         } else if !args.is_empty() {
-            let _ = value_to_int(args.remove(0))?;
+            buffer_size = self.io_index_arg_to_int(args.remove(0))?;
+        }
+        if buffer_size <= 0 {
+            return Err(RuntimeError::new(
+                "ValueError: buffer_size must be positive",
+            ));
         }
         if !args.is_empty() || !kwargs.is_empty() {
             return Err(RuntimeError::new(format!(
@@ -1504,6 +1620,12 @@ impl Vm {
             }
         }
         Self::instance_attr_set(&instance, "raw", raw)?;
+        Self::instance_attr_set(
+            &instance,
+            IO_BUFFERED_ATTR_BUF_SIZE,
+            Value::Int(buffer_size),
+        )?;
+        self.io_buffered_store_read_buffer(&instance, Vec::new())?;
         Ok(Value::None)
     }
 
@@ -1512,6 +1634,11 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "BufferedIOBase.read expects 0-1 arguments",
+            ));
+        }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.read")?;
         let readable = self.builtin_io_buffered_readable(
             vec![Value::Instance(instance.clone())],
@@ -1520,7 +1647,97 @@ impl Vm {
         if !is_truthy(&readable) {
             return Err(RuntimeError::new("UnsupportedOperation: not readable"));
         }
-        self.io_buffered_delegate_method(&instance, "read", args, kwargs, "buffered read failed")
+        let size = match args.pop() {
+            None | Some(Value::None) => -1,
+            Some(value) => self.io_index_arg_to_int(value)?,
+        };
+        if size < -1 {
+            return Err(RuntimeError::new(
+                "ValueError: read length must be non-negative",
+            ));
+        }
+        if size == 0 {
+            return Ok(self.heap.alloc_bytes(Vec::new()));
+        }
+
+        let mut cached = Self::io_buffered_read_buffer(&instance)?;
+        let mut output = Vec::new();
+        if size < 0 {
+            if !cached.is_empty() {
+                output.extend_from_slice(&cached);
+                cached.clear();
+            }
+            loop {
+                let value = self.io_buffered_delegate_method(
+                    &instance,
+                    "read",
+                    Vec::new(),
+                    HashMap::new(),
+                    "buffered read failed",
+                )?;
+                if matches!(value, Value::None) {
+                    if output.is_empty() {
+                        return Ok(Value::None);
+                    }
+                    break;
+                }
+                let chunk = bytes_like_from_value(value)
+                    .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                if chunk.is_empty() {
+                    break;
+                }
+                output.extend_from_slice(&chunk);
+            }
+            self.io_buffered_store_read_buffer(&instance, cached)?;
+            return Ok(self.heap.alloc_bytes(output));
+        }
+
+        let requested = size as usize;
+        if cached.len() >= requested {
+            let remainder = cached.split_off(requested);
+            output.extend_from_slice(&cached);
+            self.io_buffered_store_read_buffer(&instance, remainder)?;
+            return Ok(self.heap.alloc_bytes(output));
+        }
+
+        if !cached.is_empty() {
+            output.extend_from_slice(&cached);
+            cached.clear();
+        }
+
+        let buffer_size = Self::io_buffered_buffer_size(&instance).max(1);
+        while output.len() < requested {
+            let remaining = requested - output.len();
+            let read_size = buffer_size.max(remaining);
+            let value = self.io_buffered_delegate_method(
+                &instance,
+                "read",
+                vec![Value::Int(read_size as i64)],
+                HashMap::new(),
+                "buffered read failed",
+            )?;
+            if matches!(value, Value::None) {
+                if output.is_empty() {
+                    self.io_buffered_store_read_buffer(&instance, cached)?;
+                    return Ok(Value::None);
+                }
+                break;
+            }
+            let chunk = bytes_like_from_value(value)
+                .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+            if chunk.is_empty() {
+                break;
+            }
+            if chunk.len() <= remaining {
+                output.extend_from_slice(&chunk);
+                continue;
+            }
+            output.extend_from_slice(&chunk[..remaining]);
+            cached.extend_from_slice(&chunk[remaining..]);
+            break;
+        }
+        self.io_buffered_store_read_buffer(&instance, cached)?;
+        Ok(self.heap.alloc_bytes(output))
     }
 
     pub(super) fn builtin_io_buffered_readline(
@@ -1645,10 +1862,22 @@ impl Vm {
             }
             Err(err) => Some(err),
         };
-        Self::io_buffered_mark_closed(&instance)?;
         if let Some(err) = close_error {
+            if let Some(flush_err) = flush_error {
+                let flush_exception = self.io_exception_object_from_runtime_error(flush_err)?;
+                let close_exception = self.io_exception_object_from_runtime_error(err)?;
+                let close_message = close_exception
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "close".to_string());
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.active_exception = Some(Value::Exception(Box::new(flush_exception)));
+                }
+                return Err(RuntimeError::new(format!("close failed: {close_message}")));
+            }
             return Err(err);
         }
+        Self::io_buffered_mark_closed(&instance)?;
         if let Some(err) = flush_error {
             return Err(err);
         }
@@ -1691,7 +1920,27 @@ impl Vm {
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("OSError: not seekable"));
         }
-        self.io_buffered_delegate_method(&instance, "seek", args, kwargs, "buffered seek failed")
+        if !args.is_empty() {
+            let whence = if args.len() >= 2 {
+                value_to_int(args[1].clone())?
+            } else {
+                0
+            };
+            if whence == 1 {
+                let offset = value_to_int(args[0].clone())?;
+                let cached = Self::io_buffered_read_buffer(&instance)?;
+                args[0] = Value::Int(offset - cached.len() as i64);
+            }
+        }
+        let value = self.io_buffered_delegate_method(
+            &instance,
+            "seek",
+            args,
+            kwargs,
+            "buffered seek failed",
+        )?;
+        self.io_buffered_store_read_buffer(&instance, Vec::new())?;
+        Ok(value)
     }
 
     pub(super) fn builtin_io_buffered_tell(
@@ -1707,7 +1956,19 @@ impl Vm {
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("OSError: not seekable"));
         }
-        self.io_buffered_delegate_method(&instance, "tell", args, kwargs, "buffered tell failed")
+        let raw_position = self.io_buffered_delegate_method(
+            &instance,
+            "tell",
+            args,
+            kwargs,
+            "buffered tell failed",
+        )?;
+        let Value::Int(raw_pos) = raw_position else {
+            return Ok(raw_position);
+        };
+        let cached = Self::io_buffered_read_buffer(&instance)?;
+        let adjusted = raw_pos.saturating_sub(cached.len() as i64);
+        Ok(Value::Int(adjusted))
     }
 
     pub(super) fn builtin_io_buffered_truncate(
