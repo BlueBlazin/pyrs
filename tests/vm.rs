@@ -7141,6 +7141,72 @@ _io.BytesIO().detach()
 }
 
 #[test]
+fn _io_bufferedreader_init_argument_errors_are_typeerror() {
+    let source = r#"import _io
+missing_ok = False
+extra_ok = False
+try:
+    _io.BufferedReader()
+except TypeError:
+    missing_ok = True
+try:
+    _io.BufferedReader(_io.BytesIO(b"x"), 1, 2)
+except TypeError:
+    extra_ok = True
+ok = missing_ok and extra_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_bufferedreader_readline_wraps_bad_readinto_type_as_oserror_with_typeerror_cause() {
+    let source = r#"import _io
+raw = _io.BufferedReader(_io.BytesIO(b"12"))
+raw.readinto = lambda buf: b""
+bufio = _io.BufferedReader(raw)
+caught = False
+cause_ok = False
+try:
+    bufio.readline()
+except OSError as exc:
+    caught = True
+    cause_ok = isinstance(exc.__cause__, TypeError)
+ok = caught and cause_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_bufferedreader_readline_wraps_bad_readinto_value_as_oserror_without_cause() {
+    let source = r#"import _io
+raw = _io.BufferedReader(_io.BytesIO(b"12"))
+raw.readinto = lambda buf: -1
+bufio = _io.BufferedReader(raw)
+caught = False
+cause_ok = False
+try:
+    bufio.readline()
+except OSError as exc:
+    caught = True
+    cause_ok = (exc.__cause__ is None)
+ok = caught and cause_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn _io_base_destructor_closes_and_flushes_receiver() {
     let source = r#"import _io, gc
 record = []
@@ -7709,6 +7775,16 @@ fn exposes_platform_win32_is_iot_bool() {
 }
 
 #[test]
+fn sys_flags_exposes_cpython_314_field_surface() {
+    let source = "import sys\nfields = ['debug', 'inspect', 'interactive', 'optimize', 'dont_write_bytecode', 'no_user_site', 'no_site', 'ignore_environment', 'verbose', 'bytes_warning', 'quiet', 'hash_randomization', 'isolated', 'dev_mode', 'utf8_mode', 'warn_default_encoding', 'safe_path', 'int_max_str_digits', 'gil', 'thread_inherit_context', 'context_aware_warnings']\npresent = all(hasattr(sys.flags, name) for name in fields)\ntypes_ok = isinstance(sys.flags.warn_default_encoding, int) and isinstance(sys.flags.context_aware_warnings, int)\nok = present and types_ok\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_os_fsencode_fsdecode_and_unicodeerror() {
     let source = "import os\npayload = os.fsencode('abc')\ntext = os.fsdecode(payload)\ncaught = False\ntry:\n    raise UnicodeError\nexcept UnicodeError:\n    caught = True\nok = isinstance(payload, bytes) and text == 'abc' and caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -7814,6 +7890,16 @@ ok = st.st_mtime >= 2 and caught
 
     let _ = std::fs::remove_file(file);
     let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
+fn os_ftruncate_bad_fd_sets_oserror_errno_and_args() {
+    let source = "import os\ncaught = False\nerrno_ok = False\nargs_ok = False\ntry:\n    os.ftruncate(999999, 0)\nexcept OSError as exc:\n    caught = True\n    errno_ok = isinstance(exc.errno, int) and exc.errno == 9\n    args_ok = isinstance(exc.args, tuple) and len(exc.args) >= 1\nok = caught and errno_ok and args_ok\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]

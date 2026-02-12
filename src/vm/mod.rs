@@ -1633,7 +1633,13 @@ impl Vm {
             if let Object::Module(flags_data) = &mut *flags.kind_mut() {
                 flags_data
                     .globals
-                    .insert("context_aware_warnings".to_string(), Value::Bool(false));
+                    .insert("debug".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("inspect".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("interactive".to_string(), Value::Int(0));
                 flags_data
                     .globals
                     .insert("no_site".to_string(), Value::Int(0));
@@ -1657,10 +1663,35 @@ impl Vm {
                     .insert("isolated".to_string(), Value::Int(0));
                 flags_data
                     .globals
+                    .insert("dont_write_bytecode".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("quiet".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("hash_randomization".to_string(), Value::Int(1));
+                flags_data
+                    .globals
                     .insert("dev_mode".to_string(), Value::Bool(false));
                 flags_data
                     .globals
                     .insert("utf8_mode".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("warn_default_encoding".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("safe_path".to_string(), Value::Bool(false));
+                flags_data
+                    .globals
+                    .insert("int_max_str_digits".to_string(), Value::Int(4300));
+                flags_data.globals.insert("gil".to_string(), Value::Int(1));
+                flags_data
+                    .globals
+                    .insert("thread_inherit_context".to_string(), Value::Int(0));
+                flags_data
+                    .globals
+                    .insert("context_aware_warnings".to_string(), Value::Int(0));
             }
             module_data
                 .globals
@@ -3704,13 +3735,11 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
             _ => Err(RuntimeError::new("expected bytes-like payload")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => {
-                with_bytes_like_source(&view.source, |values| {
-                    let (start, end) = memoryview_bounds(view.start, view.length, values.len());
-                    values[start..end].to_vec()
-                })
-                .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
-            }
+            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+                values[start..end].to_vec()
+            })
+            .ok_or_else(|| RuntimeError::new("expected bytes-like payload")),
             _ => Err(RuntimeError::new("expected bytes-like payload")),
         },
         Value::Module(obj) => match &*obj.kind() {
@@ -6969,24 +6998,74 @@ fn is_os_error_family(name: &str) -> bool {
 
 fn extract_os_error_errno(message: &str) -> Option<i64> {
     let marker = "os error ";
-    let idx = message.rfind(marker)?;
-    let tail = &message[idx + marker.len()..];
-    let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        return None;
+    if let Some(idx) = message.rfind(marker) {
+        let tail = &message[idx + marker.len()..];
+        let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return digits.parse::<i64>().ok();
+        }
     }
-    digits.parse::<i64>().ok()
+    let marker = "[Errno ";
+    if let Some(idx) = message.find(marker) {
+        let tail = &message[idx + marker.len()..];
+        let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return digits.parse::<i64>().ok();
+        }
+    }
+    None
+}
+
+fn infer_os_error_errno(message: &str) -> Option<i64> {
+    let normalized = message.to_ascii_lowercase();
+    if normalized.contains("bad file descriptor") {
+        return Some(9);
+    }
+    if normalized.contains("no such file or directory") {
+        return Some(2);
+    }
+    if normalized.contains("permission denied") {
+        return Some(13);
+    }
+    if normalized.contains("file exists") {
+        return Some(17);
+    }
+    if normalized.contains("not a directory") {
+        return Some(20);
+    }
+    if normalized.contains("is a directory") {
+        return Some(21);
+    }
+    if normalized.contains("invalid argument") {
+        return Some(22);
+    }
+    None
 }
 
 fn extract_os_error_strerror(message: &str) -> Option<String> {
-    let line = message
+    let mut line = message
         .lines()
         .rev()
         .find(|line| !line.trim().is_empty())
         .unwrap_or(message)
-        .trim();
+        .trim()
+        .to_string();
     if let Some((_, tail)) = line.split_once(": ") {
-        return Some(tail.to_string());
+        line = tail.to_string();
+    }
+    if let Some(rest) = line.strip_prefix("[Errno ") {
+        if let Some((_, tail)) = rest.split_once("] ") {
+            line = tail.to_string();
+        }
+    }
+    if let Some(idx) = line.rfind(" (os error ") {
+        if line[idx..].ends_with(')') {
+            line = line[..idx].to_string();
+        }
+    }
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
     }
     Some(line.to_string())
 }
@@ -7019,6 +7098,7 @@ fn should_refine_os_error(message: &str) -> bool {
     message.contains("open failed:")
         || message.contains("open() failed:")
         || message.contains("mkdir failed:")
+        || message.contains("ftruncate failed:")
         || message.contains("chmod failed:")
         || message.contains("access failed:")
         || message.contains("remove failed:")
@@ -7131,6 +7211,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.contains("must be a unicode character")
         || message.contains("must be a string")
         || message.contains("must be bool")
+        || message.contains("missing required argument")
+        || message.contains("required positional argument")
+        || message.contains("received unexpected arguments")
         || message.contains("unexpected keyword argument")
         || message.contains("expected iterable")
         || message.contains("must have a write method")
@@ -7348,6 +7431,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("chmod failed:")
         || message.contains("access failed:")
         || message.contains("remove failed:")
+        || message.contains("ftruncate failed:")
         || message.contains("close failed:")
         || message.contains("stat failed:")
         || message.contains("lstat failed:")

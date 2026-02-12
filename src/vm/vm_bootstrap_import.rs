@@ -14,7 +14,9 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new(format!("module '{module_name}' not found")))?;
         let (class_ref, base_refs) = {
             let Object::Module(module_data) = &*module.kind() else {
-                return Err(RuntimeError::new(format!("module '{module_name}' is invalid")));
+                return Err(RuntimeError::new(format!(
+                    "module '{module_name}' is invalid"
+                )));
             };
             let class_ref = match module_data.globals.get(class_name) {
                 Some(Value::Class(class)) => class.clone(),

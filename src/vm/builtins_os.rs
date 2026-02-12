@@ -528,7 +528,7 @@ impl Vm {
             .find_open_file_mut(fd)
             .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
         file.set_len(length as u64)
-            .map_err(|err| RuntimeError::new(format!("ftruncate failed: {err}")))?;
+            .map_err(|err| RuntimeError::new(format!("OSError: {err}")))?;
         Ok(Value::None)
     }
 

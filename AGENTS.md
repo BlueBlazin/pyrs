@@ -126,7 +126,10 @@ Milestone 13 completion is blocked on P0 closure of:
   - weakrefs now stay dead once object finalization starts, matching CPython behavior during `__del__` side-effect windows (e.g. warning payloads).
   - `len()` unsupported-type surfaces now raise `TypeError` classification with object type context.
   - OS path helpers now raise `ValueError` for embedded NUL bytes before syscall dispatch.
-- `test.test_io` failfast probe now clears CIOTest and reaches deeper PyIOTest coverage; current first blocker is `PyIOTest.test_opener_invalid_fd` (`OSError.errno` attribute parity).
+  - runtime-exception metadata parity advanced: `OSError` now derives `errno`/`strerror`/`args` more consistently, and class/instance normalization ensures `args` is populated.
+  - `sys.flags` now exposes CPython 3.14 fields used by stdlib, including `warn_default_encoding`, `gil`, `thread_inherit_context`, and `context_aware_warnings`.
+  - `_io.BufferedReader.readline()` now wraps bad `readinto()` type/value returns as `OSError`, with `TypeError`-cause linkage for the non-int return path.
+- `test.test_io` failfast probe now clears CIOTest + PyIOTest and reaches CBufferedReader coverage; current first blocker is `CBufferedReaderTest.test_buffering` (buffering/read-size behavior mismatch).
 - Optimization work must reference CPython internals directly (`Python/ceval.c`, `Python/generated_cases.c.h`, `Include/internal/pycore_frame.h`, `Objects/call.c`, `Objects/longobject.c`) and track decisions in `docs/OPTIMIZATION_PLAN.md`.
 - Optimization item status must be updated in `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint as performance changes.
 - If optimization work is resumed as primary focus, it must explicitly close foundational missing surfaces tracked in backlog (`OPT-022` string interning strategy and remaining `OPT-023+` dispatch/call/container items).

@@ -7,7 +7,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("excepthook() got unexpected keyword arguments"));
+            return Err(RuntimeError::new(
+                "excepthook() got unexpected keyword arguments",
+            ));
         }
         Ok(Value::None)
     }

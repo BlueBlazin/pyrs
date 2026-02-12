@@ -2182,7 +2182,9 @@ impl Vm {
                     target => match (target, index) {
                         (Value::MemoryView(obj), Value::Slice(slice)) => {
                             let (source, view_start, view_length) = match &*obj.kind() {
-                                Object::MemoryView(view) => (view.source.clone(), view.start, view.length),
+                                Object::MemoryView(view) => {
+                                    (view.source.clone(), view.start, view.length)
+                                }
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "store subscript unsupported type",
@@ -2286,7 +2288,9 @@ impl Vm {
                         }
                         (Value::MemoryView(obj), index) => {
                             let (source, view_start, view_length) = match &*obj.kind() {
-                                Object::MemoryView(view) => (view.source.clone(), view.start, view.length),
+                                Object::MemoryView(view) => {
+                                    (view.source.clone(), view.start, view.length)
+                                }
                                 _ => {
                                     return Err(RuntimeError::new(
                                         "store subscript unsupported type",
@@ -4574,14 +4578,19 @@ impl Vm {
             exception_message = from_prefixed;
         }
         let exception = ExceptionObject::new(exception_type.clone(), exception_message);
+        let mut os_errno = None;
+        let mut os_strerror = None;
         if is_os_error_family(exception_type.as_str()) {
-            if let Some(errno) = extract_os_error_errno(&err.message) {
+            os_errno =
+                extract_os_error_errno(&err.message).or_else(|| infer_os_error_errno(&err.message));
+            os_strerror = extract_os_error_strerror(&err.message);
+            if let Some(errno) = os_errno {
                 exception
                     .attrs
                     .borrow_mut()
                     .insert("errno".to_string(), Value::Int(errno));
             }
-            if let Some(strerror) = extract_os_error_strerror(&err.message) {
+            if let Some(strerror) = os_strerror.clone() {
                 exception
                     .attrs
                     .borrow_mut()
@@ -4599,6 +4608,27 @@ impl Vm {
                     .insert("name".to_string(), Value::Str(name));
             }
         }
+        let args = if is_os_error_family(exception_type.as_str()) {
+            if let Some(errno) = os_errno {
+                let mut items = vec![Value::Int(errno)];
+                if let Some(strerror) = os_strerror {
+                    items.push(Value::Str(strerror));
+                }
+                self.heap.alloc_tuple(items)
+            } else if let Some(message) = &exception.message {
+                self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+            } else {
+                self.heap.alloc_tuple(Vec::new())
+            }
+        } else if let Some(message) = &exception.message {
+            self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+        } else {
+            self.heap.alloc_tuple(Vec::new())
+        };
+        exception
+            .attrs
+            .borrow_mut()
+            .insert("args".to_string(), args);
         let exception = Value::Exception(Box::new(exception));
         self.raise_exception(exception)
     }
@@ -4607,7 +4637,12 @@ impl Vm {
         match value {
             Value::Exception(_) => Ok(value),
             Value::ExceptionType(name) => {
-                Ok(Value::Exception(Box::new(ExceptionObject::new(name, None))))
+                let exception = ExceptionObject::new(name, None);
+                exception
+                    .attrs
+                    .borrow_mut()
+                    .insert("args".to_string(), self.heap.alloc_tuple(Vec::new()));
+                Ok(Value::Exception(Box::new(exception)))
             }
             Value::Class(class) => {
                 if self.class_is_exception_class(&class) {
@@ -4615,9 +4650,12 @@ impl Vm {
                         Object::Class(class_data) => class_data.name.clone(),
                         _ => "Exception".to_string(),
                     };
-                    Ok(Value::Exception(Box::new(ExceptionObject::new(
-                        class_name, None,
-                    ))))
+                    let exception = ExceptionObject::new(class_name, None);
+                    exception
+                        .attrs
+                        .borrow_mut()
+                        .insert("args".to_string(), self.heap.alloc_tuple(Vec::new()));
+                    Ok(Value::Exception(Box::new(exception)))
                 } else {
                     Err(RuntimeError::new("can only raise Exception types"))
                 }
@@ -4635,6 +4673,17 @@ impl Vm {
                             .borrow_mut()
                             .extend(instance_data.attrs.clone());
                     }
+                }
+                if !exception.attrs.borrow().contains_key("args") {
+                    let args = if let Some(message) = &exception.message {
+                        self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+                    } else {
+                        self.heap.alloc_tuple(Vec::new())
+                    };
+                    exception
+                        .attrs
+                        .borrow_mut()
+                        .insert("args".to_string(), args);
                 }
                 Ok(Value::Exception(Box::new(exception)))
             }
@@ -4866,18 +4915,43 @@ impl Vm {
             } else {
                 Vec::new()
             };
-            return Ok(Value::Exception(Box::new(ExceptionObject::with_members(
-                name.to_string(),
-                message,
-                members,
-            ))));
+            let exception = ExceptionObject::with_members(name.to_string(), message, members);
+            exception
+                .attrs
+                .borrow_mut()
+                .insert("args".to_string(), self.heap.alloc_tuple(args.to_vec()));
+            return Ok(Value::Exception(Box::new(exception)));
         }
 
         let message = exception_message_from_call_args(args);
-        Ok(Value::Exception(Box::new(ExceptionObject::new(
-            name.to_string(),
-            message,
-        ))))
+        let exception = ExceptionObject::new(name.to_string(), message);
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            attrs.insert("args".to_string(), self.heap.alloc_tuple(args.to_vec()));
+            if is_os_error_family(name) {
+                if let Some(errno) = args
+                    .first()
+                    .and_then(|value| value_to_int(value.clone()).ok())
+                {
+                    attrs.insert("errno".to_string(), Value::Int(errno));
+                }
+                if let Some(strerror) = args.get(1) {
+                    attrs.insert("strerror".to_string(), strerror.clone());
+                }
+                if let Some(filename) = args.get(2) {
+                    attrs.insert("filename".to_string(), filename.clone());
+                }
+            }
+            if matches!(name, "ImportError" | "ModuleNotFoundError") {
+                if let Some(module_name) = args.iter().find_map(|value| match value {
+                    Value::Str(text) => Some(text.clone()),
+                    _ => None,
+                }) {
+                    attrs.insert("name".to_string(), Value::Str(module_name));
+                }
+            }
+        }
+        Ok(Value::Exception(Box::new(exception)))
     }
 
     pub(super) fn exception_members_from_value(

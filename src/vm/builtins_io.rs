@@ -250,7 +250,9 @@ impl Vm {
         let fd = match file_arg {
             Value::Int(fd) => {
                 if fd < 0 {
-                    return Err(RuntimeError::new("OSError: bad file descriptor (os error 9)"));
+                    return Err(RuntimeError::new(
+                        "OSError: bad file descriptor (os error 9)",
+                    ));
                 }
                 let Some(resolved_fd) = self.resolve_open_file_fd(fd).or_else(|| {
                     if (0..=2).contains(&fd) {
@@ -259,7 +261,9 @@ impl Vm {
                         None
                     }
                 }) else {
-                    return Err(RuntimeError::new("OSError: bad file descriptor (os error 9)"));
+                    return Err(RuntimeError::new(
+                        "OSError: bad file descriptor (os error 9)",
+                    ));
                 };
                 resolved_fd
             }
@@ -313,7 +317,9 @@ impl Vm {
                             None
                         }
                     }) else {
-                        return Err(RuntimeError::new("OSError: bad file descriptor (os error 9)"));
+                        return Err(RuntimeError::new(
+                            "OSError: bad file descriptor (os error 9)",
+                        ));
                     };
                     resolved_fd
                 } else {
@@ -457,9 +463,7 @@ impl Vm {
                 let path_value = match self.call_internal(fspath, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(value) => value,
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(
-                            self.runtime_error_from_active_exception("__fspath__() failed")
-                        );
+                        return Err(self.runtime_error_from_active_exception("__fspath__() failed"));
                     }
                 };
                 match path_value {
@@ -1351,10 +1355,7 @@ impl Vm {
         Ok(())
     }
 
-    fn io_buffered_rwpair_endpoint(
-        instance: &ObjRef,
-        attr: &str,
-    ) -> Result<Value, RuntimeError> {
+    fn io_buffered_rwpair_endpoint(instance: &ObjRef, attr: &str) -> Result<Value, RuntimeError> {
         Self::instance_attr_get(instance, attr)
             .ok_or_else(|| RuntimeError::new("BufferedRWPair is uninitialized"))
     }
@@ -1402,16 +1403,83 @@ impl Vm {
         }
     }
 
+    fn io_buffered_probe_raw_readinto_for_readline(
+        &mut self,
+        instance: &ObjRef,
+    ) -> Result<(), RuntimeError> {
+        let Some(Value::Instance(raw)) = Self::instance_attr_get(instance, "raw") else {
+            return Ok(());
+        };
+        let readinto = self.builtin_getattr(
+            vec![Value::Instance(raw), Value::Str("readinto".to_string())],
+            HashMap::new(),
+        )?;
+        let probe = match self.heap.alloc_bytearray(Vec::new()) {
+            Value::ByteArray(obj) => Value::ByteArray(obj),
+            _ => unreachable!(),
+        };
+        let result = match self.call_internal(readinto, vec![probe], HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("RawIOBase.readinto failed"));
+            }
+        };
+        match result {
+            Value::None => Ok(()),
+            Value::Int(value) => {
+                if value == 0 {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::new(format!(
+                        "ValueError: readinto returned {value} outside buffer size 0",
+                    )))
+                }
+            }
+            Value::Bool(value) => {
+                if !value {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::new(
+                        "ValueError: readinto returned 1 outside buffer size 0",
+                    ))
+                }
+            }
+            Value::BigInt(value) => {
+                let read_count = value.to_i64().ok_or_else(|| {
+                    RuntimeError::new("ValueError: readinto returned value outside buffer size")
+                })?;
+                if read_count == 0 {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::new(format!(
+                        "ValueError: readinto returned {read_count} outside buffer size 0",
+                    )))
+                }
+            }
+            other => Err(RuntimeError::new(format!(
+                "TypeError: readinto() should return integer or None, not {}",
+                self.value_type_name_for_error(&other)
+            ))),
+        }
+    }
+
     pub(super) fn builtin_io_buffered_init(
         &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.__init__")?;
+        let owner_name = match &*instance.kind() {
+            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "BufferedIOBase".to_string(),
+            },
+            _ => "BufferedIOBase".to_string(),
+        };
         if args.is_empty() {
-            return Err(RuntimeError::new(
-                "BufferedIOBase.__init__() missing required argument 'raw'",
-            ));
+            return Err(RuntimeError::new(format!(
+                "{owner_name}() missing required argument 'raw'"
+            )));
         }
         let raw = args.remove(0);
         if let Some(buffer_size) = kwargs.remove("buffer_size") {
@@ -1420,9 +1488,9 @@ impl Vm {
             let _ = value_to_int(args.remove(0))?;
         }
         if !args.is_empty() || !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "BufferedIOBase.__init__() received unexpected arguments",
-            ));
+            return Err(RuntimeError::new(format!(
+                "{owner_name}() received unexpected arguments"
+            )));
         }
         for required in ["read", "readline", "write", "seek", "tell"] {
             let method = self.builtin_getattr(
@@ -1468,6 +1536,29 @@ impl Vm {
         if !is_truthy(&readable) {
             return Err(RuntimeError::new("UnsupportedOperation: not readable"));
         }
+        if let Err(err) = self.io_buffered_probe_raw_readinto_for_readline(&instance) {
+            if let Some(cause_message) = err.message.strip_prefix("TypeError: ") {
+                let cause = Value::Exception(Box::new(ExceptionObject::new(
+                    "TypeError".to_string(),
+                    Some(cause_message.trim().to_string()),
+                )));
+                let os_error = Value::Exception(Box::new(ExceptionObject::new(
+                    "OSError".to_string(),
+                    Some(cause_message.trim().to_string()),
+                )));
+                self.raise_exception_with_cause(os_error, Some(cause))?;
+                return Err(self.runtime_error_from_active_exception("buffered readline failed"));
+            }
+            if let Some(message) = err.message.strip_prefix("ValueError: ") {
+                let os_error = Value::Exception(Box::new(ExceptionObject::new(
+                    "OSError".to_string(),
+                    Some(message.trim().to_string()),
+                )));
+                self.raise_exception(os_error)?;
+                return Err(self.runtime_error_from_active_exception("buffered readline failed"));
+            }
+            return Err(err);
+        }
         self.io_buffered_delegate_method(
             &instance,
             "readline",
@@ -1499,7 +1590,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedIOBase.flush expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedIOBase.flush expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.flush")?;
         if Self::iobase_is_closed(&instance) {
@@ -1520,14 +1613,19 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedIOBase.close expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedIOBase.close expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.close")?;
         if Self::iobase_is_closed(&instance) {
             return Ok(Value::None);
         }
         let flush_method = self.builtin_getattr(
-            vec![Value::Instance(instance.clone()), Value::Str("flush".to_string())],
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str("flush".to_string()),
+            ],
             HashMap::new(),
         )?;
         let flush_error = match self.call_internal(flush_method, Vec::new(), HashMap::new()) {
@@ -1563,7 +1661,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedIOBase.fileno expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedIOBase.fileno expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.fileno")?;
         match self.io_buffered_delegate_method(
@@ -1638,7 +1738,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedIOBase.readable expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedIOBase.readable expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.readable")?;
         let class_name = match &*instance.kind() {
@@ -1669,7 +1771,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedIOBase.writable expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedIOBase.writable expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.writable")?;
         let class_name = match &*instance.kind() {
@@ -1700,7 +1804,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedIOBase.seekable expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedIOBase.seekable expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.seekable")?;
         let class_name = match &*instance.kind() {
@@ -1752,18 +1858,15 @@ impl Vm {
             vec![reader.clone(), Value::Str("readable".to_string())],
             HashMap::new(),
         )?;
-        let reader_readable = match self.call_internal(
-            reader_readable,
-            Vec::new(),
-            HashMap::new(),
-        )? {
-            InternalCallOutcome::Value(value) => value,
-            InternalCallOutcome::CallerExceptionHandled => {
-                return Err(
-                    self.runtime_error_from_active_exception("BufferedRWPair readable check failed")
-                );
-            }
-        };
+        let reader_readable =
+            match self.call_internal(reader_readable, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "BufferedRWPair readable check failed",
+                    ));
+                }
+            };
         if !is_truthy(&reader_readable) {
             return Err(RuntimeError::new("OSError: readable stream expected"));
         }
@@ -1771,18 +1874,15 @@ impl Vm {
             vec![writer.clone(), Value::Str("writable".to_string())],
             HashMap::new(),
         )?;
-        let writer_writable = match self.call_internal(
-            writer_writable,
-            Vec::new(),
-            HashMap::new(),
-        )? {
-            InternalCallOutcome::Value(value) => value,
-            InternalCallOutcome::CallerExceptionHandled => {
-                return Err(
-                    self.runtime_error_from_active_exception("BufferedRWPair writable check failed")
-                );
-            }
-        };
+        let writer_writable =
+            match self.call_internal(writer_writable, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "BufferedRWPair writable check failed",
+                    ));
+                }
+            };
         if !is_truthy(&writer_writable) {
             return Err(RuntimeError::new("OSError: writable stream expected"));
         }
@@ -1916,7 +2016,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedRWPair.flush expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedRWPair.flush expects no arguments",
+            ));
         }
         let instance = self.receiver_from_value(&args.remove(0))?;
         self.io_buffered_rwpair_delegate_method(
@@ -1935,7 +2037,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedRWPair.close expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedRWPair.close expects no arguments",
+            ));
         }
         let instance = self.receiver_from_value(&args.remove(0))?;
         if Self::iobase_is_closed(&instance) {
@@ -1980,7 +2084,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedRWPair.readable expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedRWPair.readable expects no arguments",
+            ));
         }
         let instance = self.receiver_from_value(&args.remove(0))?;
         let value = self.io_buffered_rwpair_delegate_method(
@@ -2000,7 +2106,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedRWPair.writable expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedRWPair.writable expects no arguments",
+            ));
         }
         let instance = self.receiver_from_value(&args.remove(0))?;
         let value = self.io_buffered_rwpair_delegate_method(
@@ -2020,7 +2128,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedRWPair.seekable expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedRWPair.seekable expects no arguments",
+            ));
         }
         Ok(Value::Bool(false))
     }
@@ -2031,7 +2141,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BufferedRWPair.detach expects no arguments"));
+            return Err(RuntimeError::new(
+                "BufferedRWPair.detach expects no arguments",
+            ));
         }
         Err(RuntimeError::new("UnsupportedOperation: detach"))
     }
@@ -2042,7 +2154,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new("BufferedRWPair.peek expects at most one argument"));
+            return Err(RuntimeError::new(
+                "BufferedRWPair.peek expects at most one argument",
+            ));
         }
         let instance = self.receiver_from_value(&args.remove(0))?;
         let size = if args.is_empty() {
@@ -2071,15 +2185,14 @@ impl Vm {
             HashMap::new(),
         );
         if let (Ok(tell_method), Ok(seek_method)) = (tell, seek) {
-            let pos_value =
-                match self.call_internal(tell_method, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(value) => value,
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(
-                            self.runtime_error_from_active_exception("BufferedRWPair.peek failed")
-                        );
-                    }
-                };
+            let pos_value = match self.call_internal(tell_method, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(
+                        self.runtime_error_from_active_exception("BufferedRWPair.peek failed")
+                    );
+                }
+            };
             let pos = value_to_int(pos_value)?;
             let read_value = self.io_buffered_rwpair_delegate_method(
                 &instance,
@@ -2238,11 +2351,15 @@ impl Vm {
         method_name: &str,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("BufferedIOBase.readinto expects 1 argument"));
+            return Err(RuntimeError::new(
+                "BufferedIOBase.readinto expects 1 argument",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.readinto")?;
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("ValueError: I/O operation on closed file."));
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on closed file.",
+            ));
         }
         let target = args.remove(0);
         let request = self.io_writable_buffer_len(&target)?;
@@ -2270,14 +2387,13 @@ impl Vm {
         )? {
             InternalCallOutcome::Value(value) => value,
             InternalCallOutcome::CallerExceptionHandled => {
-                return Err(self.runtime_error_from_active_exception(
-                    "BufferedIOBase.readinto failed",
-                ));
+                return Err(
+                    self.runtime_error_from_active_exception("BufferedIOBase.readinto failed")
+                );
             }
         };
-        let payload = bytes_like_from_value(payload_value).map_err(|_| {
-            RuntimeError::new("TypeError: read() should return bytes")
-        })?;
+        let payload = bytes_like_from_value(payload_value)
+            .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
         let copied = self.io_copy_into_writable_buffer(target, &payload)?;
         Ok(Value::Int(copied as i64))
     }
@@ -2324,9 +2440,7 @@ impl Vm {
         )? {
             InternalCallOutcome::Value(value) => value,
             InternalCallOutcome::CallerExceptionHandled => {
-                return Err(self.runtime_error_from_active_exception(
-                    "RawIOBase.readinto failed",
-                ));
+                return Err(self.runtime_error_from_active_exception("RawIOBase.readinto failed"));
             }
         };
         let Some(read_count) = (match result {
@@ -2351,7 +2465,9 @@ impl Vm {
             )));
         }
         let Object::ByteArray(values) = &*buffer_obj.kind() else {
-            return Err(RuntimeError::new("RawIOBase.readinto produced invalid buffer"));
+            return Err(RuntimeError::new(
+                "RawIOBase.readinto produced invalid buffer",
+            ));
         };
         Ok(Some(values[..read_count as usize].to_vec()))
     }
@@ -2370,10 +2486,7 @@ impl Vm {
             Some(value) => self.io_index_arg_to_int(value)?,
         };
         if size < 0 {
-            return self.builtin_io_raw_readall(
-                vec![Value::Instance(receiver)],
-                HashMap::new(),
-            );
+            return self.builtin_io_raw_readall(vec![Value::Instance(receiver)], HashMap::new());
         }
         let Some(payload) = self.io_raw_readinto_chunk(&receiver, size as usize)? else {
             return Ok(Value::None);
@@ -2427,9 +2540,8 @@ impl Vm {
                     out.extend_from_slice(values);
                 }
                 Value::ByteArray(_) | Value::MemoryView(_) => {
-                    let values = bytes_like_from_value(chunk_value).map_err(|_| {
-                        RuntimeError::new("TypeError: read() should return bytes")
-                    })?;
+                    let values = bytes_like_from_value(chunk_value)
+                        .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
                     if values.is_empty() {
                         break;
                     }
@@ -2621,7 +2733,9 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "read")?;
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("ValueError: I/O operation on closed file."));
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on closed file.",
+            ));
         }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('r') || mode.contains('+')) {
@@ -2677,7 +2791,9 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "readinto")?;
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("ValueError: I/O operation on closed file."));
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on closed file.",
+            ));
         }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('r') || mode.contains('+')) {
@@ -2689,10 +2805,8 @@ impl Vm {
             return Ok(Value::Int(0));
         }
         if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
-            return self.builtin_bytesio_readinto(
-                vec![Value::Instance(buffer), target],
-                HashMap::new(),
-            );
+            return self
+                .builtin_bytesio_readinto(vec![Value::Instance(buffer), target], HashMap::new());
         }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let payload = self.io_file_read_bytes(fd, Some(request))?;
@@ -2710,7 +2824,9 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "readline")?;
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("ValueError: I/O operation on closed file."));
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on closed file.",
+            ));
         }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('r') || mode.contains('+')) {
@@ -2988,10 +3104,8 @@ impl Vm {
         {
             return Err(RuntimeError::new("UnsupportedOperation: not writable"));
         }
-        let seekable = self.builtin_io_file_seekable(
-            vec![Value::Instance(instance.clone())],
-            HashMap::new(),
-        )?;
+        let seekable =
+            self.builtin_io_file_seekable(vec![Value::Instance(instance.clone())], HashMap::new())?;
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("OSError: not seekable"));
         }
@@ -3009,8 +3123,7 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
         let target_size = if args.is_empty() {
             file.stream_position()
-                .map_err(|err| RuntimeError::new(format!("OSError: {err}")))?
-                as i64
+                .map_err(|err| RuntimeError::new(format!("OSError: {err}")))? as i64
         } else {
             value_to_int(args.remove(0))?
         };
@@ -3042,10 +3155,8 @@ impl Vm {
         } else {
             value_to_int(args.remove(0))?
         };
-        let seekable = self.builtin_io_file_seekable(
-            vec![Value::Instance(instance.clone())],
-            HashMap::new(),
-        )?;
+        let seekable =
+            self.builtin_io_file_seekable(vec![Value::Instance(instance.clone())], HashMap::new())?;
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("OSError: not seekable"));
         }
@@ -3093,10 +3204,8 @@ impl Vm {
             return Err(RuntimeError::new("tell() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "tell")?;
-        let seekable = self.builtin_io_file_seekable(
-            vec![Value::Instance(instance.clone())],
-            HashMap::new(),
-        )?;
+        let seekable =
+            self.builtin_io_file_seekable(vec![Value::Instance(instance.clone())], HashMap::new())?;
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("OSError: not seekable"));
         }
@@ -3130,7 +3239,10 @@ impl Vm {
             return Ok(Value::None);
         }
         let flush_method = self.builtin_getattr(
-            vec![Value::Instance(instance.clone()), Value::Str("flush".to_string())],
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str("flush".to_string()),
+            ],
             HashMap::new(),
         )?;
         let flush_error = match self.call_internal(flush_method, Vec::new(), HashMap::new()) {
@@ -3341,10 +3453,7 @@ impl Vm {
         if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer") {
             if buffer.id() != instance.id() {
                 let seekable = self.builtin_getattr(
-                    vec![
-                        Value::Instance(buffer),
-                        Value::Str("seekable".to_string()),
-                    ],
+                    vec![Value::Instance(buffer), Value::Str("seekable".to_string())],
                     HashMap::new(),
                 )?;
                 return match self.call_internal(seekable, Vec::new(), HashMap::new())? {
@@ -3398,17 +3507,15 @@ impl Vm {
             HashMap::new(),
         )?;
         if size == 0 {
-            return Ok(match self.call_internal(
-                read.clone(),
-                vec![Value::Int(0)],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(Value::Str(_)) => Value::Str(String::new()),
-                InternalCallOutcome::Value(_) => self.heap.alloc_bytes(Vec::new()),
-                InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(self.runtime_error_from_active_exception("readline() failed"));
-                }
-            });
+            return Ok(
+                match self.call_internal(read.clone(), vec![Value::Int(0)], HashMap::new())? {
+                    InternalCallOutcome::Value(Value::Str(_)) => Value::Str(String::new()),
+                    InternalCallOutcome::Value(_) => self.heap.alloc_bytes(Vec::new()),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception("readline() failed"));
+                    }
+                },
+            );
         }
         let mut remaining = size;
         let mut text_chunks = String::new();
@@ -3454,9 +3561,8 @@ impl Vm {
                         ));
                     }
                     text_mode = Some(false);
-                    let chunk_bytes = bytes_like_from_value(other).map_err(|_| {
-                        RuntimeError::new("read() should return bytes-like object")
-                    })?;
+                    let chunk_bytes = bytes_like_from_value(other)
+                        .map_err(|_| RuntimeError::new("read() should return bytes-like object"))?;
                     if chunk_bytes.is_empty() {
                         break;
                     }
@@ -3484,7 +3590,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new("readlines() expects at most one argument"));
+            return Err(RuntimeError::new(
+                "readlines() expects at most one argument",
+            ));
         }
         let receiver = args.remove(0);
         let hint = if args.is_empty() || matches!(args[0], Value::None) {
@@ -3507,14 +3615,11 @@ impl Vm {
                     return Err(self.iteration_error_from_state("readlines() iteration failed")?);
                 }
             };
-            let line_len = match self.call_builtin(
-                BuiltinFunction::Len,
-                vec![line.clone()],
-                HashMap::new(),
-            ) {
-                Ok(value) => value_to_int(value)?,
-                Err(_) => return Err(RuntimeError::new("TypeError: object has no len()")),
-            };
+            let line_len =
+                match self.call_builtin(BuiltinFunction::Len, vec![line.clone()], HashMap::new()) {
+                    Ok(value) => value_to_int(value)?,
+                    Err(_) => return Err(RuntimeError::new("TypeError: object has no len()")),
+                };
             lines.push(line);
             total_size = total_size.saturating_add(line_len);
             if total_size >= hint {
@@ -3617,7 +3722,10 @@ impl Vm {
             return;
         };
         let warn = match self.builtin_getattr(
-            vec![Value::Module(warnings_module), Value::Str("warn".to_string())],
+            vec![
+                Value::Module(warnings_module),
+                Value::Str("warn".to_string()),
+            ],
             HashMap::new(),
         ) {
             Ok(value) => value,

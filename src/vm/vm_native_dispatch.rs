@@ -1643,7 +1643,9 @@ impl Vm {
                 }
                 let source = args.remove(0);
                 let mut extension = if matches!(source, Value::Int(_)) {
-                    return Err(RuntimeError::new("TypeError: can't extend bytearray with int"));
+                    return Err(RuntimeError::new(
+                        "TypeError: can't extend bytearray with int",
+                    ));
                 } else if matches!(source, Value::Str(_)) {
                     return Err(RuntimeError::new(
                         "TypeError: expected iterable of integers; got: 'str'",
@@ -1810,11 +1812,9 @@ impl Vm {
                         "memoryview.cast() length is not a multiple of itemsize",
                     ));
                 }
-                let view = self.heap.alloc_memoryview_with(
-                    source,
-                    itemsize,
-                    Some(format),
-                );
+                let view = self
+                    .heap
+                    .alloc_memoryview_with(source, itemsize, Some(format));
                 if let Value::MemoryView(view_obj) = &view {
                     if let Object::MemoryView(view_data) = &mut *view_obj.kind_mut() {
                         view_data.start = start;
@@ -5320,9 +5320,7 @@ impl Vm {
             BuiltinFunction::IoBufferedFileno => self.builtin_io_buffered_fileno(args, kwargs),
             BuiltinFunction::IoBufferedSeek => self.builtin_io_buffered_seek(args, kwargs),
             BuiltinFunction::IoBufferedTell => self.builtin_io_buffered_tell(args, kwargs),
-            BuiltinFunction::IoBufferedTruncate => {
-                self.builtin_io_buffered_truncate(args, kwargs)
-            }
+            BuiltinFunction::IoBufferedTruncate => self.builtin_io_buffered_truncate(args, kwargs),
             BuiltinFunction::IoBufferedReadInto => self.builtin_io_buffered_readinto(args, kwargs),
             BuiltinFunction::IoBufferedReadInto1 => {
                 self.builtin_io_buffered_readinto1(args, kwargs)

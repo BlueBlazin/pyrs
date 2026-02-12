@@ -648,8 +648,7 @@ impl Vm {
             _ => {
                 return Err(RuntimeError::new(format!(
                     "{} has no attribute '{}'",
-                    type_name,
-                    attr_name
+                    type_name, attr_name
                 )));
             }
         };

@@ -5902,13 +5902,11 @@ fn value_to_bytes_with_encoding(
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
-            Object::MemoryView(view) => {
-                with_bytes_like_source(&view.source, |values| {
-                    let (start, end) = memoryview_bounds(view.start, view.length, values.len());
-                    values[start..end].to_vec()
-                })
-                .ok_or_else(|| RuntimeError::new("bytes() unsupported type"))
-            }
+            Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+                values[start..end].to_vec()
+            })
+            .ok_or_else(|| RuntimeError::new("bytes() unsupported type")),
             _ => Err(RuntimeError::new("bytes() unsupported type")),
         },
         Value::Module(obj) => match &*obj.kind() {
