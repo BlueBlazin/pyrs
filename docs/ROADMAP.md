@@ -87,6 +87,8 @@ Milestone 13 is complete only when all are true:
    - `Lib/*.py`
 3. Prefer official pure-Python stdlib modules for high-level behavior.
 4. Keep native VM stdlib code as accelerator/runtime substrate only.
+5. Drive near-term execution by common-functionality closure for top stdlib modules:
+   - canonical tracker: `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`
 
 ### Milestone 13 Workstreams
 - Runtime/native core parity:
@@ -135,6 +137,7 @@ Deliverables:
 ## Canonical Companion Docs
 - `docs/PRODUCTION_READINESS.md`: global production checklist and blocker status.
 - `docs/STUB_ACCOUNTING.md`: explicit partial/stub ledger and closure ownership.
+- `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`: top stdlib common-usecase closure tracker and execution waves.
 - `docs/STDLIB_MIGRATION_PLAN.md`: pure-stdlib migration policy.
 - `docs/ENGINEERING_GATES.md`: mandatory quality gates.
 - `docs/ALGO_AUDIT_BACKLOG.md`: algorithmic/semantic audit tasks.

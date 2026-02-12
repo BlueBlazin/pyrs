@@ -65,6 +65,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - Roadmap and milestone definitions: `docs/ROADMAP.md`
 - Production checklist and release blockers: `docs/PRODUCTION_READINESS.md`
 - Stub/partial implementation ledger: `docs/STUB_ACCOUNTING.md`
+- Top stdlib common-usecase closure tracker: `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`
 - Object-model parity audit log: `docs/OBJECT_MODEL_AUDIT.md`
 - Stdlib pure-Python migration strategy: `docs/STDLIB_MIGRATION_PLAN.md`
 - Engineering quality gates: `docs/ENGINEERING_GATES.md`
@@ -84,7 +85,7 @@ Milestone 13 completion is blocked on P0 closure of:
 - No-op inventory snapshot: `docs/NOOP_BUILTIN_INVENTORY.txt`
 
 ## Current Focus
-- Active top priority: Milestone 13 closure with benchmark-guarded performance maintenance.
+- Active top priority: Milestone 13 closure via top-stdlib common-usecase coverage first (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`), with benchmark-guarded performance maintenance.
 - Performance suite (canonical):
   - `scripts/bench_fib_gate.sh 5`
   - `scripts/bench_dispatch_hotpath.sh 5`

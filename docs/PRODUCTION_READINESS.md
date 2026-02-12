@@ -33,6 +33,7 @@ Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 
 | Area | Status | Notes |
 |---|---|---|
+| Top stdlib common-functionality coverage (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`) | `[~]` | Baseline snapshot (2026-02-12): `23/26` imports pass, `13/26` common-usecase smokes pass. Must reach full closure for listed module set before Milestone 13 closeout. |
 | `json` parity and hardening | `[~]` | Full semantic, malformed-input, and perf closure still required |
 | `_csv`/`csv` parity and hardening | `[~]` | Full parser/writer semantic and perf closure still required |
 | `pickle`/`pickletools`/`copyreg` parity and hardening | `[~]` | Still open; deferred strict pickle lane remains open |
