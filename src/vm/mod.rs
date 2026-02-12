@@ -1383,11 +1383,8 @@ impl Vm {
         let Some(hook) = hook else {
             return;
         };
-        let _ = self.call_internal_preserving_caller(
-            hook,
-            vec![Value::Module(record)],
-            HashMap::new(),
-        );
+        let _ =
+            self.call_internal_preserving_caller(hook, vec![Value::Module(record)], HashMap::new());
         if let Some(frame) = self.frames.last_mut() {
             frame.active_exception = None;
         }
@@ -4050,7 +4047,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 IteratorKind::SequenceGetItem { .. } => {
                     return Err(RuntimeError::new("expected bytes-like payload"));
                 }
-                IteratorKind::Count { .. } => {
+                IteratorKind::Count { .. } | IteratorKind::Cycle { .. } => {
                     return Err(RuntimeError::new("expected bytes-like payload"));
                 }
             };

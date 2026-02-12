@@ -1072,6 +1072,9 @@ pub enum IteratorKind {
     Bytes(ObjRef),
     ByteArray(ObjRef),
     MemoryView(ObjRef),
+    Cycle {
+        values: Vec<Value>,
+    },
     Count {
         current: i64,
         step: i64,
@@ -1544,6 +1547,11 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             | IteratorKind::Bytes(list)
             | IteratorKind::ByteArray(list)
             | IteratorKind::MemoryView(list) => stack.push(list.clone()),
+            IteratorKind::Cycle { values } => {
+                for value in values {
+                    trace_value(value, stack, marked);
+                }
+            }
             IteratorKind::Map {
                 values,
                 func,
@@ -1666,6 +1674,11 @@ fn clear_object_refs(obj: &ObjRef) {
                 | IteratorKind::Bytes(_)
                 | IteratorKind::ByteArray(_)
                 | IteratorKind::MemoryView(_) => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Cycle { values } => {
+                    values.clear();
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -3054,14 +3067,17 @@ impl BuiltinFunction {
                                 Some(Value::List(values)) => match &*values.kind() {
                                     Object::List(items) => {
                                         let itemsize = match module_data.globals.get("itemsize") {
-                                            Some(Value::Int(value)) if *value > 0 => *value as usize,
+                                            Some(Value::Int(value)) if *value > 0 => {
+                                                *value as usize
+                                            }
                                             _ => 1usize,
                                         };
                                         let from_bytes_initializer = matches!(
                                             module_data.globals.get("__pyrs_array_frombytes__"),
                                             Some(Value::Bool(true))
                                         );
-                                        let logical_len = if from_bytes_initializer && itemsize > 1 {
+                                        let logical_len = if from_bytes_initializer && itemsize > 1
+                                        {
                                             items.len() / itemsize
                                         } else {
                                             items.len()
@@ -5839,7 +5855,9 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     Ok(out)
                 }
                 IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::new("expected iterable")),
-                IteratorKind::Count { .. } => Err(RuntimeError::new("expected iterable")),
+                IteratorKind::Count { .. } | IteratorKind::Cycle { .. } => {
+                    Err(RuntimeError::new("expected iterable"))
+                }
             }
         }
         Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),

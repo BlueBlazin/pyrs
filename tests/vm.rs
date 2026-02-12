@@ -6667,6 +6667,17 @@ fn itertools_count_iterates() {
 }
 
 #[test]
+fn itertools_cycle_repeats_indefinitely() {
+    let source = "import itertools\nit = itertools.cycle([1, 19])\nout = [next(it), next(it), next(it), next(it), next(it)]\nok = out == [1, 19, 1, 19, 1]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn functools_singledispatch_exposes_register_attribute() {
     let source = "import functools\n@functools.singledispatch\ndef f(x):\n    return x\nreg = f.register\n@f.register(int)\ndef g(x):\n    return x + 1\nok = callable(reg) and g(2) == 3\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -7198,6 +7209,23 @@ except OSError as exc:
     caught = True
     cause_ok = (exc.__cause__ is None)
 ok = caught and cause_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_bufferedreader_truncate_on_read_only_raises_unsupported_operation() {
+    let source = r#"import _io
+buf = _io.BufferedReader(_io.BytesIO(b"abc"))
+ok = False
+try:
+    buf.truncate()
+except _io.UnsupportedOperation:
+    ok = True
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

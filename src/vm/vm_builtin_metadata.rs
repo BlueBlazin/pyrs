@@ -700,6 +700,7 @@ impl Vm {
                 IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false),
                 IteratorKind::ByteArray(_) => ("bytearray_iterator", None, None, None, false),
                 IteratorKind::MemoryView(_) => ("memoryview_iterator", None, None, None, false),
+                IteratorKind::Cycle { .. } => ("cycle", None, None, None, false),
                 IteratorKind::Count { .. } => ("count", None, None, None, false),
                 IteratorKind::SequenceGetItem { .. } => ("iterator", None, None, None, false),
             },
@@ -3004,12 +3005,16 @@ impl Vm {
             });
             if is_iobase_instance {
                 if let Object::Instance(instance_data) = &*instance.kind() {
-                    let closed = matches!(instance_data.attrs.get("closed"), Some(Value::Bool(true)))
-                        || matches!(
-                            instance_data.attrs.get("__IOBase_closed"),
-                            Some(Value::Bool(true))
-                        )
-                        || matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true)));
+                    let closed =
+                        matches!(instance_data.attrs.get("closed"), Some(Value::Bool(true)))
+                            || matches!(
+                                instance_data.attrs.get("__IOBase_closed"),
+                                Some(Value::Bool(true))
+                            )
+                            || matches!(
+                                instance_data.attrs.get("_closed"),
+                                Some(Value::Bool(true))
+                            );
                     return Ok(AttrAccessOutcome::Value(Value::Bool(closed)));
                 }
             }

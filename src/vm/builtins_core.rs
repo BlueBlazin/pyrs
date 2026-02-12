@@ -402,19 +402,15 @@ impl Vm {
             })
             .collect::<Vec<_>>();
         let has_mro = |needle: &str| mro_names.iter().any(|name| name == needle);
-        let try_getattr = |vm: &mut Vm,
-                           target: Value,
-                           name: &str|
-         -> Result<Option<Value>, RuntimeError> {
-            match vm.builtin_getattr(
-                vec![target, Value::Str(name.to_string())],
-                HashMap::new(),
-            ) {
-                Ok(value) => Ok(Some(value)),
-                Err(err) if is_missing_attribute_error(&err) => Ok(None),
-                Err(err) => Err(err),
-            }
-        };
+        let try_getattr =
+            |vm: &mut Vm, target: Value, name: &str| -> Result<Option<Value>, RuntimeError> {
+                match vm.builtin_getattr(vec![target, Value::Str(name.to_string())], HashMap::new())
+                {
+                    Ok(value) => Ok(Some(value)),
+                    Err(err) if is_missing_attribute_error(&err) => Ok(None),
+                    Err(err) => Err(err),
+                }
+            };
         let repr_text = |vm: &mut Vm, value: Value| -> Result<String, RuntimeError> {
             match vm.builtin_repr(vec![value], HashMap::new())? {
                 Value::Str(text) => Ok(text),
@@ -464,7 +460,8 @@ impl Vm {
                     }
                 }
             }
-            if let Some(mode_value) = try_getattr(self, Value::Instance(instance.clone()), "mode")? {
+            if let Some(mode_value) = try_getattr(self, Value::Instance(instance.clone()), "mode")?
+            {
                 parts.push(format!("mode={}", repr_text(self, mode_value)?));
             }
             if let Some(encoding_value) =
@@ -3288,10 +3285,7 @@ impl Vm {
                         Object::Bytes(bytes) | Object::ByteArray(bytes) => bytes.clone(),
                         _ => Vec::new(),
                     };
-                    bytes
-                        .iter()
-                        .map(|byte| Value::Int(*byte as i64))
-                        .collect()
+                    bytes.iter().map(|byte| Value::Int(*byte as i64)).collect()
                 }
                 Value::Str(text) => {
                     if !wide_char_typecode {

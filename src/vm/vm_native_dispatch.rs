@@ -1156,7 +1156,9 @@ impl Vm {
                 }
                 let haystack = &bytes[start as usize..end as usize];
                 if needle.is_empty() {
-                    return Ok(NativeCallResult::Value(Value::Int(haystack.len() as i64 + 1)));
+                    return Ok(NativeCallResult::Value(Value::Int(
+                        haystack.len() as i64 + 1,
+                    )));
                 }
                 let mut remaining = haystack;
                 let mut count = 0i64;
@@ -4309,6 +4311,7 @@ impl Vm {
                     IteratorKind::Bytes(_) => "bytes_iterator",
                     IteratorKind::ByteArray(_) => "bytearray_iterator",
                     IteratorKind::MemoryView(_) => "memoryview_iterator",
+                    IteratorKind::Cycle { .. } => "cycle",
                     IteratorKind::Count { .. } => "count",
                     IteratorKind::Map { .. } => "map",
                     IteratorKind::RangeObject { .. } => "range",
@@ -4455,6 +4458,15 @@ impl Vm {
                         }
                         _ => None,
                     });
+                }
+                IteratorKind::Cycle { values } => {
+                    if values.is_empty() {
+                        return Ok(None);
+                    }
+                    let index = state.index % values.len();
+                    let value = values[index].clone();
+                    state.index = state.index.wrapping_add(1);
+                    return Ok(Some(value));
                 }
                 IteratorKind::Count { current, step } => {
                     let value = *current;

@@ -824,7 +824,10 @@ impl Vm {
             return Err(RuntimeError::new("cycle() expects one iterable argument"));
         }
         let values = self.collect_iterable_values(args[0].clone())?;
-        Ok(self.heap.alloc_list(values))
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Cycle { values },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_repeat(
