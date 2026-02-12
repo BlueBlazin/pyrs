@@ -317,6 +317,127 @@ impl Vm {
         Ok(Value::Str(format!("{year:04}-{month:02}-{day:02}")))
     }
 
+    pub(super) fn builtin_datetime_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("datetime.__init__() missing instance"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        if args.len() > 7 {
+            return Err(RuntimeError::new(
+                "datetime.__init__() expects year, month, day and optional time fields",
+            ));
+        }
+
+        let mut year = None;
+        let mut month = None;
+        let mut day = None;
+        let mut hour = Some(0_i64);
+        let mut minute = Some(0_i64);
+        let mut second = Some(0_i64);
+        let mut microsecond = Some(0_i64);
+        let mut tzinfo = None;
+
+        if let Some(value) = args.first() {
+            year = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(1) {
+            month = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(2) {
+            day = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(3) {
+            hour = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(4) {
+            minute = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(5) {
+            second = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(6) {
+            microsecond = Some(value_to_int(value.clone())?);
+        }
+
+        if let Some(value) = kwargs.remove("year") {
+            year = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("month") {
+            month = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("day") {
+            day = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("hour") {
+            hour = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("minute") {
+            minute = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("second") {
+            second = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("microsecond") {
+            microsecond = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("tzinfo") {
+            tzinfo = Some(value);
+        }
+        if kwargs.contains_key("fold") {
+            let _ = kwargs.remove("fold");
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "datetime.__init__() got unexpected keyword",
+            ));
+        }
+
+        let (year, month, day) = match (year, month, day) {
+            (Some(year), Some(month), Some(day)) => (year, month, day),
+            _ => {
+                return Err(RuntimeError::new(
+                    "datetime.__init__() missing required year/month/day",
+                ));
+            }
+        };
+
+        let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
+            return Err(RuntimeError::new(
+                "datetime.__init__() expects instance receiver",
+            ));
+        };
+        instance_data
+            .attrs
+            .insert("year".to_string(), Value::Int(year));
+        instance_data
+            .attrs
+            .insert("month".to_string(), Value::Int(month));
+        instance_data
+            .attrs
+            .insert("day".to_string(), Value::Int(day));
+        instance_data
+            .attrs
+            .insert("hour".to_string(), Value::Int(hour.unwrap_or(0)));
+        instance_data
+            .attrs
+            .insert("minute".to_string(), Value::Int(minute.unwrap_or(0)));
+        instance_data
+            .attrs
+            .insert("second".to_string(), Value::Int(second.unwrap_or(0)));
+        instance_data.attrs.insert(
+            "microsecond".to_string(),
+            Value::Int(microsecond.unwrap_or(0)),
+        );
+        if let Some(tzinfo) = tzinfo {
+            instance_data.attrs.insert("tzinfo".to_string(), tzinfo);
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_date_init(
         &mut self,
         mut args: Vec<Value>,

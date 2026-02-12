@@ -3044,33 +3044,96 @@ impl Vm {
         Ok(Value::None)
     }
 
-    pub(super) fn class_has_permissive_object_init_base(&self, class: &ObjRef) -> bool {
-        let allowed = [
-            "int",
-            "list",
-            "tuple",
-            "dict",
-            "set",
-            "frozenset",
-            "bytes",
-            "bytearray",
-            "memoryview",
-            "complex",
-            "enumerate",
-            "Counter",
-        ];
-        let Object::Class(class_data) = &*class.kind() else {
-            return false;
-        };
-        for base in &class_data.bases {
-            let Object::Class(base_data) = &*base.kind() else {
-                continue;
-            };
-            if allowed.contains(&base_data.name.as_str()) {
-                return true;
-            }
+    pub(super) fn builtin_exception_type_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() {
+            return Err(RuntimeError::new(
+                "BaseException.__init__() takes no keyword arguments",
+            ));
         }
-        false
+        let receiver = args.remove(0);
+        match receiver {
+            Value::Instance(instance) => {
+                let is_exception_instance = match &*instance.kind() {
+                    Object::Instance(instance_data) => {
+                        self.class_is_exception_class(&instance_data.class)
+                    }
+                    _ => false,
+                };
+                if !is_exception_instance {
+                    return Err(RuntimeError::new(
+                        "descriptor '__init__' requires a 'BaseException' object",
+                    ));
+                }
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    let is_stop_iteration = {
+                        let class_kind = instance_data.class.kind();
+                        matches!(
+                            &*class_kind,
+                            Object::Class(class_data)
+                                if matches!(
+                                    class_data.name.as_str(),
+                                    "StopIteration" | "StopAsyncIteration"
+                                )
+                        )
+                    };
+                    instance_data
+                        .attrs
+                        .insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
+                    if is_stop_iteration {
+                        let value = args.first().cloned().unwrap_or(Value::None);
+                        instance_data.attrs.insert("value".to_string(), value);
+                    }
+                    return Ok(Value::None);
+                }
+                Err(RuntimeError::new(
+                    "descriptor '__init__' requires a 'BaseException' object",
+                ))
+            }
+            Value::Exception(mut exception) => {
+                let mut attrs = exception.attrs.borrow_mut();
+                attrs.insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
+                if matches!(exception.name.as_str(), "StopIteration" | "StopAsyncIteration") {
+                    attrs.insert(
+                        "value".to_string(),
+                        args.first().cloned().unwrap_or(Value::None),
+                    );
+                }
+                if args.len() == 1 {
+                    exception.message = Some(format_value(&args[0]));
+                } else if args.is_empty() {
+                    exception.message = None;
+                }
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::new(
+                "descriptor '__init__' requires a 'BaseException' object",
+            )),
+        }
+    }
+
+    pub(super) fn class_has_permissive_object_init_base(&self, class: &ObjRef) -> bool {
+        if self.class_has_builtin_int_base(class)
+            || self.class_has_builtin_list_base(class)
+            || self.class_has_builtin_tuple_base(class)
+            || self.class_has_builtin_dict_base(class)
+            || self.class_has_builtin_set_base(class)
+            || self.class_has_builtin_frozenset_base(class)
+            || self.class_has_builtin_bytes_base(class)
+            || self.class_has_builtin_bytearray_base(class)
+            || self.class_has_builtin_complex_base(class)
+        {
+            return true;
+        }
+        self.class_mro_entries(class).iter().any(|entry| match &*entry.kind() {
+            Object::Class(class_data) => {
+                matches!(class_data.name.as_str(), "memoryview" | "enumerate" | "Counter")
+            }
+            _ => false,
+        })
     }
 
     pub(super) fn builtin_object_getattribute(
@@ -3128,6 +3191,7 @@ impl Vm {
                     }
                 }
             }
+            Value::Cell(cell) => self.store_attr_cell(&cell, &name, value)?,
             _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
         }
         Ok(Value::None)
@@ -3159,6 +3223,7 @@ impl Vm {
                     }
                 }
             }
+            Value::Cell(cell) => self.delete_attr_cell(&cell, &name)?,
             _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
         }
         Ok(Value::None)
@@ -5875,6 +5940,7 @@ impl Vm {
             Value::Set(set) => self.load_attr_set_method(set, &name),
             Value::FrozenSet(set) => self.load_attr_set_method(set, &name),
             Value::Dict(dict) => self.load_attr_dict_method(dict, &name),
+            Value::Cell(cell) => self.load_attr_cell(cell, &name),
             Value::Builtin(builtin) => self.load_attr_builtin(builtin, &name),
             Value::Function(func) => self.load_attr_function(&func, &name),
             Value::BoundMethod(method) => self.load_attr_bound_method(&method, &name),
@@ -6092,6 +6158,7 @@ impl Vm {
                 }
             }
             Value::Function(func) => self.store_attr_function(&func, name, value)?,
+            Value::Cell(cell) => self.store_attr_cell(&cell, &name, value)?,
             Value::Exception(mut exception) => {
                 self.store_attr_exception(&mut exception, &name, value)?
             }
@@ -6156,6 +6223,7 @@ impl Vm {
                 AttrMutationOutcome::ExceptionHandled => return Ok(Value::None),
             },
             Value::Function(func) => self.delete_attr_function(&func, &name)?,
+            Value::Cell(cell) => self.delete_attr_cell(&cell, &name)?,
             Value::Exception(exception) => self.delete_attr_exception(&exception, &name)?,
             _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
         }

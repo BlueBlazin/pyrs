@@ -257,17 +257,32 @@ impl Vm {
             "__init__" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::ObjectInit))
             }
+            "__hash__" => {
+                let wrapper = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__builtin_hash_receiver__".to_string()))
+                {
+                    Value::Module(module) => module,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("value".to_string(), Value::Builtin(builtin));
+                }
+                Ok(self.alloc_builtin_bound_method(BuiltinFunction::Id, wrapper))
+            }
             "__eq__" if builtin == BuiltinFunction::ObjectNew => {
                 Ok(Value::Builtin(BuiltinFunction::OperatorEq))
             }
             "__ne__" if builtin == BuiltinFunction::ObjectNew => {
                 Ok(Value::Builtin(BuiltinFunction::OperatorNe))
             }
-            "__hash__" if builtin == BuiltinFunction::ObjectNew => {
-                Ok(Value::Builtin(BuiltinFunction::Id))
-            }
             "__getformat__" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::Str))
+            }
+            "from_iterable" if builtin == BuiltinFunction::ItertoolsChain => {
+                Ok(Value::Builtin(BuiltinFunction::ItertoolsChainFromIterable))
             }
             "fromhex" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatFromHex))
@@ -403,6 +418,21 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::TupleCount, receiver))
             }
+            "index" if builtin == BuiltinFunction::Tuple => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__tuple_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Tuple));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::TupleIndex, receiver))
+            }
             "count" if builtin == BuiltinFunction::Str => {
                 let receiver = match self
                     .heap
@@ -460,6 +490,21 @@ impl Vm {
             }
             return Some(self.alloc_native_bound_method(NativeMethodKind::TupleCount, receiver));
         }
+        if self.class_has_builtin_tuple_base(class) && attr_name == "index" {
+            let receiver = match self
+                .heap
+                .alloc_module(ModuleObject::new("__tuple_unbound_method__".to_string()))
+            {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                module_data
+                    .globals
+                    .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Tuple));
+            }
+            return Some(self.alloc_native_bound_method(NativeMethodKind::TupleIndex, receiver));
+        }
         if self.class_has_builtin_str_base(class) && attr_name == "count" {
             let receiver = match self
                 .heap
@@ -516,6 +561,7 @@ impl Vm {
         }
         let kind = match attr_name {
             "count" => NativeMethodKind::TupleCount,
+            "index" => NativeMethodKind::TupleIndex,
             _ => {
                 return Err(RuntimeError::new(format!(
                     "tuple has no attribute '{}'",
@@ -526,6 +572,33 @@ impl Vm {
         Ok(self.alloc_native_bound_method(kind, tuple))
     }
 
+    pub(super) fn load_attr_cell(
+        &self,
+        cell: ObjRef,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        if attr_name == "__doc__" {
+            return Ok(Value::None);
+        }
+        let cell_kind = cell.kind();
+        let Object::Cell(cell_data) = &*cell_kind else {
+            return Err(RuntimeError::new(format!(
+                "cell has no attribute '{}'",
+                attr_name
+            )));
+        };
+        match attr_name {
+            "cell_contents" => cell_data
+                .value
+                .clone()
+                .ok_or_else(|| RuntimeError::new("Cell is empty")),
+            _ => Err(RuntimeError::new(format!(
+                "cell has no attribute '{}'",
+                attr_name
+            ))),
+        }
+    }
+
     pub(super) fn load_attr_int_method(
         &self,
         value: Value,
@@ -533,6 +606,9 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if attr_name == "__new__" {
             return Ok(Value::Builtin(BuiltinFunction::ObjectNew));
+        }
+        if attr_name == "__doc__" {
+            return Ok(Value::None);
         }
         let kind = match attr_name {
             "to_bytes" => NativeMethodKind::IntToBytes,
@@ -563,6 +639,9 @@ impl Vm {
         text: String,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__doc__" {
+            return Ok(Value::None);
+        }
         let kind = match attr_name {
             "startswith" => NativeMethodKind::StrStartsWith,
             "endswith" => NativeMethodKind::StrEndsWith,
@@ -578,6 +657,7 @@ impl Vm {
             "isupper" => NativeMethodKind::StrIsUpper,
             "islower" => NativeMethodKind::StrIsLower,
             "isascii" => NativeMethodKind::StrIsAscii,
+            "isalpha" => NativeMethodKind::StrIsAlpha,
             "isalnum" => NativeMethodKind::StrIsAlNum,
             "isdigit" => NativeMethodKind::StrIsDigit,
             "isspace" => NativeMethodKind::StrIsSpace,
@@ -624,6 +704,9 @@ impl Vm {
         receiver_value: Value,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__doc__" {
+            return Ok(Value::None);
+        }
         let type_name = if matches!(receiver_value, Value::ByteArray(_)) {
             "bytearray"
         } else {
@@ -1185,6 +1268,7 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match attr_name {
             "__name__" | "__qualname__" => Ok(Value::Str(exception_name.to_string())),
+            "__init__" => Ok(Value::Builtin(BuiltinFunction::ExceptionTypeInit)),
             "__module__" => {
                 let module_name = if exception_name == "Error" {
                     "_csv"
@@ -1447,6 +1531,48 @@ impl Vm {
                 }
             }
         }
+    }
+
+    pub(super) fn store_attr_cell(
+        &self,
+        cell: &ObjRef,
+        attr_name: &str,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        if attr_name != "cell_contents" {
+            return Err(RuntimeError::new(format!(
+                "cell has no attribute '{}'",
+                attr_name
+            )));
+        }
+        let mut cell_kind = cell.kind_mut();
+        let Object::Cell(cell_data) = &mut *cell_kind else {
+            return Err(RuntimeError::new("cell assignment receiver must be cell"));
+        };
+        cell_data.value = Some(value);
+        Ok(())
+    }
+
+    pub(super) fn delete_attr_cell(
+        &self,
+        cell: &ObjRef,
+        attr_name: &str,
+    ) -> Result<(), RuntimeError> {
+        if attr_name != "cell_contents" {
+            return Err(RuntimeError::new(format!(
+                "cell has no attribute '{}'",
+                attr_name
+            )));
+        }
+        let mut cell_kind = cell.kind_mut();
+        let Object::Cell(cell_data) = &mut *cell_kind else {
+            return Err(RuntimeError::new("cell deletion receiver must be cell"));
+        };
+        if cell_data.value.is_none() {
+            return Err(RuntimeError::new("Cell is empty"));
+        }
+        cell_data.value = None;
+        Ok(())
     }
 
     pub(super) fn bind_descriptor_method(
@@ -1880,6 +2006,20 @@ impl Vm {
                     }
                     let init = class_attr_lookup(&class, "__init__");
                     if let Some(init_callable) = init {
+                        if matches!(init_callable, Value::Builtin(BuiltinFunction::ObjectInit)) {
+                            if let Some(fields) = self.class_namedtuple_fields(&class) {
+                                self.bind_namedtuple_instance_fields(
+                                    &instance,
+                                    &fields,
+                                    args.clone(),
+                                    kwargs.clone(),
+                                )?;
+                                return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
+                            }
+                            if used_custom_new {
+                                return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
+                            }
+                        }
                         if let Value::Function(init_func) = init_callable {
                             let func_data = match &*init_func.kind() {
                                 Object::Function(data) => data.clone(),
@@ -1930,49 +2070,10 @@ impl Vm {
                             }
                         }
                     } else {
-                        if !used_custom_new {
-                            if let Some(fields) = self.class_namedtuple_fields(&class) {
-                                let mut bound_values: Vec<Option<Value>> = vec![None; fields.len()];
-                                if args.len() > fields.len() {
-                                    return Err(RuntimeError::new(
-                                        "namedtuple() argument count mismatch",
-                                    ));
-                                }
-                                for (index, value) in args.into_iter().enumerate() {
-                                    bound_values[index] = Some(value);
-                                }
-                                for (key, value) in kwargs {
-                                    let Some(index) = fields.iter().position(|name| name == &key)
-                                    else {
-                                        return Err(RuntimeError::new(
-                                            "namedtuple() got unexpected keyword argument",
-                                        ));
-                                    };
-                                    if bound_values[index].is_some() {
-                                        return Err(RuntimeError::new(
-                                            "namedtuple() got multiple values for field",
-                                        ));
-                                    }
-                                    bound_values[index] = Some(value);
-                                }
-                                for (index, name) in fields.iter().enumerate() {
-                                    let Some(value) = bound_values[index].clone() else {
-                                        return Err(RuntimeError::new(format!(
-                                            "namedtuple() missing value for field '{}'",
-                                            name
-                                        )));
-                                    };
-                                    if let Object::Instance(instance_data) =
-                                        &mut *instance.kind_mut()
-                                    {
-                                        instance_data.attrs.insert(name.clone(), value);
-                                    } else {
-                                        return Err(RuntimeError::new(
-                                            "namedtuple() instance construction failed",
-                                        ));
-                                    }
-                                }
-                            } else if self.class_is_exception_class(&class) {
+                        if let Some(fields) = self.class_namedtuple_fields(&class) {
+                            self.bind_namedtuple_instance_fields(&instance, &fields, args, kwargs)?;
+                        } else if !used_custom_new {
+                            if self.class_is_exception_class(&class) {
                                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                                     instance_data.attrs.insert(
                                         "args".to_string(),
@@ -2434,6 +2535,49 @@ impl Vm {
                 Object::Class(class_data) => class_data.name == "list",
                 _ => false,
             })
+    }
+
+    pub(super) fn bind_namedtuple_instance_fields(
+        &mut self,
+        instance: &ObjRef,
+        fields: &[String],
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<(), RuntimeError> {
+        let mut bound_values: Vec<Option<Value>> = vec![None; fields.len()];
+        if args.len() > fields.len() {
+            return Err(RuntimeError::new("namedtuple() argument count mismatch"));
+        }
+        for (index, value) in args.into_iter().enumerate() {
+            bound_values[index] = Some(value);
+        }
+        for (key, value) in kwargs {
+            let Some(index) = fields.iter().position(|name| name == &key) else {
+                return Err(RuntimeError::new(
+                    "namedtuple() got unexpected keyword argument",
+                ));
+            };
+            if bound_values[index].is_some() {
+                return Err(RuntimeError::new(
+                    "namedtuple() got multiple values for field",
+                ));
+            }
+            bound_values[index] = Some(value);
+        }
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            for (index, name) in fields.iter().enumerate() {
+                let Some(value) = bound_values[index].clone() else {
+                    return Err(RuntimeError::new(format!(
+                        "namedtuple() missing value for field '{}'",
+                        name
+                    )));
+                };
+                instance_data.attrs.insert(name.clone(), value);
+            }
+            Ok(())
+        } else {
+            Err(RuntimeError::new("namedtuple() instance construction failed"))
+        }
     }
 
     pub(super) fn class_has_builtin_tuple_base(&self, class: &ObjRef) -> bool {

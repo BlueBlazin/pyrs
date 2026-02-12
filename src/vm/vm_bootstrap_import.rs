@@ -97,6 +97,7 @@ impl Vm {
                 ("isinf", BuiltinFunction::MathIsInf),
                 ("isnan", BuiltinFunction::MathIsNaN),
                 ("isclose", BuiltinFunction::MathIsClose),
+                ("factorial", BuiltinFunction::MathFactorial),
             ],
             vec![
                 ("pi", Value::Float(std::f64::consts::PI)),
@@ -503,7 +504,6 @@ impl Vm {
                 Value::ExceptionType("ValueError".to_string()),
             )],
         );
-        // Provide CPython-compatible _json accelerator symbols used by Lib/json paths.
         self.install_builtin_module(
             "_json",
             &[
@@ -810,7 +810,11 @@ impl Vm {
         );
         self.install_builtin_module(
             "binascii",
-            &[("crc32", BuiltinFunction::BinasciiCrc32)],
+            &[
+                ("crc32", BuiltinFunction::BinasciiCrc32),
+                ("b2a_base64", BuiltinFunction::BinasciiB2aBase64),
+                ("a2b_base64", BuiltinFunction::BinasciiA2bBase64),
+            ],
             vec![
                 ("Error", Value::ExceptionType("Exception".to_string())),
                 ("Incomplete", Value::ExceptionType("Exception".to_string())),
@@ -1280,51 +1284,8 @@ impl Vm {
                 ("NoDefault", typing_placeholder.clone()),
             ],
         );
-        let dataclasses_missing = match self
-            .heap
-            .alloc_module(ModuleObject::new("dataclasses.MISSING".to_string()))
-        {
-            Value::Module(obj) => obj,
-            _ => unreachable!(),
-        };
-        let dataclasses_kw_only = match self
-            .heap
-            .alloc_module(ModuleObject::new("dataclasses.KW_ONLY".to_string()))
-        {
-            Value::Module(obj) => obj,
-            _ => unreachable!(),
-        };
-        self.install_builtin_module(
-            "dataclasses",
-            &[
-                ("dataclass", BuiltinFunction::TypingIdFunc),
-                ("field", BuiltinFunction::DataclassesField),
-                ("is_dataclass", BuiltinFunction::DataclassesIsDataclass),
-                ("fields", BuiltinFunction::DataclassesFields),
-                ("asdict", BuiltinFunction::DataclassesAsDict),
-                ("astuple", BuiltinFunction::DataclassesAsTuple),
-                ("replace", BuiltinFunction::DataclassesReplace),
-                ("make_dataclass", BuiltinFunction::DataclassesMakeDataclass),
-            ],
-            vec![
-                ("MISSING", Value::Module(dataclasses_missing)),
-                ("KW_ONLY", Value::Module(dataclasses_kw_only)),
-                (
-                    "Field",
-                    self.heap
-                        .alloc_class(ClassObject::new("Field".to_string(), Vec::new())),
-                ),
-                (
-                    "InitVar",
-                    self.heap
-                        .alloc_class(ClassObject::new("InitVar".to_string(), Vec::new())),
-                ),
-                (
-                    "FrozenInstanceError",
-                    Value::ExceptionType("Exception".to_string()),
-                ),
-            ],
-        );
+        // Do not shadow CPython's pure-Python dataclasses implementation with a partial
+        // built-in shim; we import from Lib/dataclasses.py for correctness.
         let chain_map_class = match self
             .heap
             .alloc_class(ClassObject::new("ChainMap".to_string(), Vec::new()))
@@ -1657,6 +1618,13 @@ impl Vm {
                     "UnionType",
                     self.heap
                         .alloc_class(ClassObject::new("UnionType".to_string(), Vec::new())),
+                ),
+                (
+                    "MemberDescriptorType",
+                    self.heap.alloc_class(ClassObject::new(
+                        "member_descriptor".to_string(),
+                        Vec::new(),
+                    )),
                 ),
             ],
         );
@@ -3538,6 +3506,19 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::SubprocessPopenExit),
             );
         }
+        let subprocess_completed_process_class = match self
+            .heap
+            .alloc_class(ClassObject::new("CompletedProcess".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *subprocess_completed_process_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessCompletedProcessInit),
+            );
+        }
         self.install_builtin_module(
             "subprocess",
             &[
@@ -3550,6 +3531,10 @@ impl Vm {
                 ("STDOUT", Value::Int(-2)),
                 ("DEVNULL", Value::Int(-3)),
                 ("Popen", Value::Class(subprocess_popen_class)),
+                (
+                    "CompletedProcess",
+                    Value::Class(subprocess_completed_process_class),
+                ),
                 (
                     "CalledProcessError",
                     Value::ExceptionType("CalledProcessError".to_string()),
@@ -3584,6 +3569,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *datetime_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeInit),
+            );
             class_data.attrs.insert(
                 "now".to_string(),
                 Value::Builtin(BuiltinFunction::DateTimeNow),
@@ -4230,11 +4219,9 @@ impl Vm {
 
         if let Some((parent, _)) = name.rsplit_once('.') {
             if !self.modules.contains_key(parent) {
-                if let Some(parent_info) = self.find_module_source(parent) {
-                    if parent_info.is_package {
-                        let _ = self.load_module(parent)?;
-                    }
-                }
+                let parent_caller_depth = self.frames.len();
+                let _ = self.load_module(parent)?;
+                self.run_pending_import_frames(parent_caller_depth)?;
             }
         }
 

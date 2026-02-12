@@ -20,9 +20,9 @@ Scope list (user-priority):
 - `RED`: import itself fails (critical missing native/core surface).
 
 ## Baseline Snapshot (2026-02-12 local probe, debug build)
-- Import pass: `23/26`
-- Common-workflow smoke pass: `13/26`
-- Major blockers are foundational (`_sre`, constructors/object model, missing native modules/surfaces), not isolated single-module bugs.
+- Import pass: `25/26`
+- Common-workflow smoke pass: `24/26`
+- Remaining blockers are concentrated in two native/core surfaces: `_sqlite3` and `hashlib` backends.
 
 ## Checklist (Common Functionality)
 
@@ -30,18 +30,18 @@ Scope list (user-priority):
 |---|---|---|---|---|
 | `os` | P0 | GREEN | path ops, env ops, file descriptor helpers used by stdlib | Keep regression coverage broad |
 | `sys` | P0 | GREEN | `sys.path`, flags, implementation metadata, argv/executable surfaces | Continue parity for flags/runtime fields |
-| `pathlib` | P0 | YELLOW | `Path.resolve`, `Path.exists`, read/write helpers, path normalization | `abspath()` call path mismatch |
-| `re` | P0 | YELLOW | `search`/`match` basics, alternation/grouping, replace/split primitives | `_sre` alternation mismatch |
-| `json` | P0 | YELLOW | `dumps`/`loads`, common options (`sort_keys`, separators), decode errors | exception-init/object-model path mismatch |
-| `datetime` | P0 | YELLOW | `datetime/date/time` constructors, arithmetic/comparison, ISO formatting | builtin constructor dispatch mismatch |
+| `pathlib` | P0 | GREEN | `Path.resolve`, `Path.exists`, read/write helpers, path normalization | Deep filesystem semantics still tracked separately |
+| `re` | P0 | GREEN | `search`/`match` basics, alternation/grouping, replace/split primitives | Long-tail regex engine parity remains tracked in strict suites |
+| `json` | P0 | GREEN | `dumps`/`loads`, common options (`sort_keys`, separators), decode errors | Pure-stdlib JSON path still pending `_sre`/enum-depth closure |
+| `datetime` | P0 | GREEN | `datetime/date/time` constructors, arithmetic/comparison, ISO formatting | Deep tz/parsing edges tracked in strict harness |
 | `time` | P1 | GREEN | wall clock + monotonic + sleep path semantics | Keep platform edge parity |
-| `math` | P0 | YELLOW | arithmetic/transcendentals + common integer ops (`factorial`, etc.) | missing `math.factorial` |
-| `random` | P1 | YELLOW | `Random()` ctor, `randrange/randint`, seeding determinism | class constructor dispatch mismatch |
+| `math` | P0 | GREEN | arithmetic/transcendentals + common integer ops (`factorial`, etc.) | Advanced numeric edge parity tracked in harness |
+| `random` | P1 | GREEN | `Random()` ctor, `randrange/randint`, seeding determinism | Wider distribution/statistical API coverage pending |
 | `collections` | P0 | GREEN | `Counter`, `deque`, `defaultdict`, namedtuple baseline | expand feature-depth tests |
-| `itertools` | P0 | YELLOW | `cycle/islice/count/repeat/chain` common composition paths | hang/timeout in common composition path |
+| `itertools` | P0 | GREEN | `cycle/islice/count/repeat/chain` common composition paths | Iterator laziness depth remains tracked separately |
 | `functools` | P1 | GREEN | `lru_cache`, `partial`, comparator helpers | expand interaction tests |
 | `logging` | P1 | GREEN | logger creation, levels, handler/formatter baseline | keep traceback formatting parity |
-| `subprocess` | P0 | YELLOW | `run`, `CompletedProcess`, stdio capture basics | `CompletedProcess` missing |
+| `subprocess` | P0 | GREEN | `run`, `CompletedProcess`, stdio capture basics | Process/pipe edge semantics remain strict-suite tracked |
 | `typing` | P1 | GREEN | basic aliases/generics (`Optional`, `Union`, parametric forms) | modern edge semantics still pending |
 | `argparse` | P1 | GREEN | parser creation, positional/optional args, errors | keep parse/error parity |
 | `unittest` | P1 | GREEN | case execution, assertions, suite/runner baseline | keep exception formatting parity |
@@ -50,10 +50,10 @@ Scope list (user-priority):
 | `asyncio` | P1 | GREEN | `asyncio.run`, task scheduling baseline, coroutine correctness | expand real-world task patterns |
 | `csv` | P0 | GREEN | reader/writer basics via `Lib/csv.py` + `_csv` substrate | long-tail dialect/error parity pending |
 | `sqlite3` | P0 | RED | in-memory connect/execute/fetch/close | `_sqlite3` missing |
-| `urllib` | P0 | YELLOW | URL parse/join/quote basics used by apps | missing string method semantics (`isalpha`) |
-| `http` | P0 | RED | `http.client` import + request object baseline | `binascii.b2a_base64` missing (import chain) |
-| `hashlib` | P0 | RED | `sha256/md5` digest baseline + constructor paths | unsupported hash backends/surfaces |
-| `dataclasses` | P0 | YELLOW | decorator, generated `__init__`, defaults, repr/eq baseline | constructor/object-init semantics mismatch |
+| `urllib` | P0 | GREEN | URL parse/join/quote basics used by apps | Extended URL policy/IDNA edge parity pending |
+| `http` | P0 | GREEN | `http.client` import + request object baseline | deeper enum-member semantics still pending before enum shim retirement |
+| `hashlib` | P0 | YELLOW | `sha256/md5` digest baseline + constructor paths | module import works, but md5/sha256 constructors are still missing |
+| `dataclasses` | P0 | GREEN | decorator, generated `__init__`, defaults, repr/eq baseline | Advanced slots/frozen/post-init edge behavior tracked separately |
 
 ## Closure Criteria (Module-Level Definition of Done)
 For each module above:
@@ -66,10 +66,10 @@ For each module above:
 ## Delivery Plan (Non-Hacky, Foundational First)
 
 ### Wave 1 (P0 foundation unlockers)
-1. `_sre` alternation/grouping correctness (`re`, `assertRaisesRegex`, downstream test infra).
-2. Constructor/object-model parity for builtin/native-backed classes (`datetime`, `random`, `dataclasses`, `json` error paths).
-3. Missing core stdlib-native surfaces: `_sqlite3`, `hashlib`/`binascii` essentials, `subprocess.CompletedProcess`.
-4. Missing high-value builtin methods used transitively (`str.isalpha` and related predicates).
+1. Land native crypto substrates for `hashlib` (`md5`, `sha256` minimum) with parity tests.
+2. Implement `_sqlite3` baseline import/connect/execute/fetch path with parity tests.
+3. Keep enum/http behavior closure tracked until shim retirement (`Lib/enum.py` path).
+4. Keep constructor/object-model and iterator fixes covered with targeted regressions (no regressions to resolved rows).
 
 ### Wave 2 (P0 module closure pass)
 1. Close `pathlib`, `json`, `math`, `itertools`, `urllib` common paths.

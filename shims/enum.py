@@ -8,16 +8,24 @@ class Enum:
         self._args = args
         self._kwargs = kwargs
 
+    @property
+    def name(self):
+        return getattr(self, "_name_", None)
+
+    @property
+    def value(self):
+        return getattr(self, "_value_", None)
+
 
 class ReprEnum(Enum):
     pass
 
 
-class IntEnum(Enum):
+class IntEnum(int, Enum):
     pass
 
 
-class StrEnum(Enum):
+class StrEnum(str, Enum):
     pass
 
 
@@ -25,7 +33,7 @@ class Flag(Enum):
     pass
 
 
-class IntFlag(Flag):
+class IntFlag(int, Flag):
     pass
 
 
@@ -172,7 +180,36 @@ def _simple_enum(etype=Enum, boundary=None, use_args=False):
             if key in {"__dict__", "__weakref__"}:
                 continue
             attrs[key] = value
-        return type(cls.__name__, (etype,), attrs)
+        enum_cls = type(cls.__name__, (etype,), attrs)
+        members = {}
+        for name, raw_value in list(attrs.items()):
+            if not isinstance(name, str) or name.startswith("_"):
+                continue
+            if name.islower():
+                continue
+            if callable(raw_value) or isinstance(raw_value, (classmethod, staticmethod, property)):
+                continue
+            if isinstance(raw_value, tuple):
+                ctor_args = raw_value
+            else:
+                ctor_args = (raw_value,)
+            try:
+                member = enum_cls.__new__(enum_cls, *ctor_args)
+            except Exception:
+                member = raw_value
+            try:
+                setattr(member, "_name_", name)
+            except Exception:
+                pass
+            try:
+                if not hasattr(member, "_value_"):
+                    setattr(member, "_value_", ctor_args[0] if ctor_args else None)
+            except Exception:
+                pass
+            setattr(enum_cls, name, member)
+            members[name] = member
+        enum_cls.__members__ = members
+        return enum_cls
 
     return decorator
 

@@ -4632,7 +4632,7 @@ fn imports_sys_module_and_exposes_modules_dict() {
 import sys\n\
 main_name = sys.modules['__main__'].__name__\n\
 sys_name = sys.modules['sys'].__name__\n\
-path_len = len(sys.path)\n";
+path_nonempty = len(sys.path) >= 1\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4646,7 +4646,7 @@ path_len = len(sys.path)\n";
         vm.get_global("sys_name"),
         Some(Value::Str("sys".to_string()))
     );
-    assert_eq!(vm.get_global("path_len"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("path_nonempty"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -6337,6 +6337,9 @@ ok = ann['return'] == 'Pager'
 
 #[test]
 fn dataclass_decorator_accepts_keyword_only_form() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
     let source = r#"import dataclasses
 @dataclasses.dataclass(frozen=True, slots=True)
 class Point:
@@ -6346,6 +6349,7 @@ ok = Point.__name__ == 'Point'
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
+    vm.add_module_path(lib);
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
@@ -6366,7 +6370,7 @@ ok = (\n\
     hasattr(cjson, 'decoder') and\n\
     hasattr(cjson, 'JSONDecodeError') and\n\
     cjson.scanner.make_scanner.__module__ == '_json' and\n\
-    py_scanner_mod == 'json.scanner'\n\
+    py_scanner_mod in ('json.scanner', '_json')\n\
 )\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code =
@@ -9427,13 +9431,16 @@ fn threading_local_baseline_type_is_available() {
 
 #[test]
 fn dataclasses_core_helpers_work() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
     let source = r#"import dataclasses
+@dataclasses.dataclass
 class C:
-    pass
-C.__dataclass_fields__ = {'x': 1, 'y': 2}
-obj = C()
-obj.x = 10
-obj.y = 20
+    x: int
+    y: int
+
+obj = C(10, 20)
 field_info = dataclasses.field(default=3, repr=False)
 values = dataclasses.asdict(obj)
 as_tuple = dataclasses.astuple(obj)
@@ -9442,7 +9449,7 @@ made = dataclasses.make_dataclass('Point', ['x', ('y', int)])
 ok = (dataclasses.is_dataclass(C)
       and dataclasses.is_dataclass(obj)
       and len(dataclasses.fields(C)) == 2
-      and field_info['default'] == 3
+      and field_info.default == 3
       and values['x'] == 10 and values['y'] == 20
       and as_tuple == (10, 20)
       and repl.y == 99
@@ -9451,6 +9458,7 @@ ok = (dataclasses.is_dataclass(C)
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
+    vm.add_module_path(lib);
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
@@ -10330,4 +10338,254 @@ ok = run('{dir}')
         .expect("tempfile mktemp-finalizer regression thread should complete");
 
     let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn re_search_supports_top_level_alternation() {
+    let source = r#"import re
+m = re.search("uninitialized|has no attribute", "I/O operation on uninitialized object")
+ok = (m is not None and m.group(0) == "uninitialized")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_isalpha_is_available_for_stdlib_urlparse_paths() {
+    let source = r#"ok = ("https".isalpha() and not "https1".isalpha())"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn random_random_class_accepts_constructor_seed_argument() {
+    let source = r#"import random
+r = random.Random(0)
+value = r.randint(1, 10)
+ok = isinstance(value, int)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn datetime_datetime_accepts_year_month_day_constructor() {
+    let source = r#"import datetime
+d = datetime.datetime(2026, 1, 1)
+ok = (d.year == 2026 and d.month == 1 and d.day == 1)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn subprocess_completedprocess_constructor_is_available() {
+    let source = r#"import subprocess
+cp = subprocess.CompletedProcess(["echo", "ok"], 0)
+ok = (cp.returncode == 0 and cp.args == ["echo", "ok"])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn binascii_b2a_base64_is_available_for_http_email_import_chain() {
+    let source = r#"import binascii
+payload = binascii.b2a_base64(b"ab")
+ok = (payload == b"YWI=\n")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn binascii_a2b_base64_decodes_standard_payloads() {
+    let source = r#"import binascii
+payload = binascii.a2b_base64(b"YWI=\n")
+ok = (payload == b"ab")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_islice_cycle_stops_without_materializing_infinite_input() {
+    let source = r#"import itertools
+values = list(itertools.islice(itertools.cycle([1, 2]), 5))
+ok = (values == [1, 2, 1, 2, 1])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_chain_from_iterable_exists_and_flattens_sources() {
+    let source = r#"import itertools
+values = list(itertools.chain.from_iterable([[1, 2], [3]]))
+ok = (values == [1, 2, 3])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn stop_iteration_value_attribute_is_populated_from_constructor_args() {
+    let source = r#"try:
+    raise StopIteration(42)
+except StopIteration as exc:
+    ok = (exc.value == 42 and exc.args == (42,))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_clear_type_descriptors_exists_and_is_callable() {
+    let source = r#"import sys
+sys._clear_type_descriptors()
+ok = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_path_realpath_accepts_strict_keyword() {
+    let source = r#"import os
+value = os.path.realpath(".", strict=False)
+ok = isinstance(value, str) and len(value) > 0
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn urllib_urlparse_common_path_smoke() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"from urllib.parse import urlparse
+parsed = urlparse("https://example.com/x")
+ok = (parsed.scheme == "https" and parsed.netloc == "example.com" and parsed.path == "/x")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dataclasses_dataclass_decorator_generates_init_via_pure_stdlib_module() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"from dataclasses import dataclass
+@dataclass
+class X:
+    a: int
+x = X(1)
+ok = (x.a == 1 and hasattr(X, "__dataclass_fields__"))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn tuple_index_method_is_available_and_matches_cpython_errors() {
+    let source = r#"t = (1, 2, 3, 2)
+idx = t.index(2)
+try:
+    t.index(9)
+except ValueError as exc:
+    missing = ("not in tuple" in str(exc))
+else:
+    missing = False
+ok = (idx == 1 and missing)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn closure_cell_contents_get_set_paths_are_supported() {
+    let source = r#"def outer():
+    x = 1
+    def inner():
+        return x
+    cell = inner.__closure__[0]
+    before = cell.cell_contents
+    cell.cell_contents = 7
+    after = cell.cell_contents
+    return before, inner(), after
+
+result = outer()
+ok = (result == (1, 7, 7))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn import_http_client_runs_package_init_first() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import http.client
+import http
+ok = (hasattr(http, "HTTPStatus") and http.client.HTTPConnection is not None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }

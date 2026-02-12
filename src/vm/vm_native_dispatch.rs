@@ -556,6 +556,79 @@ impl Vm {
                 let count = values.iter().filter(|value| **value == target).count() as i64;
                 Ok(NativeCallResult::Value(Value::Int(count)))
             }
+            NativeMethodKind::TupleIndex => {
+                if !(1..=3).contains(&args.len()) {
+                    return Err(RuntimeError::new(
+                        "tuple.index() expects one to three arguments",
+                    ));
+                }
+                let target = args.remove(0);
+                let (values, mut remaining_args) = match &*receiver.kind() {
+                    Object::Tuple(values) => (values.clone(), args),
+                    Object::Module(module_data) => {
+                        let tuple_obj =
+                            if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
+                                tuple.clone()
+                            } else {
+                                if args.is_empty() {
+                                    return Err(RuntimeError::new(
+                                        "tuple.index() expects one argument",
+                                    ));
+                                }
+                                match args.remove(0) {
+                                    Value::Tuple(tuple) => tuple,
+                                    Value::Instance(instance) => {
+                                        self.instance_backing_tuple(&instance).ok_or_else(|| {
+                                            RuntimeError::new(
+                                                "tuple.index() receiver must be tuple",
+                                            )
+                                        })?
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "tuple.index() receiver must be tuple",
+                                        ));
+                                    }
+                                }
+                            };
+                        let tuple_kind = tuple_obj.kind();
+                        let Object::Tuple(values) = &*tuple_kind else {
+                            return Err(RuntimeError::new("tuple.index() receiver must be tuple"));
+                        };
+                        (values.clone(), args)
+                    }
+                    _ => return Err(RuntimeError::new("tuple.index() receiver must be tuple")),
+                };
+
+                let len = values.len() as i64;
+                let mut start = if remaining_args.is_empty() {
+                    0
+                } else {
+                    value_to_int(remaining_args.remove(0))?
+                };
+                let mut stop = if remaining_args.is_empty() {
+                    len
+                } else {
+                    value_to_int(remaining_args.remove(0))?
+                };
+                if start < 0 {
+                    start += len;
+                }
+                if stop < 0 {
+                    stop += len;
+                }
+                start = start.clamp(0, len);
+                stop = stop.clamp(0, len);
+                if stop < start {
+                    stop = start;
+                }
+                for idx in (start as usize)..(stop as usize) {
+                    if values[idx] == target {
+                        return Ok(NativeCallResult::Value(Value::Int(idx as i64)));
+                    }
+                }
+                Err(RuntimeError::new("tuple.index(x): x not in tuple"))
+            }
             NativeMethodKind::ListIndex => {
                 if !(1..=3).contains(&args.len()) {
                     return Err(RuntimeError::new(
@@ -2139,6 +2212,20 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Bool(
                     text.chars().all(|ch| ch.is_ascii()),
                 )))
+            }
+            NativeMethodKind::StrIsAlpha => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("isalpha() expects no arguments"));
+                }
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let is_alpha = !text.is_empty() && text.chars().all(|ch| ch.is_alphabetic());
+                Ok(NativeCallResult::Value(Value::Bool(is_alpha)))
             }
             NativeMethodKind::StrIsDigit => {
                 if !args.is_empty() {
@@ -4875,6 +4962,7 @@ impl Vm {
             BuiltinFunction::Property => self.builtin_property(args, kwargs),
             BuiltinFunction::ObjectNew => self.builtin_object_new(args, kwargs),
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
+            BuiltinFunction::ExceptionTypeInit => self.builtin_exception_type_init(args, kwargs),
             BuiltinFunction::ObjectGetAttribute => self.builtin_object_getattribute(args, kwargs),
             BuiltinFunction::ObjectGetState => self.builtin_object_getstate(args, kwargs),
             BuiltinFunction::ObjectSetState => self.builtin_object_setstate(args, kwargs),
@@ -4997,6 +5085,7 @@ impl Vm {
             BuiltinFunction::MathAtan => self.builtin_math_atan(args, kwargs),
             BuiltinFunction::MathAcos => self.builtin_math_acos(args, kwargs),
             BuiltinFunction::MathIsClose => self.builtin_math_isclose(args, kwargs),
+            BuiltinFunction::MathFactorial => self.builtin_math_factorial(args, kwargs),
             BuiltinFunction::TimeTime => self.builtin_time_time(args, kwargs),
             BuiltinFunction::TimeTimeNs => self.builtin_time_time_ns(args, kwargs),
             BuiltinFunction::TimeLocalTime => self.builtin_time_localtime(args, kwargs),
@@ -5103,6 +5192,9 @@ impl Vm {
             BuiltinFunction::SubprocessCleanup => self.builtin_subprocess_cleanup(args, kwargs),
             BuiltinFunction::SubprocessCheckCall => {
                 self.builtin_subprocess_check_call(args, kwargs)
+            }
+            BuiltinFunction::SubprocessCompletedProcessInit => {
+                self.builtin_subprocess_completed_process_init(args, kwargs)
             }
             BuiltinFunction::JsonDumps => self.builtin_json_dumps(args, kwargs),
             BuiltinFunction::JsonLoads => self.builtin_json_loads(args, kwargs),
@@ -5252,6 +5344,9 @@ impl Vm {
                 self.builtin_operator_methodcaller(args, kwargs)
             }
             BuiltinFunction::ItertoolsChain => self.builtin_itertools_chain(args, kwargs),
+            BuiltinFunction::ItertoolsChainFromIterable => {
+                self.builtin_itertools_chain_from_iterable(args, kwargs)
+            }
             BuiltinFunction::ItertoolsAccumulate => self.builtin_itertools_accumulate(args, kwargs),
             BuiltinFunction::ItertoolsCombinations => {
                 self.builtin_itertools_combinations(args, kwargs)
@@ -5559,6 +5654,7 @@ impl Vm {
             }
             BuiltinFunction::DateTimeNow => self.builtin_datetime_now(args, kwargs),
             BuiltinFunction::DateToday => self.builtin_datetime_today(args, kwargs),
+            BuiltinFunction::DateTimeInit => self.builtin_datetime_init(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
             BuiltinFunction::AsyncioRun => self.builtin_asyncio_run(args, kwargs),
             BuiltinFunction::AsyncioSleep => self.builtin_asyncio_sleep(args, kwargs),
@@ -5652,6 +5748,8 @@ impl Vm {
             BuiltinFunction::Uuid7 => self.builtin_uuid7(args, kwargs),
             BuiltinFunction::Uuid8 => self.builtin_uuid8(args, kwargs),
             BuiltinFunction::BinasciiCrc32 => self.builtin_binascii_crc32(args, kwargs),
+            BuiltinFunction::BinasciiB2aBase64 => self.builtin_binascii_b2a_base64(args, kwargs),
+            BuiltinFunction::BinasciiA2bBase64 => self.builtin_binascii_a2b_base64(args, kwargs),
             BuiltinFunction::CsvReader => self.builtin_csv_reader(args, kwargs),
             BuiltinFunction::CsvWriter => self.builtin_csv_writer(args, kwargs),
             BuiltinFunction::CsvWriterRow => self.builtin_csv_writerow(args, kwargs),

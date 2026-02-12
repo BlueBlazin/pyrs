@@ -226,6 +226,7 @@ pub enum NativeMethodKind {
     ListPop,
     ListCount,
     TupleCount,
+    TupleIndex,
     ListIndex,
     ListReverse,
     ListSort,
@@ -262,6 +263,7 @@ pub enum NativeMethodKind {
     StrIsUpper,
     StrIsLower,
     StrIsAscii,
+    StrIsAlpha,
     StrIsAlNum,
     StrIsDigit,
     StrIsSpace,
@@ -2168,6 +2170,7 @@ pub enum BuiltinFunction {
     Property,
     ObjectNew,
     ObjectInit,
+    ExceptionTypeInit,
     ObjectGetAttribute,
     ObjectGetState,
     ObjectSetState,
@@ -2290,6 +2293,7 @@ pub enum BuiltinFunction {
     MathAtan,
     MathAcos,
     MathIsClose,
+    MathFactorial,
     TimeTime,
     TimeTimeNs,
     TimeLocalTime,
@@ -2375,6 +2379,7 @@ pub enum BuiltinFunction {
     SubprocessPopenExit,
     SubprocessCleanup,
     SubprocessCheckCall,
+    SubprocessCompletedProcessInit,
     JsonDumps,
     JsonLoads,
     JsonEncodeBaseString,
@@ -2460,6 +2465,7 @@ pub enum BuiltinFunction {
     OperatorAttrGetter,
     OperatorMethodCaller,
     ItertoolsChain,
+    ItertoolsChainFromIterable,
     ItertoolsAccumulate,
     ItertoolsCombinations,
     ItertoolsCombinationsWithReplacement,
@@ -2707,6 +2713,7 @@ pub enum BuiltinFunction {
     BytesIOSeekable,
     DateTimeNow,
     DateToday,
+    DateTimeInit,
     DateInit,
     AsyncioRun,
     AsyncioSleep,
@@ -2767,6 +2774,8 @@ pub enum BuiltinFunction {
     Uuid7,
     Uuid8,
     BinasciiCrc32,
+    BinasciiB2aBase64,
+    BinasciiA2bBase64,
     CsvReader,
     CsvWriter,
     CsvWriterRow,
@@ -4528,6 +4537,9 @@ impl BuiltinFunction {
                 class
                     .attrs
                     .insert("__pyrs_namedtuple_fields__".to_string(), field_tuple);
+                class
+                    .attrs
+                    .insert("__pyrs_tuple_backed_type__".to_string(), Value::Bool(true));
                 for field in &fields {
                     let descriptor = match heap
                         .alloc_module(ModuleObject::new(format!("__namedtuple_field_{field}")))
@@ -5032,6 +5044,7 @@ impl BuiltinFunction {
             | BuiltinFunction::MathAtan
             | BuiltinFunction::MathAcos
             | BuiltinFunction::MathIsClose
+            | BuiltinFunction::MathFactorial
             | BuiltinFunction::TimeTime
             | BuiltinFunction::TimeTimeNs
             | BuiltinFunction::TimeLocalTime
@@ -5117,6 +5130,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SubprocessPopenExit
             | BuiltinFunction::SubprocessCleanup
             | BuiltinFunction::SubprocessCheckCall
+            | BuiltinFunction::SubprocessCompletedProcessInit
             | BuiltinFunction::JsonDumps
             | BuiltinFunction::JsonLoads
             | BuiltinFunction::JsonEncodeBaseString
@@ -5175,6 +5189,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OperatorAttrGetter
             | BuiltinFunction::OperatorMethodCaller
             | BuiltinFunction::ItertoolsChain
+            | BuiltinFunction::ItertoolsChainFromIterable
             | BuiltinFunction::ItertoolsAccumulate
             | BuiltinFunction::ItertoolsCombinations
             | BuiltinFunction::ItertoolsCombinationsWithReplacement
@@ -5261,6 +5276,7 @@ impl BuiltinFunction {
             | BuiltinFunction::IoFileSeekable
             | BuiltinFunction::DateTimeNow
             | BuiltinFunction::DateToday
+            | BuiltinFunction::DateTimeInit
             | BuiltinFunction::DateInit
             | BuiltinFunction::AsyncioRun
             | BuiltinFunction::AsyncioSleep
@@ -5322,6 +5338,8 @@ impl BuiltinFunction {
             | BuiltinFunction::Uuid7
             | BuiltinFunction::Uuid8
             | BuiltinFunction::BinasciiCrc32
+            | BuiltinFunction::BinasciiB2aBase64
+            | BuiltinFunction::BinasciiA2bBase64
             | BuiltinFunction::CsvReader
             | BuiltinFunction::CsvWriter
             | BuiltinFunction::CsvWriterRow
@@ -5349,6 +5367,7 @@ impl BuiltinFunction {
             | BuiltinFunction::WarningsReleaseLock
             | BuiltinFunction::ObjectNew
             | BuiltinFunction::ObjectInit
+            | BuiltinFunction::ExceptionTypeInit
             | BuiltinFunction::ObjectGetAttribute
             | BuiltinFunction::ObjectSetAttr
             | BuiltinFunction::ObjectDelAttr
@@ -6528,6 +6547,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
                     NativeMethodKind::TupleCount => "<bound method tuple.count>".to_string(),
+                    NativeMethodKind::TupleIndex => "<bound method tuple.index>".to_string(),
                     NativeMethodKind::ListIndex => "<bound method list.index>".to_string(),
                     NativeMethodKind::ListReverse => "<bound method list.reverse>".to_string(),
                     NativeMethodKind::ListSort => "<bound method list.sort>".to_string(),
@@ -6592,6 +6612,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrIsUpper => "<bound method str.isupper>".to_string(),
                     NativeMethodKind::StrIsLower => "<bound method str.islower>".to_string(),
                     NativeMethodKind::StrIsAscii => "<bound method str.isascii>".to_string(),
+                    NativeMethodKind::StrIsAlpha => "<bound method str.isalpha>".to_string(),
                     NativeMethodKind::StrIsAlNum => "<bound method str.isalnum>".to_string(),
                     NativeMethodKind::StrIsDigit => "<bound method str.isdigit>".to_string(),
                     NativeMethodKind::StrIsSpace => "<bound method str.isspace>".to_string(),

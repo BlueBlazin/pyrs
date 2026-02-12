@@ -649,7 +649,13 @@ impl Vm {
         let mut modules = HashMap::new();
         modules.insert("__main__".to_string(), main_module.clone());
 
-        let module_paths = vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
+        let mut module_paths =
+            vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
+        if let Some(shim_root) = Self::local_shim_root() {
+            if !module_paths.iter().any(|existing| existing == &shim_root) {
+                module_paths.push(shim_root);
+            }
+        }
 
         let mut vm = Self {
             frames: Vec::with_capacity(128),
@@ -687,7 +693,7 @@ impl Vm {
             pending_del_instances: HashMap::new(),
             weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
-            prefer_pure_json_when_available: true,
+            prefer_pure_json_when_available: false,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
             list_eq_in_progress: Vec::new(),
@@ -1947,6 +1953,10 @@ impl Vm {
                 "setrecursionlimit".to_string(),
                 Value::Builtin(BuiltinFunction::SysSetRecursionLimit),
             );
+            module_data.globals.insert(
+                "_clear_type_descriptors".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             module_data
                 .globals
                 .insert("intern".to_string(), Value::Builtin(BuiltinFunction::Str));
@@ -2559,6 +2569,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *random_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::RandomSeed),
+            );
             class_data.attrs.insert(
                 "seed".to_string(),
                 Value::Builtin(BuiltinFunction::RandomSeed),
@@ -4435,6 +4449,59 @@ fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
     })
 }
 
+fn split_top_level_regex_alternation(pattern: &str) -> Option<Vec<String>> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut bars = Vec::new();
+    let mut depth = 0usize;
+    let mut in_class = false;
+    let mut escape = false;
+    for (idx, ch) in chars.iter().enumerate() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if *ch == '\\' {
+            escape = true;
+            continue;
+        }
+        if in_class {
+            if *ch == ']' {
+                in_class = false;
+            }
+            continue;
+        }
+        if *ch == '[' {
+            in_class = true;
+            continue;
+        }
+        if *ch == '(' {
+            depth += 1;
+            continue;
+        }
+        if *ch == ')' {
+            if depth == 0 {
+                return None;
+            }
+            depth -= 1;
+            continue;
+        }
+        if *ch == '|' && depth == 0 {
+            bars.push(idx);
+        }
+    }
+    if depth != 0 || bars.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bars.len() + 1);
+    let mut start = 0usize;
+    for bar in bars {
+        out.push(chars[start..bar].iter().collect::<String>());
+        start = bar + 1;
+    }
+    out.push(chars[start..].iter().collect::<String>());
+    Some(out)
+}
+
 fn expand_simple_group_alternation(pattern: &str) -> Option<Vec<String>> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut idx = 0usize;
@@ -4701,6 +4768,21 @@ fn match_simple_regex_tokens(
 fn simple_regex_match_details(pattern: &str, text: &str, mode: ReMode) -> Option<ReMatchDetail> {
     let parsed = if let Some(parsed) = parse_simple_regex(pattern) {
         parsed
+    } else if let Some(alternatives) = split_top_level_regex_alternation(pattern) {
+        let mut best: Option<ReMatchDetail> = None;
+        for alternative in alternatives {
+            let Some(detail) = simple_regex_match_details(&alternative, text, mode) else {
+                continue;
+            };
+            let replace = best
+                .as_ref()
+                .map(|current| detail.start < current.start)
+                .unwrap_or(true);
+            if replace {
+                best = Some(detail);
+            }
+        }
+        return best;
     } else if let Some(expanded_patterns) = expand_simple_group_alternation(pattern) {
         for expanded in expanded_patterns {
             if let Some(detail) = simple_regex_match_details(&expanded, text, mode) {
@@ -7434,7 +7516,9 @@ fn classify_runtime_error(message: &str) -> &'static str {
         || message.contains("tolerances must be non-negative")
         || message.contains("inputs are not the same length")
         || message.contains("not in list")
+        || message.contains("not in tuple")
         || message.contains("substring not found")
+        || message.contains("Cell is empty")
         || message.contains("invalid literal for int")
         || message.contains("int() invalid literal")
         || message.contains("could not convert string to float")

@@ -505,6 +505,28 @@ impl Vm {
         Ok(Value::Float(value.sqrt()))
     }
 
+    pub(super) fn builtin_math_factorial(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("factorial() expects one argument"));
+        }
+        let mut value = value_to_bigint(args[0].clone())
+            .map_err(|_| RuntimeError::new("factorial() only accepts integral values"))?;
+        if value.is_negative() {
+            return Err(RuntimeError::new("factorial() not defined for negative values"));
+        }
+        let mut out = BigInt::one();
+        let one = BigInt::one();
+        while !value.is_zero() {
+            out = out.mul(&value);
+            value = value.sub(&one);
+        }
+        Ok(value_from_bigint(out))
+    }
+
     pub(super) fn builtin_math_copysign(
         &mut self,
         args: Vec<Value>,

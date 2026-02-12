@@ -921,7 +921,23 @@ impl Vm {
                 let caller_idx = self.frames.len().saturating_sub(1);
                 let site_index = self.current_site_index();
                 let value = self.pop_value()?;
-                let attr = if attr_name == "__class__" {
+                let attr = if attr_name == "__doc__"
+                    && !matches!(
+                        value,
+                        Value::Module(_)
+                            | Value::Class(_)
+                            | Value::Instance(_)
+                            | Value::Super(_)
+                            | Value::Builtin(_)
+                            | Value::Function(_)
+                            | Value::BoundMethod(_)
+                            | Value::Code(_)
+                            | Value::Exception(_)
+                            | Value::ExceptionType(_)
+                    )
+                {
+                    Value::None
+                } else if attr_name == "__class__" {
                     self.load_dunder_class_attr(&value)?
                 } else {
                     match value {
@@ -965,6 +981,7 @@ impl Vm {
                             }
                         }
                         Value::List(list) => self.load_attr_list_method(list, &attr_name)?,
+                        Value::Tuple(tuple) => self.load_attr_tuple_method(tuple, &attr_name)?,
                         Value::Int(value) => {
                             self.load_attr_int_method(Value::Int(value), &attr_name)?
                         }
@@ -973,6 +990,16 @@ impl Vm {
                         }
                         Value::Bool(value) => {
                             self.load_attr_int_method(Value::Bool(value), &attr_name)?
+                        }
+                        Value::Float(_) => {
+                            if attr_name == "__doc__" {
+                                Value::None
+                            } else {
+                                return Err(RuntimeError::new(format!(
+                                    "float has no attribute '{}'",
+                                    attr_name
+                                )));
+                            }
                         }
                         Value::Complex { real, imag } => match attr_name.as_str() {
                             "__reduce_ex__" | "__reduce__" => {
@@ -1005,14 +1032,22 @@ impl Vm {
                         Value::Bytes(obj) => {
                             let is_bytes = matches!(&*obj.kind(), Object::Bytes(_));
                             if !is_bytes {
-                                return Err(RuntimeError::new("attribute access unsupported type"));
+                                return Err(RuntimeError::new(format!(
+                                    "{} has no attribute '{}'",
+                                    self.value_type_name_for_error(&Value::Bytes(obj)),
+                                    attr_name
+                                )));
                             }
                             self.load_attr_bytes_method(Value::Bytes(obj), &attr_name)?
                         }
                         Value::ByteArray(obj) => {
                             let is_bytearray = matches!(&*obj.kind(), Object::ByteArray(_));
                             if !is_bytearray {
-                                return Err(RuntimeError::new("attribute access unsupported type"));
+                                return Err(RuntimeError::new(format!(
+                                    "{} has no attribute '{}'",
+                                    self.value_type_name_for_error(&Value::ByteArray(obj)),
+                                    attr_name
+                                )));
                             }
                             self.load_attr_bytes_method(Value::ByteArray(obj), &attr_name)?
                         }
@@ -1023,6 +1058,17 @@ impl Vm {
                         Value::Set(set) => self.load_attr_set_method(set, &attr_name)?,
                         Value::FrozenSet(set) => self.load_attr_set_method(set, &attr_name)?,
                         Value::Dict(dict) => self.load_attr_dict_method(dict, &attr_name)?,
+                        Value::Cell(cell) => self.load_attr_cell(cell, &attr_name)?,
+                        Value::None => {
+                            if attr_name == "__doc__" {
+                                Value::None
+                            } else {
+                                return Err(RuntimeError::new(format!(
+                                    "NoneType has no attribute '{}'",
+                                    attr_name
+                                )));
+                            }
+                        }
                         Value::Builtin(builtin) => self.load_attr_builtin(builtin, &attr_name)?,
                         Value::Function(func) => self.load_attr_function(&func, &attr_name)?,
                         Value::BoundMethod(method) => {
@@ -1076,9 +1122,13 @@ impl Vm {
                                     }
                                 },
                                 _ => {
-                                    return Err(RuntimeError::new(
-                                        "attribute access unsupported type",
-                                    ));
+                                    return Err(RuntimeError::new(format!(
+                                        "{} has no attribute '{}'",
+                                        self.value_type_name_for_error(&Value::Generator(
+                                            generator.clone()
+                                        )),
+                                        attr_name
+                                    )));
                                 }
                             };
                             let native =
@@ -1172,8 +1222,12 @@ impl Vm {
                         Value::ExceptionType(name) => {
                             self.load_attr_exception_type(&name, &attr_name)?
                         }
-                        _ => {
-                            return Err(RuntimeError::new("attribute access unsupported type"));
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "{} has no attribute '{}'",
+                                self.value_type_name_for_error(&other),
+                                attr_name
+                            )));
                         }
                     }
                 };
@@ -1374,6 +1428,7 @@ impl Vm {
                         self.touch_class_attr_version(&class);
                     }
                     Value::Function(func) => self.store_attr_function(&func, attr_name, value)?,
+                    Value::Cell(cell) => self.store_attr_cell(&cell, &attr_name, value)?,
                     Value::Exception(mut exception) => {
                         self.store_attr_exception(&mut exception, &attr_name, value)?
                     }
@@ -1419,6 +1474,7 @@ impl Vm {
                         self.touch_class_attr_version(&class);
                     }
                     Value::Function(func) => self.store_attr_function(&func, attr_name, value)?,
+                    Value::Cell(cell) => self.store_attr_cell(&cell, &attr_name, value)?,
                     Value::Exception(mut exception) => {
                         self.store_attr_exception(&mut exception, &attr_name, value)?
                     }
@@ -1480,6 +1536,9 @@ impl Vm {
                     }
                     Value::Function(func) => {
                         self.delete_attr_function(&func, &attr_name)?;
+                    }
+                    Value::Cell(cell) => {
+                        self.delete_attr_cell(&cell, &attr_name)?;
                     }
                     Value::Exception(exception) => {
                         self.delete_attr_exception(&exception, &attr_name)?;
@@ -4930,6 +4989,10 @@ impl Vm {
         {
             let mut attrs = exception.attrs.borrow_mut();
             attrs.insert("args".to_string(), self.heap.alloc_tuple(args.to_vec()));
+            if matches!(name, "StopIteration" | "StopAsyncIteration") {
+                let value = args.first().cloned().unwrap_or(Value::None);
+                attrs.insert("value".to_string(), value);
+            }
             if is_os_error_family(name) {
                 if let Some(errno) = args
                     .first()
@@ -7484,6 +7547,7 @@ impl Vm {
     pub(super) fn native_method_pickle_name(&self, kind: NativeMethodKind) -> Option<&'static str> {
         match kind {
             NativeMethodKind::TupleCount => Some("count"),
+            NativeMethodKind::TupleIndex => Some("index"),
             NativeMethodKind::StrCount => Some("count"),
             NativeMethodKind::StrIndex => Some("index"),
             NativeMethodKind::SetContains => Some("__contains__"),

@@ -37,11 +37,23 @@ impl Vm {
 
     pub(super) fn thread_info_dict(&mut self, name: &str) -> Result<Value, RuntimeError> {
         let ident = self.builtin_threading_get_ident(Vec::new(), HashMap::new())?;
-        Ok(self.heap.alloc_dict(vec![
-            (Value::Str("name".to_string()), Value::Str(name.to_string())),
-            (Value::Str("ident".to_string()), ident),
-            (Value::Str("daemon".to_string()), Value::Bool(false)),
-        ]))
+        let info = match self
+            .heap
+            .alloc_module(ModuleObject::new("__thread_info__".to_string()))
+        {
+            Value::Module(module) => module,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *info.kind_mut() {
+            module_data
+                .globals
+                .insert("name".to_string(), Value::Str(name.to_string()));
+            module_data.globals.insert("ident".to_string(), ident);
+            module_data
+                .globals
+                .insert("daemon".to_string(), Value::Bool(false));
+        }
+        Ok(Value::Module(info))
     }
 
     pub(super) fn range_object_parts(&self, obj: &ObjRef) -> Option<(BigInt, BigInt, BigInt)> {

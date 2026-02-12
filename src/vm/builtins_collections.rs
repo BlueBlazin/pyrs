@@ -573,7 +573,6 @@ impl Vm {
             ));
         }
         let iterable = args.remove(0);
-        let values = self.collect_iterable_values(iterable)?;
 
         let parse_opt_index = |value: Value| -> Result<Option<i64>, RuntimeError> {
             if matches!(value, Value::None) {
@@ -609,12 +608,27 @@ impl Vm {
             return Err(RuntimeError::new("islice() step must be positive"));
         }
 
+        let iterator = self.to_iterator_value(iterable)?;
         let mut out = Vec::new();
-        let stop_index = stop.unwrap_or(values.len() as i64).min(values.len() as i64) as usize;
-        let mut idx = start as usize;
-        while idx < stop_index && idx < values.len() {
-            out.push(values[idx].clone());
-            idx += step as usize;
+        let mut index = 0_i64;
+        loop {
+            if let Some(stop_value) = stop {
+                if index >= stop_value {
+                    break;
+                }
+            }
+            let next = self.next_from_iterator_value(&iterator)?;
+            let value = match next {
+                GeneratorResumeOutcome::Yield(value) => value,
+                GeneratorResumeOutcome::Complete(_) => break,
+                GeneratorResumeOutcome::PropagatedException => {
+                    return Err(self.iteration_error_from_state("islice() iterator failed")?);
+                }
+            };
+            if index >= start && (index - start) % step == 0 {
+                out.push(value);
+            }
+            index += 1;
         }
         Ok(self.heap.alloc_list(out))
     }
@@ -767,6 +781,24 @@ impl Vm {
         }
         let mut out = Vec::new();
         for source in args {
+            out.extend(self.collect_iterable_values(source)?);
+        }
+        Ok(self.heap.alloc_list(out))
+    }
+
+    pub(super) fn builtin_itertools_chain_from_iterable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "chain.from_iterable() expects one iterable argument",
+            ));
+        }
+        let sources = self.collect_iterable_values(args.remove(0))?;
+        let mut out = Vec::new();
+        for source in sources {
             out.extend(self.collect_iterable_values(source)?);
         }
         Ok(self.heap.alloc_list(out))

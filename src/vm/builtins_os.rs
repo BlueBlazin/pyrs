@@ -2077,6 +2077,86 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_subprocess_completed_process_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance =
+            self.take_bound_instance_arg(&mut args, "CompletedProcess.__init__")?;
+        if args.len() > 4 {
+            return Err(RuntimeError::new(
+                "CompletedProcess() expects args, returncode and optional stdout/stderr",
+            ));
+        }
+        let has_args_kw = kwargs.contains_key("args");
+        let has_returncode_kw = kwargs.contains_key("returncode");
+        let has_stdout_kw = kwargs.contains_key("stdout");
+        let has_stderr_kw = kwargs.contains_key("stderr");
+        if !args.is_empty() && has_args_kw {
+            return Err(RuntimeError::new(
+                "CompletedProcess() got multiple values for argument 'args'",
+            ));
+        }
+        if args.len() > 1 && has_returncode_kw {
+            return Err(RuntimeError::new(
+                "CompletedProcess() got multiple values for argument 'returncode'",
+            ));
+        }
+        if args.len() > 2 && has_stdout_kw {
+            return Err(RuntimeError::new(
+                "CompletedProcess() got multiple values for argument 'stdout'",
+            ));
+        }
+        if args.len() > 3 && has_stderr_kw {
+            return Err(RuntimeError::new(
+                "CompletedProcess() got multiple values for argument 'stderr'",
+            ));
+        }
+
+        let mut cp_args = if let Some(value) = args.first() {
+            Some(value.clone())
+        } else {
+            kwargs.remove("args")
+        };
+        let mut returncode = if args.len() > 1 {
+            Some(args[1].clone())
+        } else {
+            kwargs.remove("returncode")
+        };
+        let mut stdout = if args.len() > 2 {
+            Some(args[2].clone())
+        } else {
+            kwargs.remove("stdout")
+        };
+        let mut stderr = if args.len() > 3 {
+            Some(args[3].clone())
+        } else {
+            kwargs.remove("stderr")
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "CompletedProcess() got an unexpected keyword argument",
+            ));
+        }
+
+        let cp_args = cp_args
+            .take()
+            .ok_or_else(|| RuntimeError::new("CompletedProcess() missing args"))?;
+        let returncode = returncode
+            .take()
+            .ok_or_else(|| RuntimeError::new("CompletedProcess() missing returncode"))?;
+        let returncode = Value::Int(value_to_int(returncode)?);
+        let stdout = stdout.take().unwrap_or(Value::None);
+        let stderr = stderr.take().unwrap_or(Value::None);
+
+        Self::instance_attr_set(&instance, "args", cp_args)?;
+        Self::instance_attr_set(&instance, "returncode", returncode)?;
+        Self::instance_attr_set(&instance, "stdout", stdout)?;
+        Self::instance_attr_set(&instance, "stderr", stderr)?;
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_os_wifstopped(
         &mut self,
         args: Vec<Value>,
@@ -2785,9 +2865,23 @@ impl Vm {
     pub(super) fn builtin_os_path_realpath(
         &mut self,
         args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        self.builtin_os_path_abspath(args, kwargs)
+        if args.len() != 1 {
+            return Err(RuntimeError::new("realpath() expects one argument"));
+        }
+        if let Some(strict) = kwargs.remove("strict") {
+            match strict {
+                Value::Bool(_) | Value::Int(_) | Value::None => {}
+                _ => return Err(RuntimeError::new("realpath() strict must be bool")),
+            }
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "realpath() got an unexpected keyword argument",
+            ));
+        }
+        self.builtin_os_path_abspath(args, HashMap::new())
     }
 
     pub(super) fn builtin_os_path_relpath(
@@ -3962,6 +4056,141 @@ impl Vm {
             crc = (crc >> 8) ^ value;
         }
         Ok(Value::Int((!crc) as i64))
+    }
+
+    pub(super) fn builtin_binascii_b2a_base64(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "b2a_base64() expects one positional data argument",
+            ));
+        }
+        let newline = match kwargs.remove("newline") {
+            None => true,
+            Some(Value::Bool(flag)) => flag,
+            Some(Value::Int(number)) => number != 0,
+            Some(Value::None) => false,
+            Some(_) => return Err(RuntimeError::new("b2a_base64() newline must be bool")),
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "b2a_base64() got an unexpected keyword argument",
+            ));
+        }
+        let data = bytes_like_from_value(args.remove(0))?;
+        const TABLE: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = Vec::with_capacity(((data.len() + 2) / 3) * 4 + if newline { 1 } else { 0 });
+        let mut i = 0usize;
+        while i < data.len() {
+            let b0 = data[i];
+            let b1 = if i + 1 < data.len() { data[i + 1] } else { 0 };
+            let b2 = if i + 2 < data.len() { data[i + 2] } else { 0 };
+            let triple = ((b0 as u32) << 16) | ((b1 as u32) << 8) | b2 as u32;
+            out.push(TABLE[((triple >> 18) & 0x3f) as usize]);
+            out.push(TABLE[((triple >> 12) & 0x3f) as usize]);
+            if i + 1 < data.len() {
+                out.push(TABLE[((triple >> 6) & 0x3f) as usize]);
+            } else {
+                out.push(b'=');
+            }
+            if i + 2 < data.len() {
+                out.push(TABLE[(triple & 0x3f) as usize]);
+            } else {
+                out.push(b'=');
+            }
+            i += 3;
+        }
+        if newline {
+            out.push(b'\n');
+        }
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    pub(super) fn builtin_binascii_a2b_base64(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "a2b_base64() expects one positional data argument",
+            ));
+        }
+        let strict_mode = match kwargs.remove("strict_mode") {
+            None => false,
+            Some(Value::Bool(flag)) => flag,
+            Some(Value::Int(number)) => number != 0,
+            Some(Value::None) => false,
+            Some(_) => return Err(RuntimeError::new("a2b_base64() strict_mode must be bool")),
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "a2b_base64() got an unexpected keyword argument",
+            ));
+        }
+        let raw = args.remove(0);
+        let mut input = match raw {
+            Value::Str(text) => text.into_bytes(),
+            other => bytes_like_from_value(other)?,
+        };
+        if !strict_mode {
+            input.retain(|byte| !byte.is_ascii_whitespace());
+        }
+        if input.is_empty() {
+            return Ok(self.heap.alloc_bytes(Vec::new()));
+        }
+        if input.len() % 4 != 0 {
+            return Err(RuntimeError::new("Incorrect padding"));
+        }
+
+        let decode_char = |byte: u8| -> Option<u8> {
+            match byte {
+                b'A'..=b'Z' => Some(byte - b'A'),
+                b'a'..=b'z' => Some(byte - b'a' + 26),
+                b'0'..=b'9' => Some(byte - b'0' + 52),
+                b'+' => Some(62),
+                b'/' => Some(63),
+                _ => None,
+            }
+        };
+
+        let mut out = Vec::with_capacity((input.len() / 4) * 3);
+        for chunk in input.chunks_exact(4) {
+            let mut sextets = [0_u8; 4];
+            let mut pad = 0_u8;
+            for (idx, byte) in chunk.iter().copied().enumerate() {
+                if byte == b'=' {
+                    pad = pad.saturating_add(1);
+                    sextets[idx] = 0;
+                    continue;
+                }
+                let Some(value) = decode_char(byte) else {
+                    return Err(RuntimeError::new(
+                        "Non-base64 digit found in a2b_base64",
+                    ));
+                };
+                sextets[idx] = value;
+            }
+            if pad > 2 || (pad > 0 && chunk[3] != b'=') || (pad == 2 && chunk[2] != b'=') {
+                return Err(RuntimeError::new("Incorrect padding"));
+            }
+            let triple = ((sextets[0] as u32) << 18)
+                | ((sextets[1] as u32) << 12)
+                | ((sextets[2] as u32) << 6)
+                | sextets[3] as u32;
+            out.push(((triple >> 16) & 0xff) as u8);
+            if pad < 2 {
+                out.push(((triple >> 8) & 0xff) as u8);
+            }
+            if pad == 0 {
+                out.push((triple & 0xff) as u8);
+            }
+        }
+        Ok(self.heap.alloc_bytes(out))
     }
 
     pub(super) fn builtin_atexit_register(
