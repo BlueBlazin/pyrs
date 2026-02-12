@@ -633,6 +633,7 @@ impl Vm {
             "decode" => NativeMethodKind::BytesDecode,
             "startswith" => NativeMethodKind::BytesStartsWith,
             "endswith" => NativeMethodKind::BytesEndsWith,
+            "count" => NativeMethodKind::BytesCount,
             "find" => NativeMethodKind::BytesFind,
             "translate" => NativeMethodKind::BytesTranslate,
             "join" => NativeMethodKind::BytesJoin,

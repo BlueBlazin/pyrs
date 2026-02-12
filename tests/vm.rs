@@ -10004,6 +10004,40 @@ ok = (joined == b"a:b:c")
 }
 
 #[test]
+fn bytes_count_supports_bytes_int_and_start_end_keywords() {
+    let source = r#"payload = b"ababa"
+ok = (
+    payload.count(b"ba") == 2
+    and payload.count(b"ba", 2) == 1
+    and payload.count(b"ba", start=1, end=5) == 2
+    and payload.count(97) == 3
+    and payload.count(b"", 1, 4) == 4
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytearray_count_supports_bytes_and_integer_needles() {
+    let source = r#"buf = bytearray(b"001001")
+ok = (
+    buf.count(48) == 4
+    and buf.count(b"01") == 2
+    and buf.count(b"01", start=1) == 2
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn inspect_helpers_cover_getmodule_file_and_predicates() {
     let source = r#"import inspect
 def sample():

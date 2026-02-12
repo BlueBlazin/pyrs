@@ -243,6 +243,7 @@ pub enum NativeMethodKind {
     BytesDecode,
     BytesStartsWith,
     BytesEndsWith,
+    BytesCount,
     BytesFind,
     BytesTranslate,
     BytesJoin,
@@ -6530,6 +6531,7 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method bytes.startswith>".to_string()
                     }
                     NativeMethodKind::BytesEndsWith => "<bound method bytes.endswith>".to_string(),
+                    NativeMethodKind::BytesCount => "<bound method bytes.count>".to_string(),
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
                     NativeMethodKind::BytesTranslate => {
                         "<bound method bytes.translate>".to_string()

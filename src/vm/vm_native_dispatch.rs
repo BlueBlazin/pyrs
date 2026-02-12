@@ -22,6 +22,7 @@ impl Vm {
                     | NativeMethodKind::StrFind
                     | NativeMethodKind::StrIndex
                     | NativeMethodKind::StrRFind
+                    | NativeMethodKind::BytesCount
                     | NativeMethodKind::BytesTranslate
                     | NativeMethodKind::ListSort
                     | NativeMethodKind::CodecsIncrementalEncoderFactoryCall
@@ -1081,6 +1082,90 @@ impl Vm {
                     }
                 };
                 Ok(NativeCallResult::Value(Value::Bool(matches)))
+            }
+            NativeMethodKind::BytesCount => {
+                let start_kw = kwargs.remove("start");
+                let end_kw = kwargs.remove("end");
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "count() got an unexpected keyword argument",
+                    ));
+                }
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "count() expects sub, optional start, optional end",
+                    ));
+                }
+                if start_kw.is_some() && args.len() > 1 {
+                    return Err(RuntimeError::new("count() got multiple values for start"));
+                }
+                if end_kw.is_some() && args.len() > 2 {
+                    return Err(RuntimeError::new("count() got multiple values for end"));
+                }
+                let bytes = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(value) => bytes_like_from_value(value.clone())?,
+                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let needle = match args.remove(0) {
+                    Value::Int(value) => {
+                        if !(0..=255).contains(&value) {
+                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        }
+                        vec![value as u8]
+                    }
+                    Value::BigInt(value) => {
+                        let Some(value) = value.to_i64() else {
+                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        };
+                        if !(0..=255).contains(&value) {
+                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        }
+                        vec![value as u8]
+                    }
+                    Value::Bool(value) => vec![if value { 1 } else { 0 }],
+                    other => bytes_like_from_value(other)?,
+                };
+                let len = bytes.len() as i64;
+                let mut start = if let Some(value) = start_kw {
+                    value_to_int(value)?
+                } else if let Some(value) = args.first() {
+                    value_to_int(value.clone())?
+                } else {
+                    0
+                };
+                let mut end = if let Some(value) = end_kw {
+                    value_to_int(value)?
+                } else if let Some(value) = args.get(1) {
+                    value_to_int(value.clone())?
+                } else {
+                    len
+                };
+                if start < 0 {
+                    start += len;
+                }
+                if end < 0 {
+                    end += len;
+                }
+                start = start.clamp(0, len);
+                end = end.clamp(0, len);
+                if end < start {
+                    return Ok(NativeCallResult::Value(Value::Int(0)));
+                }
+                let haystack = &bytes[start as usize..end as usize];
+                if needle.is_empty() {
+                    return Ok(NativeCallResult::Value(Value::Int(haystack.len() as i64 + 1)));
+                }
+                let mut remaining = haystack;
+                let mut count = 0i64;
+                while let Some(index) = find_bytes_subslice(remaining, &needle) {
+                    count += 1;
+                    let next = index + needle.len();
+                    remaining = &remaining[next..];
+                }
+                Ok(NativeCallResult::Value(Value::Int(count)))
             }
             NativeMethodKind::BytesFind => {
                 if args.is_empty() || args.len() > 3 {
