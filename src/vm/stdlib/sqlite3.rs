@@ -1,6 +1,8 @@
 use super::super::*;
 use std::cell::Cell;
+use std::collections::hash_map::DefaultHasher;
 use std::ffi::{CStr, CString};
+use std::hash::{Hash, Hasher};
 use std::os::raw::{c_char, c_int, c_uchar, c_void};
 use std::ptr::{self, NonNull};
 
@@ -232,12 +234,16 @@ struct SqliteScalarFunctionCallbackState {
 #[derive(Debug)]
 pub(in crate::vm) struct SqliteConnectionState {
     handle: Option<NonNull<Sqlite3Db>>,
+    check_same_thread: bool,
+    creator_thread_ident: i64,
 }
 
 impl SqliteConnectionState {
-    pub(in crate::vm) fn new(handle: *mut Sqlite3Db) -> Self {
+    pub(in crate::vm) fn new(handle: *mut Sqlite3Db, check_same_thread: bool) -> Self {
         Self {
             handle: NonNull::new(handle),
+            check_same_thread,
+            creator_thread_ident: sqlite_current_thread_ident(),
         }
     }
 
@@ -256,6 +262,24 @@ impl SqliteConnectionState {
         } else {
             Err(format!("sqlite3_close_v2 failed with code {rc}"))
         }
+    }
+
+    pub(in crate::vm) fn ensure_thread_affinity(&self) -> Result<(), RuntimeError> {
+        if !self.check_same_thread {
+            return Ok(());
+        }
+        let current_thread_ident = sqlite_current_thread_ident();
+        if self.creator_thread_ident == current_thread_ident {
+            return Ok(());
+        }
+        Err(sqlite_error(
+            "ProgrammingError",
+            format!(
+                "SQLite objects created in a thread can only be used in that same thread. \
+The object was created in thread id {} and this is thread id {}.",
+                self.creator_thread_ident, current_thread_ident
+            ),
+        ))
     }
 }
 
@@ -812,6 +836,12 @@ fn sqlite_connection_readonly_attr_error(name: &str) -> RuntimeError {
     )
 }
 
+fn sqlite_current_thread_ident() -> i64 {
+    let mut hasher = DefaultHasher::new();
+    std::thread::current().id().hash(&mut hasher);
+    (hasher.finish() & i64::MAX as u64) as i64
+}
+
 const SQLITE_CONNECT_POSITIONAL_DEPRECATION: &str = "Passing more than 1 positional argument to sqlite3.connect() is deprecated. \
 Parameters 'timeout', 'detect_types', 'isolation_level', 'check_same_thread', \
 'factory', 'cached_statements' and 'uri' will become keyword-only parameters in Python 3.15.";
@@ -941,6 +971,7 @@ impl Vm {
             .sqlite_connections
             .get(&connection_id)
             .ok_or_else(|| sqlite_error("ProgrammingError", "invalid sqlite connection"))?;
+        state.ensure_thread_affinity()?;
         state
             .db_handle()
             .ok_or_else(|| sqlite_error("ProgrammingError", "Cannot operate on a closed database."))
@@ -1763,7 +1794,10 @@ impl Vm {
                 .remove("isolation_level")
                 .unwrap_or_else(|| Value::Str(String::new())),
         )?;
-        let _check_same_thread = kwargs.remove("check_same_thread");
+        let check_same_thread = kwargs
+            .remove("check_same_thread")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(true);
         let factory = kwargs.remove("factory");
         let _cached_statements = kwargs.remove("cached_statements");
         let uri = kwargs
@@ -1855,8 +1889,10 @@ impl Vm {
                 Value::Bool(true),
             );
         }
-        self.sqlite_connections
-            .insert(connection.id(), SqliteConnectionState::new(handle));
+        self.sqlite_connections.insert(
+            connection.id(),
+            SqliteConnectionState::new(handle, check_same_thread),
+        );
         Ok(Value::Instance(connection))
     }
 
@@ -1920,7 +1956,10 @@ impl Vm {
                 .remove("isolation_level")
                 .unwrap_or_else(|| Value::Str(String::new())),
         )?;
-        let _ = kwargs.remove("check_same_thread");
+        let check_same_thread = kwargs
+            .remove("check_same_thread")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(true);
         let _ = kwargs.remove("factory");
         let _ = kwargs.remove("cached_statements");
         let _ = kwargs.remove("autocommit");
@@ -1934,8 +1973,10 @@ impl Vm {
         if let Some(state) = self.sqlite_connections.get_mut(&receiver_id) {
             let _ = state.close();
         } else {
-            self.sqlite_connections
-                .insert(receiver_id, SqliteConnectionState::new(ptr::null_mut()));
+            self.sqlite_connections.insert(
+                receiver_id,
+                SqliteConnectionState::new(ptr::null_mut(), check_same_thread),
+            );
         }
 
         let database = self.sqlite_extract_database(database)?;
@@ -1971,8 +2012,10 @@ impl Vm {
             return Err(sqlite_error_with_code("OperationalError", message, open_rc));
         }
 
-        self.sqlite_connections
-            .insert(receiver_id, SqliteConnectionState::new(handle));
+        self.sqlite_connections.insert(
+            receiver_id,
+            SqliteConnectionState::new(handle, check_same_thread),
+        );
         let _ = Self::instance_attr_set(
             &receiver,
             SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR,
@@ -2316,6 +2359,7 @@ impl Vm {
         }
         let connection_id = self.sqlite_connection_id_from_value(&args[0], "close")?;
         if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
+            state.ensure_thread_affinity()?;
             state
                 .close()
                 .map_err(|message| sqlite_error("OperationalError", message))?;

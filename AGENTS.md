@@ -67,6 +67,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `_sqlite3.connect` / `Connection.__init__` now preserve raw bytes/bytearray database paths when calling `sqlite3_open_v2` (no lossy UTF-8 replacement in native handoff).
   - `_sqlite3.connect` now accepts path-like (`__fspath__`) database arguments, matching CPython DB-API expectations.
   - `_sqlite3.Row` parity advanced: equality now compares description + row payload (not identity), and `issubclass(sqlite3.Row, collections.abc.Sequence)` / `isinstance(row, Sequence)` now pass in the runtime.
+  - `_sqlite3` thread-affinity guard is now tracked in native connection state and enforced on connection operations when `check_same_thread=True` (default), matching CPython policy.
+  - builtin `threading` module now exposes `_dangling` registry baseline required by CPython test/support threading helpers.
 - Extended probe remaining red modules:
   - `xml`, `gzip`, `bz2`, `lzma`.
   - `smtplib` targeted smoke is green but still logs unsupported `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`).

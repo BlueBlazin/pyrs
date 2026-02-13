@@ -7603,6 +7603,16 @@ fn executes_threading_and_signal_foundations() {
 }
 
 #[test]
+fn threading_module_exposes_dangling_registry_baseline() {
+    let source = "import threading\nok = hasattr(threading, '_dangling') and isinstance(threading._dangling, set) and len(threading._dangling) >= 0\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_except_star_with_exceptiongroup_split_semantics() {
     let source = "value_count = 0\ntype_count = 0\nruntime_count = 0\ntry:\n    raise ExceptionGroup('outer', [ValueError('a'), TypeError('b'), ExceptionGroup('inner', [ValueError('c'), RuntimeError('d')])])\nexcept* ValueError as eg:\n    value_count = len(eg.exceptions)\nexcept* TypeError as eg:\n    type_count = len(eg.exceptions)\nexcept* RuntimeError as eg:\n    runtime_count = len(eg.exceptions)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

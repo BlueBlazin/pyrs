@@ -4747,6 +4747,7 @@ impl Vm {
                     "ThreadError",
                     Value::ExceptionType("RuntimeError".to_string()),
                 ),
+                ("_dangling", self.heap.alloc_set(Vec::new())),
             ],
         );
         self.install_builtin_module(
