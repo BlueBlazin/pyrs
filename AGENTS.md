@@ -71,6 +71,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `_sqlite3` thread-affinity checks now apply to cursor operations (`close`/`fetch*`/`set*size` and other cursor methods), matching CPython `test_dbapi.ThreadTests` expectations.
   - `_sqlite3.Connection` now exposes `set_trace_callback`, `create_collation`, `create_window_function`, and `iterdump`; `iterdump()` delegates to CPython `Lib/sqlite3/dump.py::_iterdump`.
   - `sqlite3` DB-API failfast probe (`Lib/test/test_sqlite3/test_dbapi.py`) is now green locally.
+  - strict stdlib harness suite now includes `test/test_sqlite3/test_dbapi.py` and stays green (`PYRS_RUN_STRICT_STDLIB=1 cargo test -q --test cpython_harness runs_cpython_strict_stdlib_suite`).
   - runtime threading identity emulation now assigns per-start synthetic ids for `_thread.start_new_thread` and `threading.Thread.start` target execution; `threading.get_ident()` reports those ids inside spawned targets.
   - object-model parity checkpoint: `object.__format__` now follows CPython semantics (empty spec -> `str(self)`, non-empty spec -> `TypeError`), unblocking unittest subtest rendering paths that rely on `str.format`.
   - builtin `threading` module now exposes `_dangling` registry baseline required by CPython test/support threading helpers.
