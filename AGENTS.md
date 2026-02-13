@@ -59,7 +59,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - exception hierarchy parity: `LookupError`/`IndexError`/`KeyError`, `ArithmeticError` family, warning family, pickle error family, and several core parents now follow CPython ancestry.
   - exception-match resilience: `except` matching now falls back to active exception state when stack operands are polluted by import-failure edges.
   - heavy CPython-stdlib VM tests now run on dedicated 32MB stack threads for stability (`import_http_client_runs_package_init_first`, `pyio_fileio_del_namedexpr_does_not_leak_bound_method_or_pin_cycle`, `c_pickler_newobj_ex_argument_type_errors_match_cpython_protocols_2_through_5`, `pickle_newobj_generic_matrix_from_pickletester_roundtrips`, `prefers_cpython_pkgutil_and_resources_over_local_shims_when_stdlib_is_available`, `pkgutil_resolve_name_accepts_module_only_target`).
-  - remaining local full-`tests/vm.rs` stack-overflow lane (with CPython Lib present) is now concentrated in additional pickle-heavy tests; latest observed blocker: `pickle_protocol4_dict_chunking_emits_multiple_setitems_for_large_dicts`.
+  - additional pickle-heavy VM tests now run on dedicated 32MB stack threads (`pickle_protocol4_dict_chunking_emits_multiple_setitems_for_large_dicts`, `pickle_slot_list_roundtrip_preserves_slots_and_dynamic_dict_attrs`, `with_assert_raises_handles_missing_attr_without_stack_underflow`), and local full `cargo test -q --test vm` is green.
+  - CPython harness import suites (`runs_cpython_language_suite`, `runs_cpython_import_suite`) now run on dedicated 32MB stack threads to avoid debug-thread stack overflows during deep import chains.
 - Extended probe remaining red modules:
   - `xml`, `gzip`, `bz2`, `lzma`.
   - `smtplib` targeted smoke is green but still logs unsupported `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`).

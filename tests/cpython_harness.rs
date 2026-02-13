@@ -523,12 +523,30 @@ fn subprocess_harness_helper_times_out_hanging_program() {
 
 #[test]
 fn runs_cpython_language_suite() {
-    run_suite_file(LANGUAGE_SUITE, ALLOWLIST_FILE, SuiteMode::ImportOnly);
+    let handle = std::thread::Builder::new()
+        .name("cpython-language-suite".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            run_suite_file(LANGUAGE_SUITE, ALLOWLIST_FILE, SuiteMode::ImportOnly);
+        })
+        .expect("spawn language harness thread");
+    handle
+        .join()
+        .expect("language harness thread should complete");
 }
 
 #[test]
 fn runs_cpython_import_suite() {
-    run_suite_file(IMPORT_SUITE, ALLOWLIST_FILE, SuiteMode::ImportOnly);
+    let handle = std::thread::Builder::new()
+        .name("cpython-import-suite".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            run_suite_file(IMPORT_SUITE, ALLOWLIST_FILE, SuiteMode::ImportOnly);
+        })
+        .expect("spawn import harness thread");
+    handle
+        .join()
+        .expect("import harness thread should complete");
 }
 
 #[test]

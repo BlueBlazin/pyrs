@@ -3753,18 +3753,27 @@ fn pickle_protocol4_dict_chunking_emits_multiple_setitems_for_large_dicts() {
         eprintln!("skipping pickle dict chunking test (CPython Lib path not available)");
         return;
     };
-    let source = r#"import pickle
+    let handle = std::thread::Builder::new()
+        .name("pickle-dict-chunking".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import pickle
 from test.pickletester import count_opcode
 d = dict.fromkeys(range(2500))
 s = pickle.dumps(d, 4)
 ok = (count_opcode(pickle.SETITEMS, s) >= 2)
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pickle-dict-chunking thread");
+    handle
+        .join()
+        .expect("pickle-dict-chunking thread should complete");
 }
 
 #[test]
@@ -3844,7 +3853,11 @@ fn pickle_slot_list_roundtrip_preserves_slots_and_dynamic_dict_attrs() {
         eprintln!("skipping pickle SlotList roundtrip test (CPython Lib path not available)");
         return;
     };
-    let source = r#"import pickle
+    let handle = std::thread::Builder::new()
+        .name("pickle-slot-list-roundtrip".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import pickle
 from test.pickletester import SlotList
 x = SlotList([1, 2, 3])
 x.foo = 42
@@ -3852,12 +3865,17 @@ x.bar = "hello"
 y = pickle.loads(pickle.dumps(x, 2))
 ok = (x == y and x.foo == y.foo and x.bar == y.bar and x.__dict__ == y.__dict__)
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pickle-slot-list-roundtrip thread");
+    handle
+        .join()
+        .expect("pickle-slot-list-roundtrip thread should complete");
 }
 
 #[test]
@@ -6786,7 +6804,11 @@ fn with_assert_raises_handles_missing_attr_without_stack_underflow() {
         eprintln!("skipping with/assertRaises regression (CPython Lib path not available)");
         return;
     };
-    let source = r#"import unittest
+    let handle = std::thread::Builder::new()
+        .name("with-assert-raises-missing-attr".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import unittest
 class C:
     def __getattr__(self, name):
         raise AttributeError("x")
@@ -6797,12 +6819,17 @@ with t.assertRaises(AttributeError):
     c.dispatch_table
 ok = True
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn with-assert-raises-missing-attr thread");
+    handle
+        .join()
+        .expect("with-assert-raises-missing-attr thread should complete");
 }
 
 #[test]
