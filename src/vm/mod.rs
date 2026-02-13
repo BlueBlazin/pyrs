@@ -3104,7 +3104,18 @@ fn deref_name(code: &CodeObject, idx: usize) -> Option<&str> {
 fn value_to_optional_index(value: Value) -> Result<Option<i64>, RuntimeError> {
     match value {
         Value::None => Ok(None),
-        other => Ok(Some(value_to_int(other)?)),
+        other => match value_to_int(other) {
+            Ok(index) => Ok(Some(index)),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    || err.message.contains("cannot be interpreted as an integer") =>
+            {
+                Err(RuntimeError::new(
+                    "TypeError: slice indices must be integers or None or have an __index__ method",
+                ))
+            }
+            Err(err) => Err(err),
+        },
     }
 }
 
@@ -7740,7 +7751,7 @@ fn slice_indices(
     let len_isize = len as isize;
     let step = step.unwrap_or(1);
     if step == 0 {
-        return Err(RuntimeError::new("slice step cannot be zero"));
+        return Err(RuntimeError::new("ValueError: slice step cannot be zero"));
     }
     let step = step as isize;
 

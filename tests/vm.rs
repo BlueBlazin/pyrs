@@ -2353,6 +2353,42 @@ ok = (
 }
 
 #[test]
+fn sqlite3_connection_call_on_closed_db_raises_programming_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 closed-call test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+conn = sqlite3.connect(':memory:')
+conn.close()
+ok = False
+try:
+    conn('select 1')
+except sqlite3.ProgrammingError as exc:
+    ok = ('closed database' in str(exc))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_ljust_supports_bytes_and_bytearray() {
+    let source = r#"b = b'xy'.ljust(5, b'_')
+ba = bytearray(b'xy').ljust(4)
+ok = (b == b'xy___' and ba == bytearray(b'xy  '))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn re_module_exposes_sre_surface_and_basic_match_works() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping re module surface test (CPython Lib path not available)");

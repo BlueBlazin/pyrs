@@ -19,6 +19,9 @@ struct Sqlite3Blob {
 }
 
 type SqliteDestructor = Option<unsafe extern "C" fn(*mut c_void)>;
+type SqliteExecCallback = Option<
+    unsafe extern "C" fn(*mut c_void, c_int, *mut *mut c_char, *mut *mut c_char) -> c_int,
+>;
 
 #[link(name = "sqlite3")]
 unsafe extern "C" {
@@ -85,6 +88,15 @@ unsafe extern "C" {
         n: c_int,
         offset: c_int,
     ) -> c_int;
+    fn sqlite3_exec(
+        db: *mut Sqlite3Db,
+        sql: *const c_char,
+        callback: SqliteExecCallback,
+        callback_arg: *mut c_void,
+        err_out: *mut *mut c_char,
+    ) -> c_int;
+    fn sqlite3_limit(db: *mut Sqlite3Db, id: c_int, new_val: c_int) -> c_int;
+    fn sqlite3_db_config(db: *mut Sqlite3Db, op: c_int, ...) -> c_int;
 }
 
 const SQLITE_OK: c_int = 0;
@@ -97,6 +109,12 @@ const SQLITE_BLOB: c_int = 4;
 const SQLITE_OPEN_READWRITE: c_int = 0x0000_0002;
 const SQLITE_OPEN_CREATE: c_int = 0x0000_0004;
 const SQLITE_OPEN_URI: c_int = 0x0000_0040;
+const SQLITE_LIMIT_MAX_CATEGORY: i64 = 11;
+const SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR: &str = "__pyrs_sqlite_base_init_called";
+const SQLITE_DBCONFIG_KNOWN_OPS: &[i64] = &[
+    1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016,
+    1017,
+];
 
 #[derive(Debug)]
 pub(in crate::vm) struct SqliteConnectionState {
@@ -178,12 +196,9 @@ impl SqliteBlobState {
             return Ok(());
         };
         // SAFETY: handle was created by sqlite3_blob_open and is owned by this state.
-        let rc = unsafe { sqlite3_blob_close(handle.as_ptr()) };
-        if rc == SQLITE_OK {
-            Ok(())
-        } else {
-            Err(format!("sqlite3_blob_close failed with code {rc}"))
-        }
+        let _ = unsafe { sqlite3_blob_close(handle.as_ptr()) };
+        // CPython close path intentionally ignores sqlite3_blob_close return code.
+        Ok(())
     }
 }
 
@@ -226,6 +241,16 @@ fn sqlite_error(kind: &str, message: impl Into<String>) -> RuntimeError {
     RuntimeError::new(format!("{kind}: {}", message.into()))
 }
 
+fn sqlite_error_from_db_status(db: *mut Sqlite3Db, default_kind: &str) -> RuntimeError {
+    let message = sqlite_last_error_message(db);
+    let kind = if message.contains("constraint failed") {
+        "IntegrityError"
+    } else {
+        default_kind
+    };
+    sqlite_error(kind, message)
+}
+
 fn sqlite_last_error_message(db: *mut Sqlite3Db) -> String {
     if db.is_null() {
         return "sqlite backend error".to_string();
@@ -255,6 +280,11 @@ fn sqlite_has_extra_sql(tail: *const c_char) -> bool {
         .iter()
         .any(|byte| !byte.is_ascii_whitespace())
 }
+
+const SQLITE_CONNECT_POSITIONAL_DEPRECATION: &str =
+    "Passing more than 1 positional argument to sqlite3.connect() is deprecated. \
+Parameters 'timeout', 'detect_types', 'isolation_level', 'check_same_thread', \
+'factory', 'cached_statements' and 'uri' will become keyword-only parameters in Python 3.15.";
 
 impl Vm {
     pub(in crate::vm) fn sqlite_libversion_string(&self) -> String {
@@ -321,6 +351,15 @@ impl Vm {
     ) -> Result<u64, RuntimeError> {
         let receiver = self.receiver_from_value(value)?;
         let receiver_id = receiver.id();
+        if matches!(
+            Self::instance_attr_get(&receiver, SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR),
+            Some(Value::Bool(false))
+        ) {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "Base Connection.__init__ not called.",
+            ));
+        }
         if self.sqlite_connections.contains_key(&receiver_id) {
             Ok(receiver_id)
         } else {
@@ -378,6 +417,38 @@ impl Vm {
         })
     }
 
+    fn sqlite_cursor_closed_runtime_error(&self, connection_id: u64) -> RuntimeError {
+        let is_connection_closed = self
+            .sqlite_connections
+            .get(&connection_id)
+            .and_then(|state| state.db_handle())
+            .is_none();
+        if is_connection_closed {
+            sqlite_error("ProgrammingError", "Cannot operate on a closed database.")
+        } else {
+            sqlite_error("ProgrammingError", "Cannot operate on a closed cursor.")
+        }
+    }
+
+    fn sqlite_limit_category(value: Value) -> Result<c_int, RuntimeError> {
+        let category = value_to_int(value)
+            .map_err(|_| sqlite_error("TypeError", "'category' must be an integer"))?;
+        if !(0..=SQLITE_LIMIT_MAX_CATEGORY).contains(&category) {
+            return Err(sqlite_error("ProgrammingError", "'category' is out of bounds"));
+        }
+        i32::try_from(category)
+            .map_err(|_| sqlite_error("ProgrammingError", "'category' is out of bounds"))
+    }
+
+    fn sqlite_dbconfig_operation(value: Value) -> Result<c_int, RuntimeError> {
+        let operation = value_to_int(value)
+            .map_err(|_| sqlite_error("TypeError", "'op' must be an integer"))?;
+        if !SQLITE_DBCONFIG_KNOWN_OPS.contains(&operation) {
+            return Err(sqlite_error("ValueError", "unknown config operation"));
+        }
+        i32::try_from(operation).map_err(|_| sqlite_error("ValueError", "unknown config operation"))
+    }
+
     fn sqlite_blob_state_and_db(
         &mut self,
         blob_id: u64,
@@ -427,6 +498,18 @@ impl Vm {
             message = format!("sqlite3 blob operation failed with code {rc}");
         }
         sqlite_error("OperationalError", message)
+    }
+
+    fn sqlite_warn_connect_positional_deprecation(&mut self) -> Result<(), RuntimeError> {
+        let _ = self.builtin_warnings_warn(
+            vec![
+                Value::Str(SQLITE_CONNECT_POSITIONAL_DEPRECATION.to_string()),
+                Value::ExceptionType("DeprecationWarning".to_string()),
+                Value::Int(1),
+            ],
+            HashMap::new(),
+        )?;
+        Ok(())
     }
 
     fn sqlite_blob_index_arg(&mut self, value: Value) -> Result<i64, RuntimeError> {
@@ -559,10 +642,7 @@ impl Vm {
         if rc == SQLITE_OK {
             Ok(())
         } else {
-            Err(sqlite_error(
-                "OperationalError",
-                sqlite_last_error_message(db),
-            ))
+            Err(sqlite_error_from_db_status(db, "OperationalError"))
         }
     }
 
@@ -632,10 +712,7 @@ impl Vm {
             )
         };
         if prepare_rc != SQLITE_OK {
-            return Err(sqlite_error(
-                "OperationalError",
-                sqlite_last_error_message(db),
-            ));
+            return Err(sqlite_error_from_db_status(db, "OperationalError"));
         }
         let Some(stmt_ptr) = NonNull::new(raw_stmt) else {
             return Ok(Vec::new());
@@ -684,14 +761,28 @@ impl Vm {
                 }
                 SQLITE_DONE => break,
                 _ => {
-                    return Err(sqlite_error(
-                        "OperationalError",
-                        sqlite_last_error_message(db),
-                    ));
+                    return Err(sqlite_error_from_db_status(db, "OperationalError"));
                 }
             }
         }
         Ok(rows)
+    }
+
+    fn sqlite_execute_script(
+        &self,
+        connection_id: u64,
+        script: &str,
+    ) -> Result<(), RuntimeError> {
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        let sql_c = CString::new(script.as_bytes())
+            .map_err(|_| sqlite_error("ProgrammingError", "SQL contains embedded NUL"))?;
+        let mut err_out: *mut c_char = ptr::null_mut();
+        // SAFETY: db is live, sql_c is valid, callback is null, and err_out is a valid out pointer.
+        let rc = unsafe { sqlite3_exec(db, sql_c.as_ptr(), None, ptr::null_mut(), &mut err_out) };
+        if rc == SQLITE_OK {
+            return Ok(());
+        }
+        Err(sqlite_error_from_db_status(db, "OperationalError"))
     }
 
     pub(in crate::vm) fn builtin_sqlite_connect(
@@ -699,6 +790,13 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let positional_count = args.len();
+        if args.len() > 8 {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("connect() takes at most 8 positional arguments ({} given)", args.len()),
+            ));
+        }
         let database = if args.is_empty() {
             kwargs
                 .remove("database")
@@ -706,14 +804,26 @@ impl Vm {
         } else {
             args.remove(0)
         };
-        if !args.is_empty() {
-            return Err(sqlite_error(
-                "TypeError",
-                format!(
-                    "connect() takes 1 positional argument but {} were given",
-                    args.len() + 1
-                ),
-            ));
+        let optional_positional_names = [
+            "timeout",
+            "detect_types",
+            "isolation_level",
+            "check_same_thread",
+            "factory",
+            "cached_statements",
+            "uri",
+        ];
+        for (name, value) in optional_positional_names.iter().zip(args.into_iter()) {
+            if kwargs.contains_key(*name) {
+                return Err(sqlite_error(
+                    "TypeError",
+                    format!("connect() got multiple values for argument '{name}'"),
+                ));
+            }
+            kwargs.insert((*name).to_string(), value);
+        }
+        if positional_count > 1 {
+            self.sqlite_warn_connect_positional_deprecation()?;
         }
 
         let _timeout = kwargs.remove("timeout");
@@ -781,10 +891,127 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("in_transaction".to_string(), Value::Bool(false));
+            instance_data.attrs.insert(
+                SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR.to_string(),
+                Value::Bool(true),
+            );
         }
         self.sqlite_connections
             .insert(connection.id(), SqliteConnectionState::new(handle));
         Ok(Value::Instance(connection))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(sqlite_error("TypeError", "Connection.__init__() missing self"));
+        }
+        if args.len() > 9 {
+            return Err(sqlite_error(
+                "TypeError",
+                format!(
+                    "Connection.__init__() takes at most 8 positional arguments ({} given)",
+                    args.len() - 1
+                ),
+            ));
+        }
+        let receiver_value = args.remove(0);
+        let receiver = self.receiver_from_value(&receiver_value)?;
+        let receiver_id = receiver.id();
+
+        let database = if args.is_empty() {
+            kwargs.remove("database").ok_or_else(|| {
+                sqlite_error("TypeError", "Connection.__init__() missing 'database'")
+            })?
+        } else {
+            args.remove(0)
+        };
+        let optional_positional_names = [
+            "timeout",
+            "detect_types",
+            "isolation_level",
+            "check_same_thread",
+            "factory",
+            "cached_statements",
+            "uri",
+        ];
+        for (name, value) in optional_positional_names.iter().zip(args.into_iter()) {
+            if kwargs.contains_key(*name) {
+                return Err(sqlite_error(
+                    "TypeError",
+                    format!("Connection.__init__() got multiple values for argument '{name}'"),
+                ));
+            }
+            kwargs.insert((*name).to_string(), value);
+        }
+        let uri = kwargs.remove("uri").map(|value| is_truthy(&value)).unwrap_or(false);
+        let _ = kwargs.remove("timeout");
+        let _ = kwargs.remove("detect_types");
+        let _ = kwargs.remove("isolation_level");
+        let _ = kwargs.remove("check_same_thread");
+        let _ = kwargs.remove("factory");
+        let _ = kwargs.remove("cached_statements");
+        let _ = kwargs.remove("autocommit");
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("Connection.__init__() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+
+        if let Some(state) = self.sqlite_connections.get_mut(&receiver_id) {
+            let _ = state.close();
+        } else {
+            self.sqlite_connections
+                .insert(receiver_id, SqliteConnectionState::new(ptr::null_mut()));
+        }
+
+        let database = Self::sqlite_extract_database(database)?;
+        let db_path = CString::new(database.as_bytes()).map_err(|_| {
+            sqlite_error("ProgrammingError", "database path contains embedded NUL")
+        })?;
+        let mut handle: *mut Sqlite3Db = ptr::null_mut();
+        let mut flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+        if uri {
+            flags |= SQLITE_OPEN_URI;
+        }
+        // SAFETY: db_path is a valid C string and handle out pointer is valid.
+        let open_rc = unsafe {
+            sqlite3_open_v2(
+                db_path.as_ptr(),
+                &mut handle as *mut *mut Sqlite3Db,
+                flags,
+                ptr::null(),
+            )
+        };
+        if open_rc != SQLITE_OK {
+            let message = sqlite_last_error_message(handle);
+            if !handle.is_null() {
+                // SAFETY: handle was returned by sqlite3_open_v2 and may be partially initialized.
+                unsafe {
+                    let _ = sqlite3_close_v2(handle);
+                }
+            }
+            let _ = Self::instance_attr_set(
+                &receiver,
+                SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR,
+                Value::Bool(false),
+            );
+            return Err(sqlite_error("OperationalError", message));
+        }
+
+        self.sqlite_connections
+            .insert(receiver_id, SqliteConnectionState::new(handle));
+        let _ = Self::instance_attr_set(
+            &receiver,
+            SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR,
+            Value::Bool(true),
+        );
+        let _ = Self::instance_attr_set(&receiver, "in_transaction", Value::Bool(false));
+        Ok(Value::None)
     }
 
     pub(in crate::vm) fn builtin_sqlite_complete_statement(
@@ -918,6 +1145,9 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("rowcount".to_string(), Value::Int(-1));
+            instance_data
+                .attrs
+                .insert("arraysize".to_string(), Value::Int(1));
         }
         self.sqlite_cursors
             .insert(cursor.id(), SqliteCursorState::new(connection_id));
@@ -956,22 +1186,118 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(in crate::vm) fn builtin_sqlite_connection_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Connection.__enter__() expects no arguments",
+            ));
+        }
+        let connection_id = self.sqlite_connection_id_from_value(&args[0], "__enter__")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        Ok(args.remove(0))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 4 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Connection.__exit__() expects exception triple",
+            ));
+        }
+        let receiver = args.remove(0);
+        let exc_type = args.remove(0);
+        if matches!(exc_type, Value::None) {
+            self.builtin_sqlite_connection_commit(vec![receiver], HashMap::new())?;
+        } else {
+            self.builtin_sqlite_connection_rollback(vec![receiver], HashMap::new())?;
+        }
+        Ok(Value::Bool(false))
+    }
+
     pub(in crate::vm) fn builtin_sqlite_connection_execute(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if args.len() < 2 {
+        if args.is_empty() {
+            return Err(sqlite_error("TypeError", "Connection.execute() missing self"));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "execute")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        if args.is_empty() {
             return Err(sqlite_error(
                 "TypeError",
                 "Connection.execute() missing SQL argument",
             ));
         }
-        let receiver = args.remove(0);
         let cursor = self.builtin_sqlite_connection_cursor(vec![receiver], HashMap::new())?;
         let mut cursor_args = vec![cursor.clone()];
         cursor_args.extend(args);
         self.builtin_sqlite_cursor_execute(cursor_args, kwargs)?;
+        Ok(cursor)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_executemany(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(sqlite_error(
+                "TypeError",
+                "Connection.executemany() missing self",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "executemany")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        if args.len() < 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Connection.executemany() missing SQL or parameters",
+            ));
+        }
+        let cursor = self.builtin_sqlite_connection_cursor(vec![receiver], HashMap::new())?;
+        let mut cursor_args = vec![cursor.clone()];
+        cursor_args.extend(args);
+        self.builtin_sqlite_cursor_executemany(cursor_args, kwargs)?;
+        Ok(cursor)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_executescript(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(sqlite_error(
+                "TypeError",
+                "Connection.executescript() missing self",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "executescript")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        if args.len() != 1 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Connection.executescript() expects one SQL script argument",
+            ));
+        }
+        let cursor = self.builtin_sqlite_connection_cursor(vec![receiver], HashMap::new())?;
+        let mut cursor_args = vec![cursor.clone()];
+        cursor_args.extend(args);
+        self.builtin_sqlite_cursor_executescript(cursor_args, kwargs)?;
         Ok(cursor)
     }
 
@@ -1011,6 +1337,244 @@ impl Vm {
             Err(err) if err.message.contains("no transaction is active") => Ok(Value::None),
             Err(err) => Err(err),
         }
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_create_function(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 4 {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_function() expects name, num_params, func",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "create_function")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let name = args.remove(0);
+        let num_params = args.remove(0);
+        let func = args.remove(0);
+        if !args.is_empty() {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_function() takes 3 positional arguments",
+            ));
+        }
+        match name {
+            Value::Str(_) => {}
+            _ => return Err(sqlite_error("TypeError", "create_function() name must be str")),
+        }
+        let _ = value_to_int(num_params).map_err(|_| {
+            sqlite_error(
+                "TypeError",
+                "create_function() num_params must be an integer",
+            )
+        })?;
+        if !matches!(func, Value::None) && !self.is_callable_value(&func) {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_function() expected a callable or None",
+            ));
+        }
+        if let Some(_deterministic) = kwargs.remove("deterministic") {}
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("create_function() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_create_aggregate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 4 {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_aggregate() expects name, num_params, aggregate_class",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "create_aggregate")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        match args.remove(0) {
+            Value::Str(_) => {}
+            _ => return Err(sqlite_error("TypeError", "create_aggregate() name must be str")),
+        }
+        let _ = value_to_int(args.remove(0)).map_err(|_| {
+            sqlite_error(
+                "TypeError",
+                "create_aggregate() num_params must be an integer",
+            )
+        })?;
+        let aggregate_class = args.remove(0);
+        if !matches!(aggregate_class, Value::None)
+            && !matches!(aggregate_class, Value::Class(_))
+            && !self.is_callable_value(&aggregate_class)
+        {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_aggregate() expected class or None",
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_set_authorizer(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_authorizer() expects callback",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "set_authorizer")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let callback = args.remove(0);
+        if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_authorizer() expected a callable or None",
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_set_progress_handler(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_progress_handler() expects callback and n",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id =
+            self.sqlite_connection_id_from_value(&receiver, "set_progress_handler")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let callback = args.remove(0);
+        let _ = value_to_int(args.remove(0)).map_err(|_| {
+            sqlite_error(
+                "TypeError",
+                "set_progress_handler() n must be an integer",
+            )
+        })?;
+        if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_progress_handler() expected a callable or None",
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_getlimit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error("TypeError", "getlimit() expects category"));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "getlimit")?;
+        let category = Self::sqlite_limit_category(args.remove(0))?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        // SAFETY: db is a valid sqlite handle and category is validated.
+        let value = unsafe { sqlite3_limit(db, category, -1) };
+        Ok(Value::Int(value as i64))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_setlimit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(sqlite_error("TypeError", "setlimit() expects category and limit"));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "setlimit")?;
+        let category = Self::sqlite_limit_category(args.remove(0))?;
+        let new_limit = value_to_int(args.remove(0))
+            .map_err(|_| sqlite_error("TypeError", "'limit' must be an integer"))?;
+        let new_limit = i32::try_from(new_limit)
+            .map_err(|_| sqlite_error("OverflowError", "limit out of range"))?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        // SAFETY: db is a valid sqlite handle, category/new_limit are validated integers.
+        let previous = unsafe { sqlite3_limit(db, category, new_limit) };
+        Ok(Value::Int(previous as i64))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_getconfig(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error("TypeError", "getconfig() expects one operation argument"));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "getconfig")?;
+        let op = Self::sqlite_dbconfig_operation(args.remove(0))?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        let mut current: c_int = 0;
+        // SAFETY: db is valid and sqlite3_db_config expects op, -1 to query, and output pointer.
+        let rc = unsafe { sqlite3_db_config(db, op, -1, &mut current as *mut c_int) };
+        if rc != SQLITE_OK {
+            return Err(sqlite_error("ValueError", "unknown config operation"));
+        }
+        Ok(Value::Bool(current != 0))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_setconfig(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(sqlite_error(
+                "TypeError",
+                "setconfig() expects operation and optional enabled flag",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "setconfig")?;
+        let op = Self::sqlite_dbconfig_operation(args.remove(0))?;
+        let enabled = if !args.is_empty() {
+            is_truthy(&args.remove(0))
+        } else if let Some(value) = kwargs.remove("enabled") {
+            is_truthy(&value)
+        } else {
+            true
+        };
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("setconfig() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        let mut current: c_int = 0;
+        let enabled_int: c_int = if enabled { 1 } else { 0 };
+        // SAFETY: db is valid and sqlite3_db_config expects op, enable flag, and output pointer.
+        let rc = unsafe { sqlite3_db_config(db, op, enabled_int, &mut current as *mut c_int) };
+        if rc != SQLITE_OK {
+            return Err(sqlite_error("ValueError", "unknown config operation"));
+        }
+        Ok(Value::Bool(current != 0))
     }
 
     pub(in crate::vm) fn builtin_sqlite_connection_blobopen(
@@ -1272,11 +1836,13 @@ impl Vm {
             ));
         };
         let len = Self::sqlite_blob_len(handle)?;
-        let base = match origin {
-            0 => 0i64,
-            1 => i64::try_from(state.offset)
+        let offset_i32 = i32::try_from(offset)
+            .map_err(|_| sqlite_error("OverflowError", "seek offset results in overflow"))?;
+        let base_i32 = match origin {
+            0 => 0i32,
+            1 => i32::try_from(state.offset)
                 .map_err(|_| sqlite_error("OverflowError", "seek offset results in overflow"))?,
-            2 => i64::try_from(len)
+            2 => i32::try_from(len)
                 .map_err(|_| sqlite_error("OverflowError", "seek offset results in overflow"))?,
             _ => {
                 return Err(sqlite_error(
@@ -1285,22 +1851,20 @@ impl Vm {
                 ));
             }
         };
-        let Some(new_offset) = base.checked_add(offset) else {
+        let Some(new_offset_i32) = base_i32.checked_add(offset_i32) else {
             return Err(sqlite_error(
                 "OverflowError",
                 "seek offset results in overflow",
             ));
         };
-        if new_offset < 0
-            || usize::try_from(new_offset)
-                .ok()
-                .is_none_or(|position| position > len)
-        {
+        let len_i32 = i32::try_from(len)
+            .map_err(|_| sqlite_error("OverflowError", "seek offset results in overflow"))?;
+        if new_offset_i32 < 0 || new_offset_i32 > len_i32 {
             return Err(sqlite_error("ValueError", "offset out of blob range"));
         }
-        state.offset = usize::try_from(new_offset)
+        state.offset = usize::try_from(new_offset_i32)
             .map_err(|_| sqlite_error("OverflowError", "seek offset results in overflow"))?;
-        Ok(Value::Int(new_offset))
+        Ok(Value::Int(new_offset_i32 as i64))
     }
 
     pub(in crate::vm) fn builtin_sqlite_blob_tell(
@@ -1341,6 +1905,20 @@ impl Vm {
             ));
         }
         Ok(args.remove(0))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_iter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(sqlite_error("TypeError", "Blob.__iter__() expects no arguments"));
+        }
+        Err(sqlite_error(
+            "TypeError",
+            "argument of type 'Blob' is not iterable",
+        ))
     }
 
     pub(in crate::vm) fn builtin_sqlite_blob_exit(
@@ -1496,8 +2074,22 @@ impl Vm {
         let replacement = args.remove(1);
         let op = match key {
             Value::Slice(slice) => {
-                let payload = bytes_like_from_value(replacement)
-                    .map_err(|_| sqlite_error("TypeError", "a bytes-like object is required"))?;
+                let payload = match replacement {
+                    Value::MemoryView(obj) => {
+                        if let Object::MemoryView(view) = &*obj.kind() {
+                            if !view.contiguous {
+                                return Err(RuntimeError::new(
+                                    "BufferError: underlying buffer is not C-contiguous",
+                                ));
+                            }
+                        }
+                        bytes_like_from_value(Value::MemoryView(obj)).map_err(|_| {
+                            sqlite_error("TypeError", "a bytes-like object is required")
+                        })?
+                    }
+                    other => bytes_like_from_value(other)
+                        .map_err(|_| sqlite_error("TypeError", "a bytes-like object is required"))?,
+                };
                 SqliteBlobSetOp::Slice {
                     lower: slice.lower,
                     upper: slice.upper,
@@ -1616,6 +2208,23 @@ impl Vm {
         }
     }
 
+    pub(in crate::vm) fn builtin_sqlite_blob_delitem(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Blob.__delitem__() expects exactly one index argument",
+            ));
+        }
+        match &args[1] {
+            Value::Slice(_) => Err(sqlite_error("TypeError", "Blob doesn't support slice deletion")),
+            _ => Err(sqlite_error("TypeError", "Blob doesn't support item deletion")),
+        }
+    }
+
     pub(in crate::vm) fn builtin_sqlite_cursor_execute(
         &mut self,
         mut args: Vec<Value>,
@@ -1654,10 +2263,7 @@ impl Vm {
                 sqlite_error("ProgrammingError", "invalid sqlite cursor")
             })?;
             if state.closed {
-                return Err(sqlite_error(
-                    "ProgrammingError",
-                    "Cannot operate on a closed cursor.",
-                ));
+                return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
             }
             state.connection_id
         };
@@ -1668,6 +2274,157 @@ impl Vm {
             state.closed = false;
         }
         Ok(receiver)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_cursor_executemany(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(sqlite_error(
+                "TypeError",
+                "Cursor.executemany() does not accept keyword arguments",
+            ));
+        }
+        if args.len() != 3 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Cursor.executemany() expects SQL and parameter iterable",
+            ));
+        }
+        let receiver = args.remove(0);
+        let cursor_id = self.sqlite_cursor_id_from_value(&receiver, "executemany")?;
+        let sql = match args.remove(0) {
+            Value::Str(text) => text,
+            _ => {
+                return Err(sqlite_error(
+                    "TypeError",
+                    "executemany() argument 1 must be str",
+                ));
+            }
+        };
+        let parameter_sets = self.collect_iterable_values(args.remove(0)).map_err(|_| {
+            sqlite_error(
+                "ProgrammingError",
+                "executemany() second argument must be iterable",
+            )
+        })?;
+        let connection_id = {
+            let state = self.sqlite_cursors.get(&cursor_id).ok_or_else(|| {
+                sqlite_error("ProgrammingError", "invalid sqlite cursor")
+            })?;
+            if state.closed {
+                return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
+            }
+            state.connection_id
+        };
+
+        let mut last_rows = Vec::new();
+        for param_set in parameter_sets {
+            let params = self.sqlite_extract_params(param_set)?;
+            last_rows = self.sqlite_execute_query(connection_id, &sql, params)?;
+        }
+        if let Some(state) = self.sqlite_cursors.get_mut(&cursor_id) {
+            state.rows = last_rows;
+            state.next_row = 0;
+            state.closed = false;
+        }
+        Ok(receiver)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_cursor_executescript(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Cursor.executescript() expects one SQL script argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let cursor_id = self.sqlite_cursor_id_from_value(&receiver, "executescript")?;
+        let script = match args.remove(0) {
+            Value::Str(text) => text,
+            _ => {
+                return Err(sqlite_error(
+                    "TypeError",
+                    "executescript() argument must be str",
+                ));
+            }
+        };
+        let connection_id = {
+            let state = self.sqlite_cursors.get(&cursor_id).ok_or_else(|| {
+                sqlite_error("ProgrammingError", "invalid sqlite cursor")
+            })?;
+            if state.closed {
+                return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
+            }
+            state.connection_id
+        };
+        self.sqlite_execute_script(connection_id, &script)?;
+        if let Some(state) = self.sqlite_cursors.get_mut(&cursor_id) {
+            state.rows.clear();
+            state.next_row = 0;
+            state.closed = false;
+        }
+        Ok(receiver)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_cursor_fetchmany(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Cursor.fetchmany() expects optional size argument",
+            ));
+        }
+        let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "fetchmany")?;
+        let size = if args.len() == 2 {
+            value_to_int(args.remove(1)).map_err(|_| {
+                sqlite_error("TypeError", "fetchmany() size argument must be integer")
+            })?
+        } else if let Some(size_kw) = kwargs.remove("size") {
+            value_to_int(size_kw)
+                .map_err(|_| sqlite_error("TypeError", "fetchmany() size must be integer"))?
+        } else {
+            let receiver = self.receiver_from_value(&args[0])?;
+            let arraysize = Self::instance_attr_get(&receiver, "arraysize").unwrap_or(Value::Int(1));
+            value_to_int(arraysize).unwrap_or(1)
+        };
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("fetchmany() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+        if size < 0 {
+            return Err(sqlite_error(
+                "ValueError",
+                "fetchmany() size must be non-negative",
+            ));
+        }
+        let state = self.sqlite_cursors.get_mut(&cursor_id).ok_or_else(|| {
+            sqlite_error("ProgrammingError", "invalid sqlite cursor")
+        })?;
+        if state.closed {
+            let connection_id = state.connection_id;
+            let _ = state;
+            return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
+        }
+        if state.next_row >= state.rows.len() {
+            return Ok(self.heap.alloc_list(Vec::new()));
+        }
+        let take = usize::try_from(size).unwrap_or(usize::MAX);
+        let end = state.next_row.saturating_add(take).min(state.rows.len());
+        let out = state.rows[state.next_row..end].to_vec();
+        state.next_row = end;
+        Ok(self.heap.alloc_list(out))
     }
 
     pub(in crate::vm) fn builtin_sqlite_cursor_fetchone(
@@ -1686,10 +2443,9 @@ impl Vm {
             sqlite_error("ProgrammingError", "invalid sqlite cursor")
         })?;
         if state.closed {
-            return Err(sqlite_error(
-                "ProgrammingError",
-                "Cannot operate on a closed cursor.",
-            ));
+            let connection_id = state.connection_id;
+            let _ = state;
+            return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
         }
         if state.next_row >= state.rows.len() {
             return Ok(Value::None);
@@ -1715,10 +2471,9 @@ impl Vm {
             sqlite_error("ProgrammingError", "invalid sqlite cursor")
         })?;
         if state.closed {
-            return Err(sqlite_error(
-                "ProgrammingError",
-                "Cannot operate on a closed cursor.",
-            ));
+            let connection_id = state.connection_id;
+            let _ = state;
+            return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
         }
         if state.next_row >= state.rows.len() {
             return Ok(self.heap.alloc_list(Vec::new()));

@@ -984,6 +984,48 @@ impl Vm {
                 Value::Bool(true),
             );
             class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionInit),
+            );
+            class_data
+                .attrs
+                .insert("Warning".to_string(), Value::ExceptionType("Warning".to_string()));
+            class_data
+                .attrs
+                .insert("Error".to_string(), Value::ExceptionType("Error".to_string()));
+            class_data.attrs.insert(
+                "InterfaceError".to_string(),
+                Value::ExceptionType("InterfaceError".to_string()),
+            );
+            class_data.attrs.insert(
+                "DatabaseError".to_string(),
+                Value::ExceptionType("DatabaseError".to_string()),
+            );
+            class_data.attrs.insert(
+                "DataError".to_string(),
+                Value::ExceptionType("DataError".to_string()),
+            );
+            class_data.attrs.insert(
+                "OperationalError".to_string(),
+                Value::ExceptionType("OperationalError".to_string()),
+            );
+            class_data.attrs.insert(
+                "IntegrityError".to_string(),
+                Value::ExceptionType("IntegrityError".to_string()),
+            );
+            class_data.attrs.insert(
+                "InternalError".to_string(),
+                Value::ExceptionType("InternalError".to_string()),
+            );
+            class_data.attrs.insert(
+                "ProgrammingError".to_string(),
+                Value::ExceptionType("ProgrammingError".to_string()),
+            );
+            class_data.attrs.insert(
+                "NotSupportedError".to_string(),
+                Value::ExceptionType("NotSupportedError".to_string()),
+            );
+            class_data.attrs.insert(
                 "cursor".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionCursor),
             );
@@ -992,7 +1034,27 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::SqliteConnectionClose),
             );
             class_data.attrs.insert(
+                "__enter__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionEnter),
+            );
+            class_data.attrs.insert(
+                "__exit__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionExit),
+            );
+            class_data.attrs.insert(
                 "execute".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionExecute),
+            );
+            class_data.attrs.insert(
+                "executemany".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionExecuteMany),
+            );
+            class_data.attrs.insert(
+                "executescript".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionExecuteScript),
+            );
+            class_data.attrs.insert(
+                "__call__".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionExecute),
             );
             class_data.attrs.insert(
@@ -1002,6 +1064,38 @@ impl Vm {
             class_data.attrs.insert(
                 "rollback".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionRollback),
+            );
+            class_data.attrs.insert(
+                "create_function".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionCreateFunction),
+            );
+            class_data.attrs.insert(
+                "create_aggregate".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionCreateAggregate),
+            );
+            class_data.attrs.insert(
+                "set_authorizer".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionSetAuthorizer),
+            );
+            class_data.attrs.insert(
+                "set_progress_handler".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionSetProgressHandler),
+            );
+            class_data.attrs.insert(
+                "getlimit".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionGetLimit),
+            );
+            class_data.attrs.insert(
+                "setlimit".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionSetLimit),
+            );
+            class_data.attrs.insert(
+                "getconfig".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionGetConfig),
+            );
+            class_data.attrs.insert(
+                "setconfig".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionSetConfig),
             );
             class_data.attrs.insert(
                 "blobopen".to_string(),
@@ -1028,8 +1122,20 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::SqliteCursorExecute),
             );
             class_data.attrs.insert(
+                "executemany".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorExecuteMany),
+            );
+            class_data.attrs.insert(
+                "executescript".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorExecuteScript),
+            );
+            class_data.attrs.insert(
                 "fetchone".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteCursorFetchOne),
+            );
+            class_data.attrs.insert(
+                "fetchmany".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorFetchMany),
             );
             class_data.attrs.insert(
                 "fetchall".to_string(),
@@ -1102,6 +1208,14 @@ impl Vm {
             class_data.attrs.insert(
                 "__setitem__".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteBlobSetItem),
+            );
+            class_data.attrs.insert(
+                "__delitem__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobDelItem),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobIter),
             );
         }
         let sqlite_row_class = self

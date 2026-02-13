@@ -213,7 +213,27 @@ impl Vm {
                                     for idx in indices {
                                         result.push(values[view_start + idx]);
                                     }
-                                    Ok(self.heap.alloc_bytes(result))
+                                    let source = match self.heap.alloc_bytes(result) {
+                                        Value::Bytes(obj) => obj,
+                                        _ => unreachable!(),
+                                    };
+                                    let sliced = self.heap.alloc_memoryview_with(
+                                        source,
+                                        view.itemsize,
+                                        view.format.clone(),
+                                    );
+                                    if let Value::MemoryView(sliced_obj) = &sliced {
+                                        if let Object::MemoryView(sliced_view) =
+                                            &mut *sliced_obj.kind_mut()
+                                        {
+                                            sliced_view.contiguous = false;
+                                            sliced_view.export_owner = view.export_owner.clone();
+                                            sliced_view.released = view.released;
+                                            sliced_view.start = 0;
+                                            sliced_view.length = None;
+                                        }
+                                    }
+                                    Ok(sliced)
                                 }
                             })
                             .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type")))

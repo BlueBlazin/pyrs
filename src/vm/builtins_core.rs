@@ -4578,7 +4578,7 @@ impl Vm {
                 }
                 let iterator = self.to_iterator_value(container.clone()).map_err(|_| {
                     RuntimeError::new(format!(
-                        "argument of type '{}' is not iterable",
+                        "TypeError: argument of type '{}' is not iterable",
                         self.value_type_name_for_error(&container)
                     ))
                 })?;

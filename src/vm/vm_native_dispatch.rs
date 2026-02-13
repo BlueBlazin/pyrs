@@ -1402,6 +1402,61 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(self.heap.alloc_bytes(output)))
             }
+            NativeMethodKind::BytesLJust => {
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "ljust() got an unexpected keyword argument",
+                    ));
+                }
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "ljust() expects width and optional fillbyte",
+                    ));
+                }
+                let receiver_value = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("value")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let bytes = bytes_like_from_value(receiver_value.clone())?;
+                let width = value_to_int(args.remove(0))?;
+                let width = if width <= 0 {
+                    0usize
+                } else {
+                    usize::try_from(width)
+                        .map_err(|_| RuntimeError::new("ljust() width is too large"))?
+                };
+                let fillbyte = if args.is_empty() {
+                    b' '
+                } else {
+                    let fill = bytes_like_from_value(args.remove(0)).map_err(|_| {
+                        RuntimeError::new(
+                            "ljust() argument 2 must be a bytes-like object of length 1",
+                        )
+                    })?;
+                    if fill.len() != 1 {
+                        return Err(RuntimeError::new(
+                            "ljust() argument 2 must be a bytes-like object of length 1",
+                        ));
+                    }
+                    fill[0]
+                };
+                if width <= bytes.len() {
+                    return Ok(NativeCallResult::Value(match receiver_value {
+                        Value::ByteArray(_) => self.heap.alloc_bytearray(bytes),
+                        _ => self.heap.alloc_bytes(bytes),
+                    }));
+                }
+                let mut out = bytes;
+                out.resize(width, fillbyte);
+                Ok(NativeCallResult::Value(match receiver_value {
+                    Value::ByteArray(_) => self.heap.alloc_bytearray(out),
+                    _ => self.heap.alloc_bytes(out),
+                }))
+            }
             NativeMethodKind::CodecsIncrementalEncoderFactoryCall => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(
@@ -5224,14 +5279,29 @@ impl Vm {
             BuiltinFunction::SqliteEnableCallbackTracebacks => {
                 self.builtin_sqlite_enable_callback_tracebacks(args, kwargs)
             }
+            BuiltinFunction::SqliteConnectionInit => {
+                self.builtin_sqlite_connection_init(args, kwargs)
+            }
             BuiltinFunction::SqliteConnectionCursor => {
                 self.builtin_sqlite_connection_cursor(args, kwargs)
             }
             BuiltinFunction::SqliteConnectionClose => {
                 self.builtin_sqlite_connection_close(args, kwargs)
             }
+            BuiltinFunction::SqliteConnectionEnter => {
+                self.builtin_sqlite_connection_enter(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionExit => {
+                self.builtin_sqlite_connection_exit(args, kwargs)
+            }
             BuiltinFunction::SqliteConnectionExecute => {
                 self.builtin_sqlite_connection_execute(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionExecuteMany => {
+                self.builtin_sqlite_connection_executemany(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionExecuteScript => {
+                self.builtin_sqlite_connection_executescript(args, kwargs)
             }
             BuiltinFunction::SqliteConnectionCommit => {
                 self.builtin_sqlite_connection_commit(args, kwargs)
@@ -5239,14 +5309,47 @@ impl Vm {
             BuiltinFunction::SqliteConnectionRollback => {
                 self.builtin_sqlite_connection_rollback(args, kwargs)
             }
+            BuiltinFunction::SqliteConnectionCreateFunction => {
+                self.builtin_sqlite_connection_create_function(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionCreateAggregate => {
+                self.builtin_sqlite_connection_create_aggregate(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionSetAuthorizer => {
+                self.builtin_sqlite_connection_set_authorizer(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionSetProgressHandler => {
+                self.builtin_sqlite_connection_set_progress_handler(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionGetLimit => {
+                self.builtin_sqlite_connection_getlimit(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionSetLimit => {
+                self.builtin_sqlite_connection_setlimit(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionGetConfig => {
+                self.builtin_sqlite_connection_getconfig(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionSetConfig => {
+                self.builtin_sqlite_connection_setconfig(args, kwargs)
+            }
             BuiltinFunction::SqliteConnectionBlobOpen => {
                 self.builtin_sqlite_connection_blobopen(args, kwargs)
             }
             BuiltinFunction::SqliteCursorExecute => {
                 self.builtin_sqlite_cursor_execute(args, kwargs)
             }
+            BuiltinFunction::SqliteCursorExecuteMany => {
+                self.builtin_sqlite_cursor_executemany(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorExecuteScript => {
+                self.builtin_sqlite_cursor_executescript(args, kwargs)
+            }
             BuiltinFunction::SqliteCursorFetchOne => {
                 self.builtin_sqlite_cursor_fetchone(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorFetchMany => {
+                self.builtin_sqlite_cursor_fetchmany(args, kwargs)
             }
             BuiltinFunction::SqliteCursorFetchAll => {
                 self.builtin_sqlite_cursor_fetchall(args, kwargs)
@@ -5264,6 +5367,8 @@ impl Vm {
             BuiltinFunction::SqliteBlobLen => self.builtin_sqlite_blob_len(args, kwargs),
             BuiltinFunction::SqliteBlobGetItem => self.builtin_sqlite_blob_getitem(args, kwargs),
             BuiltinFunction::SqliteBlobSetItem => self.builtin_sqlite_blob_setitem(args, kwargs),
+            BuiltinFunction::SqliteBlobDelItem => self.builtin_sqlite_blob_delitem(args, kwargs),
+            BuiltinFunction::SqliteBlobIter => self.builtin_sqlite_blob_iter(args, kwargs),
             BuiltinFunction::HashlibMd5 => self.builtin_hashlib_md5(args, kwargs),
             BuiltinFunction::HashlibSha224 => self.builtin_hashlib_sha224(args, kwargs),
             BuiltinFunction::HashlibSha256 => self.builtin_hashlib_sha256(args, kwargs),

@@ -248,6 +248,7 @@ pub enum NativeMethodKind {
     BytesFind,
     BytesTranslate,
     BytesJoin,
+    BytesLJust,
     ByteArrayExtend,
     ByteArrayClear,
     ByteArrayResize,
@@ -1110,6 +1111,7 @@ pub struct MemoryViewObject {
     pub itemsize: usize,
     pub format: Option<String>,
     pub export_owner: Option<ObjRef>,
+    pub contiguous: bool,
     pub released: bool,
     pub start: usize,
     pub length: Option<usize>,
@@ -1215,6 +1217,7 @@ impl Heap {
             itemsize: 1,
             format: None,
             export_owner: None,
+            contiguous: true,
             released: false,
             start: 0,
             length: None,
@@ -1239,6 +1242,7 @@ impl Heap {
             itemsize,
             format,
             export_owner: None,
+            contiguous: true,
             released: false,
             start: 0,
             length: None,
@@ -2403,14 +2407,30 @@ pub enum BuiltinFunction {
     SqliteRegisterAdapter,
     SqliteRegisterConverter,
     SqliteEnableCallbackTracebacks,
+    SqliteConnectionInit,
     SqliteConnectionCursor,
     SqliteConnectionClose,
+    SqliteConnectionEnter,
+    SqliteConnectionExit,
     SqliteConnectionExecute,
+    SqliteConnectionExecuteMany,
+    SqliteConnectionExecuteScript,
     SqliteConnectionCommit,
     SqliteConnectionRollback,
+    SqliteConnectionCreateFunction,
+    SqliteConnectionCreateAggregate,
+    SqliteConnectionSetAuthorizer,
+    SqliteConnectionSetProgressHandler,
+    SqliteConnectionGetLimit,
+    SqliteConnectionSetLimit,
+    SqliteConnectionGetConfig,
+    SqliteConnectionSetConfig,
     SqliteConnectionBlobOpen,
     SqliteCursorExecute,
+    SqliteCursorExecuteMany,
+    SqliteCursorExecuteScript,
     SqliteCursorFetchOne,
+    SqliteCursorFetchMany,
     SqliteCursorFetchAll,
     SqliteCursorClose,
     SqliteCursorIter,
@@ -2425,6 +2445,8 @@ pub enum BuiltinFunction {
     SqliteBlobLen,
     SqliteBlobGetItem,
     SqliteBlobSetItem,
+    SqliteBlobDelItem,
+    SqliteBlobIter,
     HashlibMd5,
     HashlibSha224,
     HashlibSha256,
@@ -5414,14 +5436,30 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteRegisterAdapter
             | BuiltinFunction::SqliteRegisterConverter
             | BuiltinFunction::SqliteEnableCallbackTracebacks
+            | BuiltinFunction::SqliteConnectionInit
             | BuiltinFunction::SqliteConnectionCursor
             | BuiltinFunction::SqliteConnectionClose
+            | BuiltinFunction::SqliteConnectionEnter
+            | BuiltinFunction::SqliteConnectionExit
             | BuiltinFunction::SqliteConnectionExecute
+            | BuiltinFunction::SqliteConnectionExecuteMany
+            | BuiltinFunction::SqliteConnectionExecuteScript
             | BuiltinFunction::SqliteConnectionCommit
             | BuiltinFunction::SqliteConnectionRollback
+            | BuiltinFunction::SqliteConnectionCreateFunction
+            | BuiltinFunction::SqliteConnectionCreateAggregate
+            | BuiltinFunction::SqliteConnectionSetAuthorizer
+            | BuiltinFunction::SqliteConnectionSetProgressHandler
+            | BuiltinFunction::SqliteConnectionGetLimit
+            | BuiltinFunction::SqliteConnectionSetLimit
+            | BuiltinFunction::SqliteConnectionGetConfig
+            | BuiltinFunction::SqliteConnectionSetConfig
             | BuiltinFunction::SqliteConnectionBlobOpen
             | BuiltinFunction::SqliteCursorExecute
+            | BuiltinFunction::SqliteCursorExecuteMany
+            | BuiltinFunction::SqliteCursorExecuteScript
             | BuiltinFunction::SqliteCursorFetchOne
+            | BuiltinFunction::SqliteCursorFetchMany
             | BuiltinFunction::SqliteCursorFetchAll
             | BuiltinFunction::SqliteCursorClose
             | BuiltinFunction::SqliteCursorIter
@@ -5436,6 +5474,8 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteBlobLen
             | BuiltinFunction::SqliteBlobGetItem
             | BuiltinFunction::SqliteBlobSetItem
+            | BuiltinFunction::SqliteBlobDelItem
+            | BuiltinFunction::SqliteBlobIter
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
             | BuiltinFunction::AtexitUnregister
@@ -6661,6 +6701,7 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method bytes.translate>".to_string()
                     }
                     NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
+                    NativeMethodKind::BytesLJust => "<bound method bytes.ljust>".to_string(),
                     NativeMethodKind::ByteArrayExtend => {
                         "<bound method bytearray.extend>".to_string()
                     }
@@ -7097,6 +7138,7 @@ mod tests {
             itemsize: 1,
             format: None,
             export_owner: None,
+            contiguous: true,
             released: false,
             start: 0,
             length: None,
