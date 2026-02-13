@@ -5370,6 +5370,7 @@ impl Vm {
                     class_data.metaclass = Some(meta);
                 }
             }
+            self.record_exception_parent_for_class(class_ref);
         }
         Ok(ClassBuildOutcome::Value(class_value))
     }

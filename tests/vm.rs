@@ -4497,6 +4497,20 @@ ok = (d.strftime('%Y-%m-%d') == '2024-02-29' and d.strftime('%w') == '4' and dt.
 }
 
 #[test]
+fn datetime_fromtimestamp_and_astimezone_support_fixed_offset_tz() {
+    let source = "import datetime\n\
+dt = datetime.datetime.fromtimestamp(0, datetime.timezone.utc)\n\
+tz = datetime.timezone(7200, 'EET')\n\
+shifted = dt.astimezone(tz)\n\
+ok = (dt.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 00:00:00 +0000' and shifted.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 02:00:00 +0200')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn threading_condition_supports_context_manager_protocol() {
     let source = r#"import threading
 c = threading.Condition()
@@ -9620,6 +9634,33 @@ fn exposes_function_doc_attribute() {
 #[test]
 fn raises_exception_instances_and_classes() {
     let source = "class MyError(Exception):\n    pass\nfrom_instance = False\ntry:\n    raise MyError('boom')\nexcept Exception:\n    from_instance = True\nfrom_class = False\ntry:\n    raise MyError\nexcept Exception:\n    from_class = True\nok = from_instance and from_class\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exception_subclass_init_chain_matches_valueerror_super_calls() {
+    let source = r#"class MessageDefect(ValueError):
+    def __init__(self, line=None):
+        if line is not None:
+            super().__init__(line)
+        self.line = line
+
+class HeaderDefect(MessageDefect):
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+
+class NonPrintableDefect(HeaderDefect):
+    def __init__(self, non_printables):
+        super().__init__(non_printables)
+        self.non_printables = non_printables
+
+obj = NonPrintableDefect("bad")
+ok = isinstance(obj, ValueError) and obj.args == ("bad",) and obj.line == "bad" and obj.non_printables == "bad"
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

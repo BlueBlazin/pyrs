@@ -6119,6 +6119,10 @@ impl Vm {
             BuiltinFunction::DateTimeNow => self.builtin_datetime_now(args, kwargs),
             BuiltinFunction::DateToday => self.builtin_datetime_today(args, kwargs),
             BuiltinFunction::DateTimeInit => self.builtin_datetime_init(args, kwargs),
+            BuiltinFunction::DateTimeFromTimestamp => {
+                self.builtin_datetime_fromtimestamp(args, kwargs)
+            }
+            BuiltinFunction::DateTimeAstimezone => self.builtin_datetime_astimezone(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
             BuiltinFunction::DateTimeTimezoneInit => {
                 self.builtin_datetime_timezone_init(args, kwargs)

@@ -3628,7 +3628,7 @@ impl Vm {
             let allow_extra = match &args[0] {
                 Value::Instance(instance) => match &*instance.kind() {
                     Object::Instance(instance_data) => {
-                        self.class_has_permissive_object_init_base(&instance_data.class)
+                        self.class_allows_object_init_extra_args(&instance_data.class)
                     }
                     _ => false,
                 },
@@ -3717,30 +3717,23 @@ impl Vm {
         }
     }
 
-    pub(super) fn class_has_permissive_object_init_base(&self, class: &ObjRef) -> bool {
-        if self.class_has_builtin_int_base(class)
-            || self.class_has_builtin_list_base(class)
-            || self.class_has_builtin_tuple_base(class)
-            || self.class_has_builtin_dict_base(class)
-            || self.class_has_builtin_set_base(class)
-            || self.class_has_builtin_frozenset_base(class)
-            || self.class_has_builtin_bytes_base(class)
-            || self.class_has_builtin_bytearray_base(class)
-            || self.class_has_builtin_complex_base(class)
-        {
-            return true;
+    pub(super) fn class_allows_object_init_extra_args(&self, class: &ObjRef) -> bool {
+        // Match CPython object_init semantics from Objects/typeobject.c:
+        // allow excess args only when __init__ resolves to object.__init__
+        // and __new__ resolves to a non-object.__new__ implementation.
+        let init_attr = class_attr_lookup(class, "__init__");
+        let new_attr = class_attr_lookup(class, "__new__");
+        let init_is_object_init = matches!(
+            init_attr,
+            None | Some(Value::Builtin(BuiltinFunction::ObjectInit))
+        );
+        if !init_is_object_init {
+            return false;
         }
-        self.class_mro_entries(class)
-            .iter()
-            .any(|entry| match &*entry.kind() {
-                Object::Class(class_data) => {
-                    matches!(
-                        class_data.name.as_str(),
-                        "memoryview" | "enumerate" | "Counter"
-                    )
-                }
-                _ => false,
-            })
+        !matches!(
+            new_attr,
+            None | Some(Value::Builtin(BuiltinFunction::ObjectNew))
+        )
     }
 
     pub(super) fn builtin_object_getattribute(
@@ -5804,6 +5797,15 @@ impl Vm {
                 Value::Exception(exception) => {
                     Ok(exception_type_is_subclass(&exception.name, name))
                 }
+                Value::Instance(instance) => match &*instance.kind() {
+                    Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                        Object::Class(class_data) => {
+                            Ok(self.exception_inherits(&class_data.name, name))
+                        }
+                        _ => Ok(false),
+                    },
+                    _ => Ok(false),
+                },
                 Value::ExceptionType(candidate) => Ok(exception_type_is_subclass(candidate, name)),
                 _ => Ok(false),
             },

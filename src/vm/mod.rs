@@ -634,6 +634,7 @@ pub struct Vm {
     pickle_copyreg_cache: HashMap<String, Value>,
     pickle_symbol_cache: HashMap<String, Value>,
     defaultdict_factories: HashMap<u64, Value>,
+    synthetic_exception_classes: HashMap<String, ObjRef>,
     exception_parents: HashMap<String, String>,
     finalized_del_objects: HashSet<u64>,
     pending_del_instances: HashMap<u64, ObjRef>,
@@ -707,6 +708,7 @@ impl Vm {
             pickle_copyreg_cache: HashMap::new(),
             pickle_symbol_cache: HashMap::new(),
             defaultdict_factories: HashMap::new(),
+            synthetic_exception_classes: HashMap::new(),
             exception_parents: HashMap::new(),
             finalized_del_objects: HashSet::new(),
             pending_del_instances: HashMap::new(),
@@ -5948,6 +5950,7 @@ struct TimeParts {
     weekday: u32,
     yearday: u32,
     isdst: i32,
+    utc_offset_seconds: Option<i32>,
 }
 
 fn unix_seconds_now() -> i64 {
@@ -5976,6 +5979,7 @@ fn split_unix_timestamp(total_secs: i64) -> TimeParts {
         weekday,
         yearday,
         isdst: -1,
+        utc_offset_seconds: None,
     }
 }
 
@@ -6030,6 +6034,7 @@ fn time_parts_from_value(value: &Value) -> Result<TimeParts, RuntimeError> {
         weekday: value_to_int(values[6].clone())? as u32,
         yearday: value_to_int(values[7].clone())? as u32,
         isdst: value_to_int(values[8].clone())? as i32,
+        utc_offset_seconds: None,
     })
 }
 
@@ -6056,6 +6061,16 @@ fn format_strftime(format: &str, parts: TimeParts) -> String {
             'y' => out.push_str(&format!("{:02}", parts.year.rem_euclid(100))),
             'j' => out.push_str(&format!("{:03}", parts.yearday)),
             'w' => out.push_str(&format!("{}", (parts.weekday + 1) % 7)),
+            'z' => {
+                if let Some(offset_seconds) = parts.utc_offset_seconds {
+                    let sign = if offset_seconds >= 0 { '+' } else { '-' };
+                    let abs = offset_seconds.unsigned_abs();
+                    let hours = abs / 3600;
+                    let minutes = (abs % 3600) / 60;
+                    out.push(sign);
+                    out.push_str(&format!("{hours:02}{minutes:02}"));
+                }
+            }
             _ => {
                 out.push('%');
                 out.push(spec);
@@ -6157,7 +6172,7 @@ fn exception_is_named(exception: &Value, name: &str) -> bool {
     }
 }
 
-fn builtin_exception_parent(name: &str) -> Option<&'static str> {
+pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
     match name {
         "BaseException" => None,
         "Exception" => Some("BaseException"),

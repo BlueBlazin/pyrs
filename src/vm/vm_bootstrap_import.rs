@@ -4355,6 +4355,14 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DateToday),
             );
             class_data.attrs.insert(
+                "fromtimestamp".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeFromTimestamp),
+            );
+            class_data.attrs.insert(
+                "astimezone".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeAstimezone),
+            );
+            class_data.attrs.insert(
                 "strftime".to_string(),
                 Value::Builtin(BuiltinFunction::DateStrFTime),
             );

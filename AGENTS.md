@@ -42,9 +42,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `collections.deque` class surface (`__init__`, `append*`, `pop*`, `extend*`, `clear`, `__len__`, `__iter__`) wired into module bootstrap.
   - `bytes` / `bytearray` constructor VM paths now accept generator/iterator/iterable payloads and explicit `encoding`/`errors` argument forms.
   - `datetime.date/datetime` gained `toordinal`, `weekday`, `isoweekday`; `datetime.timezone` baseline symbol added for stdlib import-chain compatibility.
+  - `datetime.datetime.fromtimestamp` + `datetime.astimezone` fixed-offset baseline landed, including `%z` formatting in `strftime`.
+  - synthetic exception-class materialization for `Value::ExceptionType` bases now builds CPython-style exception ancestry and wires `ExceptionTypeInit` to unblock stdlib exception subclasses.
   - `_sre` pattern object gained `split`; class/instance `__doc__` fallback parity tightened for stdlib object-model paths.
 - Extended probe remaining red modules:
-  - `statistics`, `decimal`, `ssl`, `email`, `smtplib`, `imaplib`, `xml`, `gzip`, `bz2`, `lzma`.
+  - `statistics`, `decimal`, `ssl`, `email`, `smtplib`, `xml`, `gzip`, `bz2`, `lzma`.
 
 ## Execution Policy
 - CPython behavior is the source of truth:

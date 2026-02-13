@@ -1404,6 +1404,57 @@ impl Vm {
         }
     }
 
+    fn alloc_synthetic_exception_class(&mut self, name: &str) -> ObjRef {
+        if let Some(existing) = self.synthetic_exception_classes.get(name).cloned() {
+            return existing;
+        }
+
+        let bases = if let Some(parent_name) = builtin_exception_parent(name) {
+            vec![self.alloc_synthetic_exception_class(parent_name)]
+        } else if let Some(Value::Class(object_class)) = self.builtins.get("object") {
+            vec![object_class.clone()]
+        } else {
+            Vec::new()
+        };
+
+        let class = match self
+            .heap
+            .alloc_class(ClassObject::new(name.to_string(), bases.clone()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        let mro = self
+            .build_class_mro(&class, &bases)
+            .unwrap_or_else(|_| {
+                let mut fallback = vec![class.clone()];
+                fallback.extend(bases.iter().cloned());
+                fallback
+            });
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.bases = bases;
+            class_data.mro = mro;
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("builtins".to_string()),
+            );
+            class_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str(name.to_string()));
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::ObjectNew),
+            );
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::ExceptionTypeInit),
+            );
+        }
+        self.synthetic_exception_classes
+            .insert(name.to_string(), class.clone());
+        class
+    }
+
     fn alloc_synthetic_reprenum_data_class(&mut self, name: &str) -> ObjRef {
         let class = self.alloc_synthetic_class(name);
         if let Object::Class(class_data) = &mut *class.kind_mut() {
@@ -1423,7 +1474,7 @@ impl Vm {
     pub(super) fn class_from_base_value(&mut self, base: Value) -> Result<ObjRef, RuntimeError> {
         match base {
             Value::Class(class) => Ok(class),
-            Value::ExceptionType(name) => Ok(self.alloc_synthetic_class(&name)),
+            Value::ExceptionType(name) => Ok(self.alloc_synthetic_exception_class(&name)),
             Value::Builtin(BuiltinFunction::Type) => self
                 .default_type_metaclass()
                 .ok_or_else(|| RuntimeError::new("class base must be a class object")),

@@ -317,6 +317,318 @@ impl Vm {
         Ok(Value::Str(format!("{year:04}-{month:02}-{day:02}")))
     }
 
+    fn datetime_timezone_offset_seconds(&self, tzinfo: &Value) -> Result<i64, RuntimeError> {
+        match tzinfo {
+            Value::None => Ok(0),
+            Value::Instance(instance) => {
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    return Ok(0);
+                };
+                let Some(offset) = instance_data.attrs.get("offset") else {
+                    return Ok(0);
+                };
+                match offset {
+                    Value::Int(_) | Value::BigInt(_) | Value::Bool(_) => value_to_int(offset.clone()),
+                    Value::Instance(delta) => {
+                        let Object::Instance(delta_data) = &*delta.kind() else {
+                            return Ok(0);
+                        };
+                        let days = delta_data
+                            .attrs
+                            .get("days")
+                            .cloned()
+                            .map(value_to_int)
+                            .transpose()?
+                            .unwrap_or(0);
+                        let seconds = delta_data
+                            .attrs
+                            .get("seconds")
+                            .cloned()
+                            .map(value_to_int)
+                            .transpose()?
+                            .unwrap_or(0);
+                        let microseconds = delta_data
+                            .attrs
+                            .get("microseconds")
+                            .cloned()
+                            .map(value_to_int)
+                            .transpose()?
+                            .unwrap_or(0);
+                        Ok(days * 86_400 + seconds + microseconds / 1_000_000)
+                    }
+                    _ => Ok(0),
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "tz argument must be an instance of tzinfo",
+            )),
+        }
+    }
+
+    fn datetime_instance_from_parts(
+        &mut self,
+        class: ObjRef,
+        year: i64,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+        microsecond: i64,
+        tzinfo: Option<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.alloc_instance_for_class(&class);
+        {
+            let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+                return Err(RuntimeError::new("datetime construction failed"));
+            };
+            instance_data
+                .attrs
+                .insert("year".to_string(), Value::Int(year));
+            instance_data
+                .attrs
+                .insert("month".to_string(), Value::Int(month as i64));
+            instance_data
+                .attrs
+                .insert("day".to_string(), Value::Int(day as i64));
+            instance_data
+                .attrs
+                .insert("hour".to_string(), Value::Int(hour as i64));
+            instance_data
+                .attrs
+                .insert("minute".to_string(), Value::Int(minute as i64));
+            instance_data
+                .attrs
+                .insert("second".to_string(), Value::Int(second as i64));
+            instance_data
+                .attrs
+                .insert("microsecond".to_string(), Value::Int(microsecond));
+            if let Some(tzinfo) = tzinfo {
+                instance_data.attrs.insert("tzinfo".to_string(), tzinfo);
+            }
+        }
+        Ok(Value::Instance(instance))
+    }
+
+    fn datetime_default_class(&self) -> Result<ObjRef, RuntimeError> {
+        let module = self
+            .modules
+            .get("datetime")
+            .ok_or_else(|| RuntimeError::new("datetime module not initialized"))?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("datetime module not initialized"));
+        };
+        let Some(Value::Class(class)) = module_data.globals.get("datetime") else {
+            return Err(RuntimeError::new("datetime.datetime is unavailable"));
+        };
+        Ok(class.clone())
+    }
+
+    pub(super) fn builtin_datetime_fromtimestamp(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let class = if let Some(Value::Class(_)) = args.first() {
+            self.receiver_from_value(&args.remove(0))?
+        } else {
+            self.datetime_default_class()?
+        };
+        let mut timestamp = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut tz = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new(
+                "fromtimestamp() takes at most 2 positional arguments",
+            ));
+        }
+        if let Some(value) = kwargs.remove("timestamp") {
+            if timestamp.is_some() {
+                return Err(RuntimeError::new(
+                    "fromtimestamp() got multiple values for argument 'timestamp'",
+                ));
+            }
+            timestamp = Some(value);
+        }
+        if let Some(value) = kwargs.remove("tz") {
+            if tz.is_some() {
+                return Err(RuntimeError::new(
+                    "fromtimestamp() got multiple values for argument 'tz'",
+                ));
+            }
+            tz = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "fromtimestamp() got an unexpected keyword argument",
+            ));
+        }
+        let timestamp = timestamp.ok_or_else(|| RuntimeError::new("fromtimestamp() missing timestamp"))?;
+        let timestamp = value_to_f64(timestamp)?;
+        let mut seconds = timestamp.floor() as i64;
+        let mut microsecond = ((timestamp - seconds as f64) * 1_000_000.0).round() as i64;
+        if microsecond >= 1_000_000 {
+            seconds += 1;
+            microsecond -= 1_000_000;
+        } else if microsecond < 0 {
+            seconds -= 1;
+            microsecond += 1_000_000;
+        }
+        let tz_offset = tz
+            .as_ref()
+            .map(|value| self.datetime_timezone_offset_seconds(value))
+            .transpose()?
+            .unwrap_or(0);
+        let parts = split_unix_timestamp(seconds + tz_offset);
+        self.datetime_instance_from_parts(
+            class,
+            parts.year as i64,
+            parts.month,
+            parts.day,
+            parts.hour,
+            parts.minute,
+            parts.second,
+            microsecond,
+            tz,
+        )
+    }
+
+    pub(super) fn builtin_datetime_astimezone(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("astimezone() missing instance"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "datetime.astimezone")?;
+        let mut tz = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new(
+                "astimezone() takes at most one positional argument",
+            ));
+        }
+        if let Some(value) = kwargs.remove("tz") {
+            if tz.is_some() {
+                return Err(RuntimeError::new(
+                    "astimezone() got multiple values for argument 'tz'",
+                ));
+            }
+            tz = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "astimezone() got an unexpected keyword argument",
+            ));
+        }
+
+        let (class, year, month, day, hour, minute, second, microsecond, current_tz) = {
+            let Object::Instance(instance_data) = &*instance.kind() else {
+                return Err(RuntimeError::new(
+                    "astimezone() expects datetime instance receiver",
+                ));
+            };
+            let year = instance_data
+                .attrs
+                .get("year")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .ok_or_else(|| RuntimeError::new("astimezone() missing year"))?;
+            let month = instance_data
+                .attrs
+                .get("month")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .ok_or_else(|| RuntimeError::new("astimezone() missing month"))? as u32;
+            let day = instance_data
+                .attrs
+                .get("day")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .ok_or_else(|| RuntimeError::new("astimezone() missing day"))? as u32;
+            let hour = instance_data
+                .attrs
+                .get("hour")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .unwrap_or(0) as u32;
+            let minute = instance_data
+                .attrs
+                .get("minute")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .unwrap_or(0) as u32;
+            let second = instance_data
+                .attrs
+                .get("second")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .unwrap_or(0) as u32;
+            let microsecond = instance_data
+                .attrs
+                .get("microsecond")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .unwrap_or(0);
+            (
+                instance_data.class.clone(),
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                microsecond,
+                instance_data.attrs.get("tzinfo").cloned(),
+            )
+        };
+
+        let current_offset = current_tz
+            .as_ref()
+            .map(|value| self.datetime_timezone_offset_seconds(value))
+            .transpose()?
+            .unwrap_or(0);
+        let target_tz = tz.or(current_tz);
+        let target_offset = target_tz
+            .as_ref()
+            .map(|value| self.datetime_timezone_offset_seconds(value))
+            .transpose()?
+            .unwrap_or(current_offset);
+        let days = days_from_civil(year, month, day);
+        let utc_seconds =
+            days * 86_400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64 - current_offset;
+        let local = split_unix_timestamp(utc_seconds + target_offset);
+        self.datetime_instance_from_parts(
+            class,
+            local.year as i64,
+            local.month,
+            local.day,
+            local.hour,
+            local.minute,
+            local.second,
+            microsecond,
+            target_tz,
+        )
+    }
+
     pub(super) fn builtin_datetime_init(
         &mut self,
         mut args: Vec<Value>,
@@ -650,6 +962,12 @@ impl Vm {
         let days = days_from_civil(year, month as u32, day as u32);
         let weekday = (days + 3).rem_euclid(7) as u32; // Monday=0
         let yearday = day_of_year(year as i32, month as u32, day as u32);
+        let utc_offset_seconds = instance_data
+            .attrs
+            .get("tzinfo")
+            .map(|value| self.datetime_timezone_offset_seconds(value))
+            .transpose()?
+            .map(|value| value.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
         let parts = TimeParts {
             year: year as i32,
             month: month as u32,
@@ -660,6 +978,7 @@ impl Vm {
             weekday,
             yearday,
             isdst: -1,
+            utc_offset_seconds,
         };
         Ok(Value::Str(format_strftime(&format, parts)))
     }

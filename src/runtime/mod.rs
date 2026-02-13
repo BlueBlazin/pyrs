@@ -2829,6 +2829,8 @@ pub enum BuiltinFunction {
     DateTimeNow,
     DateToday,
     DateTimeInit,
+    DateTimeFromTimestamp,
+    DateTimeAstimezone,
     DateInit,
     DateTimeTimezoneInit,
     DateToOrdinal,
@@ -5452,6 +5454,8 @@ impl BuiltinFunction {
             | BuiltinFunction::DateTimeNow
             | BuiltinFunction::DateToday
             | BuiltinFunction::DateTimeInit
+            | BuiltinFunction::DateTimeFromTimestamp
+            | BuiltinFunction::DateTimeAstimezone
             | BuiltinFunction::DateInit
             | BuiltinFunction::DateTimeTimezoneInit
             | BuiltinFunction::DateToOrdinal
