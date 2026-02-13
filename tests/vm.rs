@@ -2304,6 +2304,8 @@ ok = (
     and stmt_ok
     and hasattr(sqlite3, 'OperationalError')
     and hasattr(sqlite3, 'PARSE_DECLTYPES')
+    and hasattr(sqlite3, 'SQLITE_LIMIT_SQL_LENGTH')
+    and hasattr(sqlite3, 'SQLITE_DBCONFIG_ENABLE_FKEY')
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
