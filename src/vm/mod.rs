@@ -7603,7 +7603,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
     {
         return "IndexError";
     }
-    if message.contains("key not found") {
+    if message.contains("key not found") || message.contains("pop from an empty set") {
         return "KeyError";
     }
     if message.contains("division by zero") || message.contains("modulo by zero") {

@@ -1129,6 +1129,9 @@ impl Vm {
             "discard" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetDiscard, set))
             }
+            "pop" if !is_frozenset => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::SetPop, set))
+            }
             "update" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetUpdate, set))
             }
@@ -1169,6 +1172,7 @@ impl Vm {
             "get" => NativeMethodKind::DictGet,
             "__getitem__" => NativeMethodKind::DictGetItem,
             "__setitem__" => NativeMethodKind::DictSetItem,
+            "__delitem__" => NativeMethodKind::DictDelItem,
             "pop" => NativeMethodKind::DictPop,
             _ => {
                 return Err(RuntimeError::new(format!(

@@ -1931,6 +1931,50 @@ ok = (a == {3} and b == frozenset({2, 3}))\n";
 }
 
 #[test]
+fn executes_set_pop_and_empty_set_error() {
+    let source = r#"s = {1, 2}
+popped = s.pop()
+ok = (popped in {1, 2} and len(s) == 1)
+err = False
+try:
+    set().pop()
+except KeyError as exc:
+    err = ('empty set' in str(exc))
+ok = ok and err
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dict_subclass_subscript_set_and_delete_call_special_methods() {
+    let source = r#"class D(dict):
+    def __init__(self):
+        super().__init__()
+        self.log = []
+    def __setitem__(self, key, value):
+        self.log.append(('set', key, value))
+        return super().__setitem__(key, value)
+    def __delitem__(self, key):
+        self.log.append(('del', key))
+        return super().__delitem__(key)
+
+d = D()
+d['a'] = 1
+del d['a']
+ok = (d.log == [('set', 'a', 1), ('del', 'a')])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_dict_equality_independent_of_insertion_order() {
     let source = "a = {'left': 1, 'right': 2}\nb = {'right': 2, 'left': 1}\nok = (a == b) and not (a != b)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -4387,18 +4431,10 @@ fn enum_shim_vs_cpython_probe_tracks_member_value_blocker() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(
-        stderr.contains("class constructor takes no arguments")
-            || stderr.contains("keyword arguments not supported for builtin")
-            || stderr.contains("has overflowed its stack")
-            || stderr.contains("dict has no attribute '_member_names'")
-            || stderr.contains("'name' already defined as <function>")
-    );
-    assert!(
-        stderr.contains("keyword arguments not supported for builtin")
-            || stderr.contains("class constructor takes no arguments")
-            || stderr.contains("dict has no attribute '_member_names'")
-            || stderr.contains("'name' already defined as <function>")
-            || stderr.contains("/Lib/enum.py")
+        stderr.contains("/Lib/enum.py")
+            || stderr.contains("new enumerations should be created as")
+            || stderr.contains("has no attribute")
+            || stderr.contains("ReprEnum")
     );
 }
 
@@ -5007,6 +5043,26 @@ fn metaclass_super_new_handles_keyword_passthrough() {
 #[test]
 fn metaclass_prepare_namespace_drives_class_body_mapping_semantics() {
     let source = "class NS(dict):\n    def __init__(self):\n        self.marker = 99\n\nclass Meta(type):\n    @classmethod\n    def __prepare__(mcls, name, bases, **kw):\n        ns = NS()\n        ns['prepared'] = kw['flag']\n        return ns\n    def __new__(mcls, name, bases, namespace, **kw):\n        namespace['marker_seen'] = namespace.marker\n        return super().__new__(mcls, name, bases, namespace, **kw)\n\nclass Sample(metaclass=Meta, flag=7):\n    first = 1\n    second = 2\n\nok = (Sample.prepared == 7 and Sample.first == 1 and Sample.second == 2 and Sample.marker_seen == 99)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn decorated_function_in_prepare_namespace_is_stored_once() {
+    let source = "class NoDup(dict):\n    def __setitem__(self, key, value):\n        if key in self:\n            raise RuntimeError('dup:' + key)\n        return super().__setitem__(key, value)\n\nclass Meta(type):\n    @classmethod\n    def __prepare__(mcls, name, bases):\n        return NoDup()\n\nclass Sample(metaclass=Meta):\n    @property\n    def name(self):\n        return 'ok'\n\nok = (Sample().name == 'ok')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn none_dunder_new_matches_object_new() {
+    let source = "ok = (None.__new__ is object.__new__)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

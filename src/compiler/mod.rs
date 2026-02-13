@@ -1633,54 +1633,19 @@ impl Compiler {
                 kwonly_params,
                 returns,
                 body,
-            } => {
-                let drop_annotations = !type_params.is_empty();
-                let func_code = compiler.compile_function(
-                    name,
-                    *is_async,
-                    posonly_params,
-                    params,
-                    kwonly_params,
-                    vararg,
-                    kwarg,
-                    body,
-                )?;
-                let mut ann_posonly = posonly_params.clone();
-                let mut ann_params = params.clone();
-                let mut ann_kwonly = kwonly_params.clone();
-                let mut ann_vararg = vararg.clone();
-                let mut ann_kwarg = kwarg.clone();
-                if drop_annotations {
-                    for param in ann_posonly
-                        .iter_mut()
-                        .chain(ann_params.iter_mut())
-                        .chain(ann_kwonly.iter_mut())
-                    {
-                        param.annotation = None;
-                    }
-                    if let Some(param) = &mut ann_vararg {
-                        param.annotation = None;
-                    }
-                    if let Some(param) = &mut ann_kwarg {
-                        param.annotation = None;
-                    }
-                }
-                compiler.emit_function_with_defaults(
-                    &ann_posonly,
-                    &ann_params,
-                    &ann_kwonly,
-                    &ann_vararg,
-                    &ann_kwarg,
-                    if drop_annotations {
-                        None
-                    } else {
-                        returns.as_ref()
-                    },
-                    func_code,
-                )?;
-                compiler.emit_store_name_scoped(name)?;
-                Ok(())
-            }
+            } => compiler.compile_function_def_stmt(
+                name,
+                type_params,
+                *is_async,
+                posonly_params,
+                params,
+                vararg,
+                kwarg,
+                kwonly_params,
+                returns.as_ref(),
+                body,
+                true,
+            ),
             StmtKind::ClassDef {
                 name,
                 type_params,
@@ -1690,7 +1655,7 @@ impl Compiler {
                 body,
             } => {
                 let _ = type_params;
-                compiler.compile_class_def(name, bases, metaclass.as_ref(), keywords, body)
+                compiler.compile_class_def(name, bases, metaclass.as_ref(), keywords, body, true)
             }
             StmtKind::Delete { targets } => compiler.compile_delete(targets),
             StmtKind::Decorated { decorators, stmt } => {
@@ -2566,6 +2531,67 @@ impl Compiler {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn compile_function_def_stmt(
+        &mut self,
+        name: &str,
+        type_params: &[String],
+        is_async: bool,
+        posonly_params: &[Parameter],
+        params: &[Parameter],
+        vararg: &Option<Parameter>,
+        kwarg: &Option<Parameter>,
+        kwonly_params: &[Parameter],
+        returns: Option<&Expr>,
+        body: &[Stmt],
+        store_target: bool,
+    ) -> Result<(), CompileError> {
+        let drop_annotations = !type_params.is_empty();
+        let func_code = self.compile_function(
+            name,
+            is_async,
+            posonly_params,
+            params,
+            kwonly_params,
+            vararg,
+            kwarg,
+            body,
+        )?;
+        let mut ann_posonly = posonly_params.to_vec();
+        let mut ann_params = params.to_vec();
+        let mut ann_kwonly = kwonly_params.to_vec();
+        let mut ann_vararg = vararg.clone();
+        let mut ann_kwarg = kwarg.clone();
+        if drop_annotations {
+            for param in ann_posonly
+                .iter_mut()
+                .chain(ann_params.iter_mut())
+                .chain(ann_kwonly.iter_mut())
+            {
+                param.annotation = None;
+            }
+            if let Some(param) = &mut ann_vararg {
+                param.annotation = None;
+            }
+            if let Some(param) = &mut ann_kwarg {
+                param.annotation = None;
+            }
+        }
+        self.emit_function_with_defaults(
+            &ann_posonly,
+            &ann_params,
+            &ann_kwonly,
+            &ann_vararg,
+            &ann_kwarg,
+            if drop_annotations { None } else { returns },
+            func_code,
+        )?;
+        if store_target {
+            self.emit_store_name_scoped(name)?;
+        }
+        Ok(())
+    }
+
     fn compile_class_def(
         &mut self,
         name: &str,
@@ -2573,6 +2599,7 @@ impl Compiler {
         metaclass: Option<&Expr>,
         keywords: &[(String, Expr)],
         body: &[Stmt],
+        store_target: bool,
     ) -> Result<(), CompileError> {
         let class_code = self.compile_class(name, body)?;
         let code_idx = self.code.add_const(Value::Code(Rc::new(class_code)));
@@ -2593,7 +2620,9 @@ impl Compiler {
         }
         self.emit(Opcode::BuildDict, Some(keywords.len() as u32));
         self.emit(Opcode::BuildClass, Some(code_idx));
-        self.emit_store_name_scoped(name)?;
+        if store_target {
+            self.emit_store_name_scoped(name)?;
+        }
         Ok(())
     }
 
@@ -2633,13 +2662,59 @@ impl Compiler {
             temp_names.push(temp);
         }
 
-        self.compile_stmt(stmt)?;
+        match &stmt.node {
+            StmtKind::FunctionDef {
+                name,
+                type_params,
+                is_async,
+                posonly_params,
+                params,
+                vararg,
+                kwarg,
+                kwonly_params,
+                returns,
+                body,
+            } => self.compile_function_def_stmt(
+                name,
+                type_params,
+                *is_async,
+                posonly_params,
+                params,
+                vararg,
+                kwarg,
+                kwonly_params,
+                returns.as_ref(),
+                body,
+                false,
+            )?,
+            StmtKind::ClassDef {
+                name,
+                type_params,
+                bases,
+                metaclass,
+                keywords,
+                body,
+            } => {
+                let _ = type_params;
+                self.compile_class_def(name, bases, metaclass.as_ref(), keywords, body, false)?
+            }
+            _ => unreachable!("decorated stmt target is validated above"),
+        }
+
+        let decorated_temp = self.fresh_temp("decorated");
+        self.emit_store_name(&decorated_temp);
 
         for temp in temp_names.iter().rev() {
             self.emit_load_name(temp)?;
-            self.emit_load_name(&target_name)?;
+            self.emit_load_name(&decorated_temp)?;
             self.emit(Opcode::CallFunction, Some(1));
-            self.emit_store_name_scoped(&target_name)?;
+            self.emit_store_name(&decorated_temp);
+        }
+        self.emit_load_name(&decorated_temp)?;
+        self.emit_store_name_scoped(&target_name)?;
+        self.emit_delete_name(&decorated_temp);
+        for temp in temp_names {
+            self.emit_delete_name(&temp);
         }
 
         Ok(())

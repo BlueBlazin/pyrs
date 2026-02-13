@@ -444,6 +444,35 @@ impl Vm {
                 dict_set_value_checked(&dict_receiver, key, value)?;
                 Ok(NativeCallResult::Value(Value::None))
             }
+            NativeMethodKind::DictDelItem => {
+                if args.len() != 1 || !kwargs.is_empty() {
+                    return Err(RuntimeError::new("dict.__delitem__() expects one argument"));
+                }
+                let key = args.first().cloned().expect("checked len");
+                ensure_hashable(&key)?;
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Module(module_data) if module_data.name == "__dict_method__" => {
+                        match module_data.globals.get("dict") {
+                            Some(Value::Dict(dict_obj)) => dict_obj.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.__delitem__() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "dict.__delitem__() receiver must be dict",
+                        ));
+                    }
+                };
+                if dict_remove_value(&dict_receiver, &key).is_none() {
+                    return Err(RuntimeError::new("key not found"));
+                }
+                Ok(NativeCallResult::Value(Value::None))
+            }
             NativeMethodKind::DictPop => {
                 if args.is_empty() || args.len() > 2 || !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.pop() expects 1-2 arguments"));
@@ -3465,6 +3494,20 @@ impl Vm {
                 };
                 values.remove_value(&item);
                 Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::SetPop => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("pop() expects no arguments"));
+                }
+                let mut receiver_kind = receiver.kind_mut();
+                let Object::Set(values) = &mut *receiver_kind else {
+                    return Err(RuntimeError::new("pop() receiver must be set"));
+                };
+                if values.is_empty() {
+                    return Err(RuntimeError::new("pop from an empty set"));
+                }
+                let item = values.remove(values.len() - 1);
+                Ok(NativeCallResult::Value(item))
             }
             NativeMethodKind::SetUpdate => {
                 if args.len() != 1 {

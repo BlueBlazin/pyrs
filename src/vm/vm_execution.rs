@@ -1059,16 +1059,16 @@ impl Vm {
                         Value::FrozenSet(set) => self.load_attr_set_method(set, &attr_name)?,
                         Value::Dict(dict) => self.load_attr_dict_method(dict, &attr_name)?,
                         Value::Cell(cell) => self.load_attr_cell(cell, &attr_name)?,
-                        Value::None => {
-                            if attr_name == "__doc__" {
-                                Value::None
-                            } else {
+                        Value::None => match attr_name.as_str() {
+                            "__doc__" => Value::None,
+                            "__new__" => Value::Builtin(BuiltinFunction::ObjectNew),
+                            _ => {
                                 return Err(RuntimeError::new(format!(
                                     "NoneType has no attribute '{}'",
                                     attr_name
                                 )));
                             }
-                        }
+                        },
                         Value::Builtin(builtin) => self.load_attr_builtin(builtin, &attr_name)?,
                         Value::Function(func) => self.load_attr_function(&func, &attr_name)?,
                         Value::BoundMethod(method) => {
@@ -2188,9 +2188,6 @@ impl Vm {
                     },
                     Value::Instance(instance) => match index {
                         Value::Slice(_) => {
-                            if self.instance_backing_dict(&instance).is_some() {
-                                return Err(RuntimeError::new("slicing unsupported for dict"));
-                            }
                             let target_value = Value::Instance(instance.clone());
                             if let Some(setitem) =
                                 self.lookup_bound_special_method(&target_value, "__setitem__")?
@@ -2207,34 +2204,34 @@ impl Vm {
                                 }
                                 self.push_value(target_value);
                             } else {
+                                if self.instance_backing_dict(&instance).is_some() {
+                                    return Err(RuntimeError::new("slicing unsupported for dict"));
+                                }
                                 return Err(RuntimeError::new("slice assignment not supported"));
                             }
                         }
                         index => {
-                            if let Some(backing_dict) = self.instance_backing_dict(&instance) {
+                            let target_value = Value::Instance(instance.clone());
+                            if let Some(setitem) =
+                                self.lookup_bound_special_method(&target_value, "__setitem__")?
+                            {
+                                match self.call_internal(
+                                    setitem,
+                                    vec![index, value],
+                                    HashMap::new(),
+                                )? {
+                                    InternalCallOutcome::Value(_) => {}
+                                    InternalCallOutcome::CallerExceptionHandled => {
+                                        return Ok(None);
+                                    }
+                                }
+                                self.push_value(target_value);
+                            } else if let Some(backing_dict) = self.instance_backing_dict(&instance)
+                            {
                                 dict_set_value_checked(&backing_dict, index, value)?;
                                 self.push_value(Value::Instance(instance));
                             } else {
-                                let target_value = Value::Instance(instance.clone());
-                                if let Some(setitem) =
-                                    self.lookup_bound_special_method(&target_value, "__setitem__")?
-                                {
-                                    match self.call_internal(
-                                        setitem,
-                                        vec![index, value],
-                                        HashMap::new(),
-                                    )? {
-                                        InternalCallOutcome::Value(_) => {}
-                                        InternalCallOutcome::CallerExceptionHandled => {
-                                            return Ok(None);
-                                        }
-                                    }
-                                    self.push_value(target_value);
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "store subscript unsupported type",
-                                    ));
-                                }
+                                return Err(RuntimeError::new("store subscript unsupported type"));
                             }
                         }
                     },
@@ -2536,9 +2533,6 @@ impl Vm {
                     },
                     Value::Instance(instance) => match index {
                         Value::Slice(_) => {
-                            if self.instance_backing_dict(&instance).is_some() {
-                                return Err(RuntimeError::new("slice deletion not supported"));
-                            }
                             let target_value = Value::Instance(instance.clone());
                             if let Some(delitem) =
                                 self.lookup_bound_special_method(&target_value, "__delitem__")?
@@ -2550,35 +2544,31 @@ impl Vm {
                                     }
                                 }
                             } else {
+                                if self.instance_backing_dict(&instance).is_some() {
+                                    return Err(RuntimeError::new("slice deletion not supported"));
+                                }
                                 return Err(RuntimeError::new("slice deletion not supported"));
                             }
                         }
                         index => {
-                            if let Some(backing_dict) = self.instance_backing_dict(&instance) {
+                            let target_value = Value::Instance(instance.clone());
+                            if let Some(delitem) =
+                                self.lookup_bound_special_method(&target_value, "__delitem__")?
+                            {
+                                match self.call_internal(delitem, vec![index], HashMap::new())? {
+                                    InternalCallOutcome::Value(_) => {}
+                                    InternalCallOutcome::CallerExceptionHandled => {
+                                        return Ok(None);
+                                    }
+                                }
+                            } else if let Some(backing_dict) = self.instance_backing_dict(&instance)
+                            {
                                 ensure_hashable(&index)?;
                                 if dict_remove_value(&backing_dict, &index).is_none() {
                                     return Err(RuntimeError::new("key not found"));
                                 }
                             } else {
-                                let target_value = Value::Instance(instance.clone());
-                                if let Some(delitem) =
-                                    self.lookup_bound_special_method(&target_value, "__delitem__")?
-                                {
-                                    match self.call_internal(
-                                        delitem,
-                                        vec![index],
-                                        HashMap::new(),
-                                    )? {
-                                        InternalCallOutcome::Value(_) => {}
-                                        InternalCallOutcome::CallerExceptionHandled => {
-                                            return Ok(None);
-                                        }
-                                    }
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "delete subscript unsupported type",
-                                    ));
-                                }
+                                return Err(RuntimeError::new("delete subscript unsupported type"));
                             }
                         }
                     },
@@ -5282,16 +5272,11 @@ impl Vm {
     pub(super) fn class_value_from_module(
         &mut self,
         module: &ObjRef,
-        mut bases: Vec<ObjRef>,
+        bases: Vec<ObjRef>,
         metaclass: Option<Value>,
         class_keywords: HashMap<String, Value>,
         class_namespace: Option<Value>,
     ) -> Result<ClassBuildOutcome, RuntimeError> {
-        if bases.is_empty() {
-            if let Some(Value::Class(object_class)) = self.builtins.get("object") {
-                bases.push(object_class.clone());
-            }
-        }
         let (name, module_attrs) = match &*module.kind() {
             Object::Module(module_data) => (module_data.name.clone(), module_data.globals.clone()),
             _ => ("<class>".to_string(), HashMap::new()),
@@ -5305,6 +5290,15 @@ impl Vm {
             )
         });
         let attrs = self.class_namespace_attrs_map(&namespace_value)?;
+        let default_bases = if bases.is_empty() {
+            if let Some(Value::Class(object_class)) = self.builtins.get("object") {
+                vec![object_class.clone()]
+            } else {
+                Vec::new()
+            }
+        } else {
+            bases.clone()
+        };
 
         let resolved_metaclass = self.resolve_class_metaclass(&bases, metaclass.as_ref())?;
         let explicit_metaclass = metaclass.clone();
@@ -5322,7 +5316,7 @@ impl Vm {
         if !uses_plain_type {
             let Some(meta) = effective_metaclass else {
                 let class_value =
-                    self.build_default_class_value(name, attrs, bases, resolved_metaclass);
+                    self.build_default_class_value(name, attrs, default_bases, resolved_metaclass);
                 if let Value::Class(class_ref) = &class_value {
                     if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                         return Ok(ClassBuildOutcome::ExceptionHandled);
@@ -5357,7 +5351,8 @@ impl Vm {
             };
         }
 
-        let class_value = self.build_default_class_value(name, attrs, bases, resolved_metaclass);
+        let class_value =
+            self.build_default_class_value(name, attrs, default_bases, resolved_metaclass);
         if let Value::Class(class_ref) = &class_value {
             if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                 return Ok(ClassBuildOutcome::ExceptionHandled);
