@@ -194,6 +194,7 @@ const SQLITE_OPEN_URI: c_int = 0x0000_0040;
 const SQLITE_LIMIT_SQL_LENGTH_ID: c_int = 1;
 const SQLITE_LIMIT_MAX_CATEGORY: i64 = 11;
 const SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR: &str = "__pyrs_sqlite_base_init_called";
+const SQLITE_CURSOR_BASE_INIT_CALLED_ATTR: &str = "__pyrs_sqlite_cursor_base_init_called";
 const SQLITE_CONNECTION_ISOLATION_LEVEL_ATTR: &str = "isolation_level";
 const SQLITE_LEGACY_TRANSACTION_CONTROL: i64 = -1;
 const SQLITE_CONNECTION_ISOLATION_LEVEL_VALUE_ERROR: &str =
@@ -889,6 +890,9 @@ fn sqlite_current_thread_ident() -> i64 {
 const SQLITE_CONNECT_POSITIONAL_DEPRECATION: &str = "Passing more than 1 positional argument to sqlite3.connect() is deprecated. \
 Parameters 'timeout', 'detect_types', 'isolation_level', 'check_same_thread', \
 'factory', 'cached_statements' and 'uri' will become keyword-only parameters in Python 3.15.";
+const SQLITE_CONNECTION_POSITIONAL_DEPRECATION: &str = "Passing more than 1 positional argument to _sqlite3.Connection() is deprecated. \
+Parameters 'timeout', 'detect_types', 'isolation_level', 'check_same_thread', \
+'factory', 'cached_statements' and 'uri' will become keyword-only parameters in Python 3.15.";
 
 impl Vm {
     pub(in crate::vm) fn sqlite_libversion_string(&self) -> String {
@@ -950,6 +954,82 @@ impl Vm {
         self.builtins.get("str").cloned().unwrap_or(Value::None)
     }
 
+    fn sqlite_value_is_connection_instance(&self, value: &Value) -> bool {
+        let receiver = match self.receiver_from_value(value) {
+            Ok(receiver) => receiver,
+            Err(_) => return false,
+        };
+        let receiver_class = match &*receiver.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return false,
+        };
+        let connection_class = match self.sqlite_connection_class() {
+            Ok(class_ref) => class_ref,
+            Err(_) => return false,
+        };
+        if receiver_class.id() == connection_class.id() {
+            return true;
+        }
+        self.class_mro_entries(&receiver_class)
+            .iter()
+            .any(|entry| entry.id() == connection_class.id())
+    }
+
+    fn sqlite_value_is_cursor_instance(&self, value: &Value) -> bool {
+        let receiver = match self.receiver_from_value(value) {
+            Ok(receiver) => receiver,
+            Err(_) => return false,
+        };
+        let receiver_class = match &*receiver.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return false,
+        };
+        let cursor_class = match self.sqlite_cursor_class() {
+            Ok(class_ref) => class_ref,
+            Err(_) => return false,
+        };
+        if receiver_class.id() == cursor_class.id() {
+            return true;
+        }
+        self.class_mro_entries(&receiver_class)
+            .iter()
+            .any(|entry| entry.id() == cursor_class.id())
+    }
+
+    fn sqlite_initialize_cursor_instance(
+        &mut self,
+        cursor: &ObjRef,
+        connection: &Value,
+        connection_id: u64,
+    ) {
+        if let Object::Instance(instance_data) = &mut *cursor.kind_mut() {
+            instance_data
+                .attrs
+                .insert("rowcount".to_string(), Value::Int(-1));
+            instance_data
+                .attrs
+                .insert("arraysize".to_string(), Value::Int(1));
+            instance_data
+                .attrs
+                .insert("description".to_string(), Value::None);
+            instance_data
+                .attrs
+                .insert("row_factory".to_string(), Value::None);
+            instance_data
+                .attrs
+                .insert("lastrowid".to_string(), Value::None);
+            instance_data
+                .attrs
+                .insert("connection".to_string(), connection.clone());
+            instance_data.attrs.insert(
+                SQLITE_CURSOR_BASE_INIT_CALLED_ATTR.to_string(),
+                Value::Bool(true),
+            );
+        }
+        self.sqlite_cursors
+            .insert(cursor.id(), SqliteCursorState::new(connection_id));
+    }
+
     fn sqlite_connection_id_from_value(
         &self,
         value: &Value,
@@ -957,19 +1037,7 @@ impl Vm {
     ) -> Result<u64, RuntimeError> {
         let receiver = self.receiver_from_value(value)?;
         let receiver_id = receiver.id();
-        let receiver_is_sqlite_connection = match &*receiver.kind() {
-            Object::Instance(instance_data) => match &*instance_data.class.kind() {
-                Object::Class(class_data) => {
-                    class_data.name == "Connection"
-                        && matches!(
-                            class_data.attrs.get("__module__"),
-                            Some(Value::Str(module_name)) if module_name == "_sqlite3"
-                        )
-                }
-                _ => false,
-            },
-            _ => false,
-        };
+        let receiver_is_sqlite_connection = self.sqlite_value_is_connection_instance(value);
         if matches!(
             Self::instance_attr_get(&receiver, SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR),
             Some(Value::Bool(false))
@@ -1001,8 +1069,23 @@ impl Vm {
     ) -> Result<u64, RuntimeError> {
         let receiver = self.receiver_from_value(value)?;
         let receiver_id = receiver.id();
+        let receiver_is_sqlite_cursor = self.sqlite_value_is_cursor_instance(value);
+        if matches!(
+            Self::instance_attr_get(&receiver, SQLITE_CURSOR_BASE_INIT_CALLED_ATTR),
+            Some(Value::Bool(false))
+        ) {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "Base Cursor.__init__ not called.",
+            ));
+        }
         if self.sqlite_cursors.contains_key(&receiver_id) {
             Ok(receiver_id)
+        } else if receiver_is_sqlite_cursor {
+            Err(sqlite_error(
+                "ProgrammingError",
+                "Base Cursor.__init__ not called.",
+            ))
         } else {
             Err(sqlite_error(
                 "ProgrammingError",
@@ -1261,12 +1344,21 @@ impl Vm {
         sqlite_error("OperationalError", message)
     }
 
-    fn sqlite_warn_connect_positional_deprecation(&mut self) -> Result<(), RuntimeError> {
+    fn sqlite_warn_connect_positional_deprecation(
+        &mut self,
+        from_connection_factory: bool,
+    ) -> Result<(), RuntimeError> {
+        let message = if from_connection_factory {
+            SQLITE_CONNECTION_POSITIONAL_DEPRECATION
+        } else {
+            SQLITE_CONNECT_POSITIONAL_DEPRECATION
+        };
+        let stacklevel = if from_connection_factory { 2 } else { 1 };
         let _ = self.builtin_warnings_warn(
             vec![
-                Value::Str(SQLITE_CONNECT_POSITIONAL_DEPRECATION.to_string()),
+                Value::Str(message.to_string()),
                 Value::ExceptionType("DeprecationWarning".to_string()),
-                Value::Int(1),
+                Value::Int(stacklevel),
             ],
             HashMap::new(),
         )?;
@@ -1953,28 +2045,25 @@ impl Vm {
             }
             kwargs.insert((*name).to_string(), value);
         }
-        if positional_count > 1 {
-            self.sqlite_warn_connect_positional_deprecation()?;
-        }
-
-        let _timeout = kwargs.remove("timeout");
-        let _detect_types = kwargs.remove("detect_types");
+        let timeout_arg = kwargs.remove("timeout");
+        let detect_types_arg = kwargs.remove("detect_types");
+        let isolation_level_arg = kwargs.remove("isolation_level");
         let isolation_level = sqlite_normalize_isolation_level(
-            kwargs
-                .remove("isolation_level")
+            isolation_level_arg
+                .clone()
                 .unwrap_or_else(|| Value::Str(String::new())),
         )?;
-        let check_same_thread = kwargs
-            .remove("check_same_thread")
-            .map(|value| is_truthy(&value))
+        let check_same_thread_arg = kwargs.remove("check_same_thread");
+        let check_same_thread = check_same_thread_arg
+            .as_ref()
+            .map(is_truthy)
             .unwrap_or(true);
         let factory = kwargs.remove("factory");
-        let _cached_statements = kwargs.remove("cached_statements");
-        let uri = kwargs
-            .remove("uri")
-            .map(|value| is_truthy(&value))
-            .unwrap_or(false);
-        let autocommit_mode = sqlite_normalize_autocommit(kwargs.remove("autocommit"))?;
+        let cached_statements_arg = kwargs.remove("cached_statements");
+        let uri_arg = kwargs.remove("uri");
+        let uri = uri_arg.as_ref().map(is_truthy).unwrap_or(false);
+        let autocommit_arg = kwargs.remove("autocommit");
+        let autocommit_mode = sqlite_normalize_autocommit(autocommit_arg.clone())?;
         if let Some(unexpected) = kwargs.keys().next() {
             return Err(sqlite_error(
                 "TypeError",
@@ -1982,8 +2071,53 @@ impl Vm {
             ));
         }
 
+        let default_connection_class = self.sqlite_connection_class()?;
+        if positional_count > 1 {
+            let from_connection_factory = match factory.as_ref() {
+                Some(Value::Class(class_ref)) => class_ref.id() != default_connection_class.id(),
+                _ => false,
+            };
+            self.sqlite_warn_connect_positional_deprecation(from_connection_factory)?;
+        }
+
         if let Some(factory_callable) = factory.clone() {
-            if !matches!(factory_callable, Value::Class(_)) {
+            if let Value::Class(class_ref) = &factory_callable {
+                if class_ref.id() != default_connection_class.id() {
+                    let mut factory_kwargs = HashMap::new();
+                    if let Some(value) = timeout_arg {
+                        factory_kwargs.insert("timeout".to_string(), value);
+                    }
+                    if let Some(value) = detect_types_arg {
+                        factory_kwargs.insert("detect_types".to_string(), value);
+                    }
+                    if let Some(value) = isolation_level_arg {
+                        factory_kwargs.insert("isolation_level".to_string(), value);
+                    }
+                    if let Some(value) = check_same_thread_arg {
+                        factory_kwargs.insert("check_same_thread".to_string(), value);
+                    }
+                    if let Some(value) = cached_statements_arg {
+                        factory_kwargs.insert("cached_statements".to_string(), value);
+                    }
+                    if let Some(value) = uri_arg {
+                        factory_kwargs.insert("uri".to_string(), value);
+                    }
+                    if let Some(value) = autocommit_arg {
+                        factory_kwargs.insert("autocommit".to_string(), value);
+                    }
+                    return match self.call_internal_preserving_caller(
+                        factory_callable,
+                        vec![database],
+                        factory_kwargs,
+                    )? {
+                        InternalCallOutcome::Value(value) => Ok(value),
+                        InternalCallOutcome::CallerExceptionHandled => Err(self
+                            .runtime_error_from_active_exception(
+                                "sqlite connect factory callable failed",
+                            )),
+                    };
+                }
+            } else {
                 if !self.is_callable_value(&factory_callable) {
                     return Err(sqlite_error(
                         "TypeError",
@@ -2036,7 +2170,7 @@ impl Vm {
         let class = match factory {
             Some(Value::Class(class_ref)) => class_ref,
             Some(_) => unreachable!("non-class factory is handled before sqlite open"),
-            None => self.sqlite_connection_class()?,
+            None => default_connection_class,
         };
         let connection = self.alloc_instance_for_class(&class);
         if let Object::Instance(instance_data) = &mut *connection.kind_mut() {
@@ -2360,62 +2494,122 @@ impl Vm {
 
     pub(in crate::vm) fn builtin_sqlite_connection_cursor(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if args.len() != 1 {
+        if args.is_empty() {
+            return Err(sqlite_error("TypeError", "Connection.cursor() missing self"));
+        }
+        if args.len() > 2 {
             return Err(sqlite_error(
                 "TypeError",
-                "Connection.cursor() expects no positional arguments",
+                format!("cursor() takes at most 1 argument ({} given)", args.len() - 1),
             ));
         }
-        let connection_id = self.sqlite_connection_id_from_value(&args[0], "cursor")?;
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "cursor")?;
         let _ = self.sqlite_open_db_handle(connection_id)?;
-        let class = match kwargs.remove("factory") {
-            Some(Value::Class(class_ref)) => class_ref,
-            Some(_) => {
-                return Err(sqlite_error(
-                    "TypeError",
-                    "cursor() factory must be a Cursor subclass",
-                ));
-            }
-            None => self.sqlite_cursor_class()?,
-        };
-        if let Some(unexpected) = kwargs.keys().next() {
+        let factory = if args.is_empty() {
+            kwargs
+                .remove("factory")
+                .unwrap_or(Value::Class(self.sqlite_cursor_class()?))
+        } else if kwargs.contains_key("factory") {
             return Err(sqlite_error(
                 "TypeError",
-                format!("cursor() got an unexpected keyword argument '{unexpected}'"),
+                "cursor() got multiple values for argument 'factory'",
+            ));
+        } else {
+            args.remove(0)
+        };
+        if !kwargs.is_empty() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("cursor() takes at most 1 keyword argument ({} given)", kwargs.len()),
             ));
         }
-        let cursor = self.alloc_instance_for_class(&class);
+        let default_cursor_class = self.sqlite_cursor_class()?;
+        let cursor = match factory {
+            Value::Class(class_ref) if class_ref.id() == default_cursor_class.id() => {
+                let cursor_obj = self.alloc_instance_for_class(&class_ref);
+                self.sqlite_initialize_cursor_instance(&cursor_obj, &receiver, connection_id);
+                Value::Instance(cursor_obj)
+            }
+            factory_callable => match self.call_internal_preserving_caller(
+                factory_callable,
+                vec![receiver.clone()],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "sqlite cursor factory callable failed",
+                    ));
+                }
+            },
+        };
+        if !self.sqlite_value_is_cursor_instance(&cursor) {
+            return Err(sqlite_error(
+                "TypeError",
+                format!(
+                    "factory must return a cursor, not {}",
+                    self.value_type_name_for_error(&cursor)
+                ),
+            ));
+        }
         let row_factory = self
             .heap
             .find_object_by_id(connection_id)
             .and_then(|connection| Self::instance_attr_get(&connection, "row_factory"))
             .unwrap_or(Value::None);
-        if let Object::Instance(instance_data) = &mut *cursor.kind_mut() {
-            instance_data
-                .attrs
-                .insert("rowcount".to_string(), Value::Int(-1));
-            instance_data
-                .attrs
-                .insert("arraysize".to_string(), Value::Int(1));
-            instance_data
-                .attrs
-                .insert("description".to_string(), Value::None);
-            instance_data
-                .attrs
-                .insert("row_factory".to_string(), row_factory);
-            instance_data
-                .attrs
-                .insert("lastrowid".to_string(), Value::None);
-            instance_data
-                .attrs
-                .insert("connection".to_string(), args[0].clone());
+        if row_factory != Value::None {
+            let cursor_obj = self.receiver_from_value(&cursor)?;
+            let _ = Self::instance_attr_set(&cursor_obj, "row_factory", row_factory);
         }
-        self.sqlite_cursors
-            .insert(cursor.id(), SqliteCursorState::new(connection_id));
-        Ok(Value::Instance(cursor))
+        Ok(cursor)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_cursor_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(sqlite_error("TypeError", "Cursor.__init__() missing self"));
+        }
+        if args.len() > 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("Cursor expected 1 argument, got {}", args.len() - 1),
+            ));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let connection = if args.is_empty() {
+            kwargs
+                .remove("connection")
+                .ok_or_else(|| sqlite_error("TypeError", "Cursor expected 1 argument, got 0"))?
+        } else {
+            args.remove(0)
+        };
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("Cursor.__init__() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+        if !self.sqlite_value_is_connection_instance(&connection) {
+            return Err(sqlite_error(
+                "TypeError",
+                format!(
+                    "Cursor() argument 1 must be sqlite3.Connection, not {}",
+                    self.value_type_name_for_error(&connection)
+                ),
+            ));
+        }
+        let connection_id =
+            self.sqlite_connection_id_from_value(&connection, "Cursor.__init__")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        self.sqlite_initialize_cursor_instance(&receiver, &connection, connection_id);
+        Ok(Value::None)
     }
 
     pub(in crate::vm) fn builtin_sqlite_connection_getattribute(

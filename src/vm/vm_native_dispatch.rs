@@ -5709,6 +5709,7 @@ impl Vm {
             BuiltinFunction::SqliteConnectionBlobOpen => {
                 self.builtin_sqlite_connection_blobopen(args, kwargs)
             }
+            BuiltinFunction::SqliteCursorInit => self.builtin_sqlite_cursor_init(args, kwargs),
             BuiltinFunction::SqliteCursorSetAttribute => {
                 self.builtin_sqlite_cursor_setattr(args, kwargs)
             }

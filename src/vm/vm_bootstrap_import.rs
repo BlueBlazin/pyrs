@@ -1153,6 +1153,10 @@ impl Vm {
                 Value::Bool(true),
             );
             class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorInit),
+            );
+            class_data.attrs.insert(
                 "__setattr__".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteCursorSetAttribute),
             );
