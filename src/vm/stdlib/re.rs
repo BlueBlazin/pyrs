@@ -1060,7 +1060,9 @@ impl Vm {
                                 Some((capture_start, capture_end)) => {
                                     let capture_start = cursor + capture_start;
                                     let capture_end = cursor + capture_end;
-                                    out.push(Value::Str(text[capture_start..capture_end].to_string()));
+                                    out.push(Value::Str(
+                                        text[capture_start..capture_end].to_string(),
+                                    ));
                                 }
                                 None => out.push(Value::None),
                             }
@@ -1104,7 +1106,10 @@ impl Vm {
                     if absolute_start > stop || absolute_end > stop {
                         break;
                     }
-                    out.push(self.heap.alloc_bytes(bytes[cursor..absolute_start].to_vec()));
+                    out.push(
+                        self.heap
+                            .alloc_bytes(bytes[cursor..absolute_start].to_vec()),
+                    );
                     if detail.captures.len() > 1 {
                         for capture in detail.captures.iter().skip(1) {
                             match capture {
@@ -1112,7 +1117,9 @@ impl Vm {
                                     let capture_start = cursor + capture_start;
                                     let capture_end = cursor + capture_end;
                                     out.push(
-                                        self.heap.alloc_bytes(bytes[capture_start..capture_end].to_vec()),
+                                        self.heap.alloc_bytes(
+                                            bytes[capture_start..capture_end].to_vec(),
+                                        ),
                                     );
                                 }
                                 None => out.push(Value::None),

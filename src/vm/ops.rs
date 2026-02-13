@@ -3,12 +3,50 @@ use std::cmp::Ordering;
 use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
 use super::{
-    NumericValue, mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div,
-    python_mod, value_to_int,
+    LIST_BACKING_STORAGE_ATTR, NumericValue, STR_BACKING_STORAGE_ATTR, mod_float,
+    numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod, value_to_int,
 };
 use crate::runtime::{
     BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,
 };
+
+fn string_like_for_add(value: &Value) -> Option<String> {
+    match value {
+        Value::Str(text) => Some(text.clone()),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(STR_BACKING_STORAGE_ATTR) {
+                    Some(Value::Str(text)) => Some(text.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn list_like_for_add(value: &Value) -> Option<Vec<Value>> {
+    match value {
+        Value::List(list) => match &*list.kind() {
+            Object::List(values) => Some(values.clone()),
+            _ => None,
+        },
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(LIST_BACKING_STORAGE_ATTR) {
+                    Some(Value::List(list)) => match &*list.kind() {
+                        Object::List(values) => Some(values.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 fn int_like_to_bigint(value: &Value) -> Option<BigInt> {
     match value {
@@ -70,6 +108,18 @@ fn bigint_to_value(value: BigInt) -> Value {
 }
 
 pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
+    if let (Some(left_text), Some(right_text)) =
+        (string_like_for_add(&left), string_like_for_add(&right))
+    {
+        return Ok(Value::Str(format!("{left_text}{right_text}")));
+    }
+    if let (Some(mut left_values), Some(right_values)) =
+        (list_like_for_add(&left), list_like_for_add(&right))
+    {
+        left_values.extend(right_values);
+        return Ok(heap.alloc_list(left_values));
+    }
+
     if let Some((left, right)) = integer_i64_pair(&left, &right) {
         if let Some(sum) = left.checked_add(right) {
             return Ok(Value::Int(sum));

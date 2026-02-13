@@ -5315,12 +5315,8 @@ impl Vm {
 
         if !uses_plain_type {
             let Some(meta) = effective_metaclass else {
-                let class_value = self.build_default_class_value(
-                    name,
-                    attrs,
-                    default_bases,
-                    resolved_metaclass,
-                )?;
+                let class_value =
+                    self.build_default_class_value(name, attrs, default_bases, resolved_metaclass)?;
                 if let Value::Class(class_ref) = &class_value {
                     if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                         return Ok(ClassBuildOutcome::ExceptionHandled);
@@ -5355,12 +5351,8 @@ impl Vm {
             };
         }
 
-        let class_value = self.build_default_class_value(
-            name,
-            attrs,
-            default_bases,
-            resolved_metaclass,
-        )?;
+        let class_value =
+            self.build_default_class_value(name, attrs, default_bases, resolved_metaclass)?;
         if let Value::Class(class_ref) = &class_value {
             if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                 return Ok(ClassBuildOutcome::ExceptionHandled);
@@ -5585,8 +5577,9 @@ impl Vm {
             )? {
                 InternalCallOutcome::Value(_) => {}
                 InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(self
-                        .runtime_error_from_active_exception("__set_name__ during class creation failed"))
+                    return Err(self.runtime_error_from_active_exception(
+                        "__set_name__ during class creation failed",
+                    ));
                 }
             }
         }

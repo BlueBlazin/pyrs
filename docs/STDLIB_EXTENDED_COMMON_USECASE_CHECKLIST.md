@@ -56,8 +56,8 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `concurrent.futures` | DONE | PASS | PASS | - |
 | `socket` | DONE | PASS | PASS | - |
 | `ssl` | P0 | FAIL | FAIL | ModuleNotFoundError: module '_ssl' not found |
-| `email` | P0 | PASS | FAIL | RuntimeError: stack underflow in `_header_value_parser.LocalPart.value` (`self[0].value` branch) during header parsing |
-| `smtplib` | P0 | PASS | FAIL | blocked by `email` `EmailMessage` header parsing failure (same `LocalPart.value` stack-underflow path) |
+| `email` | P0 | PASS | FAIL | `LocalPart.value` stack-underflow path is closed; remaining common-flow blockers are serializer long-tail gaps (`bytes.splitlines`, `list.copy`) |
+| `smtplib` | P0 | PASS | FAIL | import-chain baseline is green; common flow remains blocked by `email` serialization gaps and missing `hashlib` algorithm coverage (`sha1`/`sha3`/`blake*`/`shake*`) |
 | `imaplib` | DONE | PASS | PASS | targeted `Time2Internaldate(0)` smoke now green after `datetime.datetime.fromtimestamp` + `%z` baseline |
 | `ftplib` | DONE | PASS | PASS | - |
 | `xml` | P1 | PASS | FAIL | ImportError: No module named expat; use SimpleXMLTreeBuilder instead |
@@ -70,9 +70,9 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 ## Open Blockers (Grouped)
 
 - Native extension/module gaps: `ssl`, `gzip`, `bz2`, `lzma`
-- Email stack long-tail gap impacting `smtplib` common flow (`EmailMessage` path)
+- Email serializer long-tail gap impacting `smtplib` common flow (`EmailMessage` formatting/content path)
 - Numeric core parity gaps: `statistics`, `decimal`
-- Regex accelerator parity gaps: `email`
+- Hashlib algorithm coverage gaps impacting `smtplib` import/runtime diagnostics
 - XML parser backend gap (`pyexpat`): `xml`
 
 ## Shim and Probe Notes

@@ -45,6 +45,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `datetime.datetime.fromtimestamp` + `datetime.astimezone` fixed-offset baseline landed, including `%z` formatting in `strftime`.
   - synthetic exception-class materialization for `Value::ExceptionType` bases now builds CPython-style exception ancestry and wires `ExceptionTypeInit` to unblock stdlib exception subclasses.
   - `_sre` pattern object gained `split`; class/instance `__doc__` fallback parity tightened for stdlib object-model paths.
+  - internal-call exception propagation now treats caller `active_exception` deltas as propagated failures (prevents false-success stack pops/underflow in descriptor/property call paths).
+  - `str.join` now accepts `str` subclass instances via backing-string extraction.
+  - `super(...).__init__` for synthetic builtin `list`/`dict` bases now resolves to native container initializers (`list.__init__`, `dict.__init__`) instead of falling through to `object.__init__`.
 - Extended probe remaining red modules:
   - `statistics`, `decimal`, `ssl`, `email`, `smtplib`, `xml`, `gzip`, `bz2`, `lzma`.
 

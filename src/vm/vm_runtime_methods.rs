@@ -1424,20 +1424,17 @@ impl Vm {
             Value::Class(class) => class,
             _ => unreachable!(),
         };
-        let mro = self
-            .build_class_mro(&class, &bases)
-            .unwrap_or_else(|_| {
-                let mut fallback = vec![class.clone()];
-                fallback.extend(bases.iter().cloned());
-                fallback
-            });
+        let mro = self.build_class_mro(&class, &bases).unwrap_or_else(|_| {
+            let mut fallback = vec![class.clone()];
+            fallback.extend(bases.iter().cloned());
+            fallback
+        });
         if let Object::Class(class_data) = &mut *class.kind_mut() {
             class_data.bases = bases;
             class_data.mro = mro;
-            class_data.attrs.insert(
-                "__module__".to_string(),
-                Value::Str("builtins".to_string()),
-            );
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("builtins".to_string()));
             class_data
                 .attrs
                 .insert("__qualname__".to_string(), Value::Str(name.to_string()));

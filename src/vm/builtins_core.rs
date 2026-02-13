@@ -2389,7 +2389,8 @@ impl Vm {
             };
             let encoding =
                 normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
-            let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+            let errors =
+                normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
             return encode_text_bytes(&text, &encoding, &errors);
         }
 
@@ -2400,9 +2401,7 @@ impl Vm {
                 }
                 Ok(vec![0; count as usize])
             }
-            Value::Str(_) => Err(RuntimeError::new(
-                "string argument without an encoding",
-            )),
+            Value::Str(_) => Err(RuntimeError::new("string argument without an encoding")),
             Value::None => Err(RuntimeError::new(format!(
                 "cannot convert '{}' object to bytes",
                 self.value_type_name_for_error(&Value::None)
@@ -2429,7 +2428,8 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let (object, encoding, errors) = self.parse_bytes_constructor_args("bytes", args, kwargs)?;
+        let (object, encoding, errors) =
+            self.parse_bytes_constructor_args("bytes", args, kwargs)?;
         let payload =
             self.bytes_payload_from_constructor_parts("bytes", object, encoding, errors)?;
         Ok(self.heap.alloc_bytes(payload))
@@ -3729,6 +3729,20 @@ impl Vm {
         );
         if !init_is_object_init {
             return false;
+        }
+        if self.class_has_builtin_int_base(class)
+            || self.class_has_builtin_float_base(class)
+            || self.class_has_builtin_str_base(class)
+            || self.class_has_builtin_list_base(class)
+            || self.class_has_builtin_tuple_base(class)
+            || self.class_has_builtin_dict_base(class)
+            || self.class_has_builtin_set_base(class)
+            || self.class_has_builtin_frozenset_base(class)
+            || self.class_has_builtin_bytes_base(class)
+            || self.class_has_builtin_bytearray_base(class)
+            || self.class_has_builtin_complex_base(class)
+        {
+            return true;
         }
         !matches!(
             new_attr,

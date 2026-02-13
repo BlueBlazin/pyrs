@@ -328,7 +328,9 @@ impl Vm {
                     return Ok(0);
                 };
                 match offset {
-                    Value::Int(_) | Value::BigInt(_) | Value::Bool(_) => value_to_int(offset.clone()),
+                    Value::Int(_) | Value::BigInt(_) | Value::Bool(_) => {
+                        value_to_int(offset.clone())
+                    }
                     Value::Instance(delta) => {
                         let Object::Instance(delta_data) = &*delta.kind() else {
                             return Ok(0);
@@ -470,7 +472,8 @@ impl Vm {
                 "fromtimestamp() got an unexpected keyword argument",
             ));
         }
-        let timestamp = timestamp.ok_or_else(|| RuntimeError::new("fromtimestamp() missing timestamp"))?;
+        let timestamp =
+            timestamp.ok_or_else(|| RuntimeError::new("fromtimestamp() missing timestamp"))?;
         let timestamp = value_to_f64(timestamp)?;
         let mut seconds = timestamp.floor() as i64;
         let mut microsecond = ((timestamp - seconds as f64) * 1_000_000.0).round() as i64;
@@ -552,14 +555,16 @@ impl Vm {
                 .cloned()
                 .map(value_to_int)
                 .transpose()?
-                .ok_or_else(|| RuntimeError::new("astimezone() missing month"))? as u32;
+                .ok_or_else(|| RuntimeError::new("astimezone() missing month"))?
+                as u32;
             let day = instance_data
                 .attrs
                 .get("day")
                 .cloned()
                 .map(value_to_int)
                 .transpose()?
-                .ok_or_else(|| RuntimeError::new("astimezone() missing day"))? as u32;
+                .ok_or_else(|| RuntimeError::new("astimezone() missing day"))?
+                as u32;
             let hour = instance_data
                 .attrs
                 .get("hour")
@@ -613,8 +618,8 @@ impl Vm {
             .transpose()?
             .unwrap_or(current_offset);
         let days = days_from_civil(year, month, day);
-        let utc_seconds =
-            days * 86_400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64 - current_offset;
+        let utc_seconds = days * 86_400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64
+            - current_offset;
         let local = split_unix_timestamp(utc_seconds + target_offset);
         self.datetime_instance_from_parts(
             class,

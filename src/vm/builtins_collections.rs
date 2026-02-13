@@ -1556,9 +1556,9 @@ impl Vm {
         self.call_internal(deque_class, args, kwargs)
             .and_then(|outcome| match outcome {
                 InternalCallOutcome::Value(value) => Ok(value),
-                InternalCallOutcome::CallerExceptionHandled => Err(
-                    self.runtime_error_from_active_exception("deque() raised an exception"),
-                ),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Err(self.runtime_error_from_active_exception("deque() raised an exception"))
+                }
             })
     }
 
@@ -1642,7 +1642,9 @@ impl Vm {
             None
         };
         if !args.is_empty() {
-            return Err(RuntimeError::new("deque.__init__() takes at most 2 arguments"));
+            return Err(RuntimeError::new(
+                "deque.__init__() takes at most 2 arguments",
+            ));
         }
         if let Some(value) = kwargs.remove("iterable") {
             if iterable.is_some() {
@@ -1685,7 +1687,9 @@ impl Vm {
 
         let storage = self.heap.alloc_list(values);
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
-            return Err(RuntimeError::new("deque.__init__() expected deque instance"));
+            return Err(RuntimeError::new(
+                "deque.__init__() expected deque instance",
+            ));
         };
         instance_data
             .attrs
@@ -1732,7 +1736,9 @@ impl Vm {
         let maxlen = self.dequeue_maxlen(&instance)?;
         let storage = self.dequeue_storage_list(&instance, "deque.appendleft")?;
         let Object::List(values) = &mut *storage.kind_mut() else {
-            return Err(RuntimeError::new("deque.appendleft() expected deque instance"));
+            return Err(RuntimeError::new(
+                "deque.appendleft() expected deque instance",
+            ));
         };
         values.insert(0, item);
         Self::dequeue_apply_maxlen_left(values, maxlen)?;
@@ -1830,7 +1836,9 @@ impl Vm {
         let storage = self.dequeue_storage_list(&instance, "deque.extendleft")?;
         let values_to_add = self.collect_iterable_values(source)?;
         let Object::List(values) = &mut *storage.kind_mut() else {
-            return Err(RuntimeError::new("deque.extendleft() expected deque instance"));
+            return Err(RuntimeError::new(
+                "deque.extendleft() expected deque instance",
+            ));
         };
         for value in values_to_add {
             values.insert(0, value);
@@ -1867,7 +1875,11 @@ impl Vm {
         let storage = self.dequeue_storage_list(&instance, "deque.__iter__")?;
         let snapshot = match &*storage.kind() {
             Object::List(values) => values.clone(),
-            _ => return Err(RuntimeError::new("deque.__iter__() expected deque instance")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "deque.__iter__() expected deque instance",
+                ));
+            }
         };
         self.to_iterator_value(self.heap.alloc_list(snapshot))
     }

@@ -247,6 +247,34 @@ impl Vm {
                     self.heap.alloc_dict(entries.to_vec()),
                 ))
             }
+            NativeMethodKind::DictInit => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "dict.__init__() expects at most one argument",
+                    ));
+                }
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
+                    return Err(RuntimeError::new("dict.__init__() receiver must be dict"));
+                }
+                {
+                    let mut receiver_kind = receiver.kind_mut();
+                    let Object::Dict(entries) = &mut *receiver_kind else {
+                        unreachable!();
+                    };
+                    entries.clear();
+                }
+                match self.call_native_method(
+                    NativeMethodKind::DictUpdateMethod,
+                    receiver,
+                    args,
+                    kwargs,
+                )? {
+                    NativeCallResult::Value(_) => Ok(NativeCallResult::Value(Value::None)),
+                    NativeCallResult::PropagatedException => {
+                        Ok(NativeCallResult::PropagatedException)
+                    }
+                }
+            }
             NativeMethodKind::DictClear => {
                 if !args.is_empty() || !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.clear() expects no arguments"));
@@ -501,6 +529,25 @@ impl Vm {
                     return Err(RuntimeError::new("list.append() receiver must be list"));
                 };
                 values.push(value);
+                Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::ListInit => {
+                if args.len() > 1 || !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "list.__init__() expects at most one argument",
+                    ));
+                }
+                let mut incoming = if let Some(iterable) = args.first() {
+                    self.collect_iterable_values(iterable.clone())?
+                } else {
+                    Vec::new()
+                };
+                let mut receiver_kind = receiver.kind_mut();
+                let Object::List(values) = &mut *receiver_kind else {
+                    return Err(RuntimeError::new("list.__init__() receiver must be list"));
+                };
+                values.clear();
+                values.append(&mut incoming);
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::ListExtend => {
@@ -2491,6 +2538,15 @@ impl Vm {
                 for value in values {
                     match value {
                         Value::Str(text) => parts.push(text),
+                        Value::Instance(instance) => {
+                            if let Some(text) = self.instance_backing_str(&instance) {
+                                parts.push(text);
+                            } else {
+                                return Err(RuntimeError::new(
+                                    "sequence item is not str for join()",
+                                ));
+                            }
+                        }
                         _ => {
                             return Err(RuntimeError::new("sequence item is not str for join()"));
                         }
@@ -3347,10 +3403,9 @@ impl Vm {
                     return Ok(NativeCallResult::Value(Value::Function(receiver)));
                 }
                 let bound_receiver = self.receiver_from_value(&obj)?;
-                Ok(NativeCallResult::Value(
-                    self.heap
-                        .alloc_bound_method(BoundMethod::new(receiver, bound_receiver)),
-                ))
+                Ok(NativeCallResult::Value(self.heap.alloc_bound_method(
+                    BoundMethod::new(receiver, bound_receiver),
+                )))
             }
             NativeMethodKind::ObjectReduceExBound => {
                 let receiver_kind = receiver.kind();
@@ -5835,7 +5890,9 @@ impl Vm {
             BuiltinFunction::CollectionsDequeAppendLeft => {
                 self.builtin_collections_deque_appendleft(args, kwargs)
             }
-            BuiltinFunction::CollectionsDequePop => self.builtin_collections_deque_pop(args, kwargs),
+            BuiltinFunction::CollectionsDequePop => {
+                self.builtin_collections_deque_pop(args, kwargs)
+            }
             BuiltinFunction::CollectionsDequePopleft => {
                 self.builtin_collections_deque_popleft(args, kwargs)
             }
@@ -5848,7 +5905,9 @@ impl Vm {
             BuiltinFunction::CollectionsDequeExtendLeft => {
                 self.builtin_collections_deque_extendleft(args, kwargs)
             }
-            BuiltinFunction::CollectionsDequeLen => self.builtin_collections_deque_len(args, kwargs),
+            BuiltinFunction::CollectionsDequeLen => {
+                self.builtin_collections_deque_len(args, kwargs)
+            }
             BuiltinFunction::CollectionsDequeIter => {
                 self.builtin_collections_deque_iter(args, kwargs)
             }

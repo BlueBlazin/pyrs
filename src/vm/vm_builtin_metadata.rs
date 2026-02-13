@@ -465,10 +465,7 @@ impl Vm {
                         .iter()
                         .any(|(name, _)| matches!(name, Value::Str(key) if key == "__new__"))
                 {
-                    entries.push((
-                        Value::Str("__new__".to_string()),
-                        Value::Builtin(builtin),
-                    ));
+                    entries.push((Value::Str("__new__".to_string()), Value::Builtin(builtin)));
                 }
                 Ok(self.heap.alloc_dict(entries))
             }
@@ -501,8 +498,7 @@ impl Vm {
             "__self__" => Ok(Value::Builtin(builtin)),
             "__flags__" => Ok(Value::Int(0)),
             "__new__"
-                if builtin != BuiltinFunction::Type
-                    && self.builtin_is_type_object(builtin) =>
+                if builtin != BuiltinFunction::Type && self.builtin_is_type_object(builtin) =>
             {
                 Ok(Value::Builtin(BuiltinFunction::ObjectNew))
             }
@@ -813,6 +809,7 @@ impl Vm {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, list));
         }
         let kind = match attr_name {
+            "__init__" => NativeMethodKind::ListInit,
             "append" => NativeMethodKind::ListAppend,
             "extend" => NativeMethodKind::ListExtend,
             "insert" => NativeMethodKind::ListInsert,
@@ -1230,6 +1227,7 @@ impl Vm {
             return Ok(self.alloc_reduce_ex_bound_method(Value::Dict(dict)));
         }
         let kind = match attr_name {
+            "__init__" => NativeMethodKind::DictInit,
             "keys" => NativeMethodKind::DictKeys,
             "values" => NativeMethodKind::DictValues,
             "items" => NativeMethodKind::DictItems,
@@ -1458,10 +1456,8 @@ impl Vm {
             "__doc__" => Ok(Value::None),
             "__call__" => Ok(Value::Function(func.clone())),
             "__func__" => Ok(Value::Function(func.clone())),
-            "__get__" => Ok(self.alloc_native_bound_method(
-                NativeMethodKind::FunctionDescriptorGet,
-                func.clone(),
-            )),
+            "__get__" => Ok(self
+                .alloc_native_bound_method(NativeMethodKind::FunctionDescriptorGet, func.clone())),
             "__defaults__" => {
                 let defaults = {
                     let func_ref = func.kind();
@@ -2148,7 +2144,11 @@ impl Vm {
         if caller_depth as i64 >= self.recursion_limit {
             return Err(RuntimeError::new("maximum recursion depth exceeded"));
         }
-        let caller_ip = self.frames.last().map(|frame| frame.ip).unwrap_or(0);
+        let (caller_ip, caller_active_exception) = self
+            .frames
+            .last()
+            .map(|frame| (frame.ip, frame.active_exception.clone()))
+            .unwrap_or((0, None));
 
         let needs_run = match callable {
             Value::Function(func) => {
@@ -2661,6 +2661,9 @@ impl Vm {
             .get(caller_depth - 1)
             .ok_or_else(|| RuntimeError::new("caller frame missing"))?;
         if caller.ip != caller_ip {
+            return Ok(InternalCallOutcome::CallerExceptionHandled);
+        }
+        if caller.active_exception != caller_active_exception {
             return Ok(InternalCallOutcome::CallerExceptionHandled);
         }
 
@@ -3791,6 +3794,18 @@ impl Vm {
                         Some(owner_value.clone()),
                         attr_name,
                     ) {
+                        return Ok(AttrAccessOutcome::Value(method));
+                    }
+                }
+            }
+            if self.class_has_builtin_list_base(&class) {
+                let list_receiver = match &receiver_value {
+                    Value::List(list) => Some(list.clone()),
+                    Value::Instance(instance) => self.instance_backing_list(instance),
+                    _ => None,
+                };
+                if let Some(list_receiver) = list_receiver {
+                    if let Ok(method) = self.load_attr_list_method(list_receiver, attr_name) {
                         return Ok(AttrAccessOutcome::Value(method));
                     }
                 }

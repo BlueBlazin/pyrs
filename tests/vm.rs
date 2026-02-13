@@ -7593,6 +7593,36 @@ fn list_subclass_constructor_accepts_iterable_argument() {
 }
 
 #[test]
+fn list_subclass_addition_returns_plain_list_result() {
+    let source = "class L(list):\n    pass\nleft = L([1])\nright = L([2])\na = left + [3]\nb = [0] + right\nok = (a == [1, 3] and b == [0, 2] and type(a) is list and type(b) is list)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_join_accepts_str_subclass_items() {
+    let source = "class S(str):\n    pass\nout = ''.join([S('a'), S('b')])\nok = (out == 'ab')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn property_getter_exception_does_not_surface_stack_underflow() {
+    let source = "class C:\n    @property\n    def value(self):\n        return ''.join([1])\nmsg = ''\ntry:\n    C().value\nexcept Exception as exc:\n    msg = str(exc)\nok = ('stack underflow' not in msg and 'join' in msg)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn list_remove_misses_raise_value_error() {
     let source = "caught = False\ntry:\n    [1].remove(2)\nexcept ValueError:\n    caught = True\nok = caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");

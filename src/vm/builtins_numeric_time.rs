@@ -535,9 +535,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "gcd() does not accept keyword arguments",
-            ));
+            return Err(RuntimeError::new("gcd() does not accept keyword arguments"));
         }
         if args.is_empty() {
             return Ok(Value::Int(0));
