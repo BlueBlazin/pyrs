@@ -72,7 +72,7 @@ Milestone 13 stdlib closure proceeds in this order:
 ### Active Stdlib Readiness
 - `[~]` `json`: pure-module-first default path and `_json` scanner integration are green; full malformed-input/perf closure still pending
 - `[~]` `csv`: native `_csv` substrate in place; full parity/perf closure pending
-- `[~]` `sqlite3`: `_sqlite3` baseline is landed (connect/cursor/execute/fetch/close, connection/cursor shortcut methods, limit/config APIs, constant surface, `Connection.blobopen` + `_sqlite3.Blob` baseline methods); full DB-API long-tail parity remains
+- `[~]` `sqlite3`: `_sqlite3` baseline now also covers connection descriptor attrs (`isolation_level`/`in_transaction`/`total_changes`), SQL-length/DataError precheck, row/text-factory plumbing, and `_sqlite3.Row` baseline methods; full DB-API long-tail parity remains, and current failfast blocker (`test_connection_signature`) depends on broader object-model `__repr__`/`__str__` parity
 - `[~]` `pickle`: native substrate partially in place; strict deferred lane still open
 - `[~]` `re`: `_sre` substrate partially in place; pure `Lib/re/*` default closure pending
 - `[x]` `hashlib` md5/sha2 minimum path (`_md5`, `_sha2`) with parity tests (`digest`/`hexdigest`/`update`/`copy`)

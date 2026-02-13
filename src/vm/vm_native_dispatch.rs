@@ -5282,6 +5282,18 @@ impl Vm {
             BuiltinFunction::SqliteConnectionInit => {
                 self.builtin_sqlite_connection_init(args, kwargs)
             }
+            BuiltinFunction::SqliteConnectionDel => {
+                self.builtin_sqlite_connection_del(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionGetAttribute => {
+                self.builtin_sqlite_connection_getattribute(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionSetAttribute => {
+                self.builtin_sqlite_connection_setattr(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionDelAttribute => {
+                self.builtin_sqlite_connection_delattr(args, kwargs)
+            }
             BuiltinFunction::SqliteConnectionCursor => {
                 self.builtin_sqlite_connection_cursor(args, kwargs)
             }
@@ -5369,6 +5381,12 @@ impl Vm {
             BuiltinFunction::SqliteBlobSetItem => self.builtin_sqlite_blob_setitem(args, kwargs),
             BuiltinFunction::SqliteBlobDelItem => self.builtin_sqlite_blob_delitem(args, kwargs),
             BuiltinFunction::SqliteBlobIter => self.builtin_sqlite_blob_iter(args, kwargs),
+            BuiltinFunction::SqliteRowInit => self.builtin_sqlite_row_init(args, kwargs),
+            BuiltinFunction::SqliteRowKeys => self.builtin_sqlite_row_keys(args, kwargs),
+            BuiltinFunction::SqliteRowLen => self.builtin_sqlite_row_len(args, kwargs),
+            BuiltinFunction::SqliteRowGetItem => self.builtin_sqlite_row_getitem(args, kwargs),
+            BuiltinFunction::SqliteRowIter => self.builtin_sqlite_row_iter(args, kwargs),
+            BuiltinFunction::SqliteRowEq => self.builtin_sqlite_row_eq(args, kwargs),
             BuiltinFunction::HashlibMd5 => self.builtin_hashlib_md5(args, kwargs),
             BuiltinFunction::HashlibSha224 => self.builtin_hashlib_sha224(args, kwargs),
             BuiltinFunction::HashlibSha256 => self.builtin_hashlib_sha256(args, kwargs),

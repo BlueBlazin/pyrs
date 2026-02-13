@@ -95,6 +95,10 @@ impl Vm {
                 "enable_callback_tracebacks".to_string()
             }
             BuiltinFunction::SqliteConnectionInit => "__init__".to_string(),
+            BuiltinFunction::SqliteConnectionDel => "__del__".to_string(),
+            BuiltinFunction::SqliteConnectionGetAttribute => "__getattribute__".to_string(),
+            BuiltinFunction::SqliteConnectionSetAttribute => "__setattr__".to_string(),
+            BuiltinFunction::SqliteConnectionDelAttribute => "__delattr__".to_string(),
             BuiltinFunction::SqliteConnectionCursor => "cursor".to_string(),
             BuiltinFunction::SqliteConnectionClose => "close".to_string(),
             BuiltinFunction::SqliteConnectionEnter => "__enter__".to_string(),
@@ -136,6 +140,12 @@ impl Vm {
             BuiltinFunction::SqliteBlobSetItem => "__setitem__".to_string(),
             BuiltinFunction::SqliteBlobDelItem => "__delitem__".to_string(),
             BuiltinFunction::SqliteBlobIter => "__iter__".to_string(),
+            BuiltinFunction::SqliteRowInit => "__init__".to_string(),
+            BuiltinFunction::SqliteRowKeys => "keys".to_string(),
+            BuiltinFunction::SqliteRowLen => "__len__".to_string(),
+            BuiltinFunction::SqliteRowGetItem => "__getitem__".to_string(),
+            BuiltinFunction::SqliteRowIter => "__iter__".to_string(),
+            BuiltinFunction::SqliteRowEq => "__eq__".to_string(),
             BuiltinFunction::SreCompile => "compile".to_string(),
             BuiltinFunction::SreTemplate => "template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "ascii_iscased".to_string(),
@@ -165,15 +175,23 @@ impl Vm {
             BuiltinFunction::JsonScannerScanOnce => "_json.scan_once".to_string(),
             BuiltinFunction::JsonDecoderScanString => "_json.scanstring".to_string(),
             BuiltinFunction::SqliteConnect => "_sqlite3.connect".to_string(),
-            BuiltinFunction::SqliteCompleteStatement => {
-                "_sqlite3.complete_statement".to_string()
-            }
+            BuiltinFunction::SqliteCompleteStatement => "_sqlite3.complete_statement".to_string(),
             BuiltinFunction::SqliteRegisterAdapter => "_sqlite3.register_adapter".to_string(),
             BuiltinFunction::SqliteRegisterConverter => "_sqlite3.register_converter".to_string(),
             BuiltinFunction::SqliteEnableCallbackTracebacks => {
                 "_sqlite3.enable_callback_tracebacks".to_string()
             }
             BuiltinFunction::SqliteConnectionInit => "_sqlite3.Connection.__init__".to_string(),
+            BuiltinFunction::SqliteConnectionDel => "_sqlite3.Connection.__del__".to_string(),
+            BuiltinFunction::SqliteConnectionGetAttribute => {
+                "_sqlite3.Connection.__getattribute__".to_string()
+            }
+            BuiltinFunction::SqliteConnectionSetAttribute => {
+                "_sqlite3.Connection.__setattr__".to_string()
+            }
+            BuiltinFunction::SqliteConnectionDelAttribute => {
+                "_sqlite3.Connection.__delattr__".to_string()
+            }
             BuiltinFunction::SqliteConnectionCursor => "_sqlite3.Connection.cursor".to_string(),
             BuiltinFunction::SqliteConnectionClose => "_sqlite3.Connection.close".to_string(),
             BuiltinFunction::SqliteConnectionEnter => "_sqlite3.Connection.__enter__".to_string(),
@@ -199,12 +217,8 @@ impl Vm {
             BuiltinFunction::SqliteConnectionSetProgressHandler => {
                 "_sqlite3.Connection.set_progress_handler".to_string()
             }
-            BuiltinFunction::SqliteConnectionGetLimit => {
-                "_sqlite3.Connection.getlimit".to_string()
-            }
-            BuiltinFunction::SqliteConnectionSetLimit => {
-                "_sqlite3.Connection.setlimit".to_string()
-            }
+            BuiltinFunction::SqliteConnectionGetLimit => "_sqlite3.Connection.getlimit".to_string(),
+            BuiltinFunction::SqliteConnectionSetLimit => "_sqlite3.Connection.setlimit".to_string(),
             BuiltinFunction::SqliteConnectionGetConfig => {
                 "_sqlite3.Connection.getconfig".to_string()
             }
@@ -235,6 +249,12 @@ impl Vm {
             BuiltinFunction::SqliteBlobSetItem => "_sqlite3.Blob.__setitem__".to_string(),
             BuiltinFunction::SqliteBlobDelItem => "_sqlite3.Blob.__delitem__".to_string(),
             BuiltinFunction::SqliteBlobIter => "_sqlite3.Blob.__iter__".to_string(),
+            BuiltinFunction::SqliteRowInit => "_sqlite3.Row.__init__".to_string(),
+            BuiltinFunction::SqliteRowKeys => "_sqlite3.Row.keys".to_string(),
+            BuiltinFunction::SqliteRowLen => "_sqlite3.Row.__len__".to_string(),
+            BuiltinFunction::SqliteRowGetItem => "_sqlite3.Row.__getitem__".to_string(),
+            BuiltinFunction::SqliteRowIter => "_sqlite3.Row.__iter__".to_string(),
+            BuiltinFunction::SqliteRowEq => "_sqlite3.Row.__eq__".to_string(),
             BuiltinFunction::SreCompile => "_sre.compile".to_string(),
             BuiltinFunction::SreTemplate => "_sre.template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "_sre.ascii_iscased".to_string(),
@@ -329,6 +349,10 @@ impl Vm {
             | BuiltinFunction::SqliteRegisterConverter
             | BuiltinFunction::SqliteEnableCallbackTracebacks
             | BuiltinFunction::SqliteConnectionInit
+            | BuiltinFunction::SqliteConnectionDel
+            | BuiltinFunction::SqliteConnectionGetAttribute
+            | BuiltinFunction::SqliteConnectionSetAttribute
+            | BuiltinFunction::SqliteConnectionDelAttribute
             | BuiltinFunction::SqliteConnectionCursor
             | BuiltinFunction::SqliteConnectionClose
             | BuiltinFunction::SqliteConnectionEnter
@@ -367,7 +391,13 @@ impl Vm {
             | BuiltinFunction::SqliteBlobGetItem
             | BuiltinFunction::SqliteBlobSetItem
             | BuiltinFunction::SqliteBlobDelItem
-            | BuiltinFunction::SqliteBlobIter => "_sqlite3",
+            | BuiltinFunction::SqliteBlobIter
+            | BuiltinFunction::SqliteRowInit
+            | BuiltinFunction::SqliteRowKeys
+            | BuiltinFunction::SqliteRowLen
+            | BuiltinFunction::SqliteRowGetItem
+            | BuiltinFunction::SqliteRowIter
+            | BuiltinFunction::SqliteRowEq => "_sqlite3",
             BuiltinFunction::SreCompile
             | BuiltinFunction::SreTemplate
             | BuiltinFunction::SreAsciiIsCased

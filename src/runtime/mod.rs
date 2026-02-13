@@ -2408,6 +2408,10 @@ pub enum BuiltinFunction {
     SqliteRegisterConverter,
     SqliteEnableCallbackTracebacks,
     SqliteConnectionInit,
+    SqliteConnectionDel,
+    SqliteConnectionGetAttribute,
+    SqliteConnectionSetAttribute,
+    SqliteConnectionDelAttribute,
     SqliteConnectionCursor,
     SqliteConnectionClose,
     SqliteConnectionEnter,
@@ -2447,6 +2451,12 @@ pub enum BuiltinFunction {
     SqliteBlobSetItem,
     SqliteBlobDelItem,
     SqliteBlobIter,
+    SqliteRowInit,
+    SqliteRowKeys,
+    SqliteRowLen,
+    SqliteRowGetItem,
+    SqliteRowIter,
+    SqliteRowEq,
     HashlibMd5,
     HashlibSha224,
     HashlibSha256,
@@ -5437,6 +5447,10 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteRegisterConverter
             | BuiltinFunction::SqliteEnableCallbackTracebacks
             | BuiltinFunction::SqliteConnectionInit
+            | BuiltinFunction::SqliteConnectionDel
+            | BuiltinFunction::SqliteConnectionGetAttribute
+            | BuiltinFunction::SqliteConnectionSetAttribute
+            | BuiltinFunction::SqliteConnectionDelAttribute
             | BuiltinFunction::SqliteConnectionCursor
             | BuiltinFunction::SqliteConnectionClose
             | BuiltinFunction::SqliteConnectionEnter
@@ -5476,6 +5490,12 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteBlobSetItem
             | BuiltinFunction::SqliteBlobDelItem
             | BuiltinFunction::SqliteBlobIter
+            | BuiltinFunction::SqliteRowInit
+            | BuiltinFunction::SqliteRowKeys
+            | BuiltinFunction::SqliteRowLen
+            | BuiltinFunction::SqliteRowGetItem
+            | BuiltinFunction::SqliteRowIter
+            | BuiltinFunction::SqliteRowEq
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
             | BuiltinFunction::AtexitUnregister

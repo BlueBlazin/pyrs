@@ -122,8 +122,8 @@ Milestone 13 completion is blocked on P0 closure of:
   - `_sqlite3` baseline is landed: module import surface, `connect`, `Connection.cursor/execute/close`, `Cursor.execute/fetchone/fetchall/close`, adapter/converter registries, and core exception/type exports.
   - `Connection.blobopen` and `_sqlite3.Blob` baseline native methods are wired (`close`, `read`, `write`, `seek`, `tell`, context-manager hooks, `__len__`, `__getitem__`, `__setitem__`) with regression coverage.
   - `_sqlite3` constant export surface now includes CPython-style authorizer/limit/dbconfig constants (`SQLITE_LIMIT_*`, `SQLITE_DBCONFIG_*`, etc.).
-  - `_sqlite3` connection/cursor baseline surface now includes `Connection.__call__`, `Connection.executemany/executescript`, context-manager hooks, `Connection.__init__` reinit entrypoint, `Connection.getlimit/setlimit/getconfig/setconfig`, and `Cursor.executemany/executescript/fetchmany`.
-  - Current `test.test_sqlite3.test_dbapi` failfast frontier is isolation-level descriptor parity (`cx.isolation_level` validation semantics) after connection/bblob/lifecycle closure.
+  - `_sqlite3` connection/cursor surface now also includes `Connection.__del__`, descriptor-backed `Connection` attributes (`isolation_level`, `in_transaction`, `total_changes`), SQL-length/DataError parity guard, cursor `description`, row/text-factory plumbing, and `_sqlite3.Row` baseline methods (`keys`, `__len__`, `__getitem__`, `__iter__`, `__eq__`).
+  - Current `test.test_sqlite3.test_dbapi` failfast frontier is `test_connection_signature`, blocked by broader object-model gap where custom `__repr__`/`__str__` are not being honored (e.g., `inspect.Signature` rendering), not by `_sqlite3` surface.
   - pure-stdlib JSON remains the default when CPython `Lib/` is available, and `_json` scanner integration now handles `json.loads` decode flow with correct regex `pos/endpos` handling.
 - Hashlib checkpoint:
   - native `_md5` and `_sha2` backends are wired using Rust crypto crates with constructor/update/digest/hexdigest/copy parity tests.

@@ -987,12 +987,30 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionInit),
             );
-            class_data
-                .attrs
-                .insert("Warning".to_string(), Value::ExceptionType("Warning".to_string()));
-            class_data
-                .attrs
-                .insert("Error".to_string(), Value::ExceptionType("Error".to_string()));
+            class_data.attrs.insert(
+                "__del__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionDel),
+            );
+            class_data.attrs.insert(
+                "__getattribute__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionGetAttribute),
+            );
+            class_data.attrs.insert(
+                "__setattr__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionSetAttribute),
+            );
+            class_data.attrs.insert(
+                "__delattr__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionDelAttribute),
+            );
+            class_data.attrs.insert(
+                "Warning".to_string(),
+                Value::ExceptionType("Warning".to_string()),
+            );
+            class_data.attrs.insert(
+                "Error".to_string(),
+                Value::ExceptionType("Error".to_string()),
+            );
             class_data.attrs.insert(
                 "InterfaceError".to_string(),
                 Value::ExceptionType("InterfaceError".to_string()),
@@ -1226,6 +1244,30 @@ impl Vm {
                 class_data
                     .attrs
                     .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
+                class_data.attrs.insert(
+                    "__init__".to_string(),
+                    Value::Builtin(BuiltinFunction::SqliteRowInit),
+                );
+                class_data.attrs.insert(
+                    "keys".to_string(),
+                    Value::Builtin(BuiltinFunction::SqliteRowKeys),
+                );
+                class_data.attrs.insert(
+                    "__len__".to_string(),
+                    Value::Builtin(BuiltinFunction::SqliteRowLen),
+                );
+                class_data.attrs.insert(
+                    "__getitem__".to_string(),
+                    Value::Builtin(BuiltinFunction::SqliteRowGetItem),
+                );
+                class_data.attrs.insert(
+                    "__iter__".to_string(),
+                    Value::Builtin(BuiltinFunction::SqliteRowIter),
+                );
+                class_data.attrs.insert(
+                    "__eq__".to_string(),
+                    Value::Builtin(BuiltinFunction::SqliteRowEq),
+                );
             }
         }
         let sqlite_prepare_protocol_class = self
@@ -1296,7 +1338,10 @@ impl Vm {
                 ("PARSE_COLNAMES", Value::Int(2)),
                 ("LEGACY_TRANSACTION_CONTROL", Value::Int(-1)),
                 ("threadsafety", Value::Int(3)),
-                ("sqlite_version", Value::Str(self.sqlite_libversion_string())),
+                (
+                    "sqlite_version",
+                    Value::Str(self.sqlite_libversion_string()),
+                ),
                 ("SQLITE_OK", Value::Int(0)),
                 ("SQLITE_DENY", Value::Int(1)),
                 ("SQLITE_IGNORE", Value::Int(2)),

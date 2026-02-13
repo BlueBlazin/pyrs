@@ -44,6 +44,9 @@ Primary references used for this audit:
 
 - Long-tail membership edge parity from CPython tests (`test_contains`, `test_descr`), including explicit blocking cases (for example `__contains__ = None`) and exact error text parity.
 - Broader slot edge behavior from CPython tests in `test_bool` and `test_descr`.
+- Special-method dispatch parity for representation/stringification hooks:
+  - custom `__repr__` / `__str__` on user classes must be honored consistently.
+  - this currently blocks inspect-visible rendering parity (for example `inspect.Signature` stringification in sqlite DB-API tests).
 - Continue reducing static truthiness shortcuts in call sites where Python-level coercion is required.
 
 ## Validation Expectations

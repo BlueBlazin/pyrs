@@ -2376,6 +2376,82 @@ except sqlite3.ProgrammingError as exc:
 }
 
 #[test]
+fn sqlite3_isolation_level_and_readonly_connection_attrs_follow_cpython_contract() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 isolation-level test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+ok = True
+try:
+    sqlite3.connect(':memory:', isolation_level='bogus')
+    ok = False
+except ValueError:
+    pass
+conn = sqlite3.connect(':memory:')
+try:
+    conn.isolation_level = 'bogus'
+    ok = False
+except ValueError:
+    pass
+conn.isolation_level = 'deferred'
+ok = ok and (conn.isolation_level == 'DEFERRED')
+for attr, value in (('in_transaction', True), ('total_changes', 1)):
+    try:
+        setattr(conn, attr, value)
+        ok = False
+    except AttributeError:
+        pass
+conn.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_row_factory_and_text_factory_reinit_behavior_matches_expected_baseline() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 row-factory test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+conn = sqlite3.connect(':memory:')
+conn.text_factory = bytes
+conn.row_factory = sqlite3.Row
+cur = conn.cursor()
+cur.execute('create table t(x)')
+cur.executemany('insert into t values (?)', ((v,) for v in ('a', 'b', 'c')))
+cur.execute('select x as first from t')
+head = cur.fetchmany(2)
+conn.__init__(':memory:')
+tail = cur.fetchall()
+empty_cursor = conn.cursor()
+row = sqlite3.Row(empty_cursor, ())
+ok = (
+    len(head) == 2
+    and all(isinstance(r, sqlite3.Row) for r in head)
+    and head[0].keys() == ['first']
+    and head[0][0] == b'a'
+    and len(tail) == 1
+    and isinstance(tail[0], sqlite3.Row)
+    and tail[0][0] == 'c'
+    and row.keys() == []
+)
+conn.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bytes_ljust_supports_bytes_and_bytearray() {
     let source = r#"b = b'xy'.ljust(5, b'_')
 ba = bytearray(b'xy').ljust(4)
