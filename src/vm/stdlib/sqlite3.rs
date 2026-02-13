@@ -1091,13 +1091,11 @@ impl Vm {
         })
     }
 
-    fn sqlite_extract_database(value: Value) -> Result<String, RuntimeError> {
+    fn sqlite_extract_database(value: Value) -> Result<Vec<u8>, RuntimeError> {
         match value {
-            Value::Str(text) => Ok(text),
+            Value::Str(text) => Ok(text.into_bytes()),
             Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
-                Object::Bytes(bytes) | Object::ByteArray(bytes) => {
-                    Ok(String::from_utf8_lossy(bytes).into_owned())
-                }
+                Object::Bytes(bytes) | Object::ByteArray(bytes) => Ok(bytes.clone()),
                 _ => Err(sqlite_error(
                     "TypeError",
                     "database argument must be str or bytes-like",
@@ -1799,7 +1797,7 @@ impl Vm {
         }
 
         let database = Self::sqlite_extract_database(database)?;
-        let db_path = CString::new(database.as_bytes())
+        let db_path = CString::new(database)
             .map_err(|_| sqlite_error("ProgrammingError", "database path contains embedded NUL"))?;
 
         let mut handle: *mut Sqlite3Db = ptr::null_mut();
@@ -1937,7 +1935,7 @@ impl Vm {
         }
 
         let database = Self::sqlite_extract_database(database)?;
-        let db_path = CString::new(database.as_bytes())
+        let db_path = CString::new(database)
             .map_err(|_| sqlite_error("ProgrammingError", "database path contains embedded NUL"))?;
         let mut handle: *mut Sqlite3Db = ptr::null_mut();
         let mut flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
