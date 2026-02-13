@@ -2566,6 +2566,13 @@ impl Vm {
             vec![
                 ("INT_MAX", Value::Int(i32::MAX as i64)),
                 ("INT_MIN", Value::Int(i32::MIN as i64)),
+                ("UINT_MAX", Value::Int(u32::MAX as i64)),
+                ("LLONG_MAX", Value::Int(i64::MAX)),
+                ("LLONG_MIN", Value::Int(i64::MIN)),
+                (
+                    "ULLONG_MAX",
+                    Value::BigInt(Box::new(BigInt::from_u64(u64::MAX))),
+                ),
                 ("PY_SSIZE_T_MAX", Value::Int(i64::MAX)),
                 ("PY_SSIZE_T_MIN", Value::Int(i64::MIN)),
                 ("MethInstance", Value::Class(meth_instance_class)),

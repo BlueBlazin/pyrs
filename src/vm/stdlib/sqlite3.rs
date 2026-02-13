@@ -429,6 +429,20 @@ impl Vm {
         sqlite_error("OperationalError", message)
     }
 
+    fn sqlite_blob_index_arg(&mut self, value: Value) -> Result<i64, RuntimeError> {
+        self.io_index_arg_to_int(value).map_err(|err| {
+            if err.message.contains("integer overflow") {
+                sqlite_error("IndexError", "cannot fit 'int' into an index-sized integer")
+            } else if err.message.contains("unsupported operand type")
+                || err.message.contains("cannot be interpreted as an integer")
+            {
+                sqlite_error("TypeError", "Blob indices must be integers")
+            } else {
+                err
+            }
+        })
+    }
+
     fn sqlite_extract_database(value: Value) -> Result<String, RuntimeError> {
         match value {
             Value::Str(text) => Ok(text),
@@ -1391,7 +1405,7 @@ impl Vm {
         let key = args.remove(1);
         let parsed_index = match &key {
             Value::Slice(_) => None,
-            other => Some(self.io_index_arg_to_int(other.clone())?),
+            other => Some(self.sqlite_blob_index_arg(other.clone())?),
         };
         let blob_bytes = {
             let (state, db) = self.sqlite_blob_state_and_db(blob_id)?;
@@ -1492,7 +1506,7 @@ impl Vm {
                 }
             }
             other => {
-                let index = self.io_index_arg_to_int(other)?;
+                let index = self.sqlite_blob_index_arg(other)?;
                 let byte_value = match replacement {
                     Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => {
                         value_to_int(replacement).map_err(|_| {
