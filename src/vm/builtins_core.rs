@@ -173,14 +173,26 @@ impl Vm {
         args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let sep = kwargs
-            .remove("sep")
-            .map(|value| format_value(&value))
-            .unwrap_or_else(|| " ".to_string());
-        let end = kwargs
-            .remove("end")
-            .map(|value| format_value(&value))
-            .unwrap_or_else(|| "\n".to_string());
+        let sep = match kwargs.remove("sep") {
+            None | Some(Value::None) => " ".to_string(),
+            Some(Value::Str(text)) => text,
+            Some(other) => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: sep must be None or a string, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        let end = match kwargs.remove("end") {
+            None | Some(Value::None) => "\n".to_string(),
+            Some(Value::Str(text)) => text,
+            Some(other) => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: end must be None or a string, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
         let file = kwargs.remove("file").unwrap_or(Value::None);
         let flush_requested = match kwargs.remove("flush") {
             Some(value) => self.truthy_from_value(&value)?,
@@ -194,7 +206,11 @@ impl Vm {
 
         let mut parts = Vec::with_capacity(args.len());
         for value in args {
-            parts.push(format_value(&value));
+            let rendered = match self.builtin_str(vec![value], HashMap::new())? {
+                Value::Str(text) => text,
+                _ => return Err(RuntimeError::new("str() returned non-string")),
+            };
+            parts.push(rendered);
         }
         let rendered = format!("{}{}", parts.join(&sep), end);
 

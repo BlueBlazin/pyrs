@@ -2769,6 +2769,26 @@ impl Vm {
             self.heap
                 .alloc_instance(InstanceObject::new(sentinel_class))
         };
+        let inspect_signature_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Signature".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *inspect_signature_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("inspect".to_string()));
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::InspectSignatureStr),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::InspectSignatureRepr),
+            );
+        }
         self.install_builtin_module(
             "inspect",
             &[
@@ -2805,11 +2825,7 @@ impl Vm {
             ],
             vec![
                 ("_sentinel", inspect_sentinel),
-                (
-                    "Signature",
-                    self.heap
-                        .alloc_class(ClassObject::new("Signature".to_string(), Vec::new())),
-                ),
+                ("Signature", Value::Class(inspect_signature_class)),
                 ("CO_VARARGS", Value::Int(0x04)),
                 ("CO_VARKEYWORDS", Value::Int(0x08)),
                 ("CO_GENERATOR", Value::Int(0x20)),

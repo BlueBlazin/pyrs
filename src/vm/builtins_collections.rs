@@ -2128,6 +2128,19 @@ impl Vm {
             })
             .ok_or_else(|| RuntimeError::new("inspect.Signature unavailable"))?;
 
+        let text_signature_override = match self.builtin_getattr(
+            vec![
+                callable.clone(),
+                Value::Str("__text_signature__".to_string()),
+            ],
+            HashMap::new(),
+        ) {
+            Ok(Value::Str(text)) if !text.is_empty() => Some(text),
+            Ok(_) => None,
+            Err(err) if is_missing_attribute_error(&err) => None,
+            Err(err) => return Err(err),
+        };
+
         let mut params = Vec::new();
         let mut parts = Vec::new();
         let mut return_annotation = Value::None;
@@ -2248,22 +2261,28 @@ impl Vm {
                 }
             }
             _ => {
-                parts.push("*args".to_string());
-                params.push((
-                    Value::Str("args".to_string()),
-                    self.heap
-                        .alloc_tuple(vec![Value::Str("VAR_POSITIONAL".to_string()), Value::None]),
-                ));
-                parts.push("**kwargs".to_string());
-                params.push((
-                    Value::Str("kwargs".to_string()),
-                    self.heap
-                        .alloc_tuple(vec![Value::Str("VAR_KEYWORD".to_string()), Value::None]),
-                ));
+                if text_signature_override.is_none() {
+                    parts.push("*args".to_string());
+                    params.push((
+                        Value::Str("args".to_string()),
+                        self.heap.alloc_tuple(vec![
+                            Value::Str("VAR_POSITIONAL".to_string()),
+                            Value::None,
+                        ]),
+                    ));
+                    parts.push("**kwargs".to_string());
+                    params.push((
+                        Value::Str("kwargs".to_string()),
+                        self.heap
+                            .alloc_tuple(vec![Value::Str("VAR_KEYWORD".to_string()), Value::None]),
+                    ));
+                }
             }
         }
 
-        let signature_text = Value::Str(format!("({})", parts.join(", ")));
+        let signature_text = Value::Str(
+            text_signature_override.unwrap_or_else(|| format!("({})", parts.join(", "))),
+        );
         let instance = match self
             .heap
             .alloc_instance(InstanceObject::new(signature_class))
@@ -2283,6 +2302,40 @@ impl Vm {
                 .insert("return_annotation".to_string(), return_annotation);
         }
         Ok(Value::Instance(instance))
+    }
+
+    pub(super) fn builtin_inspect_signature_str(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "Signature.__str__() expects no arguments",
+            ));
+        }
+        let instance = self.receiver_from_value(&args[0])?;
+        match Self::instance_attr_get(&instance, "__text__") {
+            Some(Value::Str(text)) => Ok(Value::Str(text)),
+            _ => Ok(Value::Str("<Signature instance>".to_string())),
+        }
+    }
+
+    pub(super) fn builtin_inspect_signature_repr(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "Signature.__repr__() expects no arguments",
+            ));
+        }
+        let instance = self.receiver_from_value(&args[0])?;
+        match Self::instance_attr_get(&instance, "__text__") {
+            Some(Value::Str(text)) => Ok(Value::Str(format!("<Signature {text}>"))),
+            _ => Ok(Value::Str("<Signature instance>".to_string())),
+        }
     }
 
     pub(super) fn builtin_inspect_isfunction(

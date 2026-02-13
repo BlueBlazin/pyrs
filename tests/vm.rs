@@ -2452,6 +2452,60 @@ conn.close()
 }
 
 #[test]
+fn print_uses_str_dunder_and_validates_sep_end_contract() {
+    let source = r#"import io
+class Message:
+    def __str__(self):
+        return "S"
+    def __repr__(self):
+        return "R"
+buf = io.StringIO()
+print(Message(), Message(), sep="-", end="!", file=buf)
+text = buf.getvalue()
+ok = (text == "S-S!")
+bad_sep = False
+try:
+    print(1, sep=1)
+except TypeError:
+    bad_sep = True
+bad_end = False
+try:
+    print(1, end=1)
+except TypeError:
+    bad_end = True
+ok = ok and bad_sep and bad_end
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn inspect_signature_uses_text_signature_for_sqlite_connection_callables() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping inspect-signature sqlite3 test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import inspect, sqlite3
+cx = sqlite3.connect(":memory:")
+sig = inspect.signature(cx)
+ok = (
+    str(sig) == "(sql, /)"
+    and repr(sig) == "<Signature (sql, /)>"
+)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bytes_ljust_supports_bytes_and_bytearray() {
     let source = r#"b = b'xy'.ljust(5, b'_')
 ba = bytearray(b'xy').ljust(4)

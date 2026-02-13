@@ -5619,6 +5619,12 @@ impl Vm {
                 self.builtin_collections_count_elements(args, kwargs)
             }
             BuiltinFunction::InspectSignature => self.builtin_inspect_signature(args, kwargs),
+            BuiltinFunction::InspectSignatureStr => {
+                self.builtin_inspect_signature_str(args, kwargs)
+            }
+            BuiltinFunction::InspectSignatureRepr => {
+                self.builtin_inspect_signature_repr(args, kwargs)
+            }
             BuiltinFunction::InspectGetModule => self.builtin_inspect_getmodule(args, kwargs),
             BuiltinFunction::InspectGetFile => self.builtin_inspect_getfile(args, kwargs),
             BuiltinFunction::InspectGetSourceFile => {

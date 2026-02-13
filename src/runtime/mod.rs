@@ -2646,6 +2646,8 @@ pub enum BuiltinFunction {
     InspectIsCode,
     InspectUnwrap,
     InspectSignature,
+    InspectSignatureStr,
+    InspectSignatureRepr,
     InspectGetModule,
     InspectGetFile,
     InspectGetSourceFile,
@@ -5320,6 +5322,8 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectIsCode
             | BuiltinFunction::InspectUnwrap
             | BuiltinFunction::InspectSignature
+            | BuiltinFunction::InspectSignatureStr
+            | BuiltinFunction::InspectSignatureRepr
             | BuiltinFunction::InspectGetModule
             | BuiltinFunction::InspectGetFile
             | BuiltinFunction::InspectGetSourceFile

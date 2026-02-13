@@ -46,7 +46,7 @@ Primary references used for this audit:
 - Broader slot edge behavior from CPython tests in `test_bool` and `test_descr`.
 - Special-method dispatch parity for representation/stringification hooks:
   - custom `__repr__` / `__str__` on user classes must be honored consistently.
-  - this currently blocks inspect-visible rendering parity (for example `inspect.Signature` stringification in sqlite DB-API tests).
+  - print path now routes through `str()` semantics rather than static value formatting.
 - Continue reducing static truthiness shortcuts in call sites where Python-level coercion is required.
 
 ## Validation Expectations
