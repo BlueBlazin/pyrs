@@ -5353,6 +5353,7 @@ impl Vm {
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
             BuiltinFunction::ExceptionTypeInit => self.builtin_exception_type_init(args, kwargs),
             BuiltinFunction::ObjectGetAttribute => self.builtin_object_getattribute(args, kwargs),
+            BuiltinFunction::ObjectFormat => self.builtin_object_format(args, kwargs),
             BuiltinFunction::ObjectGetState => self.builtin_object_getstate(args, kwargs),
             BuiltinFunction::ObjectSetState => self.builtin_object_setstate(args, kwargs),
             BuiltinFunction::ObjectReduce => self.builtin_object_reduce(args, kwargs),
@@ -5669,11 +5670,23 @@ impl Vm {
             BuiltinFunction::SqliteConnectionInterrupt => {
                 self.builtin_sqlite_connection_interrupt(args, kwargs)
             }
+            BuiltinFunction::SqliteConnectionIterDump => {
+                self.builtin_sqlite_connection_iterdump(args, kwargs)
+            }
             BuiltinFunction::SqliteConnectionCreateFunction => {
                 self.builtin_sqlite_connection_create_function(args, kwargs)
             }
             BuiltinFunction::SqliteConnectionCreateAggregate => {
                 self.builtin_sqlite_connection_create_aggregate(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionCreateWindowFunction => {
+                self.builtin_sqlite_connection_create_window_function(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionSetTraceCallback => {
+                self.builtin_sqlite_connection_set_trace_callback(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionCreateCollation => {
+                self.builtin_sqlite_connection_create_collation(args, kwargs)
             }
             BuiltinFunction::SqliteConnectionSetAuthorizer => {
                 self.builtin_sqlite_connection_set_authorizer(args, kwargs)

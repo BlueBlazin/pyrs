@@ -1,8 +1,6 @@
 use super::super::*;
 use std::cell::Cell;
-use std::collections::hash_map::DefaultHasher;
 use std::ffi::{CStr, CString};
-use std::hash::{Hash, Hasher};
 use std::os::raw::{c_char, c_int, c_uchar, c_void};
 use std::ptr::{self, NonNull};
 
@@ -837,9 +835,7 @@ fn sqlite_connection_readonly_attr_error(name: &str) -> RuntimeError {
 }
 
 fn sqlite_current_thread_ident() -> i64 {
-    let mut hasher = DefaultHasher::new();
-    std::thread::current().id().hash(&mut hasher);
-    (hasher.finish() & i64::MAX as u64) as i64
+    vm_current_thread_ident()
 }
 
 const SQLITE_CONNECT_POSITIONAL_DEPRECATION: &str = "Passing more than 1 positional argument to sqlite3.connect() is deprecated. \
@@ -913,6 +909,19 @@ impl Vm {
     ) -> Result<u64, RuntimeError> {
         let receiver = self.receiver_from_value(value)?;
         let receiver_id = receiver.id();
+        let receiver_is_sqlite_connection = match &*receiver.kind() {
+            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                Object::Class(class_data) => {
+                    class_data.name == "Connection"
+                        && matches!(
+                            class_data.attrs.get("__module__"),
+                            Some(Value::Str(module_name)) if module_name == "_sqlite3"
+                        )
+                }
+                _ => false,
+            },
+            _ => false,
+        };
         if matches!(
             Self::instance_attr_get(&receiver, SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR),
             Some(Value::Bool(false))
@@ -924,6 +933,11 @@ impl Vm {
         }
         if self.sqlite_connections.contains_key(&receiver_id) {
             Ok(receiver_id)
+        } else if receiver_is_sqlite_connection {
+            Err(sqlite_error(
+                "ProgrammingError",
+                "Base Connection.__init__ not called.",
+            ))
         } else {
             Err(sqlite_error(
                 "ProgrammingError",
@@ -988,6 +1002,20 @@ impl Vm {
         } else {
             sqlite_error("ProgrammingError", "Cannot operate on a closed cursor.")
         }
+    }
+
+    fn sqlite_cursor_ensure_thread_affinity(&self, cursor_id: u64) -> Result<u64, RuntimeError> {
+        let connection_id = self
+            .sqlite_cursors
+            .get(&cursor_id)
+            .map(|state| state.connection_id)
+            .ok_or_else(|| sqlite_error("ProgrammingError", "invalid sqlite cursor"))?;
+        let connection_state = self
+            .sqlite_connections
+            .get(&connection_id)
+            .ok_or_else(|| sqlite_error("ProgrammingError", "invalid sqlite connection"))?;
+        connection_state.ensure_thread_affinity()?;
+        Ok(connection_id)
     }
 
     fn sqlite_maybe_begin_legacy_transaction(
@@ -2564,6 +2592,49 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(in crate::vm) fn builtin_sqlite_connection_iterdump(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(sqlite_error("TypeError", "iterdump() missing self"));
+        }
+        if args.len() != 1 {
+            return Err(sqlite_error(
+                "TypeError",
+                "iterdump() takes no positional arguments",
+            ));
+        }
+        let receiver = args.remove(0);
+        let filter = kwargs.remove("filter");
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("iterdump() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "iterdump")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let dump_module =
+            self.builtin_import_module(vec![Value::Str("sqlite3.dump".to_string())], HashMap::new())?;
+        let iterdump_callable = self.builtin_getattr(
+            vec![dump_module, Value::Str("_iterdump".to_string())],
+            HashMap::new(),
+        )?;
+        let mut call_kwargs = HashMap::new();
+        if let Some(filter_value) = filter {
+            call_kwargs.insert("filter".to_string(), filter_value);
+        }
+        match self.call_internal_preserving_caller(iterdump_callable, vec![receiver], call_kwargs)?
+        {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("iterdump() failed"))
+            }
+        }
+    }
+
     pub(in crate::vm) fn builtin_sqlite_connection_create_function(
         &mut self,
         mut args: Vec<Value>,
@@ -2712,6 +2783,105 @@ impl Vm {
             return Err(sqlite_error(
                 "TypeError",
                 "create_aggregate() expected class or None",
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_create_window_function(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 4 {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_window_function() expects name, num_params, aggregate_class",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id =
+            self.sqlite_connection_id_from_value(&receiver, "create_window_function")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        match args.remove(0) {
+            Value::Str(_) => {}
+            _ => {
+                return Err(sqlite_error(
+                    "TypeError",
+                    "create_window_function() name must be str",
+                ));
+            }
+        }
+        let _ = value_to_int(args.remove(0)).map_err(|_| {
+            sqlite_error(
+                "TypeError",
+                "create_window_function() num_params must be an integer",
+            )
+        })?;
+        let aggregate_class = args.remove(0);
+        if !matches!(aggregate_class, Value::None)
+            && !matches!(aggregate_class, Value::Class(_))
+            && !self.is_callable_value(&aggregate_class)
+        {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_window_function() expected class or None",
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_set_trace_callback(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_trace_callback() expects trace_callback",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id =
+            self.sqlite_connection_id_from_value(&receiver, "set_trace_callback")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let callback = args.remove(0);
+        if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_trace_callback() expected a callable or None",
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_create_collation(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_collation() expects name and callback",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "create_collation")?;
+        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let name = args.remove(0);
+        let callback = args.remove(0);
+        if !matches!(name, Value::Str(_)) {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_collation() name must be str",
+            ));
+        }
+        if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
+            return Err(sqlite_error(
+                "TypeError",
+                "create_collation() expected a callable or None",
             ));
         }
         Ok(Value::None)
@@ -3798,9 +3968,10 @@ impl Vm {
             ));
         }
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "setinputsizes")?;
+        let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
         if let Some(state) = self.sqlite_cursors.get(&cursor_id) {
             if state.closed {
-                return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
+                return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
             }
         }
         Ok(Value::None)
@@ -3818,9 +3989,10 @@ impl Vm {
             ));
         }
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "setoutputsize")?;
+        let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
         if let Some(state) = self.sqlite_cursors.get(&cursor_id) {
             if state.closed {
-                return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
+                return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
             }
         }
         Ok(Value::None)
@@ -3859,7 +4031,8 @@ impl Vm {
         } else {
             self.sqlite_extract_params(args.remove(0))?
         };
-        let connection_id = {
+        let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
+        {
             let state = self
                 .sqlite_cursors
                 .get(&cursor_id)
@@ -3867,8 +4040,7 @@ impl Vm {
             if state.closed {
                 return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
             }
-            state.connection_id
-        };
+        }
         let is_dml = sqlite_is_dml_statement(&sql);
         self.sqlite_maybe_begin_legacy_transaction(connection_id, &sql)?;
         let query_result = self.sqlite_execute_query(connection_id, &sql, params)?;
@@ -3938,7 +4110,8 @@ impl Vm {
                 "executemany() second argument must be iterable",
             )
         })?;
-        let connection_id = {
+        let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
+        {
             let state = self
                 .sqlite_cursors
                 .get(&cursor_id)
@@ -3946,8 +4119,7 @@ impl Vm {
             if state.closed {
                 return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
             }
-            state.connection_id
-        };
+        }
         self.sqlite_maybe_begin_legacy_transaction(connection_id, &sql)?;
         let mut rowcount_total: i64 = 0;
 
@@ -4000,7 +4172,8 @@ impl Vm {
                 ));
             }
         };
-        let connection_id = {
+        let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
+        {
             let state = self
                 .sqlite_cursors
                 .get(&cursor_id)
@@ -4008,8 +4181,7 @@ impl Vm {
             if state.closed {
                 return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
             }
-            state.connection_id
-        };
+        }
         self.sqlite_execute_script(connection_id, &script)?;
         if let Some(state) = self.sqlite_cursors.get_mut(&cursor_id) {
             state.rows.clear();
@@ -4066,6 +4238,7 @@ impl Vm {
                 format!("fetchmany() got an unexpected keyword argument '{unexpected}'"),
             ));
         }
+        let _connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
         let raw_rows = {
             let state = self
                 .sqlite_cursors
@@ -4104,6 +4277,7 @@ impl Vm {
             ));
         }
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "fetchone")?;
+        let _connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
         let raw_row = {
             let state = self
                 .sqlite_cursors
@@ -4136,6 +4310,7 @@ impl Vm {
             ));
         }
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "fetchall")?;
+        let _connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
         let raw_rows = {
             let state = self
                 .sqlite_cursors
@@ -4172,6 +4347,7 @@ impl Vm {
             ));
         }
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "close")?;
+        let _connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
         if let Some(state) = self.sqlite_cursors.get_mut(&cursor_id) {
             state.closed = true;
             state.rows.clear();

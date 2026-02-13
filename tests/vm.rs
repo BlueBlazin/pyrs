@@ -2546,6 +2546,151 @@ cx.close()
 }
 
 #[test]
+fn sqlite3_check_same_thread_blocks_cross_thread_connection_use() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 check_same_thread test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3, threading
+cx = sqlite3.connect(':memory:')
+err = ""
+def worker():
+    global err
+    try:
+        cx.execute('select 1')
+    except sqlite3.ProgrammingError as exc:
+        err = str(exc)
+t = threading.Thread(target=worker)
+t.start()
+t.join()
+ok = ("same thread" in err and "created in thread id" in err)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_check_same_thread_false_allows_cross_thread_connection_use() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 check_same_thread=False test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3, threading
+cx = sqlite3.connect(':memory:', check_same_thread=False)
+result = 0
+def worker():
+    global result
+    result = cx.execute('select 1').fetchone()[0]
+t = threading.Thread(target=worker)
+t.start()
+t.join()
+ok = (result == 1)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_thread_affinity_applies_to_trace_and_collation_methods() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping sqlite3 trace/collation thread-affinity test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = r#"import sqlite3, threading
+cx = sqlite3.connect(':memory:')
+errs = []
+def worker():
+    ops = [
+        lambda: cx.set_trace_callback(None),
+        lambda: cx.create_collation('cmp', None),
+    ]
+    if sqlite3.sqlite_version_info >= (3, 25, 0):
+        ops.append(lambda: cx.create_window_function('win', 0, None))
+    for op in ops:
+        try:
+            op()
+            errs.append('did not raise')
+        except sqlite3.ProgrammingError:
+            errs.append('programming')
+        except BaseException as exc:
+            errs.append(type(exc).__name__)
+t = threading.Thread(target=worker)
+t.start()
+t.join()
+ok = all(value == 'programming' for value in errs) and len(errs) >= 2
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_iterdump_uninitialized_connection_raises_programming_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping sqlite3 iterdump uninitialized-connection test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.Connection.__new__(sqlite3.Connection)
+err = ""
+try:
+    cx.iterdump()
+except sqlite3.ProgrammingError as exc:
+    err = str(exc)
+ok = ("Base Connection.__init__ not called." in err)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_iterdump_returns_sql_text_iterator_for_basic_schema() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 iterdump workflow test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.connect(':memory:')
+cx.execute("create table t(x integer)")
+cx.execute("insert into t(x) values (7)")
+dump = list(cx.iterdump())
+cx.close()
+ok = (
+    any("CREATE TABLE" in line and "t" in line for line in dump)
+    and any("INSERT INTO" in line and "7" in line for line in dump)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn sqlite3_blobopen_supports_read_write_seek_and_context_manager() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping sqlite3 blobopen test (CPython Lib path not available)");
@@ -9723,6 +9868,50 @@ fn executes_threading_class_methods_baseline() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn threading_thread_target_runs_with_distinct_ident() {
+    let source = "import threading\nmain_ident = threading.get_ident()\nseen = [main_ident]\ndef worker():\n    seen.append(threading.get_ident())\nt = threading.Thread(target=worker)\nt.start()\nt.join()\nok = (len(seen) == 2 and isinstance(seen[1], int) and seen[1] != main_ident)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn object_format_uses_str_for_empty_spec_and_rejects_nonempty_spec() {
+    let source = "class A:\n    def __str__(self):\n        return 'A'\na = A()\nerr = ''\ntry:\n    format(a, 'x')\nexcept TypeError as exc:\n    err = str(exc)\nok = (a.__format__('') == 'A' and format(a, '') == 'A' and '{} {}'.format(a, 'x') == 'A x' and 'unsupported format string passed to A.__format__' in err)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn unittest_subtest_string_render_does_not_raise_repr_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping unittest subtest repr test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("unittest-subtest-str".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\nsub = unittest.case._SubTest(T('test_x'), None, {'fn': (lambda: 1)})\ntext = str(sub)\nok = ('fn=<function>' in text and 'test_x' in text)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn unittest-subtest-str thread");
+    handle
+        .join()
+        .expect("unittest-subtest-str thread should complete");
 }
 
 #[test]

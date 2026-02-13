@@ -1085,12 +1085,28 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::SqliteConnectionInterrupt),
             );
             class_data.attrs.insert(
+                "iterdump".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionIterDump),
+            );
+            class_data.attrs.insert(
                 "create_function".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionCreateFunction),
             );
             class_data.attrs.insert(
                 "create_aggregate".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionCreateAggregate),
+            );
+            class_data.attrs.insert(
+                "create_window_function".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionCreateWindowFunction),
+            );
+            class_data.attrs.insert(
+                "set_trace_callback".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionSetTraceCallback),
+            );
+            class_data.attrs.insert(
+                "create_collation".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionCreateCollation),
             );
             class_data.attrs.insert(
                 "set_authorizer".to_string(),

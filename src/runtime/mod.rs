@@ -2199,6 +2199,7 @@ pub enum BuiltinFunction {
     ObjectInit,
     ExceptionTypeInit,
     ObjectGetAttribute,
+    ObjectFormat,
     ObjectGetState,
     ObjectSetState,
     ObjectReduce,
@@ -2442,8 +2443,12 @@ pub enum BuiltinFunction {
     SqliteConnectionCommit,
     SqliteConnectionRollback,
     SqliteConnectionInterrupt,
+    SqliteConnectionIterDump,
     SqliteConnectionCreateFunction,
     SqliteConnectionCreateAggregate,
+    SqliteConnectionCreateWindowFunction,
+    SqliteConnectionSetTraceCallback,
+    SqliteConnectionCreateCollation,
     SqliteConnectionSetAuthorizer,
     SqliteConnectionSetProgressHandler,
     SqliteConnectionGetLimit,
@@ -5561,8 +5566,12 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteConnectionCommit
             | BuiltinFunction::SqliteConnectionRollback
             | BuiltinFunction::SqliteConnectionInterrupt
+            | BuiltinFunction::SqliteConnectionIterDump
             | BuiltinFunction::SqliteConnectionCreateFunction
             | BuiltinFunction::SqliteConnectionCreateAggregate
+            | BuiltinFunction::SqliteConnectionCreateWindowFunction
+            | BuiltinFunction::SqliteConnectionSetTraceCallback
+            | BuiltinFunction::SqliteConnectionCreateCollation
             | BuiltinFunction::SqliteConnectionSetAuthorizer
             | BuiltinFunction::SqliteConnectionSetProgressHandler
             | BuiltinFunction::SqliteConnectionGetLimit
@@ -5619,6 +5628,7 @@ impl BuiltinFunction {
             | BuiltinFunction::ObjectInit
             | BuiltinFunction::ExceptionTypeInit
             | BuiltinFunction::ObjectGetAttribute
+            | BuiltinFunction::ObjectFormat
             | BuiltinFunction::ObjectSetAttr
             | BuiltinFunction::ObjectDelAttr
             | BuiltinFunction::Dir

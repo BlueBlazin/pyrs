@@ -3794,6 +3794,35 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_object_format(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "TypeError: object.__format__() expects two arguments",
+            ));
+        }
+        let target = args.remove(0);
+        let format_spec = match args.remove(0) {
+            Value::Str(spec) => spec,
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: object.__format__() argument must be str, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        if !format_spec.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: unsupported format string passed to {}.__format__",
+                self.value_type_name_for_error(&target)
+            )));
+        }
+        self.builtin_str(vec![target], HashMap::new())
+    }
+
     pub(super) fn builtin_object_setattr(
         &mut self,
         mut args: Vec<Value>,

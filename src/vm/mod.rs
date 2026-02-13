@@ -16,6 +16,7 @@ mod vm_execution;
 mod vm_native_dispatch;
 mod vm_runtime_methods;
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -114,6 +115,7 @@ const SIGNAL_DEFAULT: i64 = 0;
 const SIGNAL_IGNORE: i64 = 1;
 const SIGNAL_SIGINT: i64 = 2;
 const SIGNAL_SIGTERM: i64 = 15;
+const SYNTHETIC_THREAD_IDENT_START: i64 = 1_i64 << 60;
 const PY_TPFLAGS_HEAPTYPE: i64 = 1 << 9;
 const LIST_BACKING_STORAGE_ATTR: &str = "__pyrs_list_storage__";
 const DEQUE_BACKING_STORAGE_ATTR: &str = "__pyrs_deque_storage__";
@@ -352,6 +354,22 @@ const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
 const LOCAL_SHIM_MODULES: &[&str] = &["pkgutil", "importlib.resources"];
+
+thread_local! {
+    static VM_THREAD_IDENT_OVERRIDE: Cell<Option<i64>> = const { Cell::new(None) };
+}
+
+pub(super) fn vm_os_thread_ident() -> i64 {
+    let mut hasher = DefaultHasher::new();
+    std::thread::current().id().hash(&mut hasher);
+    (hasher.finish() & i64::MAX as u64) as i64
+}
+
+pub(super) fn vm_current_thread_ident() -> i64 {
+    VM_THREAD_IDENT_OVERRIDE
+        .with(|slot| slot.get())
+        .unwrap_or_else(vm_os_thread_ident)
+}
 
 fn env_flag_enabled(name: &str) -> bool {
     let Ok(raw) = std::env::var(name) else {
@@ -647,6 +665,7 @@ pub struct Vm {
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
     recursion_limit: i64,
+    next_synthetic_thread_ident: i64,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
 }
@@ -720,6 +739,7 @@ impl Vm {
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             recursion_limit: 1000,
+            next_synthetic_thread_ident: SYNTHETIC_THREAD_IDENT_START,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
         };
@@ -732,6 +752,36 @@ impl Vm {
         vm.install_builtins();
         vm.install_builtins_module();
         vm
+    }
+
+    pub(super) fn current_thread_ident_value(&self) -> i64 {
+        vm_current_thread_ident()
+    }
+
+    fn allocate_synthetic_thread_ident(&mut self) -> i64 {
+        let ident = self.next_synthetic_thread_ident;
+        self.next_synthetic_thread_ident = self.next_synthetic_thread_ident.wrapping_add(1);
+        if self.next_synthetic_thread_ident <= 0 {
+            self.next_synthetic_thread_ident = SYNTHETIC_THREAD_IDENT_START;
+        }
+        ident
+    }
+
+    fn call_internal_in_synthetic_thread(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<(i64, InternalCallOutcome), RuntimeError> {
+        let thread_ident = self.allocate_synthetic_thread_ident();
+        let previous = VM_THREAD_IDENT_OVERRIDE.with(|slot| {
+            let previous = slot.get();
+            slot.set(Some(thread_ident));
+            previous
+        });
+        let outcome = self.call_internal(callable, args, kwargs);
+        VM_THREAD_IDENT_OVERRIDE.with(|slot| slot.set(previous));
+        outcome.map(|result| (thread_ident, result))
     }
 
     pub fn set_global(&mut self, name: impl Into<String>, value: Value) {

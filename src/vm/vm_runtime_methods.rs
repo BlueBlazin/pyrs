@@ -871,7 +871,7 @@ impl Vm {
                 .insert("__str__".to_string(), Value::Builtin(BuiltinFunction::Repr));
             class_data.attrs.insert(
                 "__format__".to_string(),
-                Value::Builtin(BuiltinFunction::Repr),
+                Value::Builtin(BuiltinFunction::ObjectFormat),
             );
             class_data.attrs.insert(
                 "__reduce_ex__".to_string(),

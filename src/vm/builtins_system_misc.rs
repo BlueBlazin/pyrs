@@ -1241,9 +1241,7 @@ impl Vm {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("get_ident() expects no arguments"));
         }
-        let mut hasher = DefaultHasher::new();
-        std::thread::current().id().hash(&mut hasher);
-        Ok(Value::Int((hasher.finish() & i64::MAX as u64) as i64))
+        Ok(Value::Int(self.current_thread_ident_value()))
     }
 
     pub(super) fn builtin_thread_start_new_thread(
@@ -1300,10 +1298,10 @@ impl Vm {
             HashMap::new()
         };
 
-        match self.call_internal(callable, call_args, call_kwargs)? {
-            InternalCallOutcome::Value(_) => {
-                self.builtin_threading_get_ident(Vec::new(), HashMap::new())
-            }
+        let (thread_ident, outcome) =
+            self.call_internal_in_synthetic_thread(callable, call_args, call_kwargs)?;
+        match outcome {
+            InternalCallOutcome::Value(_) => Ok(Value::Int(thread_ident)),
             InternalCallOutcome::CallerExceptionHandled => {
                 Err(RuntimeError::new("start_new_thread() callable raised"))
             }
@@ -1479,7 +1477,9 @@ impl Vm {
                     }
                 }
             }
-            match self.call_internal(target, call_args, call_kwargs)? {
+            let (_, outcome) =
+                self.call_internal_in_synthetic_thread(target, call_args, call_kwargs)?;
+            match outcome {
                 InternalCallOutcome::Value(_) => {}
                 InternalCallOutcome::CallerExceptionHandled => {
                     return Err(RuntimeError::new("thread target raised"));

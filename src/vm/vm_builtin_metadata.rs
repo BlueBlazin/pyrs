@@ -94,6 +94,7 @@ impl Vm {
             BuiltinFunction::SqliteEnableCallbackTracebacks => {
                 "enable_callback_tracebacks".to_string()
             }
+            BuiltinFunction::ObjectFormat => "__format__".to_string(),
             BuiltinFunction::SqliteConnectionInit => "__init__".to_string(),
             BuiltinFunction::SqliteConnectionDel => "__del__".to_string(),
             BuiltinFunction::SqliteConnectionGetAttribute => "__getattribute__".to_string(),
@@ -109,8 +110,16 @@ impl Vm {
             BuiltinFunction::SqliteConnectionCommit => "commit".to_string(),
             BuiltinFunction::SqliteConnectionRollback => "rollback".to_string(),
             BuiltinFunction::SqliteConnectionInterrupt => "interrupt".to_string(),
+            BuiltinFunction::SqliteConnectionIterDump => "iterdump".to_string(),
             BuiltinFunction::SqliteConnectionCreateFunction => "create_function".to_string(),
             BuiltinFunction::SqliteConnectionCreateAggregate => "create_aggregate".to_string(),
+            BuiltinFunction::SqliteConnectionCreateWindowFunction => {
+                "create_window_function".to_string()
+            }
+            BuiltinFunction::SqliteConnectionSetTraceCallback => {
+                "set_trace_callback".to_string()
+            }
+            BuiltinFunction::SqliteConnectionCreateCollation => "create_collation".to_string(),
             BuiltinFunction::SqliteConnectionSetAuthorizer => "set_authorizer".to_string(),
             BuiltinFunction::SqliteConnectionSetProgressHandler => {
                 "set_progress_handler".to_string()
@@ -212,11 +221,23 @@ impl Vm {
             BuiltinFunction::SqliteConnectionInterrupt => {
                 "_sqlite3.Connection.interrupt".to_string()
             }
+            BuiltinFunction::SqliteConnectionIterDump => {
+                "_sqlite3.Connection.iterdump".to_string()
+            }
             BuiltinFunction::SqliteConnectionCreateFunction => {
                 "_sqlite3.Connection.create_function".to_string()
             }
             BuiltinFunction::SqliteConnectionCreateAggregate => {
                 "_sqlite3.Connection.create_aggregate".to_string()
+            }
+            BuiltinFunction::SqliteConnectionCreateWindowFunction => {
+                "_sqlite3.Connection.create_window_function".to_string()
+            }
+            BuiltinFunction::SqliteConnectionSetTraceCallback => {
+                "_sqlite3.Connection.set_trace_callback".to_string()
+            }
+            BuiltinFunction::SqliteConnectionCreateCollation => {
+                "_sqlite3.Connection.create_collation".to_string()
             }
             BuiltinFunction::SqliteConnectionSetAuthorizer => {
                 "_sqlite3.Connection.set_authorizer".to_string()
@@ -377,8 +398,12 @@ impl Vm {
             | BuiltinFunction::SqliteConnectionCommit
             | BuiltinFunction::SqliteConnectionRollback
             | BuiltinFunction::SqliteConnectionInterrupt
+            | BuiltinFunction::SqliteConnectionIterDump
             | BuiltinFunction::SqliteConnectionCreateFunction
             | BuiltinFunction::SqliteConnectionCreateAggregate
+            | BuiltinFunction::SqliteConnectionCreateWindowFunction
+            | BuiltinFunction::SqliteConnectionSetTraceCallback
+            | BuiltinFunction::SqliteConnectionCreateCollation
             | BuiltinFunction::SqliteConnectionSetAuthorizer
             | BuiltinFunction::SqliteConnectionSetProgressHandler
             | BuiltinFunction::SqliteConnectionGetLimit
@@ -539,60 +564,60 @@ impl Vm {
             "hex" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatHex))
             }
-            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Dict => {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::Dict => {
                 Ok(Value::Builtin(BuiltinFunction::DictTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::List => {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::List => {
                 Ok(Value::Builtin(BuiltinFunction::ListTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Tuple => {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::Tuple => {
                 Ok(Value::Builtin(BuiltinFunction::TupleTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Set => {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::Set => {
                 Ok(Value::Builtin(BuiltinFunction::SetTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::FrozenSet => {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::FrozenSet => {
                 Ok(Value::Builtin(BuiltinFunction::FrozenSetTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Str => {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::Str => {
                 Ok(Value::Builtin(BuiltinFunction::StrTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::Bytes => {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::Bytes => {
                 Ok(Value::Builtin(BuiltinFunction::BytesTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__" if builtin == BuiltinFunction::ByteArray => {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::ByteArray => {
                 Ok(Value::Builtin(BuiltinFunction::ByteArrayTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__"
-                if builtin == BuiltinFunction::TypesMappingProxy =>
-            {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::TypesMappingProxy => {
                 Ok(Value::Builtin(BuiltinFunction::MappingProxyTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__"
-                if builtin == BuiltinFunction::CollectionsDefaultDict =>
-            {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsDefaultDict => {
                 Ok(Value::Builtin(
                     BuiltinFunction::CollectionsDefaultDictTypeRepr,
                 ))
             }
-            "__repr__" | "__str__" | "__format__"
-                if builtin == BuiltinFunction::CollectionsOrderedDict =>
-            {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsOrderedDict => {
                 Ok(Value::Builtin(
                     BuiltinFunction::CollectionsOrderedDictTypeRepr,
                 ))
             }
-            "__repr__" | "__str__" | "__format__"
-                if builtin == BuiltinFunction::CollectionsCounter =>
-            {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsCounter => {
                 Ok(Value::Builtin(BuiltinFunction::CollectionsCounterTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__"
-                if builtin == BuiltinFunction::CollectionsDeque =>
-            {
+            "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsDeque => {
                 Ok(Value::Builtin(BuiltinFunction::CollectionsDequeTypeRepr))
             }
-            "__repr__" | "__str__" | "__format__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
+            "__format__" if builtin == BuiltinFunction::Int => {
+                Ok(Value::Builtin(BuiltinFunction::Format))
+            }
+            "__format__" if builtin == BuiltinFunction::Float => {
+                Ok(Value::Builtin(BuiltinFunction::Format))
+            }
+            "__format__" if builtin == BuiltinFunction::Str => {
+                Ok(Value::Builtin(BuiltinFunction::Format))
+            }
+            "__repr__" | "__str__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
+            "__format__" => Ok(Value::Builtin(BuiltinFunction::ObjectFormat)),
             "__reduce_ex__" | "__reduce__" => {
                 Ok(self.alloc_reduce_ex_bound_method(Value::Builtin(builtin)))
             }
@@ -2845,7 +2870,7 @@ impl Vm {
         } else if attr_name == "__str__" {
             Value::Builtin(BuiltinFunction::Str)
         } else if attr_name == "__format__" {
-            Value::Builtin(BuiltinFunction::Format)
+            Value::Builtin(BuiltinFunction::ObjectFormat)
         } else if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
             Value::Builtin(BuiltinFunction::ObjectReduceEx)
         } else if attr_name == "__doc__" {
