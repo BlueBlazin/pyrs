@@ -4845,9 +4845,44 @@ impl Vm {
         exception: &Value,
         handler_type: &Value,
     ) -> Result<bool, RuntimeError> {
-        let exception_name = match exception {
-            Value::Exception(exc) => exc.name.as_str(),
-            _ => return Err(RuntimeError::new("expected exception instance")),
+        let exception_name: std::borrow::Cow<'_, str> = if matches!(
+            exception,
+            Value::Exception(_) | Value::ExceptionType(_) | Value::Class(_)
+        ) {
+            match exception {
+                Value::Exception(exc) => std::borrow::Cow::Borrowed(exc.name.as_str()),
+                Value::ExceptionType(name) => std::borrow::Cow::Borrowed(name.as_str()),
+                Value::Class(class) if self.class_is_exception_class(class) => {
+                    let class_kind = class.kind();
+                    let Object::Class(class_data) = &*class_kind else {
+                        return Err(RuntimeError::new("expected exception instance"));
+                    };
+                    std::borrow::Cow::Owned(class_data.name.clone())
+                }
+                _ => {
+                    return Err(RuntimeError::new("expected exception instance"));
+                }
+            }
+        } else {
+            let Some(active) = self
+                .frames
+                .last()
+                .and_then(|frame| frame.active_exception.clone())
+            else {
+                return Err(RuntimeError::new("expected exception instance"));
+            };
+            match active {
+                Value::Exception(exc) => std::borrow::Cow::Owned(exc.name.clone()),
+                Value::ExceptionType(name) => std::borrow::Cow::Owned(name),
+                Value::Class(class) if self.class_is_exception_class(&class) => {
+                    let class_kind = class.kind();
+                    let Object::Class(class_data) = &*class_kind else {
+                        return Err(RuntimeError::new("expected exception instance"));
+                    };
+                    std::borrow::Cow::Owned(class_data.name.clone())
+                }
+                _ => return Err(RuntimeError::new("expected exception instance")),
+            }
         };
 
         let handler_name = match handler_type {
@@ -4883,12 +4918,12 @@ impl Vm {
                 let Object::Class(class_data) = &*class_kind else {
                     return Err(RuntimeError::new("except expects exception type"));
                 };
-                return Ok(self.exception_inherits(exception_name, &class_data.name));
+                return Ok(self.exception_inherits(&exception_name, &class_data.name));
             }
             _ => return Err(RuntimeError::new("except expects exception type")),
         };
 
-        Ok(self.exception_inherits(exception_name, handler_name))
+        Ok(self.exception_inherits(&exception_name, handler_name))
     }
 
     pub(super) fn exception_split_for_star(

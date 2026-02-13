@@ -648,7 +648,9 @@ impl Vm {
                 let Object::List(values) = &*receiver_kind else {
                     return Err(RuntimeError::new("list.copy() receiver must be list"));
                 };
-                Ok(NativeCallResult::Value(self.heap.alloc_list(values.clone())))
+                Ok(NativeCallResult::Value(
+                    self.heap.alloc_list(values.clone()),
+                ))
             }
             NativeMethodKind::TupleCount => {
                 if args.is_empty() {

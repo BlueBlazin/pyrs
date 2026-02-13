@@ -54,8 +54,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - targeted CPython `email` smoke (`EmailMessage` header/content fold + `as_string`) is green locally; extended matrix artifact refresh pending.
   - numeric parity checkpoint: `int` now exposes `numerator`/`denominator`/`real`/`imag`; `sum()` now uses binary add runtime fallback; `float()` now honors `__float__`; primitive numeric instances satisfy `numbers` ABC checks used by `fractions`/`statistics`.
   - regex parity checkpoint: `_sre` now recognizes CPython `_pydecimal` parser pattern structure with named-group captures (`sign`/`int`/`frac`/`exp`/`signal`/`diag`) and matching `groupindex` mapping.
+  - import binding parity: `import` / `__import__` now bind the canonical `sys.modules[name]` module object when module code replaces the entry during execution.
+  - pure `decimal` preference: when CPython `Lib/decimal.py` is available on `sys.path`, builtin bootstrap `decimal` is unloaded and pure `decimal`/`_pydecimal` is used.
+  - exception hierarchy parity: `LookupError`/`IndexError`/`KeyError`, `ArithmeticError` family, warning family, pickle error family, and several core parents now follow CPython ancestry.
+  - exception-match resilience: `except` matching now falls back to active exception state when stack operands are polluted by import-failure edges.
+  - heavy CPython-stdlib VM tests now run on dedicated 32MB stack threads for stability (`import_http_client_runs_package_init_first`, `pyio_fileio_del_namedexpr_does_not_leak_bound_method_or_pin_cycle`, `c_pickler_newobj_ex_argument_type_errors_match_cpython_protocols_2_through_5`, `pickle_newobj_generic_matrix_from_pickletester_roundtrips`, `prefers_cpython_pkgutil_and_resources_over_local_shims_when_stdlib_is_available`).
 - Extended probe remaining red modules:
-  - `statistics`* (targeted smoke green; artifact pending refresh), `decimal`, `ssl`, `email`* (artifact pending refresh), `smtplib`, `xml`, `gzip`, `bz2`, `lzma`.
+  - `xml`, `gzip`, `bz2`, `lzma`.
+  - `smtplib` targeted smoke is green but still logs unsupported `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`).
 
 ## Execution Policy
 - CPython behavior is the source of truth:

@@ -448,8 +448,7 @@ ok = (a == 1 and b == -1 and c == int('100000000000000000000') and v1 == 0 and v
 
 #[test]
 fn int_exposes_rational_and_complex_projection_attributes() {
-    let source =
-        "x = 42\nok = (x.numerator == 42 and x.denominator == 1 and x.real == 42 and x.imag == 0)\n";
+    let source = "x = 42\nok = (x.numerator == 42 and x.denominator == 1 and x.real == 42 and x.imag == 0)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3607,7 +3606,11 @@ fn c_pickler_newobj_ex_argument_type_errors_match_cpython_protocols_2_through_5(
         );
         return;
     };
-    let source = r#"import copyreg
+    let handle = std::thread::Builder::new()
+        .name("pickle-newobj-ex".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import copyreg
 import io
 import _pickle
 from test.pickletester import REX
@@ -3634,12 +3637,17 @@ for proto in (2, 3, 4, 5):
             and str(exc) == "third argument to __newobj_ex__() must be a dict, not list"
         )
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pickle-newobj-ex thread");
+    handle
+        .join()
+        .expect("pickle-newobj-ex thread should complete");
 }
 
 #[test]
@@ -3801,7 +3809,11 @@ fn pickle_newobj_generic_matrix_from_pickletester_roundtrips() {
         eprintln!("skipping pickle newobj generic matrix test (CPython Lib path not available)");
         return;
     };
-    let source = r#"import pickle
+    let handle = std::thread::Builder::new()
+        .name("pickle-newobj-matrix".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import pickle
 from test.pickletester import myclasses, protocols
 
 ok = True
@@ -3813,12 +3825,17 @@ for proto in protocols:
         y = pickle.loads(pickle.dumps(x, proto))
         ok = ok and (x == y) and (B(x) == B(y)) and (x.__dict__ == y.__dict__)
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pickle-newobj-matrix thread");
+    handle
+        .join()
+        .expect("pickle-newobj-matrix thread should complete");
 }
 
 #[test]
@@ -4588,13 +4605,22 @@ fn prefers_cpython_pkgutil_and_resources_over_local_shims_when_stdlib_is_availab
     let Some(lib_path) = cpython_lib_path() else {
         return;
     };
-    let source = "import pkgutil\nimport importlib.resources as resources\npkg_norm = getattr(pkgutil, '__file__', '').replace('\\\\', '/')\nres_norm = getattr(resources, '__file__', '').replace('\\\\', '/')\nok = ('/shims/' not in pkg_norm and '/shims/' not in res_norm)\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    let handle = std::thread::Builder::new()
+        .name("pkgutil-resources-import".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = "import pkgutil\nimport importlib.resources as resources\npkg_norm = getattr(pkgutil, '__file__', '').replace('\\\\', '/')\nres_norm = getattr(resources, '__file__', '').replace('\\\\', '/')\nok = ('/shims/' not in pkg_norm and '/shims/' not in res_norm)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pkgutil-resources-import thread");
+    handle
+        .join()
+        .expect("pkgutil-resources-import thread should complete");
 }
 
 #[test]
@@ -6700,7 +6726,11 @@ fn pyio_fileio_del_namedexpr_does_not_leak_bound_method_or_pin_cycle() {
         eprintln!("skipping _pyio namedexpr/GC regression (CPython Lib path not available)");
         return;
     };
-    let source = r#"import sys
+    let handle = std::thread::Builder::new()
+        .name("pyio-fileio-del".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import sys
 sys.path = [LIB_PATH]
 
 import gc
@@ -6723,17 +6753,22 @@ with open(name, "rb") as check:
     flushed = check.read() == b"abc"
 ok = collected and (not dealloc_warn_leaked) and flushed
 "#
-    .replace("LIB_PATH", &format!("{lib_path:?}"));
-    let module = parser::parse_module(&source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("collected"), Some(Value::Bool(true)));
-    assert_eq!(
-        vm.get_global("dealloc_warn_leaked"),
-        Some(Value::Bool(false))
-    );
+            .replace("LIB_PATH", &format!("{lib_path:?}"));
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            assert_eq!(vm.get_global("collected"), Some(Value::Bool(true)));
+            assert_eq!(
+                vm.get_global("dealloc_warn_leaked"),
+                Some(Value::Bool(false))
+            );
+        })
+        .expect("spawn pyio-fileio-del thread");
+    handle
+        .join()
+        .expect("pyio-fileio-del thread should complete");
 }
 
 #[test]
@@ -9475,6 +9510,33 @@ fn executes_decimal_context_helpers() {
 }
 
 #[test]
+fn keyerror_and_indexerror_are_lookuperror_subclasses() {
+    let source = "ok1 = issubclass(KeyError, LookupError)\nok2 = issubclass(IndexError, LookupError)\ncaught = False\ntry:\n    {}['missing']\nexcept LookupError:\n    caught = True\nok = ok1 and ok2 and caught\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_pure_decimal_getcontext_and_addition() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure decimal test (CPython Lib path not available)");
+        return;
+    };
+    let lib_path = lib_path.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{lib_path}']\nimport decimal\nctx = decimal.getcontext()\na = decimal.Decimal('1.25')\nb = decimal.Decimal('2')\ns = str(a + b)\nok = (ctx is not None and s == '3.25' and decimal.__file__.endswith('_pydecimal.py'))\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_thread_start_new_thread_baseline() {
     let source = "import _thread\nout = []\ndef fn(x, y=0):\n    out.append(x + y)\ntid = _thread.start_new_thread(fn, (2,), {'y': 3})\nok = isinstance(tid, int) and out == [5]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -12017,14 +12079,23 @@ fn import_http_client_runs_package_init_first() {
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    let source = r#"import http.client
+    let handle = std::thread::Builder::new()
+        .name("http-client-import".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import http.client
 import http
 ok = (hasattr(http, "HTTPStatus") and http.client.HTTPConnection is not None)
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn http-client-import thread");
+    handle
+        .join()
+        .expect("http-client-import thread should complete");
 }

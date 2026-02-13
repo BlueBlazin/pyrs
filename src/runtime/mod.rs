@@ -6184,14 +6184,8 @@ fn normalize_text_encoding_name(name: &str) -> Option<&'static str> {
     let lowered = name.to_ascii_lowercase().replace('_', "-");
     match lowered.as_str() {
         "utf-8" | "utf8" => Some("utf-8"),
-        "ascii"
-        | "us-ascii"
-        | "usascii"
-        | "ansi-x3.4-1968"
-        | "ansi-x3.4-1986"
-        | "iso646-us"
-        | "cp367"
-        | "646" => Some("ascii"),
+        "ascii" | "us-ascii" | "usascii" | "ansi-x3.4-1968" | "ansi-x3.4-1986" | "iso646-us"
+        | "cp367" | "646" => Some("ascii"),
         "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" | "cp819" | "l1" => Some("latin-1"),
         _ => None,
     }

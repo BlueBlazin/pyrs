@@ -397,16 +397,13 @@ impl Vm {
                             .ok_or_else(|| RuntimeError::new("key not found"));
                     }
                     if module_data.name == "__re_match__" {
-                        let getitem = self.alloc_native_bound_method(
-                            NativeMethodKind::ReMatchGroup,
-                            obj.clone(),
-                        );
+                        let getitem = self
+                            .alloc_native_bound_method(NativeMethodKind::ReMatchGroup, obj.clone());
                         return match self.call_internal(getitem, vec![index], HashMap::new())? {
                             InternalCallOutcome::Value(value) => Ok(value),
                             InternalCallOutcome::CallerExceptionHandled => {
-                                Err(self.runtime_error_from_active_exception(
-                                    "subscript lookup failed",
-                                ))
+                                Err(self
+                                    .runtime_error_from_active_exception("subscript lookup failed"))
                             }
                         };
                     }

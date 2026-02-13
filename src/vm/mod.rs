@@ -5351,14 +5351,8 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
         "utf-32" | "utf32" => Ok("utf-32".to_string()),
         "utf-32-le" | "utf32-le" | "utf-32le" | "utf32le" => Ok("utf-32-le".to_string()),
         "utf-32-be" | "utf32-be" | "utf-32be" | "utf32be" => Ok("utf-32-be".to_string()),
-        "ascii"
-        | "us-ascii"
-        | "usascii"
-        | "ansi-x3.4-1968"
-        | "ansi-x3.4-1986"
-        | "iso646-us"
-        | "cp367"
-        | "646" => Ok("ascii".to_string()),
+        "ascii" | "us-ascii" | "usascii" | "ansi-x3.4-1968" | "ansi-x3.4-1986" | "iso646-us"
+        | "cp367" | "646" => Ok("ascii".to_string()),
         "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" | "cp819" | "l1" => {
             Ok("latin-1".to_string())
         }
@@ -6319,15 +6313,30 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "ExceptionGroup" => Some("BaseExceptionGroup"),
         "StopIteration" => Some("Exception"),
         "StopAsyncIteration" => Some("Exception"),
+        "ArithmeticError" => Some("Exception"),
+        "FloatingPointError" => Some("ArithmeticError"),
+        "OverflowError" => Some("ArithmeticError"),
+        "ZeroDivisionError" => Some("ArithmeticError"),
         "AssertionError" => Some("Exception"),
         "AttributeError" => Some("Exception"),
-        "IndexError" => Some("Exception"),
-        "KeyError" => Some("Exception"),
+        "LookupError" => Some("Exception"),
+        "IndexError" => Some("LookupError"),
+        "KeyError" => Some("LookupError"),
+        "BufferError" => Some("Exception"),
+        "EOFError" => Some("Exception"),
+        "MemoryError" => Some("Exception"),
+        "ReferenceError" => Some("Exception"),
+        "SyntaxError" => Some("Exception"),
+        "IndentationError" => Some("SyntaxError"),
+        "TabError" => Some("IndentationError"),
         "NameError" => Some("Exception"),
+        "UnboundLocalError" => Some("NameError"),
         "ImportError" => Some("Exception"),
         "ModuleNotFoundError" => Some("ImportError"),
         "RuntimeError" => Some("Exception"),
         "PythonFinalizationError" => Some("RuntimeError"),
+        "NotImplementedError" => Some("RuntimeError"),
+        "SystemError" => Some("Exception"),
         "_IncompleteInputError" => Some("SyntaxError"),
         "OSError" => Some("Exception"),
         "FileNotFoundError" => Some("OSError"),
@@ -6348,8 +6357,22 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "UnsupportedOperation" => Some("OSError"),
         "TypeError" => Some("Exception"),
         "ValueError" => Some("Exception"),
+        "PickleError" => Some("Exception"),
+        "PicklingError" => Some("PickleError"),
+        "UnpicklingError" => Some("PickleError"),
         "Error" => Some("Exception"),
         "Warning" => Some("Exception"),
+        "UserWarning" => Some("Warning"),
+        "DeprecationWarning" => Some("Warning"),
+        "PendingDeprecationWarning" => Some("Warning"),
+        "RuntimeWarning" => Some("Warning"),
+        "SyntaxWarning" => Some("Warning"),
+        "FutureWarning" => Some("Warning"),
+        "ImportWarning" => Some("Warning"),
+        "UnicodeWarning" => Some("Warning"),
+        "BytesWarning" => Some("Warning"),
+        "ResourceWarning" => Some("Warning"),
+        "EncodingWarning" => Some("Warning"),
         "InterfaceError" => Some("Error"),
         "DatabaseError" => Some("Error"),
         "DataError" => Some("DatabaseError"),
@@ -6362,8 +6385,6 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "UnicodeEncodeError" => Some("UnicodeError"),
         "UnicodeDecodeError" => Some("UnicodeError"),
         "UnicodeTranslateError" => Some("UnicodeError"),
-        "EncodingWarning" => Some("Warning"),
-        "ZeroDivisionError" => Some("Exception"),
         _ => None,
     }
 }
@@ -7309,98 +7330,20 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
     if candidate == expected || expected == "BaseException" {
         return true;
     }
-    if expected == "Exception" {
-        return candidate != "BaseException";
-    }
     if expected == "Warning" && candidate.ends_with("Warning") {
         return true;
     }
-    if expected == "UnicodeError"
-        && matches!(
-            candidate,
-            "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError"
-        )
-    {
-        return true;
-    }
-    if expected == "ImportError" && candidate == "ModuleNotFoundError" {
-        return true;
-    }
-    if expected == "SyntaxError"
-        && matches!(
-            candidate,
-            "IndentationError" | "TabError" | "_IncompleteInputError"
-        )
-    {
-        return true;
-    }
-    if expected == "RuntimeError" && candidate == "PythonFinalizationError" {
-        return true;
-    }
-    if expected == "Error"
-        && matches!(
-            candidate,
-            "InterfaceError"
-                | "DatabaseError"
-                | "DataError"
-                | "OperationalError"
-                | "IntegrityError"
-                | "InternalError"
-                | "ProgrammingError"
-                | "NotSupportedError"
-        )
-    {
-        return true;
-    }
-    if expected == "DatabaseError"
-        && matches!(
-            candidate,
-            "DataError"
-                | "OperationalError"
-                | "IntegrityError"
-                | "InternalError"
-                | "ProgrammingError"
-                | "NotSupportedError"
-        )
-    {
-        return true;
-    }
-    if expected == "PickleError" && matches!(candidate, "PicklingError" | "UnpicklingError") {
-        return true;
-    }
-    if expected == "OSError"
-        && matches!(
-            candidate,
-            "FileNotFoundError"
-                | "BlockingIOError"
-                | "TimeoutError"
-                | "NotADirectoryError"
-                | "PermissionError"
-                | "FileExistsError"
-                | "IsADirectoryError"
-                | "InterruptedError"
-                | "ProcessLookupError"
-                | "ChildProcessError"
-                | "ConnectionError"
-                | "BrokenPipeError"
-                | "ConnectionAbortedError"
-                | "ConnectionRefusedError"
-                | "ConnectionResetError"
-                | "UnsupportedOperation"
-        )
-    {
-        return true;
-    }
-    if expected == "ConnectionError"
-        && matches!(
-            candidate,
-            "BrokenPipeError"
-                | "ConnectionAbortedError"
-                | "ConnectionRefusedError"
-                | "ConnectionResetError"
-        )
-    {
-        return true;
+    let mut current = Some(candidate);
+    let mut depth = 0usize;
+    while let Some(name) = current {
+        if name == expected {
+            return true;
+        }
+        current = builtin_exception_parent(name);
+        depth += 1;
+        if depth > 64 {
+            break;
+        }
     }
     false
 }
