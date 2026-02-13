@@ -10,7 +10,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 - Common-usecase smoke pass: `39/50`
 - Runtime: `target/debug/pyrs`
 - CPython Lib: `/Users/$USER/Downloads/Python-3.14.3/Lib`
-- Note: targeted closures landed after this snapshot (`queue`, `smtplib` import chain, `imaplib` common `Time2Internaldate(0)` path, email `Content-Type` fold/as_string smoke after str-subclass + regex match indexing parity fixes). Refresh artifact pending.
+- Note: targeted closures landed after this snapshot (`queue`, `smtplib` import chain, `imaplib` common `Time2Internaldate(0)` path, email `Content-Type` fold/as_string smoke after str-subclass + regex match indexing parity fixes, `statistics.mean([1,2,3,4])` smoke after numeric ABC + binary add + `float(__float__)` parity fixes). Refresh artifact pending.
 
 ## Checklist
 
@@ -42,8 +42,8 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `http` | DONE | PASS | PASS | - |
 | `hashlib` | DONE | PASS | PASS | - |
 | `dataclasses` | DONE | PASS | PASS | - |
-| `statistics` | P0 | PASS | FAIL | TypeError: can't convert type 'int' to numerator/denominator |
-| `decimal` | P0 | PASS | FAIL | RuntimeError: class constructor takes no arguments |
+| `statistics` | P0 | PASS | FAIL* | targeted `statistics.mean([1,2,3,4])` smoke now green; full matrix artifact refresh pending before status flip |
+| `decimal` | P0 | PASS | FAIL | `decimal` remains a local bootstrap stub; common constructor flow still fails with `RuntimeError: class constructor takes no arguments` |
 | `fractions` | DONE | PASS | PASS | - |
 | `pprint` | DONE | PASS | PASS | - |
 | `copy` | DONE | PASS | PASS | - |
@@ -71,7 +71,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 
 - Native extension/module gaps: `ssl`, `gzip`, `bz2`, `lzma`
 - Extended `hashlib` algorithm coverage gap impacting `smtplib` startup/runtime diagnostics
-- Numeric core parity gaps: `statistics`, `decimal`
+- Numeric core parity gaps: `decimal` (`statistics` targeted smoke green; full matrix refresh pending)
 - XML parser backend gap (`pyexpat`): `xml`
 
 ## Shim and Probe Notes

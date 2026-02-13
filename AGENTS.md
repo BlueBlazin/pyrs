@@ -52,8 +52,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - regex `Match` now supports subscript group aliasing (`m[0]`, `m[1]`, ...), including module-wrapper dispatch needed by CPython email header folding paths.
   - instance subscription now delegates to tuple/str backing for synthetic builtin subclasses; `str()` now returns backing text for str-backed instances.
   - targeted CPython `email` smoke (`EmailMessage` header/content fold + `as_string`) is green locally; extended matrix artifact refresh pending.
+  - numeric parity checkpoint: `int` now exposes `numerator`/`denominator`/`real`/`imag`; `sum()` now uses binary add runtime fallback; `float()` now honors `__float__`; primitive numeric instances satisfy `numbers` ABC checks used by `fractions`/`statistics`.
 - Extended probe remaining red modules:
-  - `statistics`, `decimal`, `ssl`, `email`* (artifact pending refresh), `smtplib`, `xml`, `gzip`, `bz2`, `lzma`.
+  - `statistics`* (targeted smoke green; artifact pending refresh), `decimal`, `ssl`, `email`* (artifact pending refresh), `smtplib`, `xml`, `gzip`, `bz2`, `lzma`.
 
 ## Execution Policy
 - CPython behavior is the source of truth:

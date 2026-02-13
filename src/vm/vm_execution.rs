@@ -1590,9 +1590,9 @@ impl Vm {
                 let value = match (left, right) {
                     (Value::Int(a), Value::Int(b)) => match a.checked_add(b) {
                         Some(sum) => Value::Int(sum),
-                        None => add_values(Value::Int(a), Value::Int(b), &self.heap)?,
+                        None => self.binary_add_runtime(Value::Int(a), Value::Int(b))?,
                     },
-                    (left, right) => add_values(left, right, &self.heap)?,
+                    (left, right) => self.binary_add_runtime(left, right)?,
                 };
                 self.frames
                     .last_mut()

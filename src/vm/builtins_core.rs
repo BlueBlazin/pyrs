@@ -2143,6 +2143,17 @@ impl Vm {
                     return Ok(Value::Float(backing));
                 }
             }
+            if let Some(float_method) = self.lookup_bound_special_method(&args[0], "__float__")? {
+                return match self.call_internal(float_method, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(Value::Float(value)) => Ok(Value::Float(value)),
+                    InternalCallOutcome::Value(_) => {
+                        Err(RuntimeError::new("__float__ returned non-float"))
+                    }
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(self.runtime_error_from_active_exception("float() failed"))
+                    }
+                };
+            }
             return BuiltinFunction::Float.call(&self.heap, args);
         }
         if kwargs.is_empty() {
@@ -4437,7 +4448,7 @@ impl Vm {
         let values = self.collect_iterable_values(args.remove(0))?;
         let mut total = start;
         for value in values {
-            total = add_values(total, value, &self.heap)?;
+            total = self.binary_add_runtime(total, value)?;
         }
         Ok(total)
     }
@@ -5169,6 +5180,12 @@ impl Vm {
         }
     }
 
+    fn is_not_implemented_singleton(&self, value: &Value) -> bool {
+        self.builtins
+            .get("NotImplemented")
+            .is_some_and(|not_implemented| value == not_implemented)
+    }
+
     pub(super) fn binary_div_runtime(
         &mut self,
         left: Value,
@@ -5189,6 +5206,35 @@ impl Vm {
                     self.call_binary_special_method(&right, "__rtruediv__", left)?
                 {
                     return Ok(value);
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn binary_add_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        match add_values(left.clone(), right.clone(), &self.heap) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for +") =>
+            {
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__add__", right.clone())?
+                {
+                    if !self.is_not_implemented_singleton(&value) {
+                        return Ok(value);
+                    }
+                }
+                if let Some(value) = self.call_binary_special_method(&right, "__radd__", left)? {
+                    if !self.is_not_implemented_singleton(&value) {
+                        return Ok(value);
+                    }
                 }
                 Err(err)
             }
@@ -5784,6 +5830,23 @@ impl Vm {
                             "method" => matches!(value, Value::BoundMethod(_)),
                             "builtin_function_or_method" => matches!(value, Value::Builtin(_)),
                             "code" => matches!(value, Value::Code(_)),
+                            // CPython's numbers ABC tower treats these primitive
+                            // runtime numerics as virtual subclasses.
+                            "Number" | "Complex" => matches!(
+                                value,
+                                Value::Bool(_)
+                                    | Value::Int(_)
+                                    | Value::BigInt(_)
+                                    | Value::Float(_)
+                                    | Value::Complex { .. }
+                            ),
+                            "Real" => matches!(
+                                value,
+                                Value::Bool(_) | Value::Int(_) | Value::BigInt(_) | Value::Float(_)
+                            ),
+                            "Rational" | "Integral" => {
+                                matches!(value, Value::Bool(_) | Value::Int(_) | Value::BigInt(_))
+                            }
                             _ => false,
                         };
                         if marker_match {
@@ -5910,7 +5973,16 @@ impl Vm {
                     let Object::Class(class_data) = &*expected.kind() else {
                         return Ok(false);
                     };
-                    Ok(class_data.name == "object")
+                    Ok(match class_data.name.as_str() {
+                        "object" => true,
+                        "Number" | "Complex" => true,
+                        "Real" => !matches!(candidate, Value::Builtin(BuiltinFunction::Complex)),
+                        "Rational" | "Integral" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::Int | BuiltinFunction::Bool)
+                        ),
+                        _ => false,
+                    })
                 }
                 _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
             },

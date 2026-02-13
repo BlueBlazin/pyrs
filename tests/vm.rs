@@ -447,6 +447,17 @@ ok = (a == 1 and b == -1 and c == int('100000000000000000000') and v1 == 0 and v
 }
 
 #[test]
+fn int_exposes_rational_and_complex_projection_attributes() {
+    let source =
+        "x = 42\nok = (x.numerator == 42 and x.denominator == 1 and x.real == 42 and x.imag == 0)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_bigint_from_bytes_to_bytes_and_bit_length_paths() {
     let source = "\
 big = int.from_bytes(b'\\x01' + (b'\\x00' * 20), 'big')\n\
@@ -11721,6 +11732,58 @@ ok = (d.year == 2026 and d.month == 1 and d.day == 1)
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn fractions_support_int_plus_fraction_via_radd() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"from fractions import Fraction
+x = 0 + Fraction(1, 2)
+y = Fraction(1, 3) + 0
+ok = (x.numerator == 1 and x.denominator == 2 and y.numerator == 1 and y.denominator == 3)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn float_builtin_uses_fraction_dunder_float() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"from fractions import Fraction
+value = float(Fraction(1, 2))
+ok = (value == 0.5)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn statistics_mean_supports_basic_int_dataset() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import statistics
+value = statistics.mean([1, 2, 3, 4])
+ok = (value == 2.5)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib);
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }

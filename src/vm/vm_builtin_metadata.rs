@@ -883,6 +883,12 @@ impl Vm {
         value: Value,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        match attr_name {
+            "numerator" | "real" => return Ok(value.clone()),
+            "denominator" => return Ok(Value::Int(1)),
+            "imag" => return Ok(Value::Int(0)),
+            _ => {}
+        }
         if attr_name == "__new__" {
             return Ok(Value::Builtin(BuiltinFunction::ObjectNew));
         }
