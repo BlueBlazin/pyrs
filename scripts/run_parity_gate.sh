@@ -10,6 +10,9 @@ cd "$ROOT_DIR"
 
 export PYRS_PARITY_STRICT=1
 
+echo "[parity] running builtin parity gate"
+./scripts/run_builtin_parity_gate.sh
+
 echo "[parity] running focused parity gate suites"
 cargo test -q \
   --test cpython_harness \

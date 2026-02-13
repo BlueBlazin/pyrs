@@ -74,6 +74,8 @@ Milestone 13 completion is blocked on P0 closure of:
 - Compatibility matrix: `docs/COMPATIBILITY.md`
 - Unicode-name data provenance/regeneration: `docs/UNICODE_NAME_DATA.md`
 - Coverage gate workflow: `scripts/run_coverage_gate.sh`
+- Builtin parity gate and closure tracker: `docs/BUILTIN_PARITY.md`
+- Builtin optimization classes/policy: `docs/BUILTIN_OPTIMIZATION_POLICY.md`
 - Optimization execution plan: `docs/OPTIMIZATION_PLAN.md`
 - Optimization backlog and status ledger: `docs/OPTIMIZATION_BACKLOG.md`
 
@@ -90,6 +92,11 @@ Milestone 13 completion is blocked on P0 closure of:
   - import pass: `26/26`
   - smoke pass: `26/26`
   - no red module in the top-stdlib checklist baseline
+- Builtin parity gate snapshot (local debug, 2026-02-13):
+  - cpython builtins: `145`
+  - pyrs builtins: `139`
+  - missing allowlisted names: `False`, `None`, `True`, `breakpoint`, `eval`, `hash`, `vars`
+  - gate command: `./scripts/run_builtin_parity_gate.sh`
 - Performance suite (canonical):
   - `scripts/bench_fib_gate.sh 5`
   - `scripts/bench_dispatch_hotpath.sh 5`

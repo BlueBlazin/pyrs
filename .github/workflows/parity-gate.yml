@@ -62,7 +62,17 @@ jobs:
           if-no-files-found: ignore
 
       - name: Run parity gate profile
+        env:
+          PYRS_CPYTHON_BIN: python3
         run: ./scripts/run_parity_gate.sh
+
+      - name: Upload builtin parity artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: builtin-parity-report
+          path: perf/builtin_parity_report.json
+          if-no-files-found: ignore
 
       - name: Run coverage gate (enforced soft floors)
         env:

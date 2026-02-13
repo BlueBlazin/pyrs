@@ -78,6 +78,7 @@ Milestone 13 is complete only when all are true:
 4. Strict stdlib harness lane for active modules is green with empty allowlist.
 5. Deferred pickle strict lane is re-enabled and closed.
 6. Engineering gates in `docs/ENGINEERING_GATES.md` and P0 audit backlog in `docs/ALGO_AUDIT_BACKLOG.md` are satisfied for Milestone 13 scope.
+7. Builtin parity gate (`docs/BUILTIN_PARITY.md`) is green with empty allowlists.
 
 ### Milestone 13 Implementation Strategy
 1. Native-core-first, then pure-stdlib expansion.
@@ -142,3 +143,5 @@ Deliverables:
 - `docs/ENGINEERING_GATES.md`: mandatory quality gates.
 - `docs/ALGO_AUDIT_BACKLOG.md`: algorithmic/semantic audit tasks.
 - `docs/OPTIMIZATION_BACKLOG.md`: permanent optimization checklist and status ledger.
+- `docs/BUILTIN_PARITY.md`: builtin surface parity gate and closure status.
+- `docs/BUILTIN_OPTIMIZATION_POLICY.md`: builtin optimization classes and targets.

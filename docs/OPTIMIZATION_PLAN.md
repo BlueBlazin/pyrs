@@ -5,6 +5,7 @@
 This is the active execution plan for the optimization sprint.
 During this sprint, broad runtime throughput work takes precedence over Milestone 13 functional closure.
 The canonical optimization status ledger is `docs/OPTIMIZATION_BACKLOG.md`.
+Builtin heat-class policy and targets are tracked in `docs/BUILTIN_OPTIMIZATION_POLICY.md`.
 
 ## Current Benchmark Suite (Not Fib-Only)
 

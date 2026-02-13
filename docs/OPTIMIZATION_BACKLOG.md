@@ -5,7 +5,7 @@
 This is the permanent, canonical optimization checklist for `pyrs`.
 Every optimization item must be tracked here with explicit status.
 
-Last updated: 2026-02-11
+Last updated: 2026-02-13
 
 ## Status Legend
 
@@ -78,6 +78,7 @@ Latest local snapshot (2026-02-11):
 | `OPT-026` | P1 | allocations | Add allocator/freelist strategy for hot temporary objects and call argument buffers | `frame.c`, `dictobject.c`, `call.c` | `[ ]` |
 | `OPT-027` | P0 | value model | Shrink `Value` payload by boxing heavyweight inline variants used in hot VM transport paths | `ceval.c` value-pointer transport model | `[~]` |
 | `OPT-028` | P0 | dispatch correctness | Restore release-path list comprehension/iterator correctness (`FOR_ITER` and list-comp call lanes) so `fib(29)x5` gate is runnable and trustworthy | `ceval.c`, `generated_cases.c.h` | `[x]` |
+| `OPT-029` | P0 | builtins/calls | Heat-classed builtin call optimization closure (HOT/WARM/COLD policy) with parity-gated fast paths for HOT builtins | `bltinmodule.c`, `call.c`, `ceval.c` | `[~]` |
 
 ## Rules For This Backlog
 
@@ -114,4 +115,5 @@ Latest local snapshot (2026-02-11):
 - Largest remaining throughput gaps are dispatch hotpath and pickle/container-heavy workloads.
 - Active foundational items for closure: `OPT-022`, `OPT-023`, `OPT-024`, `OPT-025`, `OPT-026`.
 - Optimization phase-1 checkpoint is complete; this backlog remains the source of truth for Milestone 14 throughput closure and any regression-driven pull-forward work.
+- Builtin parity drift gate (`scripts/run_builtin_parity_gate.sh`) is now part of the optimization safety rail for builtin call-path work.
 - Detailed historical optimization deltas are tracked in git history; keep this section to current-state notes only.

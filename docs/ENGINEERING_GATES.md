@@ -110,6 +110,20 @@ Rules:
 - each extraction must be behavior-preserving with regression proof
 - new functionality should target focused modules, not `src/vm/mod.rs` when a focused module exists
 
+## Gate 6: Builtin Surface Parity Drift (P0)
+
+Builtin drift must fail fast before broader parity runs.
+
+Rules:
+- builtin inventory and semantic probes must be checked against CPython on each parity-gate run
+- allowlists may only be used for tracked gaps and must shrink over time
+- stale allowlist entries are treated as failures
+
+Required evidence:
+1. `./scripts/run_builtin_parity_gate.sh` passes
+2. `perf/builtin_parity_report.json` is produced and reviewable in CI
+3. remaining gaps are tracked in `docs/BUILTIN_PARITY.md`
+
 ## Detection Pipeline
 
 Run this pipeline continuously during Milestone 13 and Milestone 14:
@@ -126,6 +140,7 @@ Run this pipeline continuously during Milestone 13 and Milestone 14:
 10. strict-harness timeout regression (`tests/cpython_harness.rs::subprocess_harness_helper_times_out_hanging_program`) so hang/memory-growth incidents fail fast
 11. dispatch hotpath perf smoke (`scripts/bench_dispatch_hotpath.sh`) on CI as non-blocking telemetry artifact; regressions must be investigated before performance sprint closure
 12. generated Unicode-name table drift check (`scripts/generate_unicode_name_table.py --check`) to prevent unvetted/manual changes in parser Unicode data
+13. builtin surface parity gate (`scripts/run_builtin_parity_gate.sh`) for inventory + semantic probes against CPython
 
 Strict stdlib harness policy:
 - `tests/cpython_harness.rs` strict suite runs in isolated subprocesses with a per-entry timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent unbounded hangs/memory growth from masking regressions.

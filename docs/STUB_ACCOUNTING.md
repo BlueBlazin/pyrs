@@ -21,6 +21,7 @@ No partially implemented surface is allowed to remain untracked.
 | `json` | Common `dumps`/`loads` workflows are green in top-stdlib gate; pure-stdlib default path with `_json` scanner handoff is now green | Full CPython semantic parity (pure + native accelerator paths), malformed-input differential coverage, perf baseline | 13 |
 | `_csv`/`csv` | Top-level common workflows are green; long-tail dialect/error parity still partial | Full parser/writer parity (`test_csv` class), malformed-input hardening, perf baseline | 13 |
 | `_sre` | Core accelerator surface bootstrapped; long-tail behavior pending | Pure `Lib/re/*` default path passes strict/curated gates | 13 |
+| Builtin symbol surface (`builtins`) | Automated CPython-vs-pyrs gate is now wired (`scripts/run_builtin_parity_gate.sh`); remaining allowlisted gaps are `False`, `None`, `True`, `breakpoint`, `eval`, `hash`, `vars` | Gate runs green with empty allowlists and no inventory/probe drift (`docs/BUILTIN_PARITY.md`) | 13 |
 | Hash containers | Dict backend upgraded; set/frozenset mostly hash-indexed | Long-tail semantic + performance parity closure for dict/set/frozenset | 13/14 |
 
 ## Active Non-P0 Partial Surfaces
