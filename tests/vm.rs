@@ -7603,6 +7603,16 @@ fn list_subclass_addition_returns_plain_list_result() {
 }
 
 #[test]
+fn list_copy_returns_shallow_copy() {
+    let source = "items = [[1], [2]]\ncopy = items.copy()\ncopy[0].append(9)\nok = (copy is not items and items == [[1, 9], [2]] and copy == [[1, 9], [2]])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn str_join_accepts_str_subclass_items() {
     let source = "class S(str):\n    pass\nout = ''.join([S('a'), S('b')])\nok = (out == 'ab')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -10276,6 +10286,19 @@ fn string_splitlines_supports_keepends_and_crlf() {
 b = 'x\\ny\\r\\nz'.splitlines(True)\n\
 c = ''.splitlines()\n\
 ok = (a == ['x', 'y', 'z'] and b == ['x\\n', 'y\\r\\n', 'z'] and c == [])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_splitlines_supports_keepends_and_bytearray_receiver() {
+    let source = "a = b'x\\ny\\r\\nz'.splitlines()\n\
+b = b'x\\ny\\r\\nz'.splitlines(True)\n\
+c = bytearray(b'x\\ny').splitlines()\n\
+ok = (a == [b'x', b'y', b'z'] and b == [b'x\\n', b'y\\r\\n', b'z'] and c == [bytearray(b'x'), bytearray(b'y')])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

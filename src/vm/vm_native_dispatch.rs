@@ -640,6 +640,16 @@ impl Vm {
                 let count = values.iter().filter(|value| **value == target).count() as i64;
                 Ok(NativeCallResult::Value(Value::Int(count)))
             }
+            NativeMethodKind::ListCopy => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("list.copy() expects no arguments"));
+                }
+                let receiver_kind = receiver.kind();
+                let Object::List(values) = &*receiver_kind else {
+                    return Err(RuntimeError::new("list.copy() receiver must be list"));
+                };
+                Ok(NativeCallResult::Value(self.heap.alloc_list(values.clone())))
+            }
             NativeMethodKind::TupleCount => {
                 if args.is_empty() {
                     return Err(RuntimeError::new("tuple.count() expects one argument"));
@@ -1438,6 +1448,61 @@ impl Vm {
                 };
                 let index = found.map(|idx| idx as i64 + start).unwrap_or(-1);
                 Ok(NativeCallResult::Value(Value::Int(index)))
+            }
+            NativeMethodKind::BytesSplitLines => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "splitlines() expects at most one argument",
+                    ));
+                }
+                let keepends = args
+                    .first()
+                    .map(|value| self.truthy_from_value(value))
+                    .transpose()?
+                    .unwrap_or(false);
+                let (bytes, output_bytearray) = match &*receiver.kind() {
+                    Object::Module(module_data) => {
+                        let Some(value) = module_data.globals.get("value").cloned() else {
+                            return Err(RuntimeError::new("bytes receiver is invalid"));
+                        };
+                        let bytes = bytes_like_from_value(value.clone())?;
+                        let output_bytearray = matches!(value, Value::ByteArray(_));
+                        (bytes, output_bytearray)
+                    }
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let mut lines = Vec::new();
+                let mut start = 0usize;
+                let mut idx = 0usize;
+                while idx < bytes.len() {
+                    let byte = bytes[idx];
+                    if byte == b'\n' || byte == b'\r' {
+                        let mut break_end = idx + 1;
+                        if byte == b'\r' && break_end < bytes.len() && bytes[break_end] == b'\n' {
+                            break_end += 1;
+                        }
+                        let line_end = if keepends { break_end } else { idx };
+                        let line = bytes[start..line_end].to_vec();
+                        if output_bytearray {
+                            lines.push(self.heap.alloc_bytearray(line));
+                        } else {
+                            lines.push(self.heap.alloc_bytes(line));
+                        }
+                        start = break_end;
+                        idx = break_end;
+                        continue;
+                    }
+                    idx += 1;
+                }
+                if start < bytes.len() {
+                    let tail = bytes[start..].to_vec();
+                    if output_bytearray {
+                        lines.push(self.heap.alloc_bytearray(tail));
+                    } else {
+                        lines.push(self.heap.alloc_bytes(tail));
+                    }
+                }
+                Ok(NativeCallResult::Value(self.heap.alloc_list(lines)))
             }
             NativeMethodKind::BytesTranslate => {
                 let delete_kw = kwargs.remove("delete");

@@ -229,6 +229,7 @@ pub enum NativeMethodKind {
     ListRemove,
     ListPop,
     ListCount,
+    ListCopy,
     TupleCount,
     TupleIndex,
     ListIndex,
@@ -250,6 +251,7 @@ pub enum NativeMethodKind {
     BytesEndsWith,
     BytesCount,
     BytesFind,
+    BytesSplitLines,
     BytesTranslate,
     BytesJoin,
     BytesLJust,
@@ -6798,6 +6800,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
                     NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
+                    NativeMethodKind::ListCopy => "<bound method list.copy>".to_string(),
                     NativeMethodKind::TupleCount => "<bound method tuple.count>".to_string(),
                     NativeMethodKind::TupleIndex => "<bound method tuple.index>".to_string(),
                     NativeMethodKind::ListIndex => "<bound method list.index>".to_string(),
@@ -6823,6 +6826,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::BytesEndsWith => "<bound method bytes.endswith>".to_string(),
                     NativeMethodKind::BytesCount => "<bound method bytes.count>".to_string(),
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
+                    NativeMethodKind::BytesSplitLines => {
+                        "<bound method bytes.splitlines>".to_string()
+                    }
                     NativeMethodKind::BytesTranslate => {
                         "<bound method bytes.translate>".to_string()
                     }
