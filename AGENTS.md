@@ -65,6 +65,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - strict stdlib lane remains green after enum-shim retirement (`PYRS_RUN_STRICT_STDLIB=1 cargo test -q --test cpython_harness runs_cpython_strict_stdlib_suite`).
   - `_io.open` now preserves raw bytes paths when dispatching opener callbacks (no lossy bytes->str conversion), with regression coverage in `tests/vm.rs::io_open_passes_bytes_path_to_opener_without_lossy_conversion`.
   - `_sqlite3.connect` / `Connection.__init__` now preserve raw bytes/bytearray database paths when calling `sqlite3_open_v2` (no lossy UTF-8 replacement in native handoff).
+  - `_sqlite3.connect` now accepts path-like (`__fspath__`) database arguments, matching CPython DB-API expectations.
+  - `_sqlite3.Row` parity advanced: equality now compares description + row payload (not identity), and `issubclass(sqlite3.Row, collections.abc.Sequence)` / `isinstance(row, Sequence)` now pass in the runtime.
 - Extended probe remaining red modules:
   - `xml`, `gzip`, `bz2`, `lzma`.
   - `smtplib` targeted smoke is green but still logs unsupported `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`).

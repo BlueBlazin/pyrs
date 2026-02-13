@@ -2459,6 +2459,93 @@ ok = (
 }
 
 #[test]
+fn sqlite3_connect_accepts_pathlike_database_argument() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 path-like test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("sqlite3-pathlike-database".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import os
+import sqlite3
+import tempfile
+
+class P:
+    def __init__(self, path):
+        self.path = path
+    def __fspath__(self):
+        return self.path
+
+name = tempfile.mktemp()
+cx = sqlite3.connect(P(name))
+cx.execute('create table t(x integer)')
+cx.close()
+ok = os.path.exists(name)
+os.remove(name)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn sqlite3-pathlike-database thread");
+    handle
+        .join()
+        .expect("sqlite3-pathlike-database thread should complete");
+}
+
+#[test]
+fn sqlite3_row_satisfies_sequence_abc_checks() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 Row Sequence ABC test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+from collections.abc import Sequence
+
+cx = sqlite3.connect(':memory:')
+cx.row_factory = sqlite3.Row
+row = cx.execute('select 1').fetchone()
+ok = issubclass(sqlite3.Row, Sequence) and isinstance(row, Sequence)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_row_equality_matches_description_and_values() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 Row equality test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+
+cx = sqlite3.connect(':memory:')
+cx.row_factory = sqlite3.Row
+r1 = cx.execute('select 1 as a').fetchone()
+r2 = cx.execute('select 1 as a').fetchone()
+r3 = cx.execute('select 1 as b').fetchone()
+ok = (r1 is not r2) and (r1 == r2) and (r1 != r3)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn sqlite3_blobopen_supports_read_write_seek_and_context_manager() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping sqlite3 blobopen test (CPython Lib path not available)");

@@ -5847,6 +5847,20 @@ impl Vm {
                             "Rational" | "Integral" => {
                                 matches!(value, Value::Bool(_) | Value::Int(_) | Value::BigInt(_))
                             }
+                            "Sequence" => match value {
+                                Value::Instance(instance) => match &*instance.kind() {
+                                    Object::Instance(instance_data) => {
+                                        class_attr_lookup(&instance_data.class, "__len__").is_some()
+                                            && class_attr_lookup(
+                                                &instance_data.class,
+                                                "__getitem__",
+                                            )
+                                            .is_some()
+                                    }
+                                    _ => false,
+                                },
+                                _ => false,
+                            },
                             _ => false,
                         };
                         if marker_match {
@@ -5948,6 +5962,12 @@ impl Vm {
                     if let Object::Class(expected_data) = &*expected.kind() {
                         if expected_data.name == "PathLike"
                             && class_attr_lookup(class, "__fspath__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Sequence"
+                            && class_attr_lookup(class, "__len__").is_some()
+                            && class_attr_lookup(class, "__getitem__").is_some()
                         {
                             return Ok(true);
                         }

@@ -1091,8 +1091,12 @@ impl Vm {
         })
     }
 
-    fn sqlite_extract_database(value: Value) -> Result<Vec<u8>, RuntimeError> {
-        match value {
+    fn sqlite_extract_database(&mut self, value: Value) -> Result<Vec<u8>, RuntimeError> {
+        let normalized = match value {
+            Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) => value,
+            candidate => self.builtin_os_fspath(vec![candidate], HashMap::new())?,
+        };
+        match normalized {
             Value::Str(text) => Ok(text.into_bytes()),
             Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
                 Object::Bytes(bytes) | Object::ByteArray(bytes) => Ok(bytes.clone()),
@@ -1796,7 +1800,7 @@ impl Vm {
             }
         }
 
-        let database = Self::sqlite_extract_database(database)?;
+        let database = self.sqlite_extract_database(database)?;
         let db_path = CString::new(database)
             .map_err(|_| sqlite_error("ProgrammingError", "database path contains embedded NUL"))?;
 
@@ -1934,7 +1938,7 @@ impl Vm {
                 .insert(receiver_id, SqliteConnectionState::new(ptr::null_mut()));
         }
 
-        let database = Self::sqlite_extract_database(database)?;
+        let database = self.sqlite_extract_database(database)?;
         let db_path = CString::new(database)
             .map_err(|_| sqlite_error("ProgrammingError", "database path contains embedded NUL"))?;
         let mut handle: *mut Sqlite3Db = ptr::null_mut();
@@ -3699,8 +3703,10 @@ impl Vm {
         };
         let left_desc = Self::sqlite_row_description_value(&left);
         let right_desc = Self::sqlite_row_description_value(&right);
-        let desc_equal = self.compare_in_runtime(left_desc, right_desc)?;
-        let data_equal = self.compare_in_runtime(left_data, right_data)?;
+        let desc_eq_value = self.compare_eq_runtime(left_desc, right_desc)?;
+        let desc_equal = self.truthy_from_value(&desc_eq_value)?;
+        let data_eq_value = self.compare_eq_runtime(left_data, right_data)?;
+        let data_equal = self.truthy_from_value(&data_eq_value)?;
         Ok(Value::Bool(desc_equal && data_equal))
     }
 
