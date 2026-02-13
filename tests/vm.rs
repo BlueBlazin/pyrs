@@ -2507,7 +2507,9 @@ ok = ok and raised
 #[test]
 fn sqlite3_create_function_registers_and_executes_python_callback() {
     let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping sqlite3 create_function callback test (CPython Lib path not available)");
+        eprintln!(
+            "skipping sqlite3 create_function callback test (CPython Lib path not available)"
+        );
         return;
     };
     let source = r#"import sqlite3
@@ -9967,6 +9969,90 @@ fn compile_builtin_exec_mode_returns_code_object() {
 scope = {}\n\
 exec(co, scope)\n\
 ok = (scope['x'] == 42)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn compile_builtin_eval_mode_returns_expression_code_object() {
+    let source = "co = compile('20 + 22', '<inline>', 'eval')\n\
+result = eval(co)\n\
+ok = (result == 42)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn eval_builtin_resolves_callsite_and_explicit_namespaces() {
+    let source = "x = 4\n\
+base = eval('x + 6')\n\
+g = {'x': 100}\n\
+l = {'x': 5}\n\
+scoped = eval('x + 1', g, l)\n\
+ok = (base == 10 and scoped == 6)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn vars_hash_and_breakpoint_builtins_match_core_contracts() {
+    let source = r#"import builtins, sys
+class C:
+    pass
+obj = C()
+obj.x = 9
+ns = vars()
+attrs = vars(obj)
+class H:
+    def __hash__(self):
+        return 123
+class U:
+    __hash__ = None
+try:
+    hash([])
+    list_hash_error = False
+except TypeError:
+    list_hash_error = True
+try:
+    hash(U())
+    none_hash_error = False
+except TypeError:
+    none_hash_error = True
+calls = []
+def hook(*args, **kwargs):
+    calls.append((args, kwargs))
+    return 'hooked'
+sys.breakpointhook = hook
+bp_result = breakpoint(1, flag=True)
+ok = (
+    hasattr(builtins, 'True') and hasattr(builtins, 'False') and hasattr(builtins, 'None')
+    and getattr(builtins, 'True') is True
+    and getattr(builtins, 'False') is False
+    and getattr(builtins, 'None') is None
+    and vars() is globals()
+    and ns['obj'] is obj
+    and attrs['x'] == 9
+    and hash(1) == hash(True)
+    and hash(H()) == 123
+    and list_hash_error
+    and none_hash_error
+    and callable(eval)
+    and callable(hash)
+    and callable(vars)
+    and callable(breakpoint)
+    and bp_result == 'hooked'
+    and calls == [((1,), {'flag': True})]
+)
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

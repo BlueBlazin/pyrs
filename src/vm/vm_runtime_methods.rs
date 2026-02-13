@@ -665,6 +665,10 @@ impl Vm {
     }
 
     pub(super) fn install_builtins(&mut self) {
+        self.builtins.insert("True".to_string(), Value::Bool(true));
+        self.builtins
+            .insert("False".to_string(), Value::Bool(false));
+        self.builtins.insert("None".to_string(), Value::None);
         self.builtins
             .insert("print".to_string(), Value::Builtin(BuiltinFunction::Print));
         self.builtins
@@ -991,14 +995,19 @@ impl Vm {
             Value::Builtin(BuiltinFunction::Compile),
         );
         self.builtins
+            .insert("eval".to_string(), Value::Builtin(BuiltinFunction::Eval));
+        self.builtins
             .insert("exec".to_string(), Value::Builtin(BuiltinFunction::Exec));
         self.builtins
-            .insert("__debug__".to_string(), Value::Bool(true));
+            .insert("hash".to_string(), Value::Builtin(BuiltinFunction::Hash));
+        self.builtins
+            .insert("vars".to_string(), Value::Builtin(BuiltinFunction::Vars));
         self.builtins.insert(
-            "IO".to_string(),
-            self.heap
-                .alloc_class(ClassObject::new("IO".to_string(), Vec::new())),
+            "breakpoint".to_string(),
+            Value::Builtin(BuiltinFunction::Breakpoint),
         );
+        self.builtins
+            .insert("__debug__".to_string(), Value::Bool(true));
         self.builtins.insert(
             "BaseException".to_string(),
             Value::ExceptionType("BaseException".to_string()),

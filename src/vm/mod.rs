@@ -1996,6 +1996,14 @@ impl Vm {
                 "__unraisablehook__".to_string(),
                 Value::Builtin(BuiltinFunction::NoOp),
             );
+            module_data.globals.insert(
+                "breakpointhook".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
+            module_data.globals.insert(
+                "__breakpointhook__".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
             let build_stream = |name: &str,
                                 write_builtin: BuiltinFunction,
                                 flush_builtin: BuiltinFunction,

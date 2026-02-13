@@ -2243,6 +2243,10 @@ pub enum BuiltinFunction {
     PlatformWin32IsIot,
     Import,
     Exec,
+    Eval,
+    Hash,
+    Vars,
+    Breakpoint,
     ImportModule,
     FindSpec,
     ImportlibInvalidateCaches,
@@ -5084,6 +5088,10 @@ impl BuiltinFunction {
             | BuiltinFunction::Locals
             | BuiltinFunction::Globals
             | BuiltinFunction::Exec
+            | BuiltinFunction::Eval
+            | BuiltinFunction::Hash
+            | BuiltinFunction::Vars
+            | BuiltinFunction::Breakpoint
             | BuiltinFunction::SysGetFrame
             | BuiltinFunction::SysException
             | BuiltinFunction::SysExcInfo

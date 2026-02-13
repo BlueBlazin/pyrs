@@ -1,9 +1,2 @@
-# Builtin semantic probes that currently mismatch only due missing symbols.
-# Gate policy: this list may only shrink; any net-new mismatch fails CI.
-builtins_true_attr
-builtins_false_attr
-builtins_none_attr
-breakpoint_callable
-eval_callable
-hash_callable
-vars_callable
+# Builtin semantic probe mismatch allowlist.
+# Keep empty; any entry requires tracked justification.

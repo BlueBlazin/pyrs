@@ -54,19 +54,15 @@ Rules:
 3. net-new semantic probe mismatches fail the gate
 4. stale allowlist entries fail the gate
 
-## Current Gap Snapshot (2026-02-13)
+## Current Snapshot (2026-02-13)
 
-Missing builtin names in `pyrs`:
-- `False`
-- `None`
-- `True`
-- `breakpoint`
-- `eval`
-- `hash`
-- `vars`
-
-Unexpected extra name in `pyrs`:
-- `IO`
+- CPython builtin count: `145`
+- pyrs builtin count: `145`
+- Missing builtin names in `pyrs`: none
+- Unexpected semantic probe mismatches: none
+- Allowlists:
+  - `tests/builtin_missing_allowlist.txt`: empty
+  - `tests/builtin_probe_allowlist.txt`: empty
 
 ## Closure Criteria
 

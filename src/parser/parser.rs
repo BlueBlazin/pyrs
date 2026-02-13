@@ -49,6 +49,17 @@ pub fn parse_module(source: &str) -> Result<Module, ParseError> {
     Ok(module)
 }
 
+pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer.tokenize().map_err(ParseError::from)?;
+    let mut parser = Parser::new(tokens);
+    let start = parser.consume_separators(0);
+    let (expr, pos) = parser.parse_expr_at(start)?;
+    let end = parser.consume_separators(pos);
+    parser.expect_end(end)?;
+    Ok(expr)
+}
+
 struct Parser {
     tokens: Vec<Token>,
     module_memo: HashMap<usize, Memo<Module>>,

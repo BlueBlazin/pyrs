@@ -94,8 +94,10 @@ Milestone 13 completion is blocked on P0 closure of:
   - no red module in the top-stdlib checklist baseline
 - Builtin parity gate snapshot (local debug, 2026-02-13):
   - cpython builtins: `145`
-  - pyrs builtins: `139`
-  - missing allowlisted names: `False`, `None`, `True`, `breakpoint`, `eval`, `hash`, `vars`
+  - pyrs builtins: `145`
+  - missing names: none
+  - semantic probe mismatches: none
+  - builtin allowlists: empty
   - gate command: `./scripts/run_builtin_parity_gate.sh`
 - Performance suite (canonical):
   - `scripts/bench_fib_gate.sh 5`

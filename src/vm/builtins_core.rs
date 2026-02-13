@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::value_lookup_hash;
 
 impl Vm {
     pub(super) fn value_type_name_for_error(&self, value: &Value) -> String {
@@ -637,6 +638,103 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_vars(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "TypeError: vars() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() > 1 {
+            return Err(RuntimeError::new(
+                "TypeError: vars() takes at most one argument",
+            ));
+        }
+        if args.is_empty() {
+            return self.builtin_locals(Vec::new(), HashMap::new());
+        }
+        let target = args.remove(0);
+        match self.builtin_getattr(
+            vec![target, Value::Str("__dict__".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(value) => Ok(value),
+            Err(err) if is_missing_attribute_error(&err) => Err(RuntimeError::new(
+                "TypeError: vars() argument must have __dict__ attribute",
+            )),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn builtin_hash(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "TypeError: hash() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new("TypeError: hash() expects one argument"));
+        }
+        let target = args.remove(0);
+        let hash_value = match target {
+            Value::Instance(_) | Value::Class(_) | Value::Super(_) => {
+                let Some(hash_method) = self.lookup_bound_special_method(&target, "__hash__")?
+                else {
+                    return Err(RuntimeError::new(format!(
+                        "TypeError: unhashable type: '{}'",
+                        self.value_type_name_for_error(&target)
+                    )));
+                };
+                let result = match self.call_internal(hash_method, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value_to_int(value)?,
+                    InternalCallOutcome::CallerExceptionHandled => return Ok(Value::None),
+                };
+                if result == -1 { -2 } else { result }
+            }
+            _ => {
+                let Some(hash_bits) = value_lookup_hash(&target) else {
+                    return Err(RuntimeError::new(format!(
+                        "TypeError: unhashable type: '{}'",
+                        self.value_type_name_for_error(&target)
+                    )));
+                };
+                let result = hash_bits as i64;
+                if result == -1 { -2 } else { result }
+            }
+        };
+        Ok(Value::Int(hash_value))
+    }
+
+    pub(super) fn builtin_breakpoint(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let breakpointhook =
+            self.modules
+                .get("sys")
+                .and_then(|sys_module| match &*sys_module.kind() {
+                    Object::Module(module_data) => {
+                        module_data.globals.get("breakpointhook").cloned()
+                    }
+                    _ => None,
+                });
+        let Some(hook) = breakpointhook else {
+            return Ok(Value::None);
+        };
+        match self.call_internal(hook, args, kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => Ok(Value::None),
+        }
+    }
+
     pub(super) fn exec_namespace_map_from_dict(
         &self,
         dict: &ObjRef,
@@ -933,6 +1031,199 @@ impl Vm {
 
         run_result?;
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_eval(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "eval() expects source plus optional globals and locals",
+            ));
+        }
+
+        let source = args.remove(0);
+        let globals_kw = kwargs.remove("globals");
+        let locals_kw = kwargs.remove("locals");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "eval() got an unexpected keyword argument",
+            ));
+        }
+
+        let globals_arg = if let Some(arg) = args.first().cloned() {
+            if globals_kw.is_some() {
+                return Err(RuntimeError::new("eval() got multiple values for globals"));
+            }
+            Some(arg)
+        } else {
+            globals_kw
+        };
+        let locals_arg = if let Some(arg) = args.get(1).cloned() {
+            if locals_kw.is_some() {
+                return Err(RuntimeError::new("eval() got multiple values for locals"));
+            }
+            Some(arg)
+        } else {
+            locals_kw
+        };
+
+        let code = match source {
+            Value::Code(code) => code,
+            source => {
+                let source_text = match source {
+                    Value::Str(text) => text,
+                    other => {
+                        let bytes = bytes_like_from_value(other)?;
+                        String::from_utf8(bytes)
+                            .map_err(|_| RuntimeError::new("eval() source is not valid UTF-8"))?
+                    }
+                };
+                let expr_ast = parser::parse_expression(&source_text).map_err(|err| {
+                    RuntimeError::new(format!(
+                        "eval() parse error at {}: {}",
+                        err.offset, err.message
+                    ))
+                })?;
+                Rc::new(
+                    compiler::compile_expression_with_filename(&expr_ast, "<eval>").map_err(
+                        |err| RuntimeError::new(format!("eval() compile error: {}", err.message)),
+                    )?,
+                )
+            }
+        };
+        if !code.freevars.is_empty() {
+            return Err(RuntimeError::new(
+                "eval() code object may not contain free variables",
+            ));
+        }
+
+        let caller_depth = self.frames.len();
+        if caller_depth == 0 {
+            return Err(RuntimeError::new("eval() requires an active frame"));
+        }
+        let caller_index = caller_depth - 1;
+        let caller_globals = self.frames[caller_index].function_globals.clone();
+        let caller_module = self.frames[caller_index].module.clone();
+        let caller_is_module = self.frames[caller_index].is_module;
+        let caller_locals = if caller_is_module {
+            HashMap::new()
+        } else {
+            self.frames[caller_index].locals.clone()
+        };
+
+        let mut globals_module = caller_globals.clone();
+        let mut globals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
+        let mut globals_explicit = false;
+        if let Some(value) = globals_arg {
+            if value != Value::None {
+                globals_explicit = true;
+                match value {
+                    Value::Module(module) => {
+                        globals_module = module;
+                    }
+                    Value::Dict(dict) => {
+                        let module = self.alloc_exec_namespace_module(
+                            "<eval_globals>",
+                            self.exec_namespace_map_from_dict(&dict, "globals")?,
+                        );
+                        globals_dict_writeback = Some((dict, module.clone()));
+                        globals_module = module;
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("eval() globals must be a dict or module"));
+                    }
+                }
+            }
+        }
+
+        let mut locals_module = globals_module.clone();
+        let mut locals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
+        let mut caller_locals_writeback: Option<ObjRef> = None;
+        if let Some(value) = locals_arg {
+            if value != Value::None {
+                match value {
+                    Value::Module(module) => {
+                        locals_module = module;
+                    }
+                    Value::Dict(dict) => {
+                        if let Some((global_dict, global_module)) = &globals_dict_writeback {
+                            if global_dict.id() == dict.id() {
+                                locals_module = global_module.clone();
+                            } else {
+                                let module = self.alloc_exec_namespace_module(
+                                    "<eval_locals>",
+                                    self.exec_namespace_map_from_dict(&dict, "locals")?,
+                                );
+                                locals_dict_writeback = Some((dict, module.clone()));
+                                locals_module = module;
+                            }
+                        } else {
+                            let module = self.alloc_exec_namespace_module(
+                                "<eval_locals>",
+                                self.exec_namespace_map_from_dict(&dict, "locals")?,
+                            );
+                            locals_dict_writeback = Some((dict, module.clone()));
+                            locals_module = module;
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("eval() locals must be a dict or module"));
+                    }
+                }
+            } else if !globals_explicit {
+                if caller_is_module {
+                    locals_module = caller_module;
+                } else {
+                    let module =
+                        self.alloc_exec_namespace_module("<eval_locals>", caller_locals.clone());
+                    caller_locals_writeback = Some(module.clone());
+                    locals_module = module;
+                }
+            }
+        } else if !globals_explicit {
+            if caller_is_module {
+                locals_module = caller_module;
+            } else {
+                let module = self.alloc_exec_namespace_module("<eval_locals>", caller_locals);
+                caller_locals_writeback = Some(module.clone());
+                locals_module = module;
+            }
+        }
+
+        let cells = self.build_cells(&code, Vec::new());
+        let mut frame = Frame::new(code, locals_module.clone(), true, false, cells, None);
+        frame.function_globals = globals_module.clone();
+        if locals_module.id() != globals_module.id() {
+            frame.globals_fallback = Some(globals_module.clone());
+        }
+        self.frames.push(Box::new(frame));
+
+        let previous_stop = self.run_stop_depth;
+        self.run_stop_depth = Some(caller_depth);
+        let run_result = self.run();
+        self.run_stop_depth = previous_stop;
+
+        if let Some((dict, module)) = &globals_dict_writeback {
+            self.sync_exec_namespace_to_dict(dict, module)?;
+        }
+        if let Some((dict, module)) = &locals_dict_writeback {
+            self.sync_exec_namespace_to_dict(dict, module)?;
+        }
+        if let Some(module) = &caller_locals_writeback {
+            let locals = self.exec_namespace_map_from_module(module)?;
+            if let Some(frame) = self.frames.get_mut(caller_index) {
+                frame.locals = locals;
+            }
+        }
+
+        run_result?;
+        let Some(caller_frame) = self.frames.get_mut(caller_index) else {
+            return Err(RuntimeError::new("eval() caller frame unavailable"));
+        };
+        Ok(caller_frame.stack.pop().unwrap_or(Value::None))
     }
 
     pub(super) fn builtin_len(
@@ -2201,20 +2492,25 @@ impl Vm {
                 "compile() mode must be 'exec', 'eval', or 'single'",
             ));
         }
-        if mode == "eval" {
-            return Err(RuntimeError::new(
-                "compile() eval mode is not implemented yet",
-            ));
-        }
-
-        let module_ast = parser::parse_module(&source_text).map_err(|err| {
-            RuntimeError::new(format!(
-                "compile() parse error at {}: {}",
-                err.offset, err.message
-            ))
-        })?;
-        let code = compiler::compile_module_with_filename(&module_ast, &filename)
-            .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?;
+        let code = if mode == "eval" {
+            let expr_ast = parser::parse_expression(&source_text).map_err(|err| {
+                RuntimeError::new(format!(
+                    "compile() parse error at {}: {}",
+                    err.offset, err.message
+                ))
+            })?;
+            compiler::compile_expression_with_filename(&expr_ast, &filename)
+                .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?
+        } else {
+            let module_ast = parser::parse_module(&source_text).map_err(|err| {
+                RuntimeError::new(format!(
+                    "compile() parse error at {}: {}",
+                    err.offset, err.message
+                ))
+            })?;
+            compiler::compile_module_with_filename(&module_ast, &filename)
+                .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?
+        };
         Ok(Value::Code(Rc::new(code)))
     }
 

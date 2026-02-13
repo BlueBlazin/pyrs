@@ -400,12 +400,15 @@ impl Vm {
                     return Ok(NativeCallResult::Value(value));
                 }
                 if let Some(owner) = missing_owner {
-                    if let Some(missing) = self.lookup_bound_special_method(&owner, "__missing__")? {
+                    if let Some(missing) =
+                        self.lookup_bound_special_method(&owner, "__missing__")?
+                    {
                         return match self.call_internal(missing, vec![key], HashMap::new())? {
                             InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
-                            InternalCallOutcome::CallerExceptionHandled => Err(
-                                self.runtime_error_from_active_exception("__missing__() failed"),
-                            ),
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                Err(self
+                                    .runtime_error_from_active_exception("__missing__() failed"))
+                            }
                         };
                     }
                 }
@@ -5077,8 +5080,11 @@ impl Vm {
             BuiltinFunction::Len => self.builtin_len(args, kwargs),
             BuiltinFunction::Locals => self.builtin_locals(args, kwargs),
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
+            BuiltinFunction::Vars => self.builtin_vars(args, kwargs),
             BuiltinFunction::GcCollect => self.builtin_gc_collect(args, kwargs),
             BuiltinFunction::Dir => self.builtin_dir(args, kwargs),
+            BuiltinFunction::Hash => self.builtin_hash(args, kwargs),
+            BuiltinFunction::Breakpoint => self.builtin_breakpoint(args, kwargs),
             BuiltinFunction::SysGetFrame => self.builtin_sys_getframe(args, kwargs),
             BuiltinFunction::SysException => self.builtin_sys_exception(args, kwargs),
             BuiltinFunction::SysExcInfo => self.builtin_sys_exc_info(args, kwargs),
@@ -5176,6 +5182,7 @@ impl Vm {
             BuiltinFunction::Super => self.builtin_super(args, kwargs),
             BuiltinFunction::Import => self.builtin_import(args, kwargs),
             BuiltinFunction::Exec => self.builtin_exec(args, kwargs),
+            BuiltinFunction::Eval => self.builtin_eval(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
             BuiltinFunction::ImportlibInvalidateCaches => {
@@ -5364,9 +5371,15 @@ impl Vm {
             BuiltinFunction::SubprocessPipeReadline => {
                 self.builtin_subprocess_pipe_readline(args, kwargs)
             }
-            BuiltinFunction::SubprocessPipeWrite => self.builtin_subprocess_pipe_write(args, kwargs),
-            BuiltinFunction::SubprocessPipeFlush => self.builtin_subprocess_pipe_flush(args, kwargs),
-            BuiltinFunction::SubprocessPipeClose => self.builtin_subprocess_pipe_close(args, kwargs),
+            BuiltinFunction::SubprocessPipeWrite => {
+                self.builtin_subprocess_pipe_write(args, kwargs)
+            }
+            BuiltinFunction::SubprocessPipeFlush => {
+                self.builtin_subprocess_pipe_flush(args, kwargs)
+            }
+            BuiltinFunction::SubprocessPipeClose => {
+                self.builtin_subprocess_pipe_close(args, kwargs)
+            }
             BuiltinFunction::SubprocessCleanup => self.builtin_subprocess_cleanup(args, kwargs),
             BuiltinFunction::SubprocessCheckCall => {
                 self.builtin_subprocess_check_call(args, kwargs)

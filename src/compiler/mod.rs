@@ -1432,6 +1432,10 @@ pub fn compile_module(module: &Module) -> Result<CodeObject, CompileError> {
     compile_module_with_filename(module, "<module>")
 }
 
+pub fn compile_expression(expr: &Expr) -> Result<CodeObject, CompileError> {
+    compile_expression_with_filename(expr, "<string>")
+}
+
 pub fn compile_module_with_filename(
     module: &Module,
     filename: &str,
@@ -1440,6 +1444,22 @@ pub fn compile_module_with_filename(
     let mut compiler = Compiler::new("<module>", filename, scope);
     compiler.compile_module(module)?;
     Ok(compiler.finish())
+}
+
+pub fn compile_expression_with_filename(
+    expr: &Expr,
+    filename: &str,
+) -> Result<CodeObject, CompileError> {
+    let scope_module = Module {
+        body: vec![Stmt {
+            node: StmtKind::Expr(expr.clone()),
+            span: expr.span,
+        }],
+    };
+    let scope = ScopeInfo::for_module(&scope_module)?;
+    let mut compiler = Compiler::new("<module>", filename, scope);
+    compiler.compile_expr(expr)?;
+    Ok(compiler.finish_expression())
 }
 
 struct Compiler {
@@ -1491,6 +1511,12 @@ impl Compiler {
 
     fn finish(mut self) -> CodeObject {
         self.emit(Opcode::LoadConst, Some(0));
+        self.emit(Opcode::ReturnValue, None);
+        self.code.rebuild_layout_indexes();
+        self.code
+    }
+
+    fn finish_expression(mut self) -> CodeObject {
         self.emit(Opcode::ReturnValue, None);
         self.code.rebuild_layout_indexes();
         self.code

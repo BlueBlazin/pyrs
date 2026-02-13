@@ -6,4 +6,4 @@ pub mod token;
 mod parser;
 mod unicode_names;
 
-pub use parser::{ParseError, parse_module};
+pub use parser::{ParseError, parse_expression, parse_module};

@@ -1,9 +1,2 @@
 # CPython builtins currently missing in pyrs.
-# Gate policy: this list may only shrink; any new missing name fails CI.
-False
-None
-True
-breakpoint
-eval
-hash
-vars
+# Keep empty; any entry requires tracked justification.

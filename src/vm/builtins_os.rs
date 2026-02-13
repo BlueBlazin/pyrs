@@ -1781,7 +1781,9 @@ impl Vm {
             return Err(RuntimeError::new("module 'subprocess' is invalid"));
         };
         let Some(Value::Class(class_ref)) = module_data.globals.get("_PyrsPipe").cloned() else {
-            return Err(RuntimeError::new("module 'subprocess' has no _PyrsPipe class"));
+            return Err(RuntimeError::new(
+                "module 'subprocess' has no _PyrsPipe class",
+            ));
         };
         Ok(class_ref)
     }
@@ -1828,18 +1830,30 @@ impl Vm {
         method_name: &str,
     ) -> Result<(i64, String, bool, Option<String>), RuntimeError> {
         let Value::Instance(instance_ref) = instance else {
-            return Err(RuntimeError::new(format!("{method_name} expected pipe instance")));
+            return Err(RuntimeError::new(format!(
+                "{method_name} expected pipe instance"
+            )));
         };
         let Object::Instance(instance_data) = &*instance_ref.kind() else {
-            return Err(RuntimeError::new(format!("{method_name} expected pipe instance")));
+            return Err(RuntimeError::new(format!(
+                "{method_name} expected pipe instance"
+            )));
         };
         let pid = match instance_data.attrs.get(SUBPROCESS_PIPE_PID_ATTR) {
             Some(Value::Int(pid)) => *pid,
-            _ => return Err(RuntimeError::new(format!("{method_name} missing process id"))),
+            _ => {
+                return Err(RuntimeError::new(format!(
+                    "{method_name} missing process id"
+                )));
+            }
         };
         let kind = match instance_data.attrs.get(SUBPROCESS_PIPE_KIND_ATTR) {
             Some(Value::Str(kind)) => kind.clone(),
-            _ => return Err(RuntimeError::new(format!("{method_name} missing pipe kind"))),
+            _ => {
+                return Err(RuntimeError::new(format!(
+                    "{method_name} missing pipe kind"
+                )));
+            }
         };
         let text_mode = matches!(
             instance_data.attrs.get(SUBPROCESS_PIPE_TEXT_ATTR),
@@ -1890,13 +1904,11 @@ impl Vm {
             .remove("universal_newlines")
             .map(|value| is_truthy(&value))
             .unwrap_or(false);
-        let encoding = kwargs
-            .remove("encoding")
-            .and_then(|value| match value {
-                Value::Str(text) => Some(text),
-                Value::None => None,
-                _ => None,
-            });
+        let encoding = kwargs.remove("encoding").and_then(|value| match value {
+            Value::Str(text) => Some(text),
+            Value::None => None,
+            _ => None,
+        });
         let explicit_text = text_mode || universal_newlines || encoding.is_some();
         let _bufsize = kwargs.remove("bufsize");
         let _errors = kwargs.remove("errors");
@@ -2007,10 +2019,7 @@ impl Vm {
                 if let Some(stdin) = child.stdin.as_mut() {
                     let payload = match input {
                         Value::Str(text) if text_mode => {
-                            let codec = encoding
-                                .as_deref()
-                                .unwrap_or("utf-8")
-                                .to_ascii_lowercase();
+                            let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
                             if codec != "utf-8" && codec != "utf8" {
                                 return Err(RuntimeError::new(
                                     "only utf-8 subprocess text encoding is supported",
@@ -2086,7 +2095,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("pipe.readline() expects no keyword arguments"));
+            return Err(RuntimeError::new(
+                "pipe.readline() expects no keyword arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "pipe.readline")?;
         if !args.is_empty() {
@@ -2095,7 +2106,9 @@ impl Vm {
         let (pid, kind, text_mode, encoding) =
             self.subprocess_pipe_metadata(&Value::Instance(instance), "pipe.readline")?;
         if kind != "stdout" && kind != "stderr" {
-            return Err(RuntimeError::new("pipe.readline() is only valid for stdout/stderr"));
+            return Err(RuntimeError::new(
+                "pipe.readline() is only valid for stdout/stderr",
+            ));
         }
         let Some(child) = self.child_processes.get_mut(&pid) else {
             return Ok(if text_mode {
@@ -2105,9 +2118,15 @@ impl Vm {
             });
         };
         let reader = if kind == "stdout" {
-            child.stdout.as_mut().map(|stream| stream as &mut dyn std::io::Read)
+            child
+                .stdout
+                .as_mut()
+                .map(|stream| stream as &mut dyn std::io::Read)
         } else {
-            child.stderr.as_mut().map(|stream| stream as &mut dyn std::io::Read)
+            child
+                .stderr
+                .as_mut()
+                .map(|stream| stream as &mut dyn std::io::Read)
         };
         let Some(reader) = reader else {
             return Ok(if text_mode {
@@ -2131,10 +2150,7 @@ impl Vm {
             }
         }
         if text_mode {
-            let codec = encoding
-                .as_deref()
-                .unwrap_or("utf-8")
-                .to_ascii_lowercase();
+            let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
             if codec != "utf-8" && codec != "utf8" {
                 return Err(RuntimeError::new(
                     "only utf-8 subprocess text encoding is supported",
@@ -2152,7 +2168,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("pipe.write() expects no keyword arguments"));
+            return Err(RuntimeError::new(
+                "pipe.write() expects no keyword arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "pipe.write")?;
         if args.len() != 1 {
@@ -2166,10 +2184,7 @@ impl Vm {
         }
         let payload = match input {
             Value::Str(text) if text_mode => {
-                let codec = encoding
-                    .as_deref()
-                    .unwrap_or("utf-8")
-                    .to_ascii_lowercase();
+                let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
                 if codec != "utf-8" && codec != "utf8" {
                     return Err(RuntimeError::new(
                         "only utf-8 subprocess text encoding is supported",
@@ -2200,7 +2215,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("pipe.flush() expects no keyword arguments"));
+            return Err(RuntimeError::new(
+                "pipe.flush() expects no keyword arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "pipe.flush")?;
         if !args.is_empty() {
@@ -2227,7 +2244,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("pipe.close() expects no keyword arguments"));
+            return Err(RuntimeError::new(
+                "pipe.close() expects no keyword arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "pipe.close")?;
         if !args.is_empty() {

@@ -484,8 +484,8 @@ unsafe fn sqlite_result_from_vm_value(
             let Object::Bytes(bytes) = &*bytes_obj.kind() else {
                 return Err("user-defined function returned unsupported value".to_string());
             };
-            let len =
-                sqlite_len_to_c_int(bytes.len(), "sqlite callback blob").map_err(|err| err.message)?;
+            let len = sqlite_len_to_c_int(bytes.len(), "sqlite callback blob")
+                .map_err(|err| err.message)?;
             // SAFETY: sqlite copies bytes because SQLITE_TRANSIENT is used.
             unsafe {
                 sqlite3_result_blob(
@@ -501,8 +501,8 @@ unsafe fn sqlite_result_from_vm_value(
             let Object::ByteArray(bytes) = &*bytearray_obj.kind() else {
                 return Err("user-defined function returned unsupported value".to_string());
             };
-            let len =
-                sqlite_len_to_c_int(bytes.len(), "sqlite callback blob").map_err(|err| err.message)?;
+            let len = sqlite_len_to_c_int(bytes.len(), "sqlite callback blob")
+                .map_err(|err| err.message)?;
             // SAFETY: sqlite copies bytes because SQLITE_TRANSIENT is used.
             unsafe {
                 sqlite3_result_blob(
@@ -518,8 +518,8 @@ unsafe fn sqlite_result_from_vm_value(
             let bytes = vm
                 .value_to_bytes_payload(value)
                 .map_err(|_| "user-defined function returned unsupported value".to_string())?;
-            let len =
-                sqlite_len_to_c_int(bytes.len(), "sqlite callback blob").map_err(|err| err.message)?;
+            let len = sqlite_len_to_c_int(bytes.len(), "sqlite callback blob")
+                .map_err(|err| err.message)?;
             // SAFETY: sqlite copies bytes because SQLITE_TRANSIENT is used.
             unsafe {
                 sqlite3_result_blob(
@@ -542,9 +542,7 @@ unsafe extern "C" fn sqlite_scalar_function_destroy(ptr: *mut c_void) {
     // SAFETY: sqlite invokes destroy exactly once for the pointer provided
     // in sqlite3_create_function_v2 registration.
     unsafe {
-        drop(Box::from_raw(
-            ptr as *mut SqliteScalarFunctionCallbackState
-        ));
+        drop(Box::from_raw(ptr as *mut SqliteScalarFunctionCallbackState));
     }
 }
 
@@ -557,7 +555,8 @@ unsafe extern "C" fn sqlite_scalar_function_callback(
         return;
     }
     // SAFETY: sqlite provided user data pointer for this callback registration.
-    let callback_state = unsafe { sqlite3_user_data(context) as *mut SqliteScalarFunctionCallbackState };
+    let callback_state =
+        unsafe { sqlite3_user_data(context) as *mut SqliteScalarFunctionCallbackState };
     if callback_state.is_null() {
         // SAFETY: context is valid for result emission.
         unsafe { sqlite3_result_null(context) };
@@ -567,7 +566,9 @@ unsafe extern "C" fn sqlite_scalar_function_callback(
     let vm_ptr = SQLITE_CALLBACK_VM.with(|slot| slot.get());
     if vm_ptr.is_null() {
         // SAFETY: context is valid for result emission.
-        unsafe { sqlite_result_error_message(context, "sqlite callback VM context is unavailable") };
+        unsafe {
+            sqlite_result_error_message(context, "sqlite callback VM context is unavailable")
+        };
         return;
     }
 
@@ -1789,11 +1790,10 @@ impl Vm {
                     HashMap::new(),
                 )? {
                     InternalCallOutcome::Value(value) => Ok(value),
-                    InternalCallOutcome::CallerExceptionHandled => Err(
-                        self.runtime_error_from_active_exception(
+                    InternalCallOutcome::CallerExceptionHandled => Err(self
+                        .runtime_error_from_active_exception(
                             "sqlite connect factory callable failed",
-                        ),
-                    ),
+                        )),
                 };
             }
         }
@@ -2544,7 +2544,10 @@ impl Vm {
         let name = match name {
             Value::Str(name) => name,
             _ => {
-                return Err(sqlite_error("TypeError", "create_function() name must be str"));
+                return Err(sqlite_error(
+                    "TypeError",
+                    "create_function() name must be str",
+                ));
             }
         };
         let num_params = value_to_int(num_params).map_err(|_| {

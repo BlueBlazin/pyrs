@@ -77,7 +77,9 @@ Minimum validation for builtin optimization checkpoints:
 - HOT path checkpoint landed:
   - direct no-keyword fast lanes for `len` and `bool`
   - builtin fast-lane attempts in `CALL_FUNCTION`/`CALL_FUNCTION1` before generic fallback
+- Builtin surface parity checkpoint landed:
+  - builtin parity gate is green (`145/145`, zero probe mismatches, empty allowlists)
+  - `True`/`False`/`None`, `eval`, `hash`, `vars`, and `breakpoint` are now present in `builtins`
 - Remaining priority:
-  - close missing builtin symbols tracked in `docs/BUILTIN_PARITY.md`
   - expand call specialization coverage (`OPT-024`)
   - continue container/dispatch throughput closure (`OPT-023`, `OPT-025`)
