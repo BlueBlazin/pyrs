@@ -6195,6 +6195,37 @@ fn executes_dunder_import_relative_level_inside_package() {
 }
 
 #[test]
+fn import_and_dunder_import_bind_replaced_sys_modules_entry() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_import_replace_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(
+        temp_dir.join("swapmod.py"),
+        "import sys as _sys\n_sys.modules[__name__] = _sys\n",
+    )
+    .expect("write swap module");
+
+    let source = "\
+import sys\n\
+import swapmod\n\
+m = __import__('swapmod')\n\
+ok = (swapmod is sys) and (m is sys.modules['swapmod']) and (m is sys)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir.join("swapmod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn executes_namespace_package_import() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

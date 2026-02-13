@@ -3815,6 +3815,7 @@ impl Vm {
             }
             Opcode::ImportName => {
                 let caller_idx = self.frames.len().saturating_sub(1);
+                let caller_depth = self.frames.len();
                 let idx = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing import argument"))?
@@ -3830,11 +3831,14 @@ impl Vm {
                     }
                 };
                 let module = self.import_module_object(&name)?;
+                self.run_pending_import_frames(caller_depth)?;
+                let module = self.canonical_imported_module_for_name(&name, module);
                 let result_module = self.module_for_plain_import(&name, module);
                 self.push_value_to_caller_frame(caller_idx, Value::Module(result_module))?;
             }
             Opcode::ImportNameCpython => {
                 let caller_idx = self.frames.len().saturating_sub(1);
+                let caller_depth = self.frames.len();
                 let idx = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing import argument"))?
@@ -3856,6 +3860,8 @@ impl Vm {
                 }
                 let resolved_name = self.resolve_import_name(&name, level as usize)?;
                 let module = self.import_module_object(&resolved_name)?;
+                self.run_pending_import_frames(caller_depth)?;
+                let module = self.canonical_imported_module_for_name(&resolved_name, module);
                 let result_module = if self.fromlist_requested(&fromlist) {
                     module
                 } else {

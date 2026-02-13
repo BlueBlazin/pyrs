@@ -5977,7 +5977,8 @@ impl Vm {
             name,
             "re" | "re._compiler" | "re._constants" | "re._parser" | "re._casefix"
         );
-        if !is_json_stack && !is_pickle_stack && !is_re_stack {
+        let is_decimal_stack = name == "decimal";
+        if !is_json_stack && !is_pickle_stack && !is_re_stack && !is_decimal_stack {
             return false;
         }
         if is_json_stack && !self.prefer_pure_json_when_available {
@@ -6008,6 +6009,26 @@ impl Vm {
         } else {
             module
         }
+    }
+
+    pub(super) fn canonical_imported_module_for_name(
+        &mut self,
+        name: &str,
+        fallback: ObjRef,
+    ) -> ObjRef {
+        if !name.is_empty() {
+            if let Some(modules_dict) = self.sys_dict_obj("modules") {
+                let key = Value::Str(name.to_string());
+                if let Some(Value::Module(module)) = dict_get_value(&modules_dict, &key) {
+                    self.modules.insert(name.to_string(), module.clone());
+                    return module;
+                }
+            }
+            if let Some(module) = self.modules.get(name).cloned() {
+                return module;
+            }
+        }
+        fallback
     }
 
     pub(super) fn fromlist_requested(&self, fromlist: &Value) -> bool {

@@ -82,6 +82,7 @@ impl Vm {
         let resolved_name = self.resolve_import_name(&name, level as usize)?;
         let module = self.import_module_object(&resolved_name)?;
         self.run_pending_import_frames(caller_depth)?;
+        let module = self.canonical_imported_module_for_name(&resolved_name, module);
         let result = if self.fromlist_requested(&fromlist) {
             module
         } else {
@@ -161,6 +162,7 @@ impl Vm {
         };
         let module = self.import_module_object(&resolved_name)?;
         self.run_pending_import_frames(caller_depth)?;
+        let module = self.canonical_imported_module_for_name(&resolved_name, module);
         Ok(Value::Module(module))
     }
 
@@ -190,8 +192,13 @@ impl Vm {
         if caller_depth == 0 {
             self.run_pending_import_frames(caller_depth)?;
         }
-        self.sync_re_module_flag_aliases(&module);
-        Ok(module)
+        let module_name = match &*module.kind() {
+            Object::Module(module_data) => module_data.name.clone(),
+            _ => String::new(),
+        };
+        let canonical = self.canonical_imported_module_for_name(&module_name, module);
+        self.sync_re_module_flag_aliases(&canonical);
+        Ok(canonical)
     }
 
     pub(super) fn sync_re_module_flag_aliases(&mut self, module: &ObjRef) {
