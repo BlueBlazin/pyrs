@@ -4,6 +4,11 @@ const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
 const IO_BUFFERED_ATTR_BUF_SIZE: &str = "__pyrs_buffer_size";
 const IO_BUFFERED_DEFAULT_SIZE: i64 = 8192;
 
+pub(super) struct IoOpenPath {
+    path: std::path::PathBuf,
+    opener_arg: Value,
+}
+
 impl Vm {
     pub(super) fn builtin_io_open(
         &mut self,
@@ -279,7 +284,7 @@ impl Vm {
                 if !closefd {
                     return Err(RuntimeError::new("Cannot use closefd=False with file name"));
                 }
-                let path = self.io_open_path_from_value(pathlike)?;
+                let open_path = self.io_open_path_from_value(pathlike)?;
                 if let Some(opener) = opener_value {
                     let mut flags = if updating {
                         2
@@ -302,7 +307,7 @@ impl Vm {
                     }
                     let opener_result = match self.call_internal(
                         opener,
-                        vec![Value::Str(path.clone()), Value::Int(flags)],
+                        vec![open_path.opener_arg.clone(), Value::Int(flags)],
                         HashMap::new(),
                     )? {
                         InternalCallOutcome::Value(value) => value,
@@ -356,7 +361,7 @@ impl Vm {
                         _ => return Err(RuntimeError::new("invalid mode")),
                     }
                     let file = options
-                        .open(path)
+                        .open(&open_path.path)
                         .map_err(|err| RuntimeError::new(format!("open() failed: {err}")))?;
                     self.alloc_open_fd(file)
                 }
@@ -458,17 +463,50 @@ impl Vm {
         }
     }
 
-    pub(super) fn io_open_path_from_value(&mut self, value: Value) -> Result<String, RuntimeError> {
-        let validate_path = |path: String| -> Result<String, RuntimeError> {
+    pub(super) fn io_open_path_from_value(
+        &mut self,
+        value: Value,
+    ) -> Result<IoOpenPath, RuntimeError> {
+        let validate_str_path = |path: String| -> Result<IoOpenPath, RuntimeError> {
             if path.contains('\0') {
                 return Err(RuntimeError::new(
                     "ValueError: embedded null character in path",
                 ));
             }
-            Ok(path)
+            Ok(IoOpenPath {
+                path: std::path::PathBuf::from(path.clone()),
+                opener_arg: Value::Str(path),
+            })
+        };
+        let validate_bytes_path = |obj: ObjRef| -> Result<IoOpenPath, RuntimeError> {
+            let bytes = match &*obj.kind() {
+                Object::Bytes(bytes) => bytes.clone(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "TypeError: __fspath__() must return str or bytes",
+                    ));
+                }
+            };
+            if bytes.iter().any(|byte| *byte == 0) {
+                return Err(RuntimeError::new(
+                    "ValueError: embedded null character in path",
+                ));
+            }
+            #[cfg(unix)]
+            let path = {
+                use std::os::unix::ffi::OsStringExt;
+                std::path::PathBuf::from(std::ffi::OsString::from_vec(bytes))
+            };
+            #[cfg(not(unix))]
+            let path = std::path::PathBuf::from(String::from_utf8_lossy(&bytes).into_owned());
+            Ok(IoOpenPath {
+                path,
+                opener_arg: Value::Bytes(obj),
+            })
         };
         match value {
-            Value::Str(_) | Value::Bytes(_) => validate_path(value_to_path(&value)?),
+            Value::Str(path) => validate_str_path(path),
+            Value::Bytes(obj) => validate_bytes_path(obj),
             other => {
                 let Some(fspath) = self.lookup_bound_special_method(&other, "__fspath__")? else {
                     return Err(RuntimeError::new(
@@ -482,7 +520,8 @@ impl Vm {
                     }
                 };
                 match path_value {
-                    Value::Str(_) | Value::Bytes(_) => validate_path(value_to_path(&path_value)?),
+                    Value::Str(path) => validate_str_path(path),
+                    Value::Bytes(obj) => validate_bytes_path(obj),
                     _ => Err(RuntimeError::new(
                         "TypeError: __fspath__() must return str or bytes",
                     )),

@@ -63,6 +63,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - additional pickle-heavy VM tests now run on dedicated 32MB stack threads (`pickle_protocol4_dict_chunking_emits_multiple_setitems_for_large_dicts`, `pickle_slot_list_roundtrip_preserves_slots_and_dynamic_dict_attrs`, `with_assert_raises_handles_missing_attr_without_stack_underflow`), and local full `cargo test -q --test vm` is green.
   - CPython harness import suites (`runs_cpython_language_suite`, `runs_cpython_import_suite`) now run on dedicated 32MB stack threads to avoid debug-thread stack overflows during deep import chains.
   - strict stdlib lane remains green after enum-shim retirement (`PYRS_RUN_STRICT_STDLIB=1 cargo test -q --test cpython_harness runs_cpython_strict_stdlib_suite`).
+  - `_io.open` now preserves raw bytes paths when dispatching opener callbacks (no lossy bytes->str conversion), with regression coverage in `tests/vm.rs::io_open_passes_bytes_path_to_opener_without_lossy_conversion`.
 - Extended probe remaining red modules:
   - `xml`, `gzip`, `bz2`, `lzma`.
   - `smtplib` targeted smoke is green but still logs unsupported `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`).

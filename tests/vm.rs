@@ -9191,6 +9191,31 @@ ok = caught
 }
 
 #[test]
+fn io_open_passes_bytes_path_to_opener_without_lossy_conversion() {
+    let source = r#"import io
+got_bytes = False
+err_ok = False
+
+def opener(path, flags):
+    global got_bytes
+    got_bytes = isinstance(path, bytes) and path == b"abc"
+    raise OSError("stop")
+
+try:
+    io.open(b"abc", "r", opener=opener)
+except OSError as exc:
+    err_ok = "stop" in str(exc)
+
+ok = got_bytes and err_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_platform_libc_ver_tuple() {
     let source = "import platform\ninfo = platform.libc_ver()\nok = isinstance(info, tuple) and len(info) == 2 and isinstance(info[0], str) and isinstance(info[1], str)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
