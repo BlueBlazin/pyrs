@@ -19,10 +19,10 @@ Scope list (user-priority):
 - `YELLOW`: imports but common workflow still fails (or only trivial path works).
 - `RED`: import itself fails (critical missing native/core surface).
 
-## Baseline Snapshot (2026-02-12 local probe, debug build)
-- Import pass: `25/26`
-- Common-workflow smoke pass: `25/26`
-- Remaining blocker is concentrated in one native/core surface: `_sqlite3`.
+## Baseline Snapshot (2026-02-13 local probe, debug build)
+- Import pass: `26/26`
+- Common-workflow smoke pass: `26/26`
+- All top-stdlib common-usecase rows in this checklist are currently green; remaining work is long-tail semantic/perf closure.
 
 ## Checklist (Common Functionality)
 
@@ -32,7 +32,7 @@ Scope list (user-priority):
 | `sys` | P0 | GREEN | `sys.path`, flags, implementation metadata, argv/executable surfaces | Continue parity for flags/runtime fields |
 | `pathlib` | P0 | GREEN | `Path.resolve`, `Path.exists`, read/write helpers, path normalization | Deep filesystem semantics still tracked separately |
 | `re` | P0 | GREEN | `search`/`match` basics, alternation/grouping, replace/split primitives | Long-tail regex engine parity remains tracked in strict suites |
-| `json` | P0 | GREEN | `dumps`/`loads`, common options (`sort_keys`, separators), decode errors | Pure-stdlib JSON path still pending `_sre`/enum-depth closure |
+| `json` | P0 | GREEN | `dumps`/`loads`, common options (`sort_keys`, separators), decode errors | Pure-json default path and `_json` scanner integration are now green; long-tail malformed-input/perf closure remains |
 | `datetime` | P0 | GREEN | `datetime/date/time` constructors, arithmetic/comparison, ISO formatting | Deep tz/parsing edges tracked in strict harness |
 | `time` | P1 | GREEN | wall clock + monotonic + sleep path semantics | Keep platform edge parity |
 | `math` | P0 | GREEN | arithmetic/transcendentals + common integer ops (`factorial`, etc.) | Advanced numeric edge parity tracked in harness |
@@ -49,7 +49,7 @@ Scope list (user-priority):
 | `multiprocessing` | P1 | YELLOW | process start/join/queue basics (or explicit, documented limitation) | only minimal probe currently verified |
 | `asyncio` | P1 | GREEN | `asyncio.run`, task scheduling baseline, coroutine correctness | expand real-world task patterns |
 | `csv` | P0 | GREEN | reader/writer basics via `Lib/csv.py` + `_csv` substrate | long-tail dialect/error parity pending |
-| `sqlite3` | P0 | RED | in-memory connect/execute/fetch/close | `_sqlite3` missing |
+| `sqlite3` | P0 | GREEN | in-memory connect/execute/fetch/close | `_sqlite3` baseline is landed; DB-API long-tail behavior (transactions/factories/types) remains |
 | `urllib` | P0 | GREEN | URL parse/join/quote basics used by apps | Extended URL policy/IDNA edge parity pending |
 | `http` | P0 | GREEN | `http.client` import + request object baseline | deeper enum-member semantics still pending before enum shim retirement |
 | `hashlib` | P0 | GREEN | `sha256/md5` digest baseline + constructor paths | md5/sha2 native backends are active; broader algorithm surface remains tracked separately |
@@ -67,7 +67,7 @@ For each module above:
 
 ### Wave 1 (P0 foundation unlockers)
 1. `hashlib` native crypto substrates (`md5`, `sha2`) are landed with parity tests.
-2. Implement `_sqlite3` baseline import/connect/execute/fetch path with parity tests.
+2. `_sqlite3` baseline import/connect/execute/fetch path is landed with regression tests.
 3. Keep enum/http behavior closure tracked until shim retirement (`Lib/enum.py` path).
 4. Keep constructor/object-model and iterator fixes covered with targeted regressions (no regressions to resolved rows).
 

@@ -31,7 +31,6 @@ Build a production-grade Python interpreter in Rust with full source + bytecode 
 - Milestones 14-16: pending (performance/observability, extension ecosystem, release hardening)
 
 Milestone 13 completion is blocked on P0 closure of:
-- `_sqlite3` baseline surface (`sqlite3` import + connect/execute/fetch path)
 - deferred strict pickle lane timeout closure (`test/test_pickle.py`, `test/test_pickletools.py`)
 
 ## Execution Policy
@@ -87,10 +86,10 @@ Milestone 13 completion is blocked on P0 closure of:
 
 ## Current Focus
 - Active top priority: Milestone 13 closure via top-stdlib common-usecase coverage first (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`), with benchmark-guarded performance maintenance.
-- Top-stdlib common-usecase gate current snapshot (local debug, 2026-02-12):
-  - import pass: `25/26`
-  - smoke pass: `25/26`
-  - remaining red module: `sqlite3`
+- Top-stdlib common-usecase gate current snapshot (local debug, 2026-02-13):
+  - import pass: `26/26`
+  - smoke pass: `26/26`
+  - no red module in the top-stdlib checklist baseline
 - Performance suite (canonical):
   - `scripts/bench_fib_gate.sh 5`
   - `scripts/bench_dispatch_hotpath.sh 5`
@@ -119,6 +118,9 @@ Milestone 13 completion is blocked on P0 closure of:
   - fast decode now handles mixed framed/unframed protocol-4/5 streams and memo opcodes (`MEMOIZE`/`BINGET`/`LONG_BINGET`/`BINPUT`/`LONG_BINPUT`), eliminating many `_loads` fallbacks.
   - `Unpickler.load` fast-probe fallback now preserves caller exception state, so unseekable streams (`tell`/`seek` raising `UnsupportedOperation`) correctly fall back instead of surfacing probe errors.
   - deferred strict pickle suite still times out (`test/test_pickle.py` > 600s) and remains open; remaining work is throughput closure for heavy pure-`pickle._Unpickler` paths.
+- sqlite/json checkpoint:
+  - `_sqlite3` baseline is landed: module import surface, `connect`, `Connection.cursor/execute/close`, `Cursor.execute/fetchone/fetchall/close`, adapter/converter registries, and core exception/type exports.
+  - pure-stdlib JSON remains the default when CPython `Lib/` is available, and `_json` scanner integration now handles `json.loads` decode flow with correct regex `pos/endpos` handling.
 - Hashlib checkpoint:
   - native `_md5` and `_sha2` backends are wired using Rust crypto crates with constructor/update/digest/hexdigest/copy parity tests.
   - common `hashlib.md5` and `hashlib.sha256` stdlib paths are now green.

@@ -14,7 +14,7 @@
 
 - Substantial pure-Python execution: modules/packages, classes, closures, generators, comprehensions, core async flows.
 - CPython `.pyc` execution for a supported subset, including sourceless import fallback paths.
-- Broad stdlib foundation (`sys`, import foundations, `os`/`pathlib`, `json`, `re`, `math`, `datetime`, `random`, core `asyncio`/`threading`/`signal`).
+- Broad stdlib foundation (`sys`, import foundations, `os`/`pathlib`, `json`, `re`, `math`, `datetime`, `random`, `sqlite3` baseline, core `asyncio`/`threading`/`signal`).
 - Curated CPython harness suites and project test suite are green.
 
 ## Current Limits
@@ -43,7 +43,7 @@ Latest local snapshot (`2026-02-11`):
 ## Native Stdlib Layout
 
 - VM-native stdlib handlers are being split out of `src/vm/mod.rs` into `src/vm/stdlib/`.
-- Current extracted modules: `src/vm/stdlib/json.rs`, `src/vm/stdlib/re.rs`, `src/vm/stdlib/csv.rs`.
+- Current extracted modules: `src/vm/stdlib/json.rs`, `src/vm/stdlib/re.rs`, `src/vm/stdlib/csv.rs`, `src/vm/stdlib/sqlite3.rs`.
 - Direction: prefer CPython official pure-Python stdlib implementations whenever feasible; keep native handlers only where required and track remaining native/stub parity gaps in `docs/STUB_ACCOUNTING.md`.
 
 ## Quick Start

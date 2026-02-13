@@ -16,10 +16,9 @@ No partially implemented surface is allowed to remain untracked.
 
 | Surface | Current state | Closure criteria | Milestone |
 |---|---|---|---|
-| `_sqlite3`/`sqlite3` | Not implemented (`sqlite3` import fails) | `_sqlite3` baseline module with connect/execute/fetch/close parity for common DB-API paths | 13 |
 | `pickle`/`pickletools`/`copyreg` | `_pickle.Pickler` `__newobj_ex__` C-path parity is landed (including proto>=4) and temporary remap shim is removed; fast decode now covers mixed frame/unframed streams + memo opcodes and unseekable `Unpickler.load` fallback parity is fixed; deferred strict lane still times out under subprocess harness (`test_pickle.py` > 600s, `test_pickletools.py` green) | Eliminate deferred strict pickle subprocess timeouts, keep allowlist empty, and close deferred strict lane | 13 |
 | `_io` | Core mode/newline/validation behavior implemented; strict memoryio lane is green; remaining long-tail behavior exists in full strict stdlib execution | Complete remaining `_io` long-tail behavior required by full strict stdlib execution | 13 |
-| `json` | Common `dumps`/`loads` workflows are green in top-stdlib gate; pure-stdlib JSON path is still partial | Full CPython semantic parity (pure + native accelerator paths), malformed-input differential coverage, perf baseline | 13 |
+| `json` | Common `dumps`/`loads` workflows are green in top-stdlib gate; pure-stdlib default path with `_json` scanner handoff is now green | Full CPython semantic parity (pure + native accelerator paths), malformed-input differential coverage, perf baseline | 13 |
 | `_csv`/`csv` | Top-level common workflows are green; long-tail dialect/error parity still partial | Full parser/writer parity (`test_csv` class), malformed-input hardening, perf baseline | 13 |
 | `_sre` | Core accelerator surface bootstrapped; long-tail behavior pending | Pure `Lib/re/*` default path passes strict/curated gates | 13 |
 | Hash containers | Dict backend upgraded; set/frozenset mostly hash-indexed | Long-tail semantic + performance parity closure for dict/set/frozenset | 13/14 |
@@ -33,6 +32,7 @@ No partially implemented surface is allowed to remain untracked.
 | `threading`/`signal`/`_thread`/`_warnings` | Foundations implemented | Full in-scope behavioral parity | 13/16 |
 | `socket`/`_socket` | Baseline methods/helpers implemented | Full in-scope API and behavior parity | 13 |
 | `uuid` | Foundations implemented | Full in-scope API parity | 13 |
+| `_sqlite3`/`sqlite3` | `_sqlite3` baseline landed (connect/cursor/execute/fetch/close, adapters/converters registries, core exception/type exports) and top-stdlib common-usecase row is green | Full DB-API semantic parity (transactions/factory callbacks/type adapters/edge errors) with expanded CPython suite coverage | 13 |
 | `dataclasses`/`typing`/`enum`/`contextvars` | Common dataclasses/typing paths are green; enum remains shim-backed and partial | Full in-scope semantics for modern pure-Python apps; retire shim enum for pure `Lib/enum.py` path | 13 |
 | `hashlib` extended algorithms (`_sha1`/`_blake2`/`_sha3`/`_hashlib`) | md5/sha2 minimum path is now green; broader algorithm coverage is still partial | Full CPython algorithm surface (or explicit in-scope exclusions) with differential tests and stdlib consumers passing | 13/14 |
 | Object-model protocol dispatch (`__contains__`/iterator fallback, slot edge parity) | Truthiness + baseline membership fallback order landed; long-tail slot/error edge parity still partial | Align remaining membership/slot edge semantics with CPython data model/tests | 13 |
