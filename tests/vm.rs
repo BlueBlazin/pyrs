@@ -4352,11 +4352,62 @@ fn executes_datetime_date_constructor() {
 }
 
 #[test]
-fn imports_enum_module_and_handles_function_form() {
-    let source = "import enum\nvalue = enum.Enum('E', type=int)\nok = value is not None\n";
+fn enum_shim_vs_cpython_probe_tracks_member_value_blocker() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "import enum\npath = getattr(enum, '__file__', '')\nnorm = path.replace('\\\\', '/')\nok_member = False\nerr_text = ''\ntry:\n    class E(enum.Enum):\n        A = 1\n    ok_member = (E.A.value == 1 and E.A.name == 'A')\nexcept Exception as exc:\n    err_text = type(exc).__name__ + ':' + str(exc)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut shim_vm = Vm::new();
+    shim_vm.add_module_path(lib_path.clone());
+    shim_vm
+        .execute(&code)
+        .expect("shim enum probe should execute");
+    let shim_path = match shim_vm.get_global("norm") {
+        Some(Value::Str(path)) => path,
+        other => panic!("expected shim probe path, got {other:?}"),
+    };
+    assert!(shim_path.contains("/shims/"));
+    assert_eq!(shim_vm.get_global("ok_member"), Some(Value::Bool(false)));
+
+    let pyrs_bin = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
+    if !pyrs_bin.is_file() {
+        return;
+    }
+    let probe_source = "import enum\nclass E(enum.Enum):\n    A = 1\nprint(E.A.value)\n";
+    let output = Command::new(&pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .env("PYRS_DISABLE_ENUM_SHIM", "1")
+        .arg("-S")
+        .arg("-c")
+        .arg(probe_source)
+        .output()
+        .expect("spawn pyrs enum cpython-path probe");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("class constructor takes no arguments")
+            || stderr.contains("keyword arguments not supported for builtin")
+            || stderr.contains("has overflowed its stack")
+    );
+    assert!(
+        stderr.contains("keyword arguments not supported for builtin")
+            || stderr.contains("class constructor takes no arguments")
+            || stderr.contains("/Lib/enum.py")
+    );
+}
+
+#[test]
+fn prefers_cpython_pkgutil_and_resources_over_local_shims_when_stdlib_is_available() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "import pkgutil\nimport importlib.resources as resources\npkg_norm = getattr(pkgutil, '__file__', '').replace('\\\\', '/')\nres_norm = getattr(resources, '__file__', '').replace('\\\\', '/')\nok = ('/shims/' not in pkg_norm and '/shims/' not in res_norm)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
@@ -6102,6 +6153,7 @@ fn pkgutil_and_importlib_resources_shims_support_basic_resource_reads() {
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
+    vm.enable_local_shim_fallback();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));

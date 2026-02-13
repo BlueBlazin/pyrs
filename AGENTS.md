@@ -41,6 +41,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   2. Pure-stdlib strict-lane expansion/closure
 - Prefer official CPython pure-Python stdlib implementations where feasible.
 - Keep native handlers as substrate/accelerator layers, not replacement semantics.
+- Local shim policy:
+  - `enum` shim remains temporarily preferred by default while CPython `Lib/enum.py` path is still blocked.
+  - `pkgutil`/`importlib.resources` local shims are fallback-only and require `PYRS_ENABLE_LOCAL_SHIMS=1`.
+  - CPython-enum probe mode: `PYRS_DISABLE_ENUM_SHIM=1`.
 - Keep docs updated in the same checkpoint as behavior changes.
 - Keep worktrees clean; commit small focused checkpoints.
 - End every assistant turn with immediate next `3-6` concrete steps.

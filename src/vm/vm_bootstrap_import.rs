@@ -5082,7 +5082,7 @@ impl Vm {
     }
 
     pub(super) fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
-        if name == "enum" {
+        if name == "enum" && self.enum_shim_enabled {
             if let Some(source) = self.preferred_local_shim_source(name) {
                 return Some(source);
             }
@@ -5098,12 +5098,14 @@ impl Vm {
         if let Some(source) = self.find_module_source_in_roots(name, &roots) {
             return Some(source);
         }
-        // Only fall back to local shims when normal path resolution fails.
-        if name == "enum" {
-            None
-        } else {
-            self.preferred_local_shim_source(name)
+        if name == "enum" && self.enum_shim_enabled {
+            return None;
         }
+        if !self.local_shim_fallback_enabled {
+            return None;
+        }
+        // Only fall back to local shims when normal path resolution fails.
+        self.preferred_local_shim_source(name)
     }
 
     pub(super) fn preferred_local_shim_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {

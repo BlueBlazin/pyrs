@@ -352,6 +352,14 @@ const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
 const LOCAL_SHIM_MODULES: &[&str] = &["enum", "pkgutil", "importlib.resources"];
 
+fn env_flag_enabled(name: &str) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return false;
+    };
+    let normalized = raw.trim().to_ascii_lowercase();
+    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+}
+
 struct Frame {
     code: Rc<CodeObject>,
     ip: usize,
@@ -626,6 +634,8 @@ pub struct Vm {
     pending_del_instances: HashMap<u64, ObjRef>,
     weakref_finalizers: HashMap<u64, (Weak<Obj>, Vec<ObjRef>)>,
     atexit_handlers: Vec<AtexitHandler>,
+    local_shim_fallback_enabled: bool,
+    enum_shim_enabled: bool,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
     prefer_pure_re_when_available: bool,
@@ -655,12 +665,7 @@ impl Vm {
         let mut modules = HashMap::new();
         modules.insert("__main__".to_string(), main_module.clone());
 
-        let mut module_paths = vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
-        if let Some(shim_root) = Self::local_shim_root() {
-            if !module_paths.iter().any(|existing| existing == &shim_root) {
-                module_paths.push(shim_root);
-            }
-        }
+        let module_paths = vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
 
         let mut vm = Self {
             frames: Vec::with_capacity(128),
@@ -702,6 +707,8 @@ impl Vm {
             pending_del_instances: HashMap::new(),
             weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
+            local_shim_fallback_enabled: env_flag_enabled("PYRS_ENABLE_LOCAL_SHIMS"),
+            enum_shim_enabled: !env_flag_enabled("PYRS_DISABLE_ENUM_SHIM"),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
@@ -1178,6 +1185,15 @@ impl Vm {
     pub fn enable_pure_re_preference(&mut self) {
         self.prefer_pure_re_when_available = true;
         self.maybe_prefer_cpython_pure_stdlib_modules();
+    }
+
+    pub fn enable_local_shim_fallback(&mut self) {
+        self.local_shim_fallback_enabled = true;
+    }
+
+    pub fn disable_enum_shim(&mut self) {
+        self.enum_shim_enabled = false;
+        self.unregister_module("enum");
     }
 
     pub fn import_module(&mut self, name: &str) -> Result<(), RuntimeError> {
