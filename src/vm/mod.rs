@@ -47,6 +47,7 @@ use self::ops::{
     rshift_values, sub_values, xor_values,
 };
 use self::stdlib::hashlib::HashState;
+use self::stdlib::sqlite3::{SqliteConnectionState, SqliteCursorState};
 use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
@@ -614,6 +615,8 @@ pub struct Vm {
     csv_dialects: HashMap<String, Value>,
     csv_field_size_limit: i64,
     hash_states: HashMap<u64, HashState>,
+    sqlite_connections: HashMap<u64, SqliteConnectionState>,
+    sqlite_cursors: HashMap<u64, SqliteCursorState>,
     pickle_copyreg_cache: HashMap<String, Value>,
     pickle_symbol_cache: HashMap<String, Value>,
     defaultdict_factories: HashMap<u64, Value>,
@@ -687,6 +690,8 @@ impl Vm {
             csv_dialects: HashMap::new(),
             csv_field_size_limit: 131_072,
             hash_states: HashMap::new(),
+            sqlite_connections: HashMap::new(),
+            sqlite_cursors: HashMap::new(),
             pickle_copyreg_cache: HashMap::new(),
             pickle_symbol_cache: HashMap::new(),
             defaultdict_factories: HashMap::new(),
@@ -1685,6 +1690,12 @@ impl Vm {
             let obj_id = obj.id();
             self.pending_del_instances.remove(&obj_id);
             self.hash_states.remove(&obj_id);
+            self.sqlite_cursors.remove(&obj_id);
+            if let Some(mut connection_state) = self.sqlite_connections.remove(&obj_id) {
+                let _ = connection_state.close();
+                self.sqlite_cursors
+                    .retain(|_, cursor_state| cursor_state.connection_id != obj_id);
+            }
             if self.finalized_del_objects.contains(&obj_id) {
                 continue;
             }

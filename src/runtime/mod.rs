@@ -2398,6 +2398,22 @@ pub enum BuiltinFunction {
     JsonEncodeBaseStringAscii,
     JsonMakeEncoder,
     JsonMakeEncoderCall,
+    SqliteConnect,
+    SqliteCompleteStatement,
+    SqliteRegisterAdapter,
+    SqliteRegisterConverter,
+    SqliteEnableCallbackTracebacks,
+    SqliteConnectionCursor,
+    SqliteConnectionClose,
+    SqliteConnectionExecute,
+    SqliteConnectionCommit,
+    SqliteConnectionRollback,
+    SqliteCursorExecute,
+    SqliteCursorFetchOne,
+    SqliteCursorFetchAll,
+    SqliteCursorClose,
+    SqliteCursorIter,
+    SqliteCursorNext,
     HashlibMd5,
     HashlibSha224,
     HashlibSha256,
@@ -5382,6 +5398,22 @@ impl BuiltinFunction {
             | BuiltinFunction::CsvListDialects
             | BuiltinFunction::CsvFieldSizeLimit
             | BuiltinFunction::CsvDialectValidate
+            | BuiltinFunction::SqliteConnect
+            | BuiltinFunction::SqliteCompleteStatement
+            | BuiltinFunction::SqliteRegisterAdapter
+            | BuiltinFunction::SqliteRegisterConverter
+            | BuiltinFunction::SqliteEnableCallbackTracebacks
+            | BuiltinFunction::SqliteConnectionCursor
+            | BuiltinFunction::SqliteConnectionClose
+            | BuiltinFunction::SqliteConnectionExecute
+            | BuiltinFunction::SqliteConnectionCommit
+            | BuiltinFunction::SqliteConnectionRollback
+            | BuiltinFunction::SqliteCursorExecute
+            | BuiltinFunction::SqliteCursorFetchOne
+            | BuiltinFunction::SqliteCursorFetchAll
+            | BuiltinFunction::SqliteCursorClose
+            | BuiltinFunction::SqliteCursorIter
+            | BuiltinFunction::SqliteCursorNext
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
             | BuiltinFunction::AtexitUnregister

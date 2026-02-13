@@ -84,8 +84,8 @@ fn top_stdlib_common_usecase_baseline_gate() {
     };
 
     // Baseline thresholds from docs/STDLIB_COMMON_USECASE_CHECKLIST.md.
-    const MIN_IMPORT_PASS: usize = 25;
-    const MIN_SMOKE_PASS: usize = 24;
+    const MIN_IMPORT_PASS: usize = 26;
+    const MIN_SMOKE_PASS: usize = 26;
     let timeout = Duration::from_secs(12);
 
     let cases = vec![

@@ -993,14 +993,88 @@ impl Vm {
         kwargs: HashMap<String, Value>,
         mode: ReMode,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() < 2 {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 4 {
             return Err(RuntimeError::new("re function expects pattern and string"));
         }
         let pattern = re_pattern_from_argument(&args[0])?;
         let groupindex = self.re_match_groupindex_from_pattern_arg(&args[0]);
-        let found = re_match_details(&pattern, &args[1], mode)?;
+        let target = args[1].clone();
+        let clamp_index = |len: usize, raw: i64| -> usize {
+            if raw < 0 {
+                (len as i64 + raw).max(0) as usize
+            } else {
+                (raw as usize).min(len)
+            }
+        };
+        let raw_pos = if let Some(value) = args.get(2) {
+            value_to_int(value.clone())?
+        } else {
+            0
+        };
+        let default_end = match &target {
+            Value::Str(text) => text.len() as i64,
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                bytes_like_from_value(target.clone())?.len() as i64
+            }
+            _ => 0,
+        };
+        let raw_end = if let Some(value) = args.get(3) {
+            value_to_int(value.clone())?
+        } else {
+            default_end
+        };
+
+        let found = match target.clone() {
+            Value::Str(text) => {
+                let mut start = clamp_index(text.len(), raw_pos);
+                let mut stop = clamp_index(text.len(), raw_end);
+                while start > 0 && !text.is_char_boundary(start) {
+                    start -= 1;
+                }
+                while stop > 0 && !text.is_char_boundary(stop) {
+                    stop -= 1;
+                }
+                if stop < start {
+                    stop = start;
+                }
+                let segment = Value::Str(text[start..stop].to_string());
+                re_match_details(&pattern, &segment, mode)?.map(|mut detail| {
+                    detail.start += start;
+                    detail.end += start;
+                    for capture in &mut detail.captures {
+                        if let Some((cap_start, cap_end)) = capture {
+                            *cap_start += start;
+                            *cap_end += start;
+                        }
+                    }
+                    detail
+                })
+            }
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                let bytes = bytes_like_from_value(target.clone())?;
+                let start = clamp_index(bytes.len(), raw_pos);
+                let mut stop = clamp_index(bytes.len(), raw_end);
+                if stop < start {
+                    stop = start;
+                }
+                let segment = self.heap.alloc_bytes(bytes[start..stop].to_vec());
+                re_match_details(&pattern, &segment, mode)?.map(|mut detail| {
+                    detail.start += start;
+                    detail.end += start;
+                    for capture in &mut detail.captures {
+                        if let Some((cap_start, cap_end)) = capture {
+                            *cap_start += start;
+                            *cap_end += start;
+                        }
+                    }
+                    detail
+                })
+            }
+            other => re_match_details(&pattern, &other, mode)?,
+        };
+
         match found {
-            Some(detail) => self.alloc_re_match_value(args[1].clone(), detail, groupindex),
+            Some(detail) => self.alloc_re_match_value(target, detail, groupindex),
             None => Ok(Value::None),
         }
     }

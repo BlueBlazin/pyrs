@@ -5211,6 +5211,46 @@ impl Vm {
             BuiltinFunction::JsonMakeEncoderCall => {
                 self.builtin_json_make_encoder_call(args, kwargs)
             }
+            BuiltinFunction::SqliteConnect => self.builtin_sqlite_connect(args, kwargs),
+            BuiltinFunction::SqliteCompleteStatement => {
+                self.builtin_sqlite_complete_statement(args, kwargs)
+            }
+            BuiltinFunction::SqliteRegisterAdapter => {
+                self.builtin_sqlite_register_adapter(args, kwargs)
+            }
+            BuiltinFunction::SqliteRegisterConverter => {
+                self.builtin_sqlite_register_converter(args, kwargs)
+            }
+            BuiltinFunction::SqliteEnableCallbackTracebacks => {
+                self.builtin_sqlite_enable_callback_tracebacks(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionCursor => {
+                self.builtin_sqlite_connection_cursor(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionClose => {
+                self.builtin_sqlite_connection_close(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionExecute => {
+                self.builtin_sqlite_connection_execute(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionCommit => {
+                self.builtin_sqlite_connection_commit(args, kwargs)
+            }
+            BuiltinFunction::SqliteConnectionRollback => {
+                self.builtin_sqlite_connection_rollback(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorExecute => {
+                self.builtin_sqlite_cursor_execute(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorFetchOne => {
+                self.builtin_sqlite_cursor_fetchone(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorFetchAll => {
+                self.builtin_sqlite_cursor_fetchall(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorClose => self.builtin_sqlite_cursor_close(args, kwargs),
+            BuiltinFunction::SqliteCursorIter => self.builtin_sqlite_cursor_iter(args, kwargs),
+            BuiltinFunction::SqliteCursorNext => self.builtin_sqlite_cursor_next(args, kwargs),
             BuiltinFunction::HashlibMd5 => self.builtin_hashlib_md5(args, kwargs),
             BuiltinFunction::HashlibSha224 => self.builtin_hashlib_sha224(args, kwargs),
             BuiltinFunction::HashlibSha256 => self.builtin_hashlib_sha256(args, kwargs),

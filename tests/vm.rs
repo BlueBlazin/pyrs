@@ -2267,6 +2267,44 @@ fn json_import_prefers_cpython_pure_module_when_lib_path_is_added_by_default() {
 origin = getattr(json, '__file__', '')
 norm = origin.replace("\\", "/")
 ok = norm.endswith('/json/__init__.py') and ('/shims/' not in norm) and hasattr(json, 'loads') and hasattr(json, 'dumps')
+ok = ok and hasattr(json, 'encoder') and hasattr(json, 'decoder')
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_import_and_basic_query_workflow_from_cpython_lib() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 workflow test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+conn = sqlite3.connect(':memory:')
+conn.execute('create table t(x integer, y text)')
+conn.execute('insert into t values (?, ?)', (7, 'v'))
+cur = conn.cursor()
+cur.execute('select x, y from t')
+row = cur.fetchone()
+none_after = cur.fetchone() is None
+cur.execute('select ? + ?', (2, 3))
+sum_value = cur.fetchone()[0]
+remaining = cur.fetchall()
+stmt_ok = sqlite3.complete_statement('select 1;')
+conn.close()
+ok = (
+    row == (7, 'v')
+    and none_after
+    and sum_value == 5
+    and remaining == []
+    and stmt_ok
+    and hasattr(sqlite3, 'OperationalError')
+    and hasattr(sqlite3, 'PARSE_DECLTYPES')
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

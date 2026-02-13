@@ -968,6 +968,181 @@ impl Vm {
                 ("QUOTE_NOTNULL", Value::Int(5)),
             ],
         );
+        let sqlite_connection_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Connection".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *sqlite_connection_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "cursor".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionCursor),
+            );
+            class_data.attrs.insert(
+                "close".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionClose),
+            );
+            class_data.attrs.insert(
+                "execute".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionExecute),
+            );
+            class_data.attrs.insert(
+                "commit".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionCommit),
+            );
+            class_data.attrs.insert(
+                "rollback".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionRollback),
+            );
+        }
+        let sqlite_cursor_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Cursor".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *sqlite_cursor_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "execute".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorExecute),
+            );
+            class_data.attrs.insert(
+                "fetchone".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorFetchOne),
+            );
+            class_data.attrs.insert(
+                "fetchall".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorFetchAll),
+            );
+            class_data.attrs.insert(
+                "close".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorClose),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorIter),
+            );
+            class_data.attrs.insert(
+                "__next__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorNext),
+            );
+        }
+        let sqlite_row_class = self
+            .heap
+            .alloc_class(ClassObject::new("Row".to_string(), Vec::new()));
+        if let Value::Class(class) = &sqlite_row_class {
+            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
+            }
+        }
+        let sqlite_prepare_protocol_class = self
+            .heap
+            .alloc_class(ClassObject::new("PrepareProtocol".to_string(), Vec::new()));
+        if let Value::Class(class) = &sqlite_prepare_protocol_class {
+            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
+            }
+        }
+        self.install_builtin_module(
+            "_sqlite3",
+            &[
+                ("connect", BuiltinFunction::SqliteConnect),
+                (
+                    "complete_statement",
+                    BuiltinFunction::SqliteCompleteStatement,
+                ),
+                ("register_adapter", BuiltinFunction::SqliteRegisterAdapter),
+                (
+                    "register_converter",
+                    BuiltinFunction::SqliteRegisterConverter,
+                ),
+                (
+                    "enable_callback_tracebacks",
+                    BuiltinFunction::SqliteEnableCallbackTracebacks,
+                ),
+            ],
+            vec![
+                ("Connection", Value::Class(sqlite_connection_class)),
+                ("Cursor", Value::Class(sqlite_cursor_class)),
+                ("Row", sqlite_row_class),
+                ("PrepareProtocol", sqlite_prepare_protocol_class),
+                ("Warning", Value::ExceptionType("Warning".to_string())),
+                ("Error", Value::ExceptionType("Error".to_string())),
+                (
+                    "InterfaceError",
+                    Value::ExceptionType("InterfaceError".to_string()),
+                ),
+                (
+                    "DatabaseError",
+                    Value::ExceptionType("DatabaseError".to_string()),
+                ),
+                ("DataError", Value::ExceptionType("DataError".to_string())),
+                (
+                    "OperationalError",
+                    Value::ExceptionType("OperationalError".to_string()),
+                ),
+                (
+                    "IntegrityError",
+                    Value::ExceptionType("IntegrityError".to_string()),
+                ),
+                (
+                    "InternalError",
+                    Value::ExceptionType("InternalError".to_string()),
+                ),
+                (
+                    "ProgrammingError",
+                    Value::ExceptionType("ProgrammingError".to_string()),
+                ),
+                (
+                    "NotSupportedError",
+                    Value::ExceptionType("NotSupportedError".to_string()),
+                ),
+                ("PARSE_DECLTYPES", Value::Int(1)),
+                ("PARSE_COLNAMES", Value::Int(2)),
+                ("LEGACY_TRANSACTION_CONTROL", Value::Int(-1)),
+                ("threadsafety", Value::Int(3)),
+                ("sqlite_version", Value::Str(self.sqlite_libversion_string())),
+                ("adapters", self.heap.alloc_dict(Vec::new())),
+                ("converters", self.heap.alloc_dict(Vec::new())),
+            ],
+        );
+        self.exception_parents
+            .insert("InterfaceError".to_string(), "Error".to_string());
+        self.exception_parents
+            .insert("DatabaseError".to_string(), "Error".to_string());
+        self.exception_parents
+            .insert("DataError".to_string(), "DatabaseError".to_string());
+        self.exception_parents
+            .insert("OperationalError".to_string(), "DatabaseError".to_string());
+        self.exception_parents
+            .insert("IntegrityError".to_string(), "DatabaseError".to_string());
+        self.exception_parents
+            .insert("InternalError".to_string(), "DatabaseError".to_string());
+        self.exception_parents
+            .insert("ProgrammingError".to_string(), "DatabaseError".to_string());
+        self.exception_parents
+            .insert("NotSupportedError".to_string(), "DatabaseError".to_string());
         // CPython accelerator shim for Lib/re package.
         // Reference: Python-3.14.3 Modules/_sre/sre.c and Lib/re/_compiler.py.
         self.install_builtin_module(
@@ -3698,6 +3873,13 @@ impl Vm {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };
+        let time_class = match self
+            .heap
+            .alloc_class(ClassObject::new("time".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
         self.install_builtin_module(
             "datetime",
             &[
@@ -3708,6 +3890,7 @@ impl Vm {
                 ("datetime", Value::Class(datetime_class)),
                 ("date", Value::Class(date_class)),
                 ("timedelta", Value::Class(timedelta_class)),
+                ("time", Value::Class(time_class)),
             ],
         );
         let uuid_class = match self

@@ -87,6 +87,24 @@ impl Vm {
             BuiltinFunction::JsonScannerPyMakeScanner => "py_make_scanner".to_string(),
             BuiltinFunction::JsonScannerScanOnce => "scan_once".to_string(),
             BuiltinFunction::JsonDecoderScanString => "scanstring".to_string(),
+            BuiltinFunction::SqliteConnect => "connect".to_string(),
+            BuiltinFunction::SqliteCompleteStatement => "complete_statement".to_string(),
+            BuiltinFunction::SqliteRegisterAdapter => "register_adapter".to_string(),
+            BuiltinFunction::SqliteRegisterConverter => "register_converter".to_string(),
+            BuiltinFunction::SqliteEnableCallbackTracebacks => {
+                "enable_callback_tracebacks".to_string()
+            }
+            BuiltinFunction::SqliteConnectionCursor => "cursor".to_string(),
+            BuiltinFunction::SqliteConnectionClose => "close".to_string(),
+            BuiltinFunction::SqliteConnectionExecute => "execute".to_string(),
+            BuiltinFunction::SqliteConnectionCommit => "commit".to_string(),
+            BuiltinFunction::SqliteConnectionRollback => "rollback".to_string(),
+            BuiltinFunction::SqliteCursorExecute => "execute".to_string(),
+            BuiltinFunction::SqliteCursorFetchOne => "fetchone".to_string(),
+            BuiltinFunction::SqliteCursorFetchAll => "fetchall".to_string(),
+            BuiltinFunction::SqliteCursorClose => "close".to_string(),
+            BuiltinFunction::SqliteCursorIter => "__iter__".to_string(),
+            BuiltinFunction::SqliteCursorNext => "__next__".to_string(),
             BuiltinFunction::SreCompile => "compile".to_string(),
             BuiltinFunction::SreTemplate => "template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "ascii_iscased".to_string(),
@@ -115,6 +133,26 @@ impl Vm {
             BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner.py_make_scanner".to_string(),
             BuiltinFunction::JsonScannerScanOnce => "_json.scan_once".to_string(),
             BuiltinFunction::JsonDecoderScanString => "_json.scanstring".to_string(),
+            BuiltinFunction::SqliteConnect => "_sqlite3.connect".to_string(),
+            BuiltinFunction::SqliteCompleteStatement => {
+                "_sqlite3.complete_statement".to_string()
+            }
+            BuiltinFunction::SqliteRegisterAdapter => "_sqlite3.register_adapter".to_string(),
+            BuiltinFunction::SqliteRegisterConverter => "_sqlite3.register_converter".to_string(),
+            BuiltinFunction::SqliteEnableCallbackTracebacks => {
+                "_sqlite3.enable_callback_tracebacks".to_string()
+            }
+            BuiltinFunction::SqliteConnectionCursor => "_sqlite3.Connection.cursor".to_string(),
+            BuiltinFunction::SqliteConnectionClose => "_sqlite3.Connection.close".to_string(),
+            BuiltinFunction::SqliteConnectionExecute => "_sqlite3.Connection.execute".to_string(),
+            BuiltinFunction::SqliteConnectionCommit => "_sqlite3.Connection.commit".to_string(),
+            BuiltinFunction::SqliteConnectionRollback => "_sqlite3.Connection.rollback".to_string(),
+            BuiltinFunction::SqliteCursorExecute => "_sqlite3.Cursor.execute".to_string(),
+            BuiltinFunction::SqliteCursorFetchOne => "_sqlite3.Cursor.fetchone".to_string(),
+            BuiltinFunction::SqliteCursorFetchAll => "_sqlite3.Cursor.fetchall".to_string(),
+            BuiltinFunction::SqliteCursorClose => "_sqlite3.Cursor.close".to_string(),
+            BuiltinFunction::SqliteCursorIter => "_sqlite3.Cursor.__iter__".to_string(),
+            BuiltinFunction::SqliteCursorNext => "_sqlite3.Cursor.__next__".to_string(),
             BuiltinFunction::SreCompile => "_sre.compile".to_string(),
             BuiltinFunction::SreTemplate => "_sre.template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "_sre.ascii_iscased".to_string(),
@@ -203,6 +241,22 @@ impl Vm {
             | BuiltinFunction::JsonEncodeBaseStringAscii
             | BuiltinFunction::JsonScannerScanOnce
             | BuiltinFunction::JsonDecoderScanString => "_json",
+            BuiltinFunction::SqliteConnect
+            | BuiltinFunction::SqliteCompleteStatement
+            | BuiltinFunction::SqliteRegisterAdapter
+            | BuiltinFunction::SqliteRegisterConverter
+            | BuiltinFunction::SqliteEnableCallbackTracebacks
+            | BuiltinFunction::SqliteConnectionCursor
+            | BuiltinFunction::SqliteConnectionClose
+            | BuiltinFunction::SqliteConnectionExecute
+            | BuiltinFunction::SqliteConnectionCommit
+            | BuiltinFunction::SqliteConnectionRollback
+            | BuiltinFunction::SqliteCursorExecute
+            | BuiltinFunction::SqliteCursorFetchOne
+            | BuiltinFunction::SqliteCursorFetchAll
+            | BuiltinFunction::SqliteCursorClose
+            | BuiltinFunction::SqliteCursorIter
+            | BuiltinFunction::SqliteCursorNext => "_sqlite3",
             BuiltinFunction::SreCompile
             | BuiltinFunction::SreTemplate
             | BuiltinFunction::SreAsciiIsCased
