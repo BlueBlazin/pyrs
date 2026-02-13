@@ -6603,6 +6603,10 @@ fn call_builtin_with_kwargs(
                 builtin.call(heap, args)
             }
         }
+        BuiltinFunction::NoOp => {
+            kwargs.clear();
+            builtin.call(heap, args)
+        }
         _ => {
             if !kwargs.is_empty() {
                 return Err(RuntimeError::new(

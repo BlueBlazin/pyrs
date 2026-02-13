@@ -4993,6 +4993,16 @@ fn class_metaclass_conflict_raises_type_error() {
 }
 
 #[test]
+fn metaclass_super_new_handles_keyword_passthrough() {
+    let source = "class Meta(type):\n    def __new__(mcls, name, bases, namespace, **kw):\n        namespace['seen'] = kw.get('tag')\n        return super().__new__(mcls, name, bases, namespace, **kw)\nclass Sample(metaclass=Meta, tag=7):\n    pass\nok = (Sample.seen == 7 and isinstance(Sample, Meta))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn dynamic_class_attribute_subclass_is_constructible() {
     let source = "from types import DynamicClassAttribute\nclass P(DynamicClassAttribute):\n    pass\nclass Box:\n    @P\n    def value(self):\n        return 42\nok = Box().value == 42\n";
     let module = parser::parse_module(source).expect("parse should succeed");
