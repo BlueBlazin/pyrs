@@ -2487,6 +2487,7 @@ pub enum BuiltinFunction {
     SqliteRowGetItem,
     SqliteRowIter,
     SqliteRowEq,
+    SqliteRowHash,
     HashlibMd5,
     HashlibSha224,
     HashlibSha256,
@@ -5611,6 +5612,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteRowGetItem
             | BuiltinFunction::SqliteRowIter
             | BuiltinFunction::SqliteRowEq
+            | BuiltinFunction::SqliteRowHash
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
             | BuiltinFunction::AtexitUnregister

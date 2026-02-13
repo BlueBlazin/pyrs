@@ -7,5 +7,6 @@ test/test_json/__init__.py
 test/test_genericalias.py
 test/test_memoryio.py
 test/test_sqlite3/test_dbapi.py
+test/test_sqlite3/test_factory.py
 test/test_sqlite3/test_dump.py
 test/test_sqlite3/test_transactions.py

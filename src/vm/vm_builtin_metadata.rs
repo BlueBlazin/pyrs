@@ -160,6 +160,7 @@ impl Vm {
             BuiltinFunction::SqliteRowGetItem => "__getitem__".to_string(),
             BuiltinFunction::SqliteRowIter => "__iter__".to_string(),
             BuiltinFunction::SqliteRowEq => "__eq__".to_string(),
+            BuiltinFunction::SqliteRowHash => "__hash__".to_string(),
             BuiltinFunction::SreCompile => "compile".to_string(),
             BuiltinFunction::SreTemplate => "template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "ascii_iscased".to_string(),
@@ -292,6 +293,7 @@ impl Vm {
             BuiltinFunction::SqliteRowGetItem => "_sqlite3.Row.__getitem__".to_string(),
             BuiltinFunction::SqliteRowIter => "_sqlite3.Row.__iter__".to_string(),
             BuiltinFunction::SqliteRowEq => "_sqlite3.Row.__eq__".to_string(),
+            BuiltinFunction::SqliteRowHash => "_sqlite3.Row.__hash__".to_string(),
             BuiltinFunction::SreCompile => "_sre.compile".to_string(),
             BuiltinFunction::SreTemplate => "_sre.template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "_sre.ascii_iscased".to_string(),
@@ -443,7 +445,8 @@ impl Vm {
             | BuiltinFunction::SqliteRowLen
             | BuiltinFunction::SqliteRowGetItem
             | BuiltinFunction::SqliteRowIter
-            | BuiltinFunction::SqliteRowEq => "_sqlite3",
+            | BuiltinFunction::SqliteRowEq
+            | BuiltinFunction::SqliteRowHash => "_sqlite3",
             BuiltinFunction::SreCompile
             | BuiltinFunction::SreTemplate
             | BuiltinFunction::SreAsciiIsCased

@@ -4116,83 +4116,21 @@ impl Vm {
                                 dict_set_value_checked(&dict_obj, key.clone(), value.clone())?;
                             }
                         }
-                    } else {
-                        for item in self.collect_iterable_values(Value::Instance(instance))? {
-                            match item {
-                                Value::Tuple(pair) => match &*pair.kind() {
-                                    Object::Tuple(parts) if parts.len() == 2 => {
-                                        dict_set_value_checked(
-                                            &dict_obj,
-                                            parts[0].clone(),
-                                            parts[1].clone(),
-                                        )?;
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "dict() sequence elements must be length 2",
-                                        ));
-                                    }
-                                },
-                                Value::List(pair) => match &*pair.kind() {
-                                    Object::List(parts) if parts.len() == 2 => {
-                                        dict_set_value_checked(
-                                            &dict_obj,
-                                            parts[0].clone(),
-                                            parts[1].clone(),
-                                        )?;
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "dict() sequence elements must be length 2",
-                                        ));
-                                    }
-                                },
-                                _ => {
-                                    return Err(RuntimeError::new(
-                                        "dict() argument must be a mapping or iterable of pairs",
-                                    ));
-                                }
-                            }
-                        }
+                    } else if !self.dict_extend_from_mapping_protocol(
+                        &dict_obj,
+                        &Value::Instance(instance.clone()),
+                    )? {
+                        self.dict_extend_from_iterable_pairs(
+                            &dict_obj,
+                            Value::Instance(instance),
+                        )?;
                     }
                 }
                 other => {
-                    for item in self.collect_iterable_values(other)? {
-                        match item {
-                            Value::Tuple(pair) => match &*pair.kind() {
-                                Object::Tuple(parts) if parts.len() == 2 => {
-                                    dict_set_value_checked(
-                                        &dict_obj,
-                                        parts[0].clone(),
-                                        parts[1].clone(),
-                                    )?;
-                                }
-                                _ => {
-                                    return Err(RuntimeError::new(
-                                        "dict() sequence elements must be length 2",
-                                    ));
-                                }
-                            },
-                            Value::List(pair) => match &*pair.kind() {
-                                Object::List(parts) if parts.len() == 2 => {
-                                    dict_set_value_checked(
-                                        &dict_obj,
-                                        parts[0].clone(),
-                                        parts[1].clone(),
-                                    )?;
-                                }
-                                _ => {
-                                    return Err(RuntimeError::new(
-                                        "dict() sequence elements must be length 2",
-                                    ));
-                                }
-                            },
-                            _ => {
-                                return Err(RuntimeError::new(
-                                    "dict() argument must be a mapping or iterable of pairs",
-                                ));
-                            }
-                        }
+                    if !self.dict_extend_from_mapping_protocol(&dict_obj, &other)? {
+                        self.dict_extend_from_iterable_pairs(&dict_obj, other)?;
+                    } else {
+                        // handled by mapping protocol path
                     }
                 }
             }
@@ -4203,6 +4141,77 @@ impl Vm {
         }
 
         Ok(Value::Dict(dict_obj))
+    }
+
+    fn dict_extend_from_mapping_protocol(
+        &mut self,
+        dict_obj: &ObjRef,
+        source: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let keys_callable = match self.builtin_getattr(
+            vec![source.clone(), Value::Str("keys".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(callable) => callable,
+            Err(err) if runtime_error_matches_exception(&err.message, "AttributeError") => {
+                return Ok(false);
+            }
+            Err(err) => return Err(err),
+        };
+        let keys_value = match self.call_internal(keys_callable, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(
+                    "dict() mapping keys() call failed",
+                ));
+            }
+        };
+        let keys = self.collect_iterable_values(keys_value)?;
+        for key in keys {
+            let value = self.builtin_operator_getitem(
+                vec![source.clone(), key.clone()],
+                HashMap::new(),
+            )?;
+            dict_set_value_checked(dict_obj, key, value)?;
+        }
+        Ok(true)
+    }
+
+    fn dict_extend_from_iterable_pairs(
+        &mut self,
+        dict_obj: &ObjRef,
+        source: Value,
+    ) -> Result<(), RuntimeError> {
+        for item in self.collect_iterable_values(source)? {
+            match item {
+                Value::Tuple(pair) => match &*pair.kind() {
+                    Object::Tuple(parts) if parts.len() == 2 => {
+                        dict_set_value_checked(dict_obj, parts[0].clone(), parts[1].clone())?;
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "dict() sequence elements must be length 2",
+                        ));
+                    }
+                },
+                Value::List(pair) => match &*pair.kind() {
+                    Object::List(parts) if parts.len() == 2 => {
+                        dict_set_value_checked(dict_obj, parts[0].clone(), parts[1].clone())?;
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "dict() sequence elements must be length 2",
+                        ));
+                    }
+                },
+                _ => {
+                    return Err(RuntimeError::new(
+                        "dict() argument must be a mapping or iterable of pairs",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn builtin_dict_fromkeys(
@@ -5063,13 +5072,6 @@ impl Vm {
             }
         }
         if let Some(result) =
-            self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
-        {
-            if result {
-                return Ok(Some(Ordering::Equal));
-            }
-        }
-        if let Some(result) =
             self.call_compare_method_bool(right.clone(), "__gt__", left.clone())?
         {
             if result {
@@ -5081,11 +5083,6 @@ impl Vm {
         {
             if result {
                 return Ok(Some(Ordering::Greater));
-            }
-        }
-        if let Some(result) = self.call_compare_method_bool(right, "__eq__", left)? {
-            if result {
-                return Ok(Some(Ordering::Equal));
             }
         }
         Ok(None)
@@ -5120,6 +5117,9 @@ impl Vm {
                 return Err(self.runtime_error_from_active_exception("comparison method raised"));
             }
         };
+        if self.is_not_implemented_singleton(&result) {
+            return Ok(None);
+        }
         Ok(Some(self.truthy_from_value(&result)?))
     }
 

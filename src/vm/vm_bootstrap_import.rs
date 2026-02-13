@@ -1301,6 +1301,10 @@ impl Vm {
                     "__eq__".to_string(),
                     Value::Builtin(BuiltinFunction::SqliteRowEq),
                 );
+                class_data.attrs.insert(
+                    "__hash__".to_string(),
+                    Value::Builtin(BuiltinFunction::SqliteRowHash),
+                );
             }
         }
         let sqlite_prepare_protocol_class = self

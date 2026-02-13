@@ -5758,6 +5758,7 @@ impl Vm {
             BuiltinFunction::SqliteRowGetItem => self.builtin_sqlite_row_getitem(args, kwargs),
             BuiltinFunction::SqliteRowIter => self.builtin_sqlite_row_iter(args, kwargs),
             BuiltinFunction::SqliteRowEq => self.builtin_sqlite_row_eq(args, kwargs),
+            BuiltinFunction::SqliteRowHash => self.builtin_sqlite_row_hash(args, kwargs),
             BuiltinFunction::HashlibMd5 => self.builtin_hashlib_md5(args, kwargs),
             BuiltinFunction::HashlibSha224 => self.builtin_hashlib_sha224(args, kwargs),
             BuiltinFunction::HashlibSha256 => self.builtin_hashlib_sha256(args, kwargs),

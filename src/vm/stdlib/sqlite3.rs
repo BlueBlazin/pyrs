@@ -4407,6 +4407,31 @@ impl Vm {
         Ok(Value::Bool(desc_equal && data_equal))
     }
 
+    pub(in crate::vm) fn builtin_sqlite_row_hash(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Row.__hash__() expects no arguments",
+            ));
+        }
+        let receiver = self.receiver_from_value(&args[0])?;
+        let description = Self::sqlite_row_description_value(&receiver);
+        let data = Self::sqlite_row_data_tuple(&receiver)?;
+        let description_hash = match self.builtin_hash(vec![description], HashMap::new())? {
+            Value::Int(value) => value,
+            other => value_to_int(other)?,
+        };
+        let data_hash = match self.builtin_hash(vec![data], HashMap::new())? {
+            Value::Int(value) => value,
+            other => value_to_int(other)?,
+        };
+        Ok(Value::Int(description_hash ^ data_hash))
+    }
+
     pub(in crate::vm) fn builtin_sqlite_cursor_setattr(
         &mut self,
         mut args: Vec<Value>,
