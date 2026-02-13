@@ -4391,11 +4391,13 @@ fn enum_shim_vs_cpython_probe_tracks_member_value_blocker() {
             || stderr.contains("keyword arguments not supported for builtin")
             || stderr.contains("has overflowed its stack")
             || stderr.contains("dict has no attribute '_member_names'")
+            || stderr.contains("'name' already defined as <function>")
     );
     assert!(
         stderr.contains("keyword arguments not supported for builtin")
             || stderr.contains("class constructor takes no arguments")
             || stderr.contains("dict has no attribute '_member_names'")
+            || stderr.contains("'name' already defined as <function>")
             || stderr.contains("/Lib/enum.py")
     );
 }
@@ -4995,6 +4997,16 @@ fn class_metaclass_conflict_raises_type_error() {
 #[test]
 fn metaclass_super_new_handles_keyword_passthrough() {
     let source = "class Meta(type):\n    def __new__(mcls, name, bases, namespace, **kw):\n        namespace['seen'] = kw.get('tag')\n        return super().__new__(mcls, name, bases, namespace, **kw)\nclass Sample(metaclass=Meta, tag=7):\n    pass\nok = (Sample.seen == 7 and isinstance(Sample, Meta))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn metaclass_prepare_namespace_drives_class_body_mapping_semantics() {
+    let source = "class NS(dict):\n    def __init__(self):\n        self.marker = 99\n\nclass Meta(type):\n    @classmethod\n    def __prepare__(mcls, name, bases, **kw):\n        ns = NS()\n        ns['prepared'] = kw['flag']\n        return ns\n    def __new__(mcls, name, bases, namespace, **kw):\n        namespace['marker_seen'] = namespace.marker\n        return super().__new__(mcls, name, bases, namespace, **kw)\n\nclass Sample(metaclass=Meta, flag=7):\n    first = 1\n    second = 2\n\nok = (Sample.prepared == 7 and Sample.first == 1 and Sample.second == 2 and Sample.marker_seen == 99)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

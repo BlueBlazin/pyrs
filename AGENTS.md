@@ -42,7 +42,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Prefer official CPython pure-Python stdlib implementations where feasible.
 - Keep native handlers as substrate/accelerator layers, not replacement semantics.
 - Local shim policy:
-  - `enum` shim remains temporarily preferred by default while CPython `Lib/enum.py` path is still blocked (`AttributeError: dict has no attribute '_member_names'` in probe mode; missing `__prepare__` class-namespace semantics).
+  - `enum` shim remains temporarily preferred by default while CPython `Lib/enum.py` path is still blocked (`TypeError: 'name' already defined as <function>` in probe mode; `__prepare__` class-namespace baseline is landed, but enum-member namespace semantics are still incomplete).
   - `pkgutil`/`importlib.resources` local shims are fallback-only and require `PYRS_ENABLE_LOCAL_SHIMS=1`.
   - CPython-enum probe mode: `PYRS_DISABLE_ENUM_SHIM=1`.
 - Keep docs updated in the same checkpoint as behavior changes.

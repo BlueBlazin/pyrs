@@ -414,6 +414,36 @@ impl Vm {
                 }
                 Err(RuntimeError::new("key not found"))
             }
+            NativeMethodKind::DictSetItem => {
+                if args.len() != 2 || !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "dict.__setitem__() expects two arguments",
+                    ));
+                }
+                let key = args.first().cloned().expect("checked len");
+                let value = args.get(1).cloned().expect("checked len");
+                ensure_hashable(&key)?;
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Module(module_data) if module_data.name == "__dict_method__" => {
+                        match module_data.globals.get("dict") {
+                            Some(Value::Dict(dict_obj)) => dict_obj.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.__setitem__() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "dict.__setitem__() receiver must be dict",
+                        ));
+                    }
+                };
+                dict_set_value_checked(&dict_receiver, key, value)?;
+                Ok(NativeCallResult::Value(Value::None))
+            }
             NativeMethodKind::DictPop => {
                 if args.is_empty() || args.len() > 2 || !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.pop() expects 1-2 arguments"));

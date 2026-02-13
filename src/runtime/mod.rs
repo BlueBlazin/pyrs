@@ -217,6 +217,7 @@ pub enum NativeMethodKind {
     DictSetDefault,
     DictGet,
     DictGetItem,
+    DictSetItem,
     DictPop,
     DictCopy,
     ListAppend,
@@ -6736,6 +6737,7 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::DictGet => "<bound method dict.get>".to_string(),
                     NativeMethodKind::DictGetItem => "<bound method dict.__getitem__>".to_string(),
+                    NativeMethodKind::DictSetItem => "<bound method dict.__setitem__>".to_string(),
                     NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
                     NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
                     NativeMethodKind::ListAppend => "<bound method list.append>".to_string(),

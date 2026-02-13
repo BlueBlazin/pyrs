@@ -380,6 +380,7 @@ struct Frame {
     discard_result: bool,
     return_instance: Option<ObjRef>,
     return_class: bool,
+    class_namespace: Option<Value>,
     class_bases: Vec<ObjRef>,
     class_metaclass: Option<Value>,
     class_keywords: HashMap<String, Value>,
@@ -431,6 +432,7 @@ impl Frame {
             discard_result: false,
             return_instance: None,
             return_class: false,
+            class_namespace: None,
             class_bases: Vec::new(),
             class_metaclass: None,
             class_keywords: HashMap::new(),
@@ -473,6 +475,7 @@ impl Frame {
         debug_assert!(self.locals_fallback.is_none());
         debug_assert!(self.return_instance.is_none());
         debug_assert!(self.class_metaclass.is_none());
+        debug_assert!(self.class_namespace.is_none());
         debug_assert!(self.active_exception.is_none());
         debug_assert!(self.generator_owner.is_none());
         debug_assert!(self.generator_resume_value.is_none());
@@ -549,6 +552,7 @@ impl Frame {
         debug_assert!(self.locals_fallback.is_none());
         debug_assert!(self.return_instance.is_none());
         debug_assert!(self.class_metaclass.is_none());
+        debug_assert!(self.class_namespace.is_none());
         debug_assert!(self.generator_owner.is_none());
         debug_assert!(self.generator_resume_value.is_none());
         debug_assert!(self.generator_pending_throw.is_none());
@@ -849,6 +853,7 @@ impl Vm {
         frame.locals_fallback = None;
         frame.return_instance = None;
         frame.class_metaclass = None;
+        frame.class_namespace = None;
         frame.active_exception = None;
         frame.generator_owner = None;
         frame.generator_resume_value = None;
@@ -975,6 +980,7 @@ impl Vm {
             && frame.locals_fallback.is_none()
             && frame.return_instance.is_none()
             && frame.class_metaclass.is_none()
+            && frame.class_namespace.is_none()
             && frame.generator_owner.is_none()
             && frame.generator_resume_value.is_none()
             && frame.generator_pending_throw.is_none()
@@ -1029,6 +1035,9 @@ impl Vm {
         }
         if frame.class_metaclass.is_some() {
             frame.class_metaclass = None;
+        }
+        if frame.class_namespace.is_some() {
+            frame.class_namespace = None;
         }
         if frame.generator_owner.is_some() {
             frame.generator_owner = None;
@@ -1094,6 +1103,7 @@ impl Vm {
         debug_assert!(frame.locals_fallback.is_none());
         debug_assert!(frame.return_instance.is_none());
         debug_assert!(frame.class_metaclass.is_none());
+        debug_assert!(frame.class_namespace.is_none());
         debug_assert!(frame.generator_owner.is_none());
         debug_assert!(frame.generator_resume_value.is_none());
         debug_assert!(frame.generator_pending_throw.is_none());
@@ -1665,6 +1675,9 @@ impl Vm {
             if let Some(meta) = &frame.class_metaclass {
                 roots.push(meta.clone());
             }
+            if let Some(namespace) = &frame.class_namespace {
+                roots.push(namespace.clone());
+            }
             roots.extend(frame.class_keywords.values().cloned());
             if let Some(exc) = &frame.active_exception {
                 roots.push(exc.clone());
@@ -1693,6 +1706,9 @@ impl Vm {
             }
             if let Some(meta) = &frame.class_metaclass {
                 roots.push(meta.clone());
+            }
+            if let Some(namespace) = &frame.class_namespace {
+                roots.push(namespace.clone());
             }
             roots.extend(frame.class_keywords.values().cloned());
             if let Some(exc) = &frame.active_exception {

@@ -1168,6 +1168,7 @@ impl Vm {
             "setdefault" => NativeMethodKind::DictSetDefault,
             "get" => NativeMethodKind::DictGet,
             "__getitem__" => NativeMethodKind::DictGetItem,
+            "__setitem__" => NativeMethodKind::DictSetItem,
             "pop" => NativeMethodKind::DictPop,
             _ => {
                 return Err(RuntimeError::new(format!(
@@ -2531,7 +2532,9 @@ impl Vm {
                                     ));
                                 };
                                 let descriptor_attrs = match &*descriptor_instance.kind() {
-                                    Object::Instance(descriptor_data) => descriptor_data.attrs.clone(),
+                                    Object::Instance(descriptor_data) => {
+                                        descriptor_data.attrs.clone()
+                                    }
                                     _ => {
                                         return Err(RuntimeError::new(
                                             "property descriptor construction failed",
@@ -2975,9 +2978,8 @@ impl Vm {
                 args.len()
             )));
         }
-        let custom_new = class_attr_lookup_direct(&metaclass, "__new__").filter(|callable| {
-            !matches!(callable, Value::Builtin(BuiltinFunction::Type))
-        });
+        let custom_new = class_attr_lookup_direct(&metaclass, "__new__")
+            .filter(|callable| !matches!(callable, Value::Builtin(BuiltinFunction::Type)));
         if let Some(new_callable) = custom_new {
             let mut new_args = Vec::with_capacity(4);
             new_args.push(Value::Class(metaclass.clone()));
@@ -2989,11 +2991,13 @@ impl Vm {
                 }
             };
             if !matches!(created, Value::Class(_)) {
-                return Err(RuntimeError::new("metaclass __new__ must return a class object"));
+                return Err(RuntimeError::new(
+                    "metaclass __new__ must return a class object",
+                ));
             }
-            if let Some(init_callable) = class_attr_lookup_direct(&metaclass, "__init__").filter(
-                |callable| !matches!(callable, Value::Builtin(BuiltinFunction::NoOp)),
-            ) {
+            if let Some(init_callable) = class_attr_lookup_direct(&metaclass, "__init__")
+                .filter(|callable| !matches!(callable, Value::Builtin(BuiltinFunction::NoOp)))
+            {
                 let init_result = self.call_internal(
                     init_callable,
                     vec![
@@ -3010,9 +3014,9 @@ impl Vm {
                         return Err(RuntimeError::new("__init__() should return None"));
                     }
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self.runtime_error_from_active_exception(
-                            "metaclass __init__ failed",
-                        ));
+                        return Err(
+                            self.runtime_error_from_active_exception("metaclass __init__ failed")
+                        );
                     }
                 }
             }
@@ -3648,6 +3652,23 @@ impl Vm {
                     );
                 }
                 return Ok(AttrAccessOutcome::Value(attr));
+            }
+
+            if self.class_has_builtin_dict_base(&class) {
+                let dict_receiver = match &receiver_value {
+                    Value::Dict(dict) => Some(dict.clone()),
+                    Value::Instance(instance) => self.instance_backing_dict(instance),
+                    _ => None,
+                };
+                if let Some(dict_receiver) = dict_receiver {
+                    if let Ok(method) = self.load_attr_dict_method_with_owner(
+                        dict_receiver,
+                        Some(owner_value.clone()),
+                        attr_name,
+                    ) {
+                        return Ok(AttrAccessOutcome::Value(method));
+                    }
+                }
             }
         }
 

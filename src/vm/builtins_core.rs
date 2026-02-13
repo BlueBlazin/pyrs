@@ -2721,7 +2721,11 @@ impl Vm {
             let (metaclass_index, name_index) = if args.len() == 4 { (0, 1) } else { (1, 2) };
             let metaclass = match &args[metaclass_index] {
                 Value::Class(class) => class.clone(),
-                _ => return Err(RuntimeError::new("type.__new__() argument 1 must be a type")),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "type.__new__() argument 1 must be a type",
+                    ));
+                }
             };
             let class_name = match &args[name_index] {
                 Value::Str(name) => name.clone(),
@@ -2742,22 +2746,7 @@ impl Vm {
             for base in base_values {
                 base_classes.push(self.class_from_base_value(base)?);
             }
-            let namespace = match &args[name_index + 2] {
-                Value::Dict(dict_obj) => match &*dict_obj.kind() {
-                    Object::Dict(entries) => {
-                        let mut attrs = HashMap::new();
-                        for (key, value) in entries {
-                            let Value::Str(name) = key else {
-                                return Err(RuntimeError::new("type() dict keys must be strings"));
-                            };
-                            attrs.insert(name.clone(), value.clone());
-                        }
-                        attrs
-                    }
-                    _ => return Err(RuntimeError::new("type() third argument must be dict")),
-                },
-                _ => return Err(RuntimeError::new("type() third argument must be dict")),
-            };
+            let namespace = self.class_namespace_attrs_map(&args[name_index + 2])?;
 
             let class_value = self.build_default_class_value(
                 class_name,
@@ -2796,22 +2785,8 @@ impl Vm {
             for base in base_values {
                 base_classes.push(self.class_from_base_value(base)?);
             }
-            let namespace = match &args[2] {
-                Value::Dict(dict_obj) => match &*dict_obj.kind() {
-                    Object::Dict(entries) => {
-                        let mut attrs = HashMap::new();
-                        for (key, value) in entries {
-                            let Value::Str(name) = key else {
-                                return Err(RuntimeError::new("type() dict keys must be strings"));
-                            };
-                            attrs.insert(name.clone(), value.clone());
-                        }
-                        attrs
-                    }
-                    _ => return Err(RuntimeError::new("type() third argument must be dict")),
-                },
-                _ => return Err(RuntimeError::new("type() third argument must be dict")),
-            };
+            let namespace_value = args[2].clone();
+            let namespace = self.class_namespace_attrs_map(&namespace_value)?;
             let class_module = match self.heap.alloc_module(ModuleObject::new(class_name)) {
                 Value::Module(module) => module,
                 _ => unreachable!(),
@@ -2824,6 +2799,7 @@ impl Vm {
                 base_classes,
                 explicit_metaclass,
                 class_keywords,
+                Some(namespace_value),
             )? {
                 ClassBuildOutcome::Value(value) => Ok(value),
                 ClassBuildOutcome::ExceptionHandled => {

@@ -39,7 +39,7 @@ Status values:
 | `socket`/`_socket` | Baseline exists; long-tail API/behavior remains. | Full in-scope API and behavior parity. | IN_PROGRESS | 13 |
 | `uuid` | Foundation exists; long-tail parity remains. | Full in-scope API parity. | IN_PROGRESS | 13 |
 | `_sqlite3`/`sqlite3` | Baseline is broad; DB-API long-tail remains. | Close remaining DB-API long-tail (including URI undecodable-path edge and autocommit/type edges). | IN_PROGRESS | 13 |
-| `dataclasses`/`typing`/`enum`/`contextvars` | Common paths are green; enum remains shim-backed by default while CPython `Lib/enum.py` path still fails on class-namespace/metaclass long-tail (`EnumType.__prepare__` namespace handling is still open; `type.__new__` keyword/super baseline is now landed). | Full in-scope semantics for modern pure-Python apps and removal of default enum-shim preference. | IN_PROGRESS | 13 |
+| `dataclasses`/`typing`/`enum`/`contextvars` | Common paths are green; enum remains shim-backed by default while CPython `Lib/enum.py` path still fails on enum-member namespace long-tail (`TypeError: 'name' already defined as <function>` in probe mode). `EnumType.__prepare__` namespace plumbing and `type.__new__` keyword/super baseline are landed. | Full in-scope semantics for modern pure-Python apps and removal of default enum-shim preference. | IN_PROGRESS | 13 |
 | `hashlib` extended algorithms (`_sha1`/`_blake2`/`_sha3`/`_hashlib`) | md5/sha2 baseline closed; broader algorithm surface open. | Full in-scope algorithm surface (or explicit exclusions) with tests and consumers green. | IN_PROGRESS | 13/14 |
 | Object-model protocol dispatch | Truthiness/membership baseline landed; long-tail slot/error semantics remain. | Align remaining protocol edge semantics with CPython data model/tests. | IN_PROGRESS | 13 |
 | VM/module decomposition | VM still has large modules. | Continue concern-based extraction with behavior-preserving tests. | IN_PROGRESS | 14 |
@@ -61,7 +61,7 @@ Shims are temporary bootstrap fallbacks and are not allowed to shadow CPython `L
 
 | Shim surface | Current state | Closure criteria | Status |
 |---|---|---|---|
-| `enum` | Local shim is still preferred by default to prevent broad stdlib regressions while CPython enum path remains blocked (`PYRS_DISABLE_ENUM_SHIM=1` currently reaches `Lib/enum.py` but fails on `AttributeError: dict has no attribute '_member_names'`, tied primarily to missing `__prepare__`/class-namespace mapping semantics). | Remove default enum-shim preference once CPython enum probe is green (`tests/vm.rs::enum_shim_vs_cpython_probe_tracks_member_value_blocker` CPython-side path). | IN_PROGRESS |
+| `enum` | Local shim is still preferred by default to prevent broad stdlib regressions while CPython enum path remains blocked (`PYRS_DISABLE_ENUM_SHIM=1` currently reaches `Lib/enum.py` but fails on `TypeError: 'name' already defined as <function>`, tied to remaining enum-member namespace semantics). | Remove default enum-shim preference once CPython enum probe is green (`tests/vm.rs::enum_shim_vs_cpython_probe_tracks_member_value_blocker` CPython-side path). | IN_PROGRESS |
 | `pkgutil` | Local shim is fallback-only and disabled by default. | Remove shim after stdlib-less bootstrap requirement is removed or replaced by native/runtime capability. | IN_PROGRESS |
 | `importlib.resources` | Local shim is fallback-only and disabled by default. | Remove shim after stdlib-less bootstrap requirement is removed or replaced by native/runtime capability. | IN_PROGRESS |
 

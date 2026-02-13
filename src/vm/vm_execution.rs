@@ -128,6 +128,7 @@ impl Vm {
                         frame.class_bases,
                         frame.class_metaclass,
                         frame.class_keywords,
+                        frame.class_namespace,
                     )? {
                         ClassBuildOutcome::Value(value) => value,
                         ClassBuildOutcome::ExceptionHandled => continue,
@@ -2781,6 +2782,82 @@ impl Vm {
                     })
                     .unwrap_or_else(|| class_name.clone());
 
+                let resolved_metaclass =
+                    self.resolve_class_metaclass(&base_classes, class_metaclass.as_ref())?;
+                let effective_metaclass = class_metaclass
+                    .clone()
+                    .or_else(|| resolved_metaclass.map(Value::Class));
+                let mut prepared_namespace = self.heap.alloc_dict(Vec::new());
+                if let Some(Value::Class(meta_class)) = effective_metaclass {
+                    if class_attr_lookup(&meta_class, "__prepare__").is_some() {
+                        let prepare_callable =
+                            match self.load_attr_class(&meta_class, "__prepare__")? {
+                                AttrAccessOutcome::Value(value) => value,
+                                AttrAccessOutcome::ExceptionHandled => return Ok(None),
+                            };
+                        let bases_tuple = self.heap.alloc_tuple(
+                            base_classes
+                                .iter()
+                                .cloned()
+                                .map(Value::Class)
+                                .collect::<Vec<_>>(),
+                        );
+                        prepared_namespace = match self.call_internal(
+                            prepare_callable,
+                            vec![Value::Str(class_name.clone()), bases_tuple],
+                            class_keywords.clone(),
+                        )? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => return Ok(None),
+                        };
+                        if self
+                            .class_namespace_backing_dict(&prepared_namespace)
+                            .is_none()
+                        {
+                            return Err(RuntimeError::new(
+                                "metaclass __prepare__() must return a mapping",
+                            ));
+                        }
+                    }
+                }
+                let module_name = self
+                    .frames
+                    .last()
+                    .and_then(|frame| {
+                        if let Object::Module(module_data) = &*frame.function_globals.kind() {
+                            module_data
+                                .globals
+                                .get("__name__")
+                                .and_then(|value| match value {
+                                    Value::Str(name) => Some(name.clone()),
+                                    _ => None,
+                                })
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| "__main__".to_string());
+                if self
+                    .class_namespace_lookup_name(&prepared_namespace, "__module__")
+                    .is_none()
+                {
+                    self.class_namespace_set_name(
+                        &prepared_namespace,
+                        "__module__".to_string(),
+                        Value::Str(module_name),
+                    )?;
+                }
+                if self
+                    .class_namespace_lookup_name(&prepared_namespace, "__qualname__")
+                    .is_none()
+                {
+                    self.class_namespace_set_name(
+                        &prepared_namespace,
+                        "__qualname__".to_string(),
+                        Value::Str(class_qualname.clone()),
+                    )?;
+                }
+
                 let class_module = match self
                     .heap
                     .alloc_module(ModuleObject::new(class_name.clone()))
@@ -2813,6 +2890,8 @@ impl Vm {
                 frame.function_globals = outer_globals.clone();
                 frame.globals_fallback = Some(outer_globals);
                 frame.locals_fallback = outer_locals;
+                frame.class_namespace = Some(prepared_namespace.clone());
+                frame.module_locals_dict = self.class_namespace_backing_dict(&prepared_namespace);
                 frame.locals.insert(
                     "__classdict__".to_string(),
                     self.heap.alloc_dict(Vec::new()),
@@ -4203,7 +4282,7 @@ impl Vm {
             }
             Opcode::SetupAnnotations => {
                 let dict = self.heap.alloc_dict(Vec::new());
-                self.store_name("__annotations__", dict);
+                self.store_name("__annotations__", dict)?;
             }
             Opcode::SetupExcept => {
                 let handler = instr
@@ -4354,6 +4433,7 @@ impl Vm {
                         frame.class_bases,
                         frame.class_metaclass,
                         frame.class_keywords,
+                        frame.class_namespace,
                     )? {
                         ClassBuildOutcome::Value(value) => value,
                         ClassBuildOutcome::ExceptionHandled => return Ok(None),
@@ -4489,6 +4569,7 @@ impl Vm {
                         frame.class_bases,
                         frame.class_metaclass,
                         frame.class_keywords,
+                        frame.class_namespace,
                     )? {
                         ClassBuildOutcome::Value(value) => value,
                         ClassBuildOutcome::ExceptionHandled => return Ok(None),
@@ -5129,26 +5210,106 @@ impl Vm {
         }
     }
 
+    pub(super) fn class_namespace_backing_dict(&self, namespace: &Value) -> Option<ObjRef> {
+        match namespace {
+            Value::Dict(dict) => Some(dict.clone()),
+            Value::Instance(instance) => self.instance_backing_dict(instance),
+            _ => None,
+        }
+    }
+
+    pub(super) fn class_namespace_attrs_map(
+        &self,
+        namespace: &Value,
+    ) -> Result<HashMap<String, Value>, RuntimeError> {
+        let Some(dict_obj) = self.class_namespace_backing_dict(namespace) else {
+            return Err(RuntimeError::new("class namespace must be a mapping"));
+        };
+        let Object::Dict(entries) = &*dict_obj.kind() else {
+            return Err(RuntimeError::new("class namespace must be a mapping"));
+        };
+        let mut attrs = HashMap::new();
+        for (key, value) in entries {
+            let Value::Str(name) = key else {
+                return Err(RuntimeError::new("type() dict keys must be strings"));
+            };
+            attrs.insert(name.clone(), value.clone());
+        }
+        Ok(attrs)
+    }
+
+    pub(super) fn class_namespace_lookup_name(
+        &self,
+        namespace: &Value,
+        name: &str,
+    ) -> Option<Value> {
+        let dict = self.class_namespace_backing_dict(namespace)?;
+        dict_get_value(&dict, &Value::Str(name.to_string()))
+    }
+
+    pub(super) fn class_namespace_set_name(
+        &mut self,
+        namespace: &Value,
+        name: String,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        match namespace {
+            Value::Dict(dict) => dict_set_value_checked(dict, Value::Str(name), value),
+            Value::Instance(_) => {
+                if let Some(setitem) = self.lookup_bound_special_method(namespace, "__setitem__")? {
+                    match self.call_internal(
+                        setitem,
+                        vec![Value::Str(name), value],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(_)
+                        | InternalCallOutcome::CallerExceptionHandled => Ok(()),
+                    }
+                } else if let Some(dict) = self.class_namespace_backing_dict(namespace) {
+                    dict_set_value_checked(&dict, Value::Str(name), value)
+                } else {
+                    Err(RuntimeError::new(
+                        "class namespace does not support item assignment",
+                    ))
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "class namespace does not support item assignment",
+            )),
+        }
+    }
+
     pub(super) fn class_value_from_module(
         &mut self,
         module: &ObjRef,
         mut bases: Vec<ObjRef>,
         metaclass: Option<Value>,
         class_keywords: HashMap<String, Value>,
+        class_namespace: Option<Value>,
     ) -> Result<ClassBuildOutcome, RuntimeError> {
         if bases.is_empty() {
             if let Some(Value::Class(object_class)) = self.builtins.get("object") {
                 bases.push(object_class.clone());
             }
         }
-        let (name, attrs) = match &*module.kind() {
+        let (name, module_attrs) = match &*module.kind() {
             Object::Module(module_data) => (module_data.name.clone(), module_data.globals.clone()),
             _ => ("<class>".to_string(), HashMap::new()),
         };
+        let namespace_value = class_namespace.unwrap_or_else(|| {
+            self.heap.alloc_dict(
+                module_attrs
+                    .iter()
+                    .map(|(key, value)| (Value::Str(key.clone()), value.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        });
+        let attrs = self.class_namespace_attrs_map(&namespace_value)?;
 
         let resolved_metaclass = self.resolve_class_metaclass(&bases, metaclass.as_ref())?;
         let explicit_metaclass = metaclass.clone();
-        let effective_metaclass = metaclass.or_else(|| resolved_metaclass.clone().map(Value::Class));
+        let effective_metaclass =
+            metaclass.or_else(|| resolved_metaclass.clone().map(Value::Class));
         let plain_type_metaclass_id = self.default_type_metaclass().map(|meta| meta.id());
         let uses_plain_type = matches!(
             &effective_metaclass,
@@ -5169,18 +5330,12 @@ impl Vm {
                 }
                 return Ok(ClassBuildOutcome::Value(class_value));
             };
-            let namespace = self.heap.alloc_dict(
-                attrs
-                    .iter()
-                    .map(|(key, value)| (Value::Str(key.clone()), value.clone()))
-                    .collect::<Vec<_>>(),
-            );
             let bases_tuple = self
                 .heap
                 .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>());
             return match self.call_internal(
                 meta,
-                vec![Value::Str(name), bases_tuple, namespace],
+                vec![Value::Str(name), bases_tuple, namespace_value],
                 class_keywords,
             )? {
                 InternalCallOutcome::Value(value) => {
@@ -5713,6 +5868,13 @@ impl Vm {
     }
 
     pub(super) fn module_namespace_lookup(&self, frame: &Frame, name: &str) -> Option<Value> {
+        if frame.return_class {
+            if let Some(namespace) = &frame.class_namespace {
+                if let Some(value) = self.class_namespace_lookup_name(namespace, name) {
+                    return Some(value);
+                }
+            }
+        }
         if let Some(dict) = &frame.module_locals_dict {
             return dict_get_value(dict, &Value::Str(name.to_string()));
         }
@@ -5776,12 +5938,14 @@ impl Vm {
         value: Value,
     ) -> Result<(), RuntimeError> {
         let mut touched_module_version: Option<(u64, u64)> = None;
+        let mut class_namespace_store: Option<(Value, String, Value)> = None;
         if let Some(frame) = self.frames.last_mut() {
             let name = frame
                 .code
                 .names
                 .get(name_index)
                 .ok_or_else(|| RuntimeError::new("name index out of range"))?;
+            let name = name.clone();
             let has_fast_slot = name_index < frame.fast_locals.len();
             if frame.is_module {
                 if has_fast_slot {
@@ -5789,17 +5953,27 @@ impl Vm {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
                 }
-                if let Some(dict) = frame.module_locals_dict.clone() {
-                    dict_set_value(&dict, Value::Str(name.clone()), value.clone());
-                }
-                if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
-                    if let Some(existing) = module_data.globals.get_mut(name.as_str()) {
-                        *existing = value;
-                    } else {
-                        module_data.globals.insert(name.clone(), value);
+                if frame.return_class {
+                    frame.locals.insert(name.clone(), value.clone());
+                    if let Some(namespace) = frame.class_namespace.clone() {
+                        class_namespace_store = Some((namespace, name, value));
+                    } else if let Some(dict) = frame.module_locals_dict.clone() {
+                        dict_set_value(&dict, Value::Str(name), value);
                     }
-                    module_data.touch_globals_version();
-                    touched_module_version = Some((frame.module.id(), module_data.globals_version));
+                } else {
+                    if let Some(dict) = frame.module_locals_dict.clone() {
+                        dict_set_value(&dict, Value::Str(name.clone()), value.clone());
+                    }
+                    if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                        if let Some(existing) = module_data.globals.get_mut(name.as_str()) {
+                            *existing = value;
+                        } else {
+                            module_data.globals.insert(name, value);
+                        }
+                        module_data.touch_globals_version();
+                        touched_module_version =
+                            Some((frame.module.id(), module_data.globals_version));
+                    }
                 }
             } else {
                 if has_fast_slot {
@@ -5812,10 +5986,13 @@ impl Vm {
                 } else {
                     // Keep fast locals authoritative; only retain truly dynamic names here.
                     if !has_fast_slot {
-                        frame.locals.insert(name.clone(), value);
+                        frame.locals.insert(name, value);
                     }
                 }
             }
+        }
+        if let Some((namespace, name, value)) = class_namespace_store {
+            self.class_namespace_set_name(&namespace, name, value)?;
         }
         if let Some((module_id, module_version)) = touched_module_version {
             self.propagate_module_globals_version(module_id, module_version);
@@ -5823,8 +6000,9 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn store_name(&mut self, name: &str, value: Value) {
+    pub(super) fn store_name(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
         let mut module_write: Option<(ObjRef, Value)> = None;
+        let mut class_namespace_store: Option<(Value, String, Value)> = None;
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
                 if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
@@ -5832,10 +6010,19 @@ impl Vm {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
                 }
-                if let Some(dict) = frame.module_locals_dict.clone() {
-                    dict_set_value(&dict, Value::Str(name.to_string()), value.clone());
+                if frame.return_class {
+                    frame.locals.insert(name.to_string(), value.clone());
+                    if let Some(namespace) = frame.class_namespace.clone() {
+                        class_namespace_store = Some((namespace, name.to_string(), value));
+                    } else if let Some(dict) = frame.module_locals_dict.clone() {
+                        dict_set_value(&dict, Value::Str(name.to_string()), value);
+                    }
+                } else {
+                    if let Some(dict) = frame.module_locals_dict.clone() {
+                        dict_set_value(&dict, Value::Str(name.to_string()), value.clone());
+                    }
+                    module_write = Some((frame.module.clone(), value));
                 }
-                module_write = Some((frame.module.clone(), value));
             } else {
                 if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
                     if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
@@ -5852,9 +6039,13 @@ impl Vm {
                 }
             }
         }
+        if let Some((namespace, key, value)) = class_namespace_store {
+            self.class_namespace_set_name(&namespace, key, value)?;
+        }
         if let Some((module, value)) = module_write {
             self.upsert_module_global(&module, name, value);
         }
+        Ok(())
     }
 
     #[inline]
