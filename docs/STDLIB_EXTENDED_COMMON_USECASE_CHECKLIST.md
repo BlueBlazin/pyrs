@@ -10,7 +10,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 - Common-usecase smoke pass: `39/50`
 - Runtime: `target/debug/pyrs`
 - CPython Lib: `/Users/$USER/Downloads/Python-3.14.3/Lib`
-- Note: targeted closures landed after this snapshot (`queue`, `smtplib` import chain, `imaplib` common `Time2Internaldate(0)` path, email `Content-Type` fold/as_string smoke after str-subclass + regex match indexing parity fixes, `statistics.mean([1,2,3,4])` smoke after numeric ABC + binary add + `float(__float__)` parity fixes). Refresh artifact pending.
+- Note: targeted closures landed after this snapshot (`queue`, `smtplib` import chain, `imaplib` common `Time2Internaldate(0)` path, email `Content-Type` fold/as_string smoke after str-subclass + regex match indexing parity fixes, `statistics.mean([1,2,3,4])` smoke after numeric ABC + binary add + `float(__float__)` parity fixes, `_sre` named-group fast path for CPython `_pydecimal` parser pattern). Refresh artifact pending.
 
 ## Checklist
 

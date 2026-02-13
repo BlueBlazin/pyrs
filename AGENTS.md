@@ -53,6 +53,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - instance subscription now delegates to tuple/str backing for synthetic builtin subclasses; `str()` now returns backing text for str-backed instances.
   - targeted CPython `email` smoke (`EmailMessage` header/content fold + `as_string`) is green locally; extended matrix artifact refresh pending.
   - numeric parity checkpoint: `int` now exposes `numerator`/`denominator`/`real`/`imag`; `sum()` now uses binary add runtime fallback; `float()` now honors `__float__`; primitive numeric instances satisfy `numbers` ABC checks used by `fractions`/`statistics`.
+  - regex parity checkpoint: `_sre` now recognizes CPython `_pydecimal` parser pattern structure with named-group captures (`sign`/`int`/`frac`/`exp`/`signal`/`diag`) and matching `groupindex` mapping.
 - Extended probe remaining red modules:
   - `statistics`* (targeted smoke green; artifact pending refresh), `decimal`, `ssl`, `email`* (artifact pending refresh), `smtplib`, `xml`, `gzip`, `bz2`, `lzma`.
 

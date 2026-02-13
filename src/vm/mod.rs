@@ -5041,6 +5041,131 @@ fn pkgutil_resolve_name_match_detail(text: &str) -> Option<ReMatchDetail> {
     })
 }
 
+fn decimal_parser_pattern_matches(pattern_text: &str) -> bool {
+    pattern_text.contains("(?P<sign>[-+])?")
+        && pattern_text.contains("(?P<int>\\d*)")
+        && pattern_text.contains("Inf(inity)?")
+        && pattern_text.contains("(?P<signal>s)?")
+        && pattern_text.contains("NaN")
+        && pattern_text.contains("(?P<diag>\\d*)")
+}
+
+fn ascii_case_starts_with(haystack: &[u8], start: usize, needle: &[u8]) -> bool {
+    if start + needle.len() > haystack.len() {
+        return false;
+    }
+    haystack[start..start + needle.len()]
+        .iter()
+        .zip(needle.iter())
+        .all(|(a, b)| a.eq_ignore_ascii_case(b))
+}
+
+fn pydecimal_parser_match_detail(text: &str) -> Option<ReMatchDetail> {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut base_captures = vec![None; 10];
+    let mut cursor = 0usize;
+    if cursor < len && (bytes[cursor] == b'+' || bytes[cursor] == b'-') {
+        base_captures[0] = Some((cursor, cursor + 1));
+        cursor += 1;
+    }
+    let body_start = cursor;
+
+    // Numeric branch.
+    let mut captures = base_captures.clone();
+    let mut index = body_start;
+    let has_digit_start = index < len && bytes[index].is_ascii_digit();
+    let has_frac_start =
+        index + 1 < len && bytes[index] == b'.' && bytes[index + 1].is_ascii_digit();
+    if has_digit_start || has_frac_start {
+        let int_start = index;
+        while index < len && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        captures[2] = Some((int_start, index));
+        if index < len && bytes[index] == b'.' {
+            let dot_start = index;
+            index += 1;
+            let frac_start = index;
+            while index < len && bytes[index].is_ascii_digit() {
+                index += 1;
+            }
+            captures[3] = Some((dot_start, index));
+            captures[4] = Some((frac_start, index));
+        }
+        if index < len && (bytes[index] == b'e' || bytes[index] == b'E') {
+            let exp_group_start = index;
+            index += 1;
+            let exp_start = index;
+            if index < len && (bytes[index] == b'+' || bytes[index] == b'-') {
+                index += 1;
+            }
+            let digits_start = index;
+            while index < len && bytes[index].is_ascii_digit() {
+                index += 1;
+            }
+            if digits_start == index {
+                return None;
+            }
+            captures[5] = Some((exp_group_start, index));
+            captures[6] = Some((exp_start, index));
+        }
+        if index == len {
+            captures[1] = Some((body_start, len));
+            return Some(ReMatchDetail {
+                start: 0,
+                end: len,
+                captures,
+            });
+        }
+    }
+
+    // Infinity branch.
+    captures = base_captures.clone();
+    index = body_start;
+    if ascii_case_starts_with(bytes, index, b"inf") {
+        index += 3;
+        if ascii_case_starts_with(bytes, index, b"inity") {
+            captures[7] = Some((index, index + 5));
+            index += 5;
+        }
+        if index == len {
+            captures[1] = Some((body_start, len));
+            return Some(ReMatchDetail {
+                start: 0,
+                end: len,
+                captures,
+            });
+        }
+    }
+
+    // sNaN/NaN branch.
+    captures = base_captures;
+    index = body_start;
+    if index < len && (bytes[index] == b's' || bytes[index] == b'S') {
+        captures[8] = Some((index, index + 1));
+        index += 1;
+    }
+    if ascii_case_starts_with(bytes, index, b"nan") {
+        index += 3;
+        let diag_start = index;
+        while index < len && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        captures[9] = Some((diag_start, index));
+        if index == len {
+            captures[1] = Some((body_start, len));
+            return Some(ReMatchDetail {
+                start: 0,
+                end: len,
+                captures,
+            });
+        }
+    }
+
+    None
+}
+
 fn re_match_details(
     pattern: &RePatternValue,
     text: &Value,
@@ -5059,6 +5184,8 @@ fn re_match_details(
             };
             let found = if pattern_text == PKGUTIL_RESOLVE_NAME_PATTERN {
                 pkgutil_resolve_name_match_detail(text)
+            } else if decimal_parser_pattern_matches(pattern_text) {
+                pydecimal_parser_match_detail(text)
             } else if matches!(mode, ReMode::Search) {
                 if let Some(quote) = csv_sniffer_doublequote_quote(pattern_text) {
                     let needle = format!("{quote}{quote}");

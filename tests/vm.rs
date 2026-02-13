@@ -7230,6 +7230,16 @@ fn re_match_exposes_group_groups_and_end() {
 }
 
 #[test]
+fn re_decimal_parser_pattern_supports_named_groups() {
+    let source = "import re\npat = re.compile(r'(?P<sign>[-+])?((?=\\d|\\.\\d)(?P<int>\\d*)(\\.(?P<frac>\\d*))?(E(?P<exp>[-+]?\\d+))?|Inf(inity)?|(?P<signal>s)?NaN(?P<diag>\\d*))\\z', re.IGNORECASE)\nm1 = pat.match('Inf')\nm2 = pat.match('-12.5e+3')\nm3 = pat.match('sNaN42')\nok = (m1 is not None and m1.group('sign') is None and m1.group('int') is None and m2.group('sign') == '-' and m2.group('int') == '12' and m2.group('frac') == '5' and m2.group('exp') == '+3' and m3.group('signal').lower() == 's' and m3.group('diag') == '42')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn re_match_supports_getitem_group_alias() {
     let source = "import re\nm = re.match(r'([a-z]+)([0-9]+)', 'abc123')\nok = (m[0] == 'abc123' and m[1] == 'abc' and m[2] == '123')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

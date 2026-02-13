@@ -11,6 +11,26 @@ const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
 const RE_MATCH_MODULE_NAME: &str = "__re_match__";
 
+fn decimal_parser_groupindex_entries(pattern: &str) -> Option<Vec<(&'static str, i64)>> {
+    let looks_like_decimal_parser = pattern.contains("(?P<sign>[-+])?")
+        && pattern.contains("(?P<int>\\d*)")
+        && pattern.contains("Inf(inity)?")
+        && pattern.contains("(?P<signal>s)?")
+        && pattern.contains("NaN")
+        && pattern.contains("(?P<diag>\\d*)");
+    if !looks_like_decimal_parser {
+        return None;
+    }
+    Some(vec![
+        ("sign", 1),
+        ("int", 3),
+        ("frac", 5),
+        ("exp", 7),
+        ("signal", 9),
+        ("diag", 10),
+    ])
+}
+
 impl Vm {
     fn coerce_sre_int_arg(&mut self, value: Value) -> Result<i64, RuntimeError> {
         let coerced = self
@@ -36,6 +56,7 @@ impl Vm {
             }
             Value::Str(pattern) => {
                 let entries = csv_sniffer_groupindex_entries(pattern)
+                    .or_else(|| decimal_parser_groupindex_entries(pattern))
                     .unwrap_or_default()
                     .into_iter()
                     .map(|(name, idx)| (Value::Str(name.to_string()), Value::Int(idx)))
@@ -476,6 +497,7 @@ impl Vm {
                 match pattern {
                     Value::Str(text) => {
                         let entries = csv_sniffer_groupindex_entries(text)
+                            .or_else(|| decimal_parser_groupindex_entries(text))
                             .unwrap_or_default()
                             .into_iter()
                             .map(|(name, idx)| (Value::Str(name.to_string()), Value::Int(idx)))
