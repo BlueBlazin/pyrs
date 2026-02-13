@@ -11,6 +11,7 @@ Use this file to find canonical ownership quickly.
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
 - `docs/ALGO_AUDIT_BACKLOG.md`: algorithmic/semantic risk backlog.
 - `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`: top-stdlib baseline closure tracker.
+- `docs/STDLIB_EXTENDED_COMMON_USECASE_CHECKLIST.md`: expanded stdlib smoke matrix and blocker grouping.
 - `docs/OBJECT_MODEL_AUDIT.md`: object-model parity audit status.
 
 ## Runtime and Architecture

@@ -91,5 +91,6 @@ For each module above:
 
 ## Ownership and Tracking
 - This checklist is the canonical tracker for the "common functionality first" pivot.
+- Extended-module coverage tracker: `docs/STDLIB_EXTENDED_COMMON_USECASE_CHECKLIST.md`.
 - `docs/PRODUCTION_READINESS.md` tracks release blocker status.
 - `docs/STUB_ACCOUNTING.md` tracks any temporary/partial behavior that remains.
