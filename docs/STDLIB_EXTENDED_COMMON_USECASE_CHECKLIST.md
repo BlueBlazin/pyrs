@@ -75,7 +75,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 
 ## Shim and Probe Notes
 - Default runtime behavior now uses CPython `Lib/enum.py`.
-- Local `enum` shim is emergency fallback only and must be explicitly enabled with `PYRS_ENABLE_ENUM_SHIM=1`.
+- Local `enum` shim has been retired (`shims/enum.py` removed).
 - Local shim fallback for `pkgutil` and `importlib.resources` is disabled by default and can be enabled explicitly with `PYRS_ENABLE_LOCAL_SHIMS=1`.
 
 ## Refresh Procedure

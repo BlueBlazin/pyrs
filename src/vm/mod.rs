@@ -351,7 +351,7 @@ const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
-const LOCAL_SHIM_MODULES: &[&str] = &["enum", "pkgutil", "importlib.resources"];
+const LOCAL_SHIM_MODULES: &[&str] = &["pkgutil", "importlib.resources"];
 
 fn env_flag_enabled(name: &str) -> bool {
     let Ok(raw) = std::env::var(name) else {
@@ -641,7 +641,6 @@ pub struct Vm {
     weakref_finalizers: HashMap<u64, (Weak<Obj>, Vec<ObjRef>)>,
     atexit_handlers: Vec<AtexitHandler>,
     local_shim_fallback_enabled: bool,
-    enum_shim_enabled: bool,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
     prefer_pure_re_when_available: bool,
@@ -715,7 +714,6 @@ impl Vm {
             weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
             local_shim_fallback_enabled: env_flag_enabled("PYRS_ENABLE_LOCAL_SHIMS"),
-            enum_shim_enabled: env_flag_enabled("PYRS_ENABLE_ENUM_SHIM"),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
@@ -1202,11 +1200,6 @@ impl Vm {
 
     pub fn enable_local_shim_fallback(&mut self) {
         self.local_shim_fallback_enabled = true;
-    }
-
-    pub fn disable_enum_shim(&mut self) {
-        self.enum_shim_enabled = false;
-        self.unregister_module("enum");
     }
 
     pub fn import_module(&mut self, name: &str) -> Result<(), RuntimeError> {

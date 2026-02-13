@@ -5225,11 +5225,6 @@ impl Vm {
     }
 
     pub(super) fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
-        if name == "enum" && self.enum_shim_enabled {
-            if let Some(source) = self.preferred_local_shim_source(name) {
-                return Some(source);
-            }
-        }
         if let Some((parent_name, child_name)) = name.rsplit_once('.') {
             if let Some(parent_paths) = self.package_search_paths(parent_name) {
                 if let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths) {
@@ -5240,9 +5235,6 @@ impl Vm {
         let roots = self.module_paths.clone();
         if let Some(source) = self.find_module_source_in_roots(name, &roots) {
             return Some(source);
-        }
-        if name == "enum" && self.enum_shim_enabled {
-            return None;
         }
         if !self.local_shim_fallback_enabled {
             return None;

@@ -40,7 +40,7 @@ Status values:
 | `uuid` | Foundation exists; long-tail parity remains. | Full in-scope API parity. | IN_PROGRESS | 13 |
 | `_sqlite3`/`sqlite3` | Baseline is broad; DB-API long-tail remains. | Close remaining DB-API long-tail (including URI undecodable-path edge and autocommit/type edges). | IN_PROGRESS | 13 |
 | `decimal`/`_pydecimal` | Bootstrap `decimal` remains as no-stdlib fallback, but CPython `Lib/decimal.py` is now preferred when available on `sys.path`; targeted pure decimal constructor/context/addition smoke is green. | Refresh extended matrix artifact and close remaining decimal long-tail parity in curated/strict suites. | IN_PROGRESS | 13 |
-| `dataclasses`/`typing`/`enum`/`contextvars` | Common paths are green; CPython `Lib/enum.py` path is now baseline-green and default (no default shim shadowing). Remaining work is long-tail enum semantics + full shim retirement criteria. | Full in-scope semantics for modern pure-Python apps and removal of emergency enum shim file. | IN_PROGRESS | 13 |
+| `dataclasses`/`typing`/`enum`/`contextvars` | Common paths are green; CPython `Lib/enum.py` path is baseline-green/default and local `enum` shim is retired. Remaining work is long-tail enum semantics only. | Full in-scope semantics for modern pure-Python apps. | IN_PROGRESS | 13 |
 | `hashlib` extended algorithms (`_sha1`/`_blake2`/`_sha3`/`_hashlib`) | md5/sha2 baseline closed; broader algorithm surface open. | Full in-scope algorithm surface (or explicit exclusions) with tests and consumers green. | IN_PROGRESS | 13/14 |
 | Object-model protocol dispatch | Truthiness/membership baseline landed; long-tail slot/error semantics remain. | Align remaining protocol edge semantics with CPython data model/tests. | IN_PROGRESS | 13 |
 | VM/module decomposition | VM still has large modules. | Continue concern-based extraction with behavior-preserving tests. | IN_PROGRESS | 14 |
@@ -62,7 +62,7 @@ Shims are temporary bootstrap fallbacks and are not allowed to shadow CPython `L
 
 | Shim surface | Current state | Closure criteria | Status |
 |---|---|---|---|
-| `enum` | CPython `Lib/enum.py` path is now default; local `shims/enum.py` is emergency fallback only via `PYRS_ENABLE_ENUM_SHIM=1`. | Remove `shims/enum.py` entirely once strict stdlib + curated real-world suites remain green without fallback toggles. Probe guard: `tests/vm.rs::cpython_enum_path_supports_member_value_and_name`. | IN_PROGRESS |
+| `enum` | Local `shims/enum.py` is removed; enum resolution now follows CPython `Lib/enum.py` only. | Keep `tests/vm.rs::cpython_enum_path_supports_member_value_and_name` and strict stdlib suites green without enum-specific fallback toggles. | CLOSED |
 | `pkgutil` | Local shim is fallback-only and disabled by default. | Remove shim after stdlib-less bootstrap requirement is removed or replaced by native/runtime capability. | IN_PROGRESS |
 | `importlib.resources` | Local shim is fallback-only and disabled by default. | Remove shim after stdlib-less bootstrap requirement is removed or replaced by native/runtime capability. | IN_PROGRESS |
 

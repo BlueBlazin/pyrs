@@ -56,11 +56,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - regex parity checkpoint: `_sre` now recognizes CPython `_pydecimal` parser pattern structure with named-group captures (`sign`/`int`/`frac`/`exp`/`signal`/`diag`) and matching `groupindex` mapping.
   - import binding parity: `import` / `__import__` now bind the canonical `sys.modules[name]` module object when module code replaces the entry during execution.
   - pure `decimal` preference: when CPython `Lib/decimal.py` is available on `sys.path`, builtin bootstrap `decimal` is unloaded and pure `decimal`/`_pydecimal` is used.
+  - enum shim retirement: `shims/enum.py` is removed; enum import now resolves only through CPython `Lib/enum.py` path.
   - exception hierarchy parity: `LookupError`/`IndexError`/`KeyError`, `ArithmeticError` family, warning family, pickle error family, and several core parents now follow CPython ancestry.
   - exception-match resilience: `except` matching now falls back to active exception state when stack operands are polluted by import-failure edges.
   - heavy CPython-stdlib VM tests now run on dedicated 32MB stack threads for stability (`import_http_client_runs_package_init_first`, `pyio_fileio_del_namedexpr_does_not_leak_bound_method_or_pin_cycle`, `c_pickler_newobj_ex_argument_type_errors_match_cpython_protocols_2_through_5`, `pickle_newobj_generic_matrix_from_pickletester_roundtrips`, `prefers_cpython_pkgutil_and_resources_over_local_shims_when_stdlib_is_available`, `pkgutil_resolve_name_accepts_module_only_target`).
   - additional pickle-heavy VM tests now run on dedicated 32MB stack threads (`pickle_protocol4_dict_chunking_emits_multiple_setitems_for_large_dicts`, `pickle_slot_list_roundtrip_preserves_slots_and_dynamic_dict_attrs`, `with_assert_raises_handles_missing_attr_without_stack_underflow`), and local full `cargo test -q --test vm` is green.
   - CPython harness import suites (`runs_cpython_language_suite`, `runs_cpython_import_suite`) now run on dedicated 32MB stack threads to avoid debug-thread stack overflows during deep import chains.
+  - strict stdlib lane remains green after enum-shim retirement (`PYRS_RUN_STRICT_STDLIB=1 cargo test -q --test cpython_harness runs_cpython_strict_stdlib_suite`).
 - Extended probe remaining red modules:
   - `xml`, `gzip`, `bz2`, `lzma`.
   - `smtplib` targeted smoke is green but still logs unsupported `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`).
@@ -77,7 +79,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Keep native handlers as substrate/accelerator layers, not replacement semantics.
 - Local shim policy:
   - CPython `Lib/enum.py` path is now the default.
-  - `enum` shim is emergency fallback only and must be enabled explicitly with `PYRS_ENABLE_ENUM_SHIM=1`.
+  - local `enum` shim has been retired (`shims/enum.py` removed); enum behavior now always follows CPython `Lib/enum.py` when stdlib is present.
   - `pkgutil`/`importlib.resources` local shims are fallback-only and require `PYRS_ENABLE_LOCAL_SHIMS=1`.
   - CPython enum probe regression: `tests/vm.rs::cpython_enum_path_supports_member_value_and_name`.
 - Keep docs updated in the same checkpoint as behavior changes.
