@@ -529,6 +529,45 @@ impl Vm {
         Ok(value_from_bigint(out))
     }
 
+    pub(super) fn builtin_math_gcd(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "gcd() does not accept keyword arguments",
+            ));
+        }
+        if args.is_empty() {
+            return Ok(Value::Int(0));
+        }
+
+        let mut acc = BigInt::zero();
+        for value in args {
+            let rhs = value_to_bigint(value)
+                .map_err(|_| RuntimeError::new("gcd() only accepts integral values"))?
+                .abs();
+            if acc.is_zero() {
+                acc = rhs;
+                continue;
+            }
+
+            // Euclidean algorithm on non-negative integers.
+            let mut left = acc;
+            let mut right = rhs;
+            while !right.is_zero() {
+                let (_, remainder) = left
+                    .div_mod_floor(&right)
+                    .ok_or_else(|| RuntimeError::new("integer division by zero"))?;
+                left = right;
+                right = remainder;
+            }
+            acc = left;
+        }
+        Ok(value_from_bigint(acc))
+    }
+
     pub(super) fn builtin_math_copysign(
         &mut self,
         args: Vec<Value>,

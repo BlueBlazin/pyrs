@@ -2321,6 +2321,7 @@ pub enum BuiltinFunction {
     MathAcos,
     MathIsClose,
     MathFactorial,
+    MathGcd,
     TimeTime,
     TimeTimeNs,
     TimeLocalTime,
@@ -2564,6 +2565,7 @@ pub enum BuiltinFunction {
     OperatorItemGetter,
     OperatorAttrGetter,
     OperatorMethodCaller,
+    OperatorCompareDigest,
     ItertoolsChain,
     ItertoolsChainFromIterable,
     ItertoolsAccumulate,
@@ -2817,6 +2819,7 @@ pub enum BuiltinFunction {
     DateToday,
     DateTimeInit,
     DateInit,
+    DateStrFTime,
     TimeInit,
     AsyncioRun,
     AsyncioSleep,
@@ -2842,6 +2845,8 @@ pub enum BuiltinFunction {
     ThreadConditionNotifyAll,
     ThreadConditionRelease,
     ThreadConditionWait,
+    ThreadConditionEnter,
+    ThreadConditionExit,
     ThreadSemaphoreInit,
     ThreadSemaphoreAcquire,
     ThreadSemaphoreRelease,
@@ -5172,6 +5177,7 @@ impl BuiltinFunction {
             | BuiltinFunction::MathAcos
             | BuiltinFunction::MathIsClose
             | BuiltinFunction::MathFactorial
+            | BuiltinFunction::MathGcd
             | BuiltinFunction::TimeTime
             | BuiltinFunction::TimeTimeNs
             | BuiltinFunction::TimeLocalTime
@@ -5328,6 +5334,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OperatorItemGetter
             | BuiltinFunction::OperatorAttrGetter
             | BuiltinFunction::OperatorMethodCaller
+            | BuiltinFunction::OperatorCompareDigest
             | BuiltinFunction::ItertoolsChain
             | BuiltinFunction::ItertoolsChainFromIterable
             | BuiltinFunction::ItertoolsAccumulate
@@ -5420,6 +5427,7 @@ impl BuiltinFunction {
             | BuiltinFunction::DateToday
             | BuiltinFunction::DateTimeInit
             | BuiltinFunction::DateInit
+            | BuiltinFunction::DateStrFTime
             | BuiltinFunction::TimeInit
             | BuiltinFunction::AsyncioRun
             | BuiltinFunction::AsyncioSleep
@@ -5446,6 +5454,8 @@ impl BuiltinFunction {
             | BuiltinFunction::ThreadConditionNotifyAll
             | BuiltinFunction::ThreadConditionRelease
             | BuiltinFunction::ThreadConditionWait
+            | BuiltinFunction::ThreadConditionEnter
+            | BuiltinFunction::ThreadConditionExit
             | BuiltinFunction::ThreadSemaphoreInit
             | BuiltinFunction::ThreadSemaphoreAcquire
             | BuiltinFunction::ThreadSemaphoreRelease

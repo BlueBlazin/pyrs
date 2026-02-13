@@ -98,6 +98,7 @@ impl Vm {
                 ("isnan", BuiltinFunction::MathIsNaN),
                 ("isclose", BuiltinFunction::MathIsClose),
                 ("factorial", BuiltinFunction::MathFactorial),
+                ("gcd", BuiltinFunction::MathGcd),
             ],
             vec![
                 ("pi", Value::Float(std::f64::consts::PI)),
@@ -1627,7 +1628,13 @@ impl Vm {
                 ("itemgetter", BuiltinFunction::OperatorItemGetter),
                 ("attrgetter", BuiltinFunction::OperatorAttrGetter),
                 ("methodcaller", BuiltinFunction::OperatorMethodCaller),
+                ("_compare_digest", BuiltinFunction::OperatorCompareDigest),
             ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
+            "_operator",
+            &[("_compare_digest", BuiltinFunction::OperatorCompareDigest)],
             Vec::new(),
         );
         self.install_builtin_module(
@@ -4294,6 +4301,10 @@ impl Vm {
                 "today".to_string(),
                 Value::Builtin(BuiltinFunction::DateToday),
             );
+            class_data.attrs.insert(
+                "strftime".to_string(),
+                Value::Builtin(BuiltinFunction::DateStrFTime),
+            );
         }
         let date_class = match self
             .heap
@@ -4310,6 +4321,10 @@ impl Vm {
             class_data.attrs.insert(
                 "today".to_string(),
                 Value::Builtin(BuiltinFunction::DateToday),
+            );
+            class_data.attrs.insert(
+                "strftime".to_string(),
+                Value::Builtin(BuiltinFunction::DateStrFTime),
             );
         }
         let timedelta_class = match self
@@ -4487,8 +4502,16 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::ThreadConditionAcquire),
             );
             class_data.attrs.insert(
+                "__enter__".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadConditionEnter),
+            );
+            class_data.attrs.insert(
                 "release".to_string(),
                 Value::Builtin(BuiltinFunction::ThreadConditionRelease),
+            );
+            class_data.attrs.insert(
+                "__exit__".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadConditionExit),
             );
             class_data.attrs.insert(
                 "wait".to_string(),

@@ -5352,6 +5352,7 @@ impl Vm {
             BuiltinFunction::MathAcos => self.builtin_math_acos(args, kwargs),
             BuiltinFunction::MathIsClose => self.builtin_math_isclose(args, kwargs),
             BuiltinFunction::MathFactorial => self.builtin_math_factorial(args, kwargs),
+            BuiltinFunction::MathGcd => self.builtin_math_gcd(args, kwargs),
             BuiltinFunction::TimeTime => self.builtin_time_time(args, kwargs),
             BuiltinFunction::TimeTimeNs => self.builtin_time_time_ns(args, kwargs),
             BuiltinFunction::TimeLocalTime => self.builtin_time_localtime(args, kwargs),
@@ -5768,6 +5769,9 @@ impl Vm {
             BuiltinFunction::OperatorMethodCaller => {
                 self.builtin_operator_methodcaller(args, kwargs)
             }
+            BuiltinFunction::OperatorCompareDigest => {
+                self.builtin_operator_compare_digest(args, kwargs)
+            }
             BuiltinFunction::ItertoolsChain => self.builtin_itertools_chain(args, kwargs),
             BuiltinFunction::ItertoolsChainFromIterable => {
                 self.builtin_itertools_chain_from_iterable(args, kwargs)
@@ -6087,6 +6091,7 @@ impl Vm {
             BuiltinFunction::DateToday => self.builtin_datetime_today(args, kwargs),
             BuiltinFunction::DateTimeInit => self.builtin_datetime_init(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
+            BuiltinFunction::DateStrFTime => self.builtin_date_strftime(args, kwargs),
             BuiltinFunction::TimeInit => self.builtin_time_init(args, kwargs),
             BuiltinFunction::AsyncioRun => self.builtin_asyncio_run(args, kwargs),
             BuiltinFunction::AsyncioSleep => self.builtin_asyncio_sleep(args, kwargs),
@@ -6121,6 +6126,9 @@ impl Vm {
             BuiltinFunction::ThreadConditionAcquire => {
                 self.builtin_thread_condition_acquire(args, kwargs)
             }
+            BuiltinFunction::ThreadConditionEnter => {
+                self.builtin_thread_condition_enter(args, kwargs)
+            }
             BuiltinFunction::ThreadConditionNotify => {
                 self.builtin_thread_condition_notify(args, kwargs)
             }
@@ -6129,6 +6137,9 @@ impl Vm {
             }
             BuiltinFunction::ThreadConditionRelease => {
                 self.builtin_thread_condition_release(args, kwargs)
+            }
+            BuiltinFunction::ThreadConditionExit => {
+                self.builtin_thread_condition_exit(args, kwargs)
             }
             BuiltinFunction::ThreadConditionWait => {
                 self.builtin_thread_condition_wait(args, kwargs)

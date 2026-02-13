@@ -505,6 +505,74 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_date_strftime(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("strftime() expects format argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "date.strftime")?;
+        let format = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("strftime() format must be str")),
+        };
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new(
+                "date.strftime() expects date/datetime instance receiver",
+            ));
+        };
+        let year = match instance_data.attrs.get("year") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.strftime() missing year")),
+        };
+        let month = match instance_data.attrs.get("month") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.strftime() missing month")),
+        };
+        let day = match instance_data.attrs.get("day") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.strftime() missing day")),
+        };
+        let hour = instance_data
+            .attrs
+            .get("hour")
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(0);
+        let minute = instance_data
+            .attrs
+            .get("minute")
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(0);
+        let second = instance_data
+            .attrs
+            .get("second")
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(0);
+        let days = days_from_civil(year, month as u32, day as u32);
+        let weekday = (days + 3).rem_euclid(7) as u32; // Monday=0
+        let yearday = day_of_year(year as i32, month as u32, day as u32);
+        let parts = TimeParts {
+            year: year as i32,
+            month: month as u32,
+            day: day as u32,
+            hour: hour as u32,
+            minute: minute as u32,
+            second: second as u32,
+            weekday,
+            yearday,
+            isdst: -1,
+        };
+        Ok(Value::Str(format_strftime(&format, parts)))
+    }
+
     pub(super) fn builtin_time_init(
         &mut self,
         mut args: Vec<Value>,
@@ -1093,6 +1161,14 @@ impl Vm {
         Ok(Value::Bool(true))
     }
 
+    pub(super) fn builtin_thread_condition_enter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_thread_condition_acquire(args, kwargs)
+    }
+
     pub(super) fn builtin_thread_condition_notify(
         &mut self,
         mut args: Vec<Value>,
@@ -1140,6 +1216,21 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "Condition.release")?;
         Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_thread_condition_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "Condition.__exit__() expects exc_type/exc/tb or no arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Condition.__exit__")?;
+        Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
+        Ok(Value::Bool(false))
     }
 
     pub(super) fn builtin_thread_condition_wait(

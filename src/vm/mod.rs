@@ -5925,6 +5925,17 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     (year as i32, m as u32, d as u32)
 }
 
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = year - if month <= 2 { 1 } else { 0 };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month as i64;
+    let day = day as i64;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
 #[derive(Clone, Copy)]
 struct TimeParts {
     year: i32,

@@ -7,7 +7,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 ## Latest Probe Summary
 - Total modules: `50`
 - Import pass: `44/50`
-- Common-usecase smoke pass: `36/50`
+- Common-usecase smoke pass: `39/50`
 - Runtime: `target/debug/pyrs`
 - CPython Lib: `/Users/$USER/Downloads/Python-3.14.3/Lib`
 
@@ -43,21 +43,21 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `dataclasses` | DONE | PASS | PASS | - |
 | `statistics` | P0 | PASS | FAIL | TypeError: can't convert type 'int' to numerator/denominator |
 | `decimal` | P0 | PASS | FAIL | RuntimeError: class constructor takes no arguments |
-| `fractions` | P0 | PASS | FAIL | AttributeError: module 'math' has no attribute 'gcd' |
+| `fractions` | DONE | PASS | PASS | - |
 | `pprint` | DONE | PASS | PASS | - |
 | `copy` | DONE | PASS | PASS | - |
-| `enum` | P0 | PASS | FAIL | TypeError: ReprEnum subclasses must be mixed with a data type ... |
+| `enum` | DONE | PASS | PASS | - |
 | `abc` | DONE | PASS | PASS | - |
 | `inspect` | DONE | PASS | PASS | - |
 | `contextlib` | DONE | PASS | PASS | - |
 | `weakref` | DONE | PASS | PASS | - |
-| `queue` | P0 | PASS | FAIL | AttributeError: 'Condition' object has no attribute '__enter__' |
-| `concurrent.futures` | P0 | PASS | FAIL | AttributeError: 'Condition' object has no attribute '__enter__' |
+| `queue` | P0 | PASS | FAIL | AttributeError: list has no attribute 'popleft' |
+| `concurrent.futures` | DONE | PASS | PASS | - |
 | `socket` | DONE | PASS | PASS | - |
 | `ssl` | P0 | FAIL | FAIL | ModuleNotFoundError: module '_ssl' not found |
 | `email` | P0 | PASS | FAIL | AttributeError: module '__re_pattern__' has no attribute 'split' |
-| `smtplib` | P0 | FAIL | FAIL | ModuleNotFoundError: module '_operator' not found |
-| `imaplib` | P0 | FAIL | FAIL | AttributeError: 'date' object has no attribute 'strftime' |
+| `smtplib` | P0 | FAIL | FAIL | TypeError: expected iterable |
+| `imaplib` | P0 | FAIL | FAIL | AttributeError: 'date' object has no attribute 'toordinal' |
 | `ftplib` | DONE | PASS | PASS | - |
 | `xml` | P1 | PASS | FAIL | ImportError: No module named expat; use SimpleXMLTreeBuilder instead |
 | `html` | DONE | PASS | PASS | - |
@@ -68,11 +68,12 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 
 ## Open Blockers (Grouped)
 
-- Native extension/module gaps: `ssl`, `smtplib`, `gzip`, `bz2`, `lzma`
-- Concurrency/context-manager protocol gaps: `queue`, `concurrent.futures`
-- Numeric core parity gaps: `statistics`, `decimal`, `fractions`
+- Native extension/module gaps: `ssl`, `gzip`, `bz2`, `lzma`
+- Iterable/bytes-constructor gap impacting import chains: `smtplib` (`hmac` path)
+- Concurrency container gap: `queue` (`deque.popleft` surface)
+- Numeric core parity gaps: `statistics`, `decimal`
 - Regex accelerator parity gaps: `email`
-- Object-model/enum/date method parity gaps: `enum`, `imaplib`
+- Date object-model parity gaps: `imaplib` (`date.toordinal` and related date methods)
 - XML parser backend gap (`pyexpat`): `xml`
 
 ## Shim and Probe Notes

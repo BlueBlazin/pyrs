@@ -146,6 +146,67 @@ impl Vm {
         self.getitem_value(args[0].clone(), args[1].clone())
     }
 
+    pub(super) fn builtin_operator_compare_digest(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "_compare_digest() expects two positional arguments",
+            ));
+        }
+
+        fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+            let mut diff: usize = left.len() ^ right.len();
+            let max_len = left.len().max(right.len());
+            for idx in 0..max_len {
+                let l = *left.get(idx).unwrap_or(&0);
+                let r = *right.get(idx).unwrap_or(&0);
+                diff |= (l ^ r) as usize;
+            }
+            diff == 0
+        }
+
+        fn as_bytes(value: &Value) -> Option<Vec<u8>> {
+            match value {
+                Value::Bytes(obj) => match &*obj.kind() {
+                    Object::Bytes(bytes) => Some(bytes.clone()),
+                    _ => None,
+                },
+                Value::ByteArray(obj) => match &*obj.kind() {
+                    Object::ByteArray(bytes) => Some(bytes.clone()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+
+        match (&args[0], &args[1]) {
+            (Value::Str(left), Value::Str(right)) => {
+                if !left.is_ascii() || !right.is_ascii() {
+                    return Err(RuntimeError::new(
+                        "comparing strings with non-ASCII characters is not supported",
+                    ));
+                }
+                Ok(Value::Bool(constant_time_eq(
+                    left.as_bytes(),
+                    right.as_bytes(),
+                )))
+            }
+            _ => {
+                let left = as_bytes(&args[0]);
+                let right = as_bytes(&args[1]);
+                match (left, right) {
+                    (Some(left), Some(right)) => Ok(Value::Bool(constant_time_eq(&left, &right))),
+                    _ => Err(RuntimeError::new(
+                        "unsupported operand types for _compare_digest()",
+                    )),
+                }
+            }
+        }
+    }
+
     pub(super) fn builtin_operator_itemgetter(
         &mut self,
         args: Vec<Value>,

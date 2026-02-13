@@ -2146,6 +2146,9 @@ import time\n\
 sqrt = math.sqrt(9)\n\
 ceil = math.ceil(2.1)\n\
 finite = math.isfinite(1.0)\n\
+gcd1 = math.gcd(48, 18)\n\
+gcd2 = math.gcd(0, 0, 6)\n\
+gcd3 = math.gcd(-7, 21)\n\
 \n\
 encoded = json.dumps({'a': 1, 'b': [2, 3]})\n\
 decoded = json.loads(encoded)\n\
@@ -2193,6 +2196,9 @@ m = time.monotonic()\n";
     assert_float_global(&vm, "sqrt", 3.0);
     assert_eq!(vm.get_global("ceil"), Some(Value::Int(3)));
     assert_eq!(vm.get_global("finite"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("gcd1"), Some(Value::Int(6)));
+    assert_eq!(vm.get_global("gcd2"), Some(Value::Int(6)));
+    assert_eq!(vm.get_global("gcd3"), Some(Value::Int(7)));
     assert_eq!(vm.get_global("op"), Some(Value::Int(5)));
     assert_eq!(vm.get_global("contains"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("item"), Some(Value::Int(8)));
@@ -4388,6 +4394,47 @@ ok = (
 #[test]
 fn executes_datetime_date_constructor() {
     let source = "import datetime\nitem = datetime.date(2024, 1, 2)\nok = item.year == 2024 and item.month == 1 and item.day == 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn datetime_date_and_datetime_support_strftime() {
+    let source = "import datetime\n\
+d = datetime.date(2024, 2, 29)\n\
+dt = datetime.datetime(2024, 2, 29, 9, 8, 7)\n\
+ok = (d.strftime('%Y-%m-%d') == '2024-02-29' and d.strftime('%w') == '4' and dt.strftime('%Y-%m-%d %H:%M:%S') == '2024-02-29 09:08:07')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn threading_condition_supports_context_manager_protocol() {
+    let source = r#"import threading
+c = threading.Condition()
+enter_ok = (c.__enter__() is True and c._locked)
+exit_ok = (c.__exit__(None, None, None) is False and (not c._locked))
+with c:
+    inside = c._locked
+ok = (enter_ok and exit_ok and inside and (not c._locked))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn operator_compare_digest_works_for_bytes_and_ascii_str() {
+    let source = "import _operator\n\
+ok = (_operator._compare_digest(b'abc', b'abc') and (not _operator._compare_digest(b'abc', b'abd')) and _operator._compare_digest('abc', 'abc') and (not _operator._compare_digest('abc', 'abd')))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
