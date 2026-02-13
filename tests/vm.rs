@@ -2258,7 +2258,7 @@ fallback_text = json.dumps(Unknown(), default=fallback, sort_keys=True)
 }
 
 #[test]
-fn json_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+fn json_import_prefers_cpython_pure_module_when_lib_path_is_added_by_default() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pure-json import preference test (CPython Lib path not available)");
         return;
@@ -2271,7 +2271,6 @@ ok = norm.endswith('/json/__init__.py') and ('/shims/' not in norm) and hasattr(
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
-    vm.enable_pure_json_preference();
     vm.add_module_path(&lib_path);
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));

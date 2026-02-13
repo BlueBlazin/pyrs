@@ -695,7 +695,7 @@ impl Vm {
             pending_del_instances: HashMap::new(),
             weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
-            prefer_pure_json_when_available: false,
+            prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
             list_eq_in_progress: Vec::new(),
