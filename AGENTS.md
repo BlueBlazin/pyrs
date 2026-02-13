@@ -116,7 +116,9 @@ Milestone 13 completion is blocked on P0 closure of:
 - Deferred pickle strict lane status:
   - `CPicklingErrorTests.test_bad_newobj_ex_args` parity is landed across proto 2-5 for `_pickle.Pickler`.
   - temporary `_pickle.Pickler.dump` error-remap shim has been removed; save-reduce hook now enforces C-path `__newobj_ex__` argument typing directly.
-  - deferred strict pickle suite currently times out in subprocess mode and remains open until timeout closure.
+  - fast decode now handles mixed framed/unframed protocol-4/5 streams and memo opcodes (`MEMOIZE`/`BINGET`/`LONG_BINGET`/`BINPUT`/`LONG_BINPUT`), eliminating many `_loads` fallbacks.
+  - `Unpickler.load` fast-probe fallback now preserves caller exception state, so unseekable streams (`tell`/`seek` raising `UnsupportedOperation`) correctly fall back instead of surfacing probe errors.
+  - deferred strict pickle suite still times out (`test/test_pickle.py` > 600s) and remains open; remaining work is throughput closure for heavy pure-`pickle._Unpickler` paths.
 - Hashlib checkpoint:
   - native `_md5` and `_sha2` backends are wired using Rust crypto crates with constructor/update/digest/hexdigest/copy parity tests.
   - common `hashlib.md5` and `hashlib.sha256` stdlib paths are now green.
