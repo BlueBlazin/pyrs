@@ -5224,8 +5224,17 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
         "utf-32" | "utf32" => Ok("utf-32".to_string()),
         "utf-32-le" | "utf32-le" | "utf-32le" | "utf32le" => Ok("utf-32-le".to_string()),
         "utf-32-be" | "utf32-be" | "utf-32be" | "utf32be" => Ok("utf-32-be".to_string()),
-        "ascii" => Ok("ascii".to_string()),
-        "latin-1" | "latin1" => Ok("latin-1".to_string()),
+        "ascii"
+        | "us-ascii"
+        | "usascii"
+        | "ansi-x3.4-1968"
+        | "ansi-x3.4-1986"
+        | "iso646-us"
+        | "cp367"
+        | "646" => Ok("ascii".to_string()),
+        "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" | "cp819" | "l1" => {
+            Ok("latin-1".to_string())
+        }
         "raw-unicode-escape" | "raw_unicode_escape" => Ok("raw-unicode-escape".to_string()),
         "unicode-escape" | "unicode_escape" => Ok("unicode-escape".to_string()),
         _ => Err(RuntimeError::new("unsupported encoding")),

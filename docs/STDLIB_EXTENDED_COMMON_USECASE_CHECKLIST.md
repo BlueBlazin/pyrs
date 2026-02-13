@@ -10,7 +10,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 - Common-usecase smoke pass: `39/50`
 - Runtime: `target/debug/pyrs`
 - CPython Lib: `/Users/$USER/Downloads/Python-3.14.3/Lib`
-- Note: targeted closures landed after this snapshot (`queue`, `smtplib` import chain, `imaplib` common `Time2Internaldate(0)` path). Refresh artifact pending.
+- Note: targeted closures landed after this snapshot (`queue`, `smtplib` import chain, `imaplib` common `Time2Internaldate(0)` path, email `Content-Type` fold/as_string smoke after str-subclass + regex match indexing parity fixes). Refresh artifact pending.
 
 ## Checklist
 
@@ -56,8 +56,8 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `concurrent.futures` | DONE | PASS | PASS | - |
 | `socket` | DONE | PASS | PASS | - |
 | `ssl` | P0 | FAIL | FAIL | ModuleNotFoundError: module '_ssl' not found |
-| `email` | P0 | PASS | FAIL | `LocalPart.value` stack-underflow path is closed; remaining common-flow blockers are serializer long-tail gaps (`bytes.splitlines`, `list.copy`) |
-| `smtplib` | P0 | PASS | FAIL | import-chain baseline is green; common flow remains blocked by `email` serialization gaps and missing `hashlib` algorithm coverage (`sha1`/`sha3`/`blake*`/`shake*`) |
+| `email` | P0 | PASS | FAIL* | `EmailMessage` header/content fold + `as_string()` smoke is now green in targeted probes; full matrix artifact refresh pending before status flip |
+| `smtplib` | P0 | PASS | FAIL | import-chain baseline is green; remaining common-flow risk is missing `hashlib` algorithm coverage (`sha1`/`sha3`/`blake*`/`shake*`) |
 | `imaplib` | DONE | PASS | PASS | targeted `Time2Internaldate(0)` smoke now green after `datetime.datetime.fromtimestamp` + `%z` baseline |
 | `ftplib` | DONE | PASS | PASS | - |
 | `xml` | P1 | PASS | FAIL | ImportError: No module named expat; use SimpleXMLTreeBuilder instead |
@@ -70,9 +70,8 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 ## Open Blockers (Grouped)
 
 - Native extension/module gaps: `ssl`, `gzip`, `bz2`, `lzma`
-- Email serializer long-tail gap impacting `smtplib` common flow (`EmailMessage` formatting/content path)
+- Extended `hashlib` algorithm coverage gap impacting `smtplib` startup/runtime diagnostics
 - Numeric core parity gaps: `statistics`, `decimal`
-- Hashlib algorithm coverage gaps impacting `smtplib` import/runtime diagnostics
 - XML parser backend gap (`pyexpat`): `xml`
 
 ## Shim and Probe Notes

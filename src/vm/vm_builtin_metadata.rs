@@ -3945,6 +3945,7 @@ impl Vm {
         if module_name == "__re_match__" {
             let kind = match attr_name {
                 "group" => Some(NativeMethodKind::ReMatchGroup),
+                "__getitem__" => Some(NativeMethodKind::ReMatchGroup),
                 "groups" => Some(NativeMethodKind::ReMatchGroups),
                 "groupdict" => Some(NativeMethodKind::ReMatchGroupDict),
                 "start" => Some(NativeMethodKind::ReMatchStart),

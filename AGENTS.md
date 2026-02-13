@@ -48,8 +48,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - internal-call exception propagation now treats caller `active_exception` deltas as propagated failures (prevents false-success stack pops/underflow in descriptor/property call paths).
   - `str.join` now accepts `str` subclass instances via backing-string extraction.
   - `super(...).__init__` for synthetic builtin `list`/`dict` bases now resolves to native container initializers (`list.__init__`, `dict.__init__`) instead of falling through to `object.__init__`.
+  - codec normalization now accepts core CPython aliases (`us-ascii`, `iso-8859-1`, etc.) in both codec paths and `bytes(..., encoding=...)` construction.
+  - regex `Match` now supports subscript group aliasing (`m[0]`, `m[1]`, ...), including module-wrapper dispatch needed by CPython email header folding paths.
+  - instance subscription now delegates to tuple/str backing for synthetic builtin subclasses; `str()` now returns backing text for str-backed instances.
+  - targeted CPython `email` smoke (`EmailMessage` header/content fold + `as_string`) is green locally; extended matrix artifact refresh pending.
 - Extended probe remaining red modules:
-  - `statistics`, `decimal`, `ssl`, `email`, `smtplib`, `xml`, `gzip`, `bz2`, `lzma`.
+  - `statistics`, `decimal`, `ssl`, `email`* (artifact pending refresh), `smtplib`, `xml`, `gzip`, `bz2`, `lzma`.
 
 ## Execution Policy
 - CPython behavior is the source of truth:

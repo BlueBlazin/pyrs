@@ -7219,6 +7219,16 @@ fn re_match_exposes_group_groups_and_end() {
 }
 
 #[test]
+fn re_match_supports_getitem_group_alias() {
+    let source = "import re\nm = re.match(r'([a-z]+)([0-9]+)', 'abc123')\nok = (m[0] == 'abc123' and m[1] == 'abc' and m[2] == '123')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn argparse_parse_args_accepts_explicit_positional_list() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
@@ -7615,6 +7625,16 @@ fn list_copy_returns_shallow_copy() {
 #[test]
 fn str_join_accepts_str_subclass_items() {
     let source = "class S(str):\n    pass\nout = ''.join([S('a'), S('b')])\nok = (out == 'ab')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_subclass_str_and_subscript_follow_backing_value() {
+    let source = "class S(str):\n    pass\ns = S('abc')\nok = (str(s) == 'abc' and s[0] == 'a' and s[-1] == 'c')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

@@ -6180,22 +6180,34 @@ fn value_type_name(value: &Value) -> &'static str {
     }
 }
 
+fn normalize_text_encoding_name(name: &str) -> Option<&'static str> {
+    let lowered = name.to_ascii_lowercase().replace('_', "-");
+    match lowered.as_str() {
+        "utf-8" | "utf8" => Some("utf-8"),
+        "ascii"
+        | "us-ascii"
+        | "usascii"
+        | "ansi-x3.4-1968"
+        | "ansi-x3.4-1986"
+        | "iso646-us"
+        | "cp367"
+        | "646" => Some("ascii"),
+        "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" | "cp819" | "l1" => Some("latin-1"),
+        _ => None,
+    }
+}
+
 fn value_to_bytes_with_encoding(
     value: Value,
     encoding: Option<Value>,
 ) -> Result<Vec<u8>, RuntimeError> {
     let encoding_name = match encoding {
-        Some(Value::Str(name)) => name.to_ascii_lowercase(),
+        Some(Value::Str(name)) => normalize_text_encoding_name(&name)
+            .ok_or_else(|| RuntimeError::new("unsupported encoding"))?
+            .to_string(),
         Some(_) => return Err(RuntimeError::new("encoding must be string")),
         None => "utf-8".to_string(),
     };
-
-    if !matches!(
-        encoding_name.as_str(),
-        "utf-8" | "utf8" | "ascii" | "latin-1" | "latin1"
-    ) {
-        return Err(RuntimeError::new("unsupported encoding"));
-    }
 
     match value {
         Value::None => Ok(Vec::new()),

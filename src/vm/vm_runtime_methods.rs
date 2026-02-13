@@ -118,6 +118,12 @@ impl Vm {
             if let Some(backing_list) = self.instance_backing_list(instance) {
                 return self.getitem_value(Value::List(backing_list), index);
             }
+            if let Some(backing_tuple) = self.instance_backing_tuple(instance) {
+                return self.getitem_value(Value::Tuple(backing_tuple), index);
+            }
+            if let Some(backing_str) = self.instance_backing_str(instance) {
+                return self.getitem_value(Value::Str(backing_str), index);
+            }
             if let Some(backing_dict) = self.instance_backing_dict(instance) {
                 let is_exact_builtin_dict = match &*instance.kind() {
                     Object::Instance(instance_data) => match &*instance_data.class.kind() {
@@ -375,22 +381,36 @@ impl Vm {
                     }
                 }
                 Value::Module(obj) => {
-                    let key = match index {
-                        Value::Str(name) => name,
-                        _ => return Err(RuntimeError::new("subscript unsupported type")),
-                    };
                     let module_kind = obj.kind();
                     let Object::Module(module_data) = &*module_kind else {
                         return Err(RuntimeError::new("subscript unsupported type"));
                     };
-                    if module_data.name != "__module_spec__" {
-                        return Err(RuntimeError::new("subscript unsupported type"));
+                    if module_data.name == "__module_spec__" {
+                        let key = match index {
+                            Value::Str(name) => name,
+                            _ => return Err(RuntimeError::new("subscript unsupported type")),
+                        };
+                        return module_data
+                            .globals
+                            .get(&key)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("key not found"));
                     }
-                    module_data
-                        .globals
-                        .get(&key)
-                        .cloned()
-                        .ok_or_else(|| RuntimeError::new("key not found"))
+                    if module_data.name == "__re_match__" {
+                        let getitem = self.alloc_native_bound_method(
+                            NativeMethodKind::ReMatchGroup,
+                            obj.clone(),
+                        );
+                        return match self.call_internal(getitem, vec![index], HashMap::new())? {
+                            InternalCallOutcome::Value(value) => Ok(value),
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                Err(self.runtime_error_from_active_exception(
+                                    "subscript lookup failed",
+                                ))
+                            }
+                        };
+                    }
+                    Err(RuntimeError::new("subscript unsupported type"))
                 }
                 Value::Bytes(obj) => match &*obj.kind() {
                     Object::Bytes(values) => {

@@ -2244,6 +2244,11 @@ impl Vm {
 
         let object = object.unwrap_or_else(|| Value::Str(String::new()));
         if encoding.is_none() && errors.is_none() {
+            if let Value::Instance(instance) = &object {
+                if let Some(backing) = self.instance_backing_str(instance) {
+                    return Ok(Value::Str(backing));
+                }
+            }
             if !matches!(object, Value::Str(_)) {
                 let str_method = self.builtin_getattr(
                     vec![object.clone(), Value::Str("__str__".to_string())],
