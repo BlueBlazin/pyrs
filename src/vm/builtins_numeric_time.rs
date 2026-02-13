@@ -516,7 +516,9 @@ impl Vm {
         let mut value = value_to_bigint(args[0].clone())
             .map_err(|_| RuntimeError::new("factorial() only accepts integral values"))?;
         if value.is_negative() {
-            return Err(RuntimeError::new("factorial() not defined for negative values"));
+            return Err(RuntimeError::new(
+                "factorial() not defined for negative values",
+            ));
         }
         let mut out = BigInt::one();
         let one = BigInt::one();

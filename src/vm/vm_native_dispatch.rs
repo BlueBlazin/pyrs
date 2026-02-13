@@ -1897,8 +1897,10 @@ impl Vm {
                     return Err(RuntimeError::new("__exit__() expects 3 arguments"));
                 }
                 if let Object::MemoryView(view) = &mut *receiver.kind_mut() {
-                    view.released = true;
-                    view.export_owner = None;
+                    if !view.released {
+                        view.released = true;
+                        view.export_owner = None;
+                    }
                 } else {
                     return Err(RuntimeError::new("memoryview receiver is invalid"));
                 }
@@ -2024,8 +2026,10 @@ impl Vm {
                     return Err(RuntimeError::new("release() expects no arguments"));
                 }
                 if let Object::MemoryView(view) = &mut *receiver.kind_mut() {
-                    view.released = true;
-                    view.export_owner = None;
+                    if !view.released {
+                        view.released = true;
+                        view.export_owner = None;
+                    }
                 } else {
                     return Err(RuntimeError::new("memoryview receiver is invalid"));
                 }

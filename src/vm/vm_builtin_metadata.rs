@@ -2576,7 +2576,9 @@ impl Vm {
             }
             Ok(())
         } else {
-            Err(RuntimeError::new("namedtuple() instance construction failed"))
+            Err(RuntimeError::new(
+                "namedtuple() instance construction failed",
+            ))
         }
     }
 

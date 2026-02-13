@@ -651,8 +651,7 @@ impl Vm {
         let mut modules = HashMap::new();
         modules.insert("__main__".to_string(), main_module.clone());
 
-        let mut module_paths =
-            vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
+        let mut module_paths = vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
         if let Some(shim_root) = Self::local_shim_root() {
             if !module_paths.iter().any(|existing| existing == &shim_root) {
                 module_paths.push(shim_root);

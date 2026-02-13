@@ -2467,6 +2467,24 @@ ok = (first == 0x80 and second == 5 and value == 1)
 }
 
 #[test]
+fn pickle_protocol3_bytes_fast_path_roundtrips_without_frames() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping protocol-3 pickle fast-path test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+data = pickle.dumps(b"xyz", protocol=3)
+ok = (data[:2] == b"\x80\x03" and data[2:3] != b"\x95" and pickle.loads(data) == b"xyz")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn picklebuffer_is_exposed_via_pickle_module() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping PickleBuffer shim test (CPython Lib path not available)");
@@ -2764,6 +2782,84 @@ for proto in (2, 3, 4, 5):
             type(exc).__name__ == "PicklingError"
             and str(exc) == "third argument to __newobj_ex__() must be a dict, not list"
         )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_loads_fast_path_accepts_mixed_framed_and_unframed_opcode_streams() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle mixed-frame fast-load test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+class ChunkAccumulator:
+    def __init__(self):
+        self.chunks = []
+    def write(self, chunk):
+        self.chunks.append(chunk)
+
+objects = [(str(i).encode("ascii"), i % 42, {"i": str(i)}) for i in range(10_000)]
+objects.append("0123456789abcdef" * (64 * 1024 // 16 + 1))
+writer = ChunkAccumulator()
+pickle.Pickler(writer, protocol=4).dump(objects)
+payload = b"".join(writer.chunks)
+
+def fail_fallback(*args, **kwargs):
+    raise RuntimeError("pickle._loads fallback should not be used")
+
+pickle._loads = fail_fallback
+decoded = pickle.loads(payload)
+ok = (
+    len(decoded) == len(objects)
+    and decoded[123][2]["i"] == "123"
+    and decoded[-1] == objects[-1]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pickle_unpickler_load_falls_back_for_unseekable_streams() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping pickle unseekable-stream fallback test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = r#"import io
+import pickle
+
+class UnseekableIO(io.BytesIO):
+    def seekable(self):
+        return False
+    def seek(self, *args):
+        raise io.UnsupportedOperation
+    def tell(self):
+        raise io.UnsupportedOperation
+
+obj = [(x, str(x)) for x in range(2_000)] + [b"abcde", len]
+blob = pickle.dumps(obj, protocol=0)
+stream = UnseekableIO(blob * 2)
+u = pickle.Unpickler(stream)
+first = u.load()
+second = u.load()
+eof_ok = False
+try:
+    u.load()
+except EOFError:
+    eof_ok = True
+ok = (first == obj and second == obj and eof_ok)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

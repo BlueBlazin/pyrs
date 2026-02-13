@@ -2082,8 +2082,7 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let instance =
-            self.take_bound_instance_arg(&mut args, "CompletedProcess.__init__")?;
+        let instance = self.take_bound_instance_arg(&mut args, "CompletedProcess.__init__")?;
         if args.len() > 4 {
             return Err(RuntimeError::new(
                 "CompletedProcess() expects args, returncode and optional stdout/stderr",
@@ -4169,9 +4168,7 @@ impl Vm {
                     continue;
                 }
                 let Some(value) = decode_char(byte) else {
-                    return Err(RuntimeError::new(
-                        "Non-base64 digit found in a2b_base64",
-                    ));
+                    return Err(RuntimeError::new("Non-base64 digit found in a2b_base64"));
                 };
                 sextets[idx] = value;
             }

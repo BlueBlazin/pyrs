@@ -1399,6 +1399,54 @@ impl Vm {
                 }
             }
             Value::Instance(obj) => {
+                {
+                    let kind = obj.kind();
+                    let Object::Instance(instance_data) = &*kind else {
+                        return Err(RuntimeError::new("memoryview() expects bytes-like object"));
+                    };
+                    let is_picklebuffer = matches!(
+                        &*instance_data.class.kind(),
+                        Object::Class(class_data) if class_data.name == "PickleBuffer"
+                    );
+                    if is_picklebuffer {
+                        if matches!(
+                            instance_data.attrs.get("__pyrs_picklebuffer_released__"),
+                            Some(Value::Bool(true))
+                        ) {
+                            return Err(RuntimeError::new(
+                                "ValueError: operation forbidden on released PickleBuffer object",
+                            ));
+                        }
+                        let source = instance_data
+                            .attrs
+                            .get("__pyrs_picklebuffer_source__")
+                            .or_else(|| instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR))
+                            .cloned()
+                            .ok_or_else(|| {
+                                RuntimeError::new("memoryview() expects bytes-like object")
+                            })?;
+                        let source = match source {
+                            Value::Bytes(source)
+                            | Value::ByteArray(source)
+                            | Value::Instance(source) => source,
+                            Value::MemoryView(view) => match &*view.kind() {
+                                Object::MemoryView(view_data) => view_data.source.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "memoryview() expects bytes-like object",
+                                    ));
+                                }
+                            },
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "memoryview() expects bytes-like object",
+                                ));
+                            }
+                        };
+                        return Ok(self.heap.alloc_memoryview(source));
+                    }
+                }
+
                 let receiver = Value::Instance(obj.clone());
                 if let Some(buffer_method) =
                     self.lookup_bound_special_method(&receiver, "__buffer__")?
@@ -3096,7 +3144,10 @@ impl Vm {
             Value::Exception(mut exception) => {
                 let mut attrs = exception.attrs.borrow_mut();
                 attrs.insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
-                if matches!(exception.name.as_str(), "StopIteration" | "StopAsyncIteration") {
+                if matches!(
+                    exception.name.as_str(),
+                    "StopIteration" | "StopAsyncIteration"
+                ) {
                     attrs.insert(
                         "value".to_string(),
                         args.first().cloned().unwrap_or(Value::None),
@@ -3128,12 +3179,17 @@ impl Vm {
         {
             return true;
         }
-        self.class_mro_entries(class).iter().any(|entry| match &*entry.kind() {
-            Object::Class(class_data) => {
-                matches!(class_data.name.as_str(), "memoryview" | "enumerate" | "Counter")
-            }
-            _ => false,
-        })
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => {
+                    matches!(
+                        class_data.name.as_str(),
+                        "memoryview" | "enumerate" | "Counter"
+                    )
+                }
+                _ => false,
+            })
     }
 
     pub(super) fn builtin_object_getattribute(

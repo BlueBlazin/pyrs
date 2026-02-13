@@ -1119,6 +1119,7 @@ pub struct MemoryViewObject {
 pub struct Heap {
     next_id: Cell<u64>,
     registry: RefCell<Vec<Weak<Obj>>>,
+    memoryview_registry: RefCell<Vec<Weak<Obj>>>,
     small_int_ids: RefCell<Vec<u64>>,
     immediate_ids: RefCell<HashMap<ImmediateKey, u64>>,
 }
@@ -1154,6 +1155,7 @@ impl Heap {
         Self {
             next_id: Cell::new(1),
             registry: RefCell::new(Vec::new()),
+            memoryview_registry: RefCell::new(Vec::new()),
             small_int_ids: RefCell::new(vec![0; SMALL_INT_COUNT]),
             immediate_ids: RefCell::new(HashMap::new()),
         }
@@ -1208,7 +1210,7 @@ impl Heap {
     }
 
     pub fn alloc_memoryview(&self, source: ObjRef) -> Value {
-        Value::MemoryView(self.alloc(Object::MemoryView(MemoryViewObject {
+        let value = Value::MemoryView(self.alloc(Object::MemoryView(MemoryViewObject {
             source,
             itemsize: 1,
             format: None,
@@ -1216,7 +1218,14 @@ impl Heap {
             released: false,
             start: 0,
             length: None,
-        })))
+        })));
+        let Value::MemoryView(obj) = &value else {
+            unreachable!();
+        };
+        self.memoryview_registry
+            .borrow_mut()
+            .push(Rc::downgrade(&obj.0));
+        value
     }
 
     pub fn alloc_memoryview_with(
@@ -1225,7 +1234,7 @@ impl Heap {
         itemsize: usize,
         format: Option<String>,
     ) -> Value {
-        Value::MemoryView(self.alloc(Object::MemoryView(MemoryViewObject {
+        let value = Value::MemoryView(self.alloc(Object::MemoryView(MemoryViewObject {
             source,
             itemsize,
             format,
@@ -1233,65 +1242,68 @@ impl Heap {
             released: false,
             start: 0,
             length: None,
-        })))
+        })));
+        let Value::MemoryView(obj) = &value else {
+            unreachable!();
+        };
+        self.memoryview_registry
+            .borrow_mut()
+            .push(Rc::downgrade(&obj.0));
+        value
     }
 
     pub fn count_live_memoryview_exports_for_owner(&self, owner: &ObjRef) -> usize {
         let mut count = 0usize;
-        for weak in self.registry.borrow().iter() {
+        self.memoryview_registry.borrow_mut().retain(|weak| {
             let Some(obj) = weak.upgrade() else {
-                continue;
+                return false;
             };
             let Object::MemoryView(view) = &*obj.kind.borrow() else {
-                continue;
+                return false;
             };
-            if view.released {
-                continue;
-            }
-            if let Some(export_owner) = &view.export_owner {
-                if export_owner.id() == owner.id() {
-                    count += 1;
+            if !view.released {
+                if let Some(export_owner) = &view.export_owner {
+                    if export_owner.id() == owner.id() {
+                        count += 1;
+                    }
                 }
             }
-        }
+            true
+        });
         count
     }
 
     pub fn count_live_memoryview_exports_for_source(&self, source: &ObjRef) -> usize {
         let mut count = 0usize;
-        for weak in self.registry.borrow().iter() {
+        self.memoryview_registry.borrow_mut().retain(|weak| {
             let Some(obj) = weak.upgrade() else {
-                continue;
+                return false;
             };
             let Object::MemoryView(view) = &*obj.kind.borrow() else {
-                continue;
+                return false;
             };
-            if view.released || view.export_owner.is_none() {
-                continue;
-            }
-            if view.source.id() == source.id() {
+            if !view.released && view.export_owner.is_some() && view.source.id() == source.id() {
                 count += 1;
             }
-        }
+            true
+        });
         count
     }
 
     pub fn count_live_memoryviews_for_source(&self, source: &ObjRef) -> usize {
         let mut count = 0usize;
-        for weak in self.registry.borrow().iter() {
+        self.memoryview_registry.borrow_mut().retain(|weak| {
             let Some(obj) = weak.upgrade() else {
-                continue;
+                return false;
             };
             let Object::MemoryView(view) = &*obj.kind.borrow() else {
-                continue;
+                return false;
             };
-            if view.released {
-                continue;
-            }
-            if view.source.id() == source.id() {
+            if !view.released && view.source.id() == source.id() {
                 count += 1;
             }
-        }
+            true
+        });
         count
     }
 

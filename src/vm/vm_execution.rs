@@ -934,8 +934,7 @@ impl Vm {
                             | Value::Code(_)
                             | Value::Exception(_)
                             | Value::ExceptionType(_)
-                    )
-                {
+                    ) {
                     Value::None
                 } else if attr_name == "__class__" {
                     self.load_dunder_class_attr(&value)?

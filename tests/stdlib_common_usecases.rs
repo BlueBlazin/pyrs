@@ -89,7 +89,11 @@ fn top_stdlib_common_usecase_baseline_gate() {
     let timeout = Duration::from_secs(12);
 
     let cases = vec![
-        ("os", "import os", "import os; assert os.path.join('a','b') == 'a/b'"),
+        (
+            "os",
+            "import os",
+            "import os; assert os.path.join('a','b') == 'a/b'",
+        ),
         (
             "sys",
             "import sys",
@@ -115,7 +119,11 @@ fn top_stdlib_common_usecase_baseline_gate() {
             "import datetime",
             "import datetime; assert datetime.datetime(2026,1,1).year == 2026",
         ),
-        ("time", "import time", "import time; _ = time.monotonic(); _ = time.time()"),
+        (
+            "time",
+            "import time",
+            "import time; _ = time.monotonic(); _ = time.time()",
+        ),
         (
             "math",
             "import math",

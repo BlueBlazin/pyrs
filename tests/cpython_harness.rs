@@ -401,7 +401,8 @@ fn run_suite_file(suite_file: &str, allowlist_file: &str, mode: SuiteMode) {
             continue;
         }
 
-        let entry_timeout = strict_mode.then(|| strict_timeout_for_entry(suite_file, is_allowlisted));
+        let entry_timeout =
+            strict_mode.then(|| strict_timeout_for_entry(suite_file, is_allowlisted));
 
         let start = Instant::now();
         let result = run_entry(&lib, entry, mode, strict_bin.as_deref(), entry_timeout);

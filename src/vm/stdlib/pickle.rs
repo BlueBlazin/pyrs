@@ -33,7 +33,7 @@ static PICKLE_PROFILE_EVENTS: AtomicU64 = AtomicU64::new(0);
 const PICKLE_BUFFER_RELEASED_ATTR: &str = "__pyrs_picklebuffer_released__";
 const PICKLE_BUFFER_SOURCE_ATTR: &str = "__pyrs_picklebuffer_source__";
 const PICKLE_DEFAULT_PROTOCOL: i64 = 5;
-const PICKLE_MIN_FAST_PROTOCOL: i64 = 4;
+const PICKLE_MIN_FAST_PROTOCOL: i64 = 3;
 const PICKLE_MAX_FAST_PROTOCOL: i64 = 5;
 const PICKLE_FRAME_SIZE_TARGET: usize = 65_536;
 const PICKLE_BATCH_SIZE: usize = 1_000;
@@ -44,6 +44,7 @@ const PICKLER_BUFFER_CALLBACK_ATTR: &str = "__pyrs_pickle_buffer_callback__";
 const PICKLER_FALLBACK_ATTR: &str = "__pyrs_pickle_fallback__";
 const PICKLER_BUSY_ATTR: &str = "__pyrs_pickle_busy__";
 const PICKLER_SAVE_REDUCE_ORIG_ATTR: &str = "__pyrs_pickle_save_reduce_orig__";
+const PICKLER_FAST_DUMP_USED_ATTR: &str = "__pyrs_pickle_fast_dump_used__";
 const UNPICKLER_FILE_ATTR: &str = "__pyrs_unpickle_file__";
 const UNPICKLER_FIX_IMPORTS_ATTR: &str = "__pyrs_unpickle_fix_imports__";
 const UNPICKLER_ENCODING_ATTR: &str = "__pyrs_unpickle_encoding__";
@@ -52,8 +53,8 @@ const UNPICKLER_BUFFERS_ATTR: &str = "__pyrs_unpickle_buffers__";
 const UNPICKLER_FALLBACK_ATTR: &str = "__pyrs_unpickle_fallback__";
 const UNPICKLER_BUSY_ATTR: &str = "__pyrs_unpickle_busy__";
 
-#[derive(Default)]
 struct FastPickleEncoder {
+    protocol: i64,
     payload: Vec<u8>,
     seen_container_ids: HashSet<u64>,
     depth: usize,
@@ -145,8 +146,9 @@ fn pickle_profile_emit_summary(event_count: u64) {
 }
 
 impl FastPickleEncoder {
-    fn new() -> Self {
+    fn new(protocol: i64) -> Self {
         Self {
+            protocol,
             payload: Vec::new(),
             seen_container_ids: HashSet::new(),
             depth: 0,
@@ -200,7 +202,7 @@ impl FastPickleEncoder {
 
     fn encode_unicode_payload(&mut self, text: &str) -> Result<(), ()> {
         let bytes = text.as_bytes();
-        if bytes.len() < 256 {
+        if self.protocol >= 4 && bytes.len() < 256 {
             self.push_byte(0x8c); // SHORT_BINUNICODE
             self.push_byte(bytes.len() as u8);
             self.push_bytes(bytes);
@@ -457,39 +459,71 @@ impl Vm {
         if !(PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol) {
             return None;
         }
-        let mut encoder = FastPickleEncoder::new();
+        let mut encoder = FastPickleEncoder::new(protocol);
         self.fast_pickle_encode_value(&mut encoder, value).ok()?;
         encoder.push_byte(b'.'); // STOP
-        let boundaries = Self::fast_pickle_opcode_boundaries(&encoder.payload)?;
         let mut chunks = Vec::new();
         chunks.push(vec![0x80, protocol as u8]); // PROTO
-        let mut frame_start = 0usize;
-        while frame_start < encoder.payload.len() {
-            let target_end = (frame_start + PICKLE_FRAME_SIZE_TARGET).min(encoder.payload.len());
-            let mut frame_end = target_end;
-            if target_end < encoder.payload.len() {
-                let candidate = boundaries
-                    .iter()
-                    .copied()
-                    .filter(|boundary| *boundary > frame_start && *boundary <= target_end)
-                    .max();
-                frame_end = if let Some(boundary) = candidate {
-                    boundary
-                } else {
-                    boundaries
-                        .iter()
-                        .copied()
-                        .find(|boundary| *boundary > frame_start)
-                        .unwrap_or(encoder.payload.len())
-                };
+        if protocol < 4 {
+            chunks.push(encoder.payload);
+            return Some(chunks);
+        }
+        let segments = Self::fast_pickle_opcode_segments(&encoder.payload)?;
+        let large_indices = segments
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, (_, _, large))| if *large { Some(idx) } else { None })
+            .collect::<Vec<_>>();
+        let multi_large = large_indices.len() >= 2;
+        let first_large = large_indices.first().copied().unwrap_or(usize::MAX);
+        let last_large = large_indices.last().copied().unwrap_or(usize::MAX);
+        let mut frame_payload = Vec::new();
+        for (segment_index, (start, end, large_payload)) in segments.into_iter().enumerate() {
+            let segment = &encoder.payload[start..end];
+            if large_payload {
+                if !frame_payload.is_empty() {
+                    let mut frame_header = Vec::with_capacity(9);
+                    frame_header.push(0x95); // FRAME
+                    frame_header.extend_from_slice(&(frame_payload.len() as u64).to_le_bytes());
+                    chunks.push(frame_header);
+                    chunks.push(frame_payload);
+                    frame_payload = Vec::new();
+                }
+                chunks.push(segment.to_vec());
+                continue;
             }
-            let frame_payload = &encoder.payload[frame_start..frame_end];
+            let frame_segment =
+                !multi_large || (segment_index > first_large && segment_index < last_large);
+            if !frame_segment {
+                if !frame_payload.is_empty() {
+                    let mut frame_header = Vec::with_capacity(9);
+                    frame_header.push(0x95); // FRAME
+                    frame_header.extend_from_slice(&(frame_payload.len() as u64).to_le_bytes());
+                    chunks.push(frame_header);
+                    chunks.push(frame_payload);
+                    frame_payload = Vec::new();
+                }
+                chunks.push(segment.to_vec());
+                continue;
+            }
+            if !frame_payload.is_empty()
+                && frame_payload.len() + segment.len() > PICKLE_FRAME_SIZE_TARGET
+            {
+                let mut frame_header = Vec::with_capacity(9);
+                frame_header.push(0x95); // FRAME
+                frame_header.extend_from_slice(&(frame_payload.len() as u64).to_le_bytes());
+                chunks.push(frame_header);
+                chunks.push(frame_payload);
+                frame_payload = Vec::new();
+            }
+            frame_payload.extend_from_slice(segment);
+        }
+        if !frame_payload.is_empty() {
             let mut frame_header = Vec::with_capacity(9);
             frame_header.push(0x95); // FRAME
             frame_header.extend_from_slice(&(frame_payload.len() as u64).to_le_bytes());
             chunks.push(frame_header);
-            chunks.push(frame_payload.to_vec());
-            frame_start = frame_end;
+            chunks.push(frame_payload);
         }
         Some(chunks)
     }
@@ -546,74 +580,14 @@ impl Vm {
         !Self::fast_pickle_graph_has_alias(value, &mut seen)
     }
 
-    fn fast_pickle_graph_has_large_payload(value: &Value, seen: &mut HashSet<u64>) -> bool {
-        match value {
-            Value::Str(text) => text.len() >= PICKLE_FRAME_SIZE_TARGET,
-            Value::Bytes(obj) => {
-                if !seen.insert(obj.id()) {
-                    return false;
-                }
-                match &*obj.kind() {
-                    Object::Bytes(bytes) => bytes.len() >= PICKLE_FRAME_SIZE_TARGET,
-                    _ => true,
-                }
-            }
-            Value::List(obj) => {
-                if !seen.insert(obj.id()) {
-                    return false;
-                }
-                let values = match &*obj.kind() {
-                    Object::List(values) => values.clone(),
-                    _ => return true,
-                };
-                values
-                    .iter()
-                    .any(|item| Self::fast_pickle_graph_has_large_payload(item, seen))
-            }
-            Value::Tuple(obj) => {
-                if !seen.insert(obj.id()) {
-                    return false;
-                }
-                let values = match &*obj.kind() {
-                    Object::Tuple(values) => values.clone(),
-                    _ => return true,
-                };
-                values
-                    .iter()
-                    .any(|item| Self::fast_pickle_graph_has_large_payload(item, seen))
-            }
-            Value::Dict(obj) => {
-                if !seen.insert(obj.id()) {
-                    return false;
-                }
-                let entries = match &*obj.kind() {
-                    Object::Dict(entries) => entries
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect::<Vec<_>>(),
-                    _ => return true,
-                };
-                entries.iter().any(|(key, value)| {
-                    Self::fast_pickle_graph_has_large_payload(key, seen)
-                        || Self::fast_pickle_graph_has_large_payload(value, seen)
-                })
-            }
-            _ => false,
-        }
-    }
-
-    fn fast_pickle_graph_is_small_payload(value: &Value) -> bool {
-        let mut seen = HashSet::new();
-        !Self::fast_pickle_graph_has_large_payload(value, &mut seen)
-    }
-
-    fn fast_pickle_opcode_boundaries(payload: &[u8]) -> Option<Vec<usize>> {
-        let mut boundaries = Vec::new();
+    fn fast_pickle_opcode_segments(payload: &[u8]) -> Option<Vec<(usize, usize, bool)>> {
+        let mut segments = Vec::new();
         let mut idx = 0usize;
-        boundaries.push(0);
         while idx < payload.len() {
+            let start = idx;
             let opcode = payload[idx];
             idx += 1;
+            let mut large_payload = false;
             match opcode {
                 b'N' | 0x88 | 0x89 | b']' | b'}' | b')' | b'(' | b'e' | b'u' | b't' | 0x85
                 | 0x86 | 0x87 | b'.' => {}
@@ -637,7 +611,9 @@ impl Vm {
                 }
                 b'X' | b'B' => {
                     let len_bytes: [u8; 4] = payload.get(idx..idx + 4)?.try_into().ok()?;
-                    idx += 4 + u32::from_le_bytes(len_bytes) as usize;
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    idx += 4 + len;
+                    large_payload = len >= PICKLE_FRAME_SIZE_TARGET;
                 }
                 b'C' => {
                     let len = *payload.get(idx)? as usize;
@@ -648,9 +624,9 @@ impl Vm {
             if idx > payload.len() {
                 return None;
             }
-            boundaries.push(idx);
+            segments.push((start, idx, large_payload));
         }
-        Some(boundaries)
+        Some(segments)
     }
 
     fn pickle_write_chunks_to_file(
@@ -686,9 +662,66 @@ impl Vm {
         }
     }
 
+    fn fast_pickle_copy_raw_stream_opcode(
+        data: &[u8],
+        start: usize,
+        payload: &mut Vec<u8>,
+    ) -> Option<usize> {
+        let mut idx = start;
+        let opcode = *data.get(idx)?;
+        idx += 1;
+        match opcode {
+            b'N' | 0x88 | 0x89 | b']' | b'}' | b')' | b'(' | b'e' | b'u' | b't' | 0x85 | 0x86
+            | 0x87 | b'.' | b'a' | b's' | 0x94 => {}
+            b'K' | b'h' | b'q' => {
+                idx += 1;
+            }
+            b'J' | b'j' | b'r' => {
+                idx += 4;
+            }
+            b'X' | b'B' => {
+                let len_bytes: [u8; 4] = data.get(idx..idx + 4)?.try_into().ok()?;
+                idx += 4 + u32::from_le_bytes(len_bytes) as usize;
+            }
+            0x8a => {
+                let len = *data.get(idx)? as usize;
+                idx += 1 + len;
+            }
+            0x8b => {
+                let len_bytes: [u8; 4] = data.get(idx..idx + 4)?.try_into().ok()?;
+                idx += 4 + u32::from_le_bytes(len_bytes) as usize;
+            }
+            0x8c | b'C' => {
+                let len = *data.get(idx)? as usize;
+                idx += 1 + len;
+            }
+            b'I' | b'p' | b'g' => {
+                let mut found_newline = false;
+                while let Some(byte) = data.get(idx) {
+                    idx += 1;
+                    if *byte == b'\n' {
+                        found_newline = true;
+                        break;
+                    }
+                }
+                if !found_newline {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+        if idx > data.len() {
+            return None;
+        }
+        payload.extend_from_slice(data.get(start..idx)?);
+        Some(idx)
+    }
+
     fn fast_pickle_decode_payload(&mut self, payload: &[u8]) -> Option<Value> {
         let mut stack: Vec<Value> = Vec::new();
         let mut marks: Vec<usize> = Vec::new();
+        let mut memo: HashMap<usize, Value> = HashMap::new();
+        let mut memo_next = 0usize;
         let mut idx = 0usize;
         while idx < payload.len() {
             let opcode = payload[idx];
@@ -706,6 +739,21 @@ impl Vm {
                     let bytes: [u8; 4] = payload.get(idx..idx + 4)?.try_into().ok()?;
                     idx += 4;
                     stack.push(Value::Int(i32::from_le_bytes(bytes) as i64));
+                }
+                b'I' => {
+                    let line_start = idx;
+                    while *payload.get(idx)? != b'\n' {
+                        idx += 1;
+                    }
+                    let raw = std::str::from_utf8(payload.get(line_start..idx)?).ok()?;
+                    idx += 1;
+                    if raw == "00" {
+                        stack.push(Value::Bool(false));
+                    } else if raw == "01" {
+                        stack.push(Value::Bool(true));
+                    } else {
+                        stack.push(Value::Int(raw.parse::<i64>().ok()?));
+                    }
                 }
                 0x8a => {
                     let len = *payload.get(idx)? as usize;
@@ -776,6 +824,18 @@ impl Vm {
                     let items = stack.split_off(mark);
                     stack.push(self.heap.alloc_tuple(items));
                 }
+                b'a' => {
+                    let item = stack.pop()?;
+                    let list_obj = match stack.last().cloned()? {
+                        Value::List(obj) => obj,
+                        _ => return None,
+                    };
+                    if let Object::List(values) = &mut *list_obj.kind_mut() {
+                        values.push(item);
+                    } else {
+                        return None;
+                    }
+                }
                 b'e' => {
                     let mark = marks.pop()?;
                     let items = stack.split_off(mark);
@@ -785,6 +845,19 @@ impl Vm {
                     };
                     if let Object::List(values) = &mut *list_obj.kind_mut() {
                         values.extend(items);
+                    } else {
+                        return None;
+                    }
+                }
+                b's' => {
+                    let value = stack.pop()?;
+                    let key = stack.pop()?;
+                    let dict_obj = match stack.last().cloned()? {
+                        Value::Dict(obj) => obj,
+                        _ => return None,
+                    };
+                    if let Object::Dict(entries) = &mut *dict_obj.kind_mut() {
+                        entries.insert(key, value);
                     } else {
                         return None;
                     }
@@ -806,6 +879,61 @@ impl Vm {
                     } else {
                         return None;
                     }
+                }
+                b'p' => {
+                    let line_start = idx;
+                    while *payload.get(idx)? != b'\n' {
+                        idx += 1;
+                    }
+                    let raw = std::str::from_utf8(payload.get(line_start..idx)?).ok()?;
+                    idx += 1;
+                    let slot = raw.parse::<usize>().ok()?;
+                    memo.insert(slot, stack.last()?.clone());
+                    if slot >= memo_next {
+                        memo_next = slot + 1;
+                    }
+                }
+                b'g' => {
+                    let line_start = idx;
+                    while *payload.get(idx)? != b'\n' {
+                        idx += 1;
+                    }
+                    let raw = std::str::from_utf8(payload.get(line_start..idx)?).ok()?;
+                    idx += 1;
+                    let slot = raw.parse::<usize>().ok()?;
+                    stack.push(memo.get(&slot)?.clone());
+                }
+                b'q' => {
+                    let slot = *payload.get(idx)? as usize;
+                    idx += 1;
+                    memo.insert(slot, stack.last()?.clone());
+                    if slot >= memo_next {
+                        memo_next = slot + 1;
+                    }
+                }
+                b'r' => {
+                    let slot_bytes: [u8; 4] = payload.get(idx..idx + 4)?.try_into().ok()?;
+                    idx += 4;
+                    let slot = u32::from_le_bytes(slot_bytes) as usize;
+                    memo.insert(slot, stack.last()?.clone());
+                    if slot >= memo_next {
+                        memo_next = slot + 1;
+                    }
+                }
+                b'h' => {
+                    let slot = *payload.get(idx)? as usize;
+                    idx += 1;
+                    stack.push(memo.get(&slot)?.clone());
+                }
+                b'j' => {
+                    let slot_bytes: [u8; 4] = payload.get(idx..idx + 4)?.try_into().ok()?;
+                    idx += 4;
+                    let slot = u32::from_le_bytes(slot_bytes) as usize;
+                    stack.push(memo.get(&slot)?.clone());
+                }
+                0x94 => {
+                    memo.insert(memo_next, stack.last()?.clone());
+                    memo_next += 1;
                 }
                 b'.' => {
                     if idx != payload.len() {
@@ -829,17 +957,20 @@ impl Vm {
         }
         let mut idx = 2usize;
         let mut payload = Vec::new();
-        while idx < data.len() {
-            if data[idx] != 0x95 {
-                return None;
+        if protocol >= 4 {
+            while idx < data.len() {
+                if data[idx] == 0x95 {
+                    let len_bytes: [u8; 8] = data.get(idx + 1..idx + 9)?.try_into().ok()?;
+                    let len = u64::from_le_bytes(len_bytes) as usize;
+                    let frame = data.get(idx + 9..idx + 9 + len)?;
+                    payload.extend_from_slice(frame);
+                    idx += 9 + len;
+                } else {
+                    idx = Self::fast_pickle_copy_raw_stream_opcode(data, idx, &mut payload)?;
+                }
             }
-            idx += 1;
-            let len_bytes: [u8; 8] = data.get(idx..idx + 8)?.try_into().ok()?;
-            idx += 8;
-            let len = u64::from_le_bytes(len_bytes) as usize;
-            let frame = data.get(idx..idx + len)?;
-            idx += len;
-            payload.extend_from_slice(frame);
+        } else {
+            payload.extend_from_slice(data.get(idx..)?);
         }
         self.fast_pickle_decode_payload(&payload)
     }
@@ -870,6 +1001,37 @@ impl Vm {
             Self::pickle_get_instance_attr(instance, name),
             Some(Value::Bool(true))
         )
+    }
+
+    fn pickle_instance_has_local_attr(instance: &ObjRef, name: &str) -> bool {
+        let kind = instance.kind();
+        let Object::Instance(instance_data) = &*kind else {
+            return false;
+        };
+        instance_data.attrs.contains_key(name)
+    }
+
+    fn pickle_instance_memo_is_empty(instance: &ObjRef) -> bool {
+        let Some(Value::Dict(dict)) = Self::pickle_get_instance_attr(instance, "memo") else {
+            return true;
+        };
+        matches!(&*dict.kind(), Object::Dict(entries) if entries.is_empty())
+    }
+
+    fn pickle_value_is_bound_builtin_method(value: &Value, builtin: BuiltinFunction) -> bool {
+        match value {
+            Value::BoundMethod(method_obj) => match &*method_obj.kind() {
+                Object::BoundMethod(method) => match &*method.function.kind() {
+                    Object::NativeMethod(native) => {
+                        matches!(native.kind, NativeMethodKind::Builtin(current) if current == builtin)
+                    }
+                    _ => false,
+                },
+                _ => false,
+            },
+            Value::Builtin(current) => *current == builtin,
+            _ => false,
+        }
     }
 
     fn pickle_get_pickler_dispatch_table(&mut self, instance: &ObjRef) -> Option<Value> {
@@ -1178,7 +1340,6 @@ impl Vm {
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
             && Self::fast_pickle_graph_is_alias_free(&args[0])
-            && Self::fast_pickle_graph_is_small_payload(&args[0])
         {
             if let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
                 self.pickle_write_chunks_to_file(args[1].clone(), chunks)?;
@@ -1221,7 +1382,6 @@ impl Vm {
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
             && Self::fast_pickle_graph_is_alias_free(&args[0])
-            && Self::fast_pickle_graph_is_small_payload(&args[0])
         {
             if let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
                 let mut payload = Vec::new();
@@ -1323,20 +1483,48 @@ impl Vm {
             if let (Ok(tell_method), Ok(seek_method), Ok(read_method)) =
                 (tell_method, seek_method, read_method)
             {
-                let start = match self.call_internal(tell_method, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(value) => value,
-                    InternalCallOutcome::CallerExceptionHandled => Value::None,
+                let start = match self.call_internal_preserving_caller(
+                    tell_method,
+                    Vec::new(),
+                    HashMap::new(),
+                ) {
+                    Ok(InternalCallOutcome::Value(value)) => value,
+                    _ => {
+                        return self.pickle_call_pure_symbol(
+                            "_load",
+                            raw_args,
+                            raw_kwargs,
+                            "pickle load fallback failed",
+                        );
+                    }
                 };
-                let raw = match self.call_internal(read_method, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(value) => value,
-                    InternalCallOutcome::CallerExceptionHandled => Value::None,
+                let raw = match self.call_internal_preserving_caller(
+                    read_method,
+                    Vec::new(),
+                    HashMap::new(),
+                ) {
+                    Ok(InternalCallOutcome::Value(value)) => value,
+                    _ => {
+                        let _ = self.call_internal_preserving_caller(
+                            seek_method,
+                            vec![start],
+                            HashMap::new(),
+                        );
+                        return self.pickle_call_pure_symbol(
+                            "_load",
+                            raw_args,
+                            raw_kwargs,
+                            "pickle load fallback failed",
+                        );
+                    }
                 };
                 if let Some(bytes) = self.pickle_extract_bytes_like(&raw) {
                     if let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
                         return Ok(value);
                     }
                 }
-                let _ = self.call_internal(seek_method, vec![start], HashMap::new());
+                let _ =
+                    self.call_internal_preserving_caller(seek_method, vec![start], HashMap::new());
             }
         }
         self.pickle_call_pure_symbol("_load", raw_args, raw_kwargs, "pickle load fallback failed")
@@ -1498,6 +1686,136 @@ impl Vm {
         let _ = self.builtin_delattr(vec![fallback, Value::Str(attr.to_string())], HashMap::new());
     }
 
+    fn pickle_try_fast_pickler_dump(
+        &mut self,
+        instance: &ObjRef,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let file =
+            Self::pickle_get_instance_attr(instance, PICKLER_FILE_ATTR).ok_or_else(|| {
+                RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__")
+            })?;
+        let protocol = match Self::pickle_get_instance_attr(instance, PICKLER_PROTOCOL_ATTR) {
+            Some(Value::None) => PICKLE_DEFAULT_PROTOCOL,
+            Some(value) => value_to_int(value)?,
+            None => PICKLE_DEFAULT_PROTOCOL,
+        };
+        let fix_imports = Self::pickle_get_instance_attr(instance, PICKLER_FIX_IMPORTS_ATTR)
+            .is_none_or(|value| is_truthy(&value));
+        let buffer_callback =
+            Self::pickle_get_instance_attr(instance, PICKLER_BUFFER_CALLBACK_ATTR)
+                .unwrap_or(Value::None);
+        let persistent_id = self.builtin_getattr(
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str("persistent_id".to_string()),
+            ],
+            HashMap::new(),
+        );
+        let default_persistent_id = match persistent_id {
+            Ok(value) => Self::pickle_value_is_bound_builtin_method(
+                &value,
+                BuiltinFunction::PicklePicklerPersistentId,
+            ),
+            Err(_) => false,
+        };
+        let fast_dump_used =
+            Self::pickle_instance_attr_is_true(instance, PICKLER_FAST_DUMP_USED_ATTR);
+
+        if !(PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
+            || fast_dump_used
+            || !fix_imports
+            || !matches!(buffer_callback, Value::None)
+            || !Self::pickle_instance_memo_is_empty(instance)
+            || !default_persistent_id
+            || Self::pickle_instance_has_local_attr(instance, "reducer_override")
+            || Self::pickle_instance_has_local_attr(instance, "dispatch_table")
+            || !Self::fast_pickle_graph_is_alias_free(value)
+        {
+            return Ok(false);
+        }
+
+        let Some(chunks) = self.fast_pickle_encode_chunks(value, protocol) else {
+            return Ok(false);
+        };
+        self.pickle_write_chunks_to_file(file, chunks)?;
+        let _ = Self::pickle_store_instance_attr(
+            instance,
+            PICKLER_FAST_DUMP_USED_ATTR,
+            Value::Bool(true),
+        );
+        Ok(true)
+    }
+
+    fn pickle_try_fast_unpickler_load(
+        &mut self,
+        instance: &ObjRef,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if !Self::pickle_instance_memo_is_empty(instance)
+            || Self::pickle_instance_has_local_attr(instance, "persistent_load")
+        {
+            return Ok(None);
+        }
+        let fix_imports = Self::pickle_get_instance_attr(instance, UNPICKLER_FIX_IMPORTS_ATTR)
+            .is_none_or(|value| is_truthy(&value));
+        let encoding_ascii = Self::pickle_get_instance_attr(instance, UNPICKLER_ENCODING_ATTR)
+            .is_none_or(|value| matches!(value, Value::Str(name) if name == "ASCII"));
+        let errors_strict = Self::pickle_get_instance_attr(instance, UNPICKLER_ERRORS_ATTR)
+            .is_none_or(|value| matches!(value, Value::Str(name) if name == "strict"));
+        let buffers_none = Self::pickle_get_instance_attr(instance, UNPICKLER_BUFFERS_ATTR)
+            .is_none_or(|value| matches!(value, Value::None));
+        if !fix_imports || !encoding_ascii || !errors_strict || !buffers_none {
+            return Ok(None);
+        }
+        let file =
+            Self::pickle_get_instance_attr(instance, UNPICKLER_FILE_ATTR).ok_or_else(|| {
+                RuntimeError::new("Unpickler.__init__() was not called by Unpickler.__init__")
+            })?;
+
+        let tell_method = self.builtin_getattr(
+            vec![file.clone(), Value::Str("tell".to_string())],
+            HashMap::new(),
+        );
+        let seek_method = self.builtin_getattr(
+            vec![file.clone(), Value::Str("seek".to_string())],
+            HashMap::new(),
+        );
+        let read_method = self.builtin_getattr(
+            vec![file.clone(), Value::Str("read".to_string())],
+            HashMap::new(),
+        );
+
+        let (Ok(tell_method), Ok(seek_method), Ok(read_method)) =
+            (tell_method, seek_method, read_method)
+        else {
+            return Ok(None);
+        };
+        let start =
+            match self.call_internal_preserving_caller(tell_method, Vec::new(), HashMap::new()) {
+                Ok(InternalCallOutcome::Value(value)) => value,
+                _ => return Ok(None),
+            };
+        let raw =
+            match self.call_internal_preserving_caller(read_method, Vec::new(), HashMap::new()) {
+                Ok(InternalCallOutcome::Value(value)) => value,
+                _ => {
+                    let _ = self.call_internal_preserving_caller(
+                        seek_method,
+                        vec![start],
+                        HashMap::new(),
+                    );
+                    return Ok(None);
+                }
+            };
+        if let Some(bytes) = self.pickle_extract_bytes_like(&raw) {
+            if let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
+                return Ok(Some(value));
+            }
+        }
+        let _ = self.call_internal_preserving_caller(seek_method, vec![start], HashMap::new());
+        Ok(None)
+    }
+
     pub(in crate::vm) fn builtin_pickle_pickler_init(
         &mut self,
         mut args: Vec<Value>,
@@ -1554,6 +1872,11 @@ impl Vm {
         Self::pickle_store_instance_attr(&instance, PICKLER_FALLBACK_ATTR, Value::None)?;
         Self::pickle_store_instance_attr(&instance, "memo", self.heap.alloc_dict(Vec::new()))?;
         Self::pickle_store_instance_attr(&instance, PICKLER_BUSY_ATTR, Value::Bool(false))?;
+        Self::pickle_store_instance_attr(
+            &instance,
+            PICKLER_FAST_DUMP_USED_ATTR,
+            Value::Bool(false),
+        )?;
         Ok(Value::None)
     }
 
@@ -1582,6 +1905,10 @@ impl Vm {
             })?;
         Self::pickle_store_instance_attr(&instance, PICKLER_BUSY_ATTR, Value::Bool(true))?;
         let result = (|| {
+            let dump_arg = args.remove(0);
+            if self.pickle_try_fast_pickler_dump(&instance, &dump_arg)? {
+                return Ok(Value::None);
+            }
             let fallback = self.pickle_pickler_build_fallback(&instance)?;
             if let Some(memo) = Self::pickle_get_instance_attr(&instance, "memo") {
                 self.builtin_setattr(
@@ -1599,7 +1926,6 @@ impl Vm {
                 vec![fallback.clone(), Value::Str("dump".to_string())],
                 HashMap::new(),
             )?;
-            let dump_arg = args.remove(0);
             let outcome = self.call_internal(dump_method, vec![dump_arg], HashMap::new());
             if let Some(cached_fallback) =
                 Self::pickle_get_instance_attr(&instance, PICKLER_FALLBACK_ATTR)
@@ -1726,6 +2052,11 @@ impl Vm {
                 let _ = Self::pickle_store_instance_attr(&instance, "memo", memo);
             }
         }
+        let _ = Self::pickle_store_instance_attr(
+            &instance,
+            PICKLER_FAST_DUMP_USED_ATTR,
+            Value::Bool(false),
+        );
         Ok(Value::None)
     }
 
@@ -1834,6 +2165,9 @@ impl Vm {
             Self::pickle_get_instance_attr(&instance, UNPICKLER_ERRORS_ATTR),
             Self::pickle_get_instance_attr(&instance, UNPICKLER_BUFFERS_ATTR),
         );
+        if let Some(value) = self.pickle_try_fast_unpickler_load(&instance)? {
+            return Ok(value);
+        }
         Self::pickle_store_instance_attr(&instance, UNPICKLER_BUSY_ATTR, Value::Bool(true))?;
         let result = (|| {
             let fallback = self.pickle_unpickler_build_fallback(&instance)?;
