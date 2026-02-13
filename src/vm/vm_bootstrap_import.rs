@@ -1003,6 +1003,10 @@ impl Vm {
                 "rollback".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionRollback),
             );
+            class_data.attrs.insert(
+                "blobopen".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionBlobOpen),
+            );
         }
         let sqlite_cursor_class = match self
             .heap
@@ -1042,6 +1046,62 @@ impl Vm {
             class_data.attrs.insert(
                 "__next__".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteCursorNext),
+            );
+        }
+        let sqlite_blob_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Blob".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *sqlite_blob_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "close".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobClose),
+            );
+            class_data.attrs.insert(
+                "read".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobRead),
+            );
+            class_data.attrs.insert(
+                "write".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobWrite),
+            );
+            class_data.attrs.insert(
+                "seek".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobSeek),
+            );
+            class_data.attrs.insert(
+                "tell".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobTell),
+            );
+            class_data.attrs.insert(
+                "__enter__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobEnter),
+            );
+            class_data.attrs.insert(
+                "__exit__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobExit),
+            );
+            class_data.attrs.insert(
+                "__len__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobLen),
+            );
+            class_data.attrs.insert(
+                "__getitem__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobGetItem),
+            );
+            class_data.attrs.insert(
+                "__setitem__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteBlobSetItem),
             );
         }
         let sqlite_row_class = self
@@ -1189,6 +1249,7 @@ impl Vm {
                 ("SQLITE_DBCONFIG_TRUSTED_SCHEMA", Value::Int(1017)),
                 ("adapters", self.heap.alloc_dict(Vec::new())),
                 ("converters", self.heap.alloc_dict(Vec::new())),
+                ("Blob", Value::Class(sqlite_blob_class)),
             ],
         );
         self.exception_parents

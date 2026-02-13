@@ -49,7 +49,7 @@ Scope list (user-priority):
 | `multiprocessing` | P1 | YELLOW | process start/join/queue basics (or explicit, documented limitation) | only minimal probe currently verified |
 | `asyncio` | P1 | GREEN | `asyncio.run`, task scheduling baseline, coroutine correctness | expand real-world task patterns |
 | `csv` | P0 | GREEN | reader/writer basics via `Lib/csv.py` + `_csv` substrate | long-tail dialect/error parity pending |
-| `sqlite3` | P0 | GREEN | in-memory connect/execute/fetch/close | `_sqlite3` baseline is landed; DB-API long-tail behavior (transactions/factories/types) remains |
+| `sqlite3` | P0 | GREEN | in-memory connect/execute/fetch/close | `_sqlite3` baseline is landed (`connect`/cursor/query path, exported constants, and `Connection.blobopen`/`Blob` baseline methods); DB-API long-tail behavior (transactions/factories/types) remains |
 | `urllib` | P0 | GREEN | URL parse/join/quote basics used by apps | Extended URL policy/IDNA edge parity pending |
 | `http` | P0 | GREEN | `http.client` import + request object baseline | deeper enum-member semantics still pending before enum shim retirement |
 | `hashlib` | P0 | GREEN | `sha256/md5` digest baseline + constructor paths | md5/sha2 native backends are active; broader algorithm surface remains tracked separately |

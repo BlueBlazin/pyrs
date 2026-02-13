@@ -99,12 +99,23 @@ impl Vm {
             BuiltinFunction::SqliteConnectionExecute => "execute".to_string(),
             BuiltinFunction::SqliteConnectionCommit => "commit".to_string(),
             BuiltinFunction::SqliteConnectionRollback => "rollback".to_string(),
+            BuiltinFunction::SqliteConnectionBlobOpen => "blobopen".to_string(),
             BuiltinFunction::SqliteCursorExecute => "execute".to_string(),
             BuiltinFunction::SqliteCursorFetchOne => "fetchone".to_string(),
             BuiltinFunction::SqliteCursorFetchAll => "fetchall".to_string(),
             BuiltinFunction::SqliteCursorClose => "close".to_string(),
             BuiltinFunction::SqliteCursorIter => "__iter__".to_string(),
             BuiltinFunction::SqliteCursorNext => "__next__".to_string(),
+            BuiltinFunction::SqliteBlobClose => "close".to_string(),
+            BuiltinFunction::SqliteBlobRead => "read".to_string(),
+            BuiltinFunction::SqliteBlobWrite => "write".to_string(),
+            BuiltinFunction::SqliteBlobSeek => "seek".to_string(),
+            BuiltinFunction::SqliteBlobTell => "tell".to_string(),
+            BuiltinFunction::SqliteBlobEnter => "__enter__".to_string(),
+            BuiltinFunction::SqliteBlobExit => "__exit__".to_string(),
+            BuiltinFunction::SqliteBlobLen => "__len__".to_string(),
+            BuiltinFunction::SqliteBlobGetItem => "__getitem__".to_string(),
+            BuiltinFunction::SqliteBlobSetItem => "__setitem__".to_string(),
             BuiltinFunction::SreCompile => "compile".to_string(),
             BuiltinFunction::SreTemplate => "template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "ascii_iscased".to_string(),
@@ -147,12 +158,23 @@ impl Vm {
             BuiltinFunction::SqliteConnectionExecute => "_sqlite3.Connection.execute".to_string(),
             BuiltinFunction::SqliteConnectionCommit => "_sqlite3.Connection.commit".to_string(),
             BuiltinFunction::SqliteConnectionRollback => "_sqlite3.Connection.rollback".to_string(),
+            BuiltinFunction::SqliteConnectionBlobOpen => "_sqlite3.Connection.blobopen".to_string(),
             BuiltinFunction::SqliteCursorExecute => "_sqlite3.Cursor.execute".to_string(),
             BuiltinFunction::SqliteCursorFetchOne => "_sqlite3.Cursor.fetchone".to_string(),
             BuiltinFunction::SqliteCursorFetchAll => "_sqlite3.Cursor.fetchall".to_string(),
             BuiltinFunction::SqliteCursorClose => "_sqlite3.Cursor.close".to_string(),
             BuiltinFunction::SqliteCursorIter => "_sqlite3.Cursor.__iter__".to_string(),
             BuiltinFunction::SqliteCursorNext => "_sqlite3.Cursor.__next__".to_string(),
+            BuiltinFunction::SqliteBlobClose => "_sqlite3.Blob.close".to_string(),
+            BuiltinFunction::SqliteBlobRead => "_sqlite3.Blob.read".to_string(),
+            BuiltinFunction::SqliteBlobWrite => "_sqlite3.Blob.write".to_string(),
+            BuiltinFunction::SqliteBlobSeek => "_sqlite3.Blob.seek".to_string(),
+            BuiltinFunction::SqliteBlobTell => "_sqlite3.Blob.tell".to_string(),
+            BuiltinFunction::SqliteBlobEnter => "_sqlite3.Blob.__enter__".to_string(),
+            BuiltinFunction::SqliteBlobExit => "_sqlite3.Blob.__exit__".to_string(),
+            BuiltinFunction::SqliteBlobLen => "_sqlite3.Blob.__len__".to_string(),
+            BuiltinFunction::SqliteBlobGetItem => "_sqlite3.Blob.__getitem__".to_string(),
+            BuiltinFunction::SqliteBlobSetItem => "_sqlite3.Blob.__setitem__".to_string(),
             BuiltinFunction::SreCompile => "_sre.compile".to_string(),
             BuiltinFunction::SreTemplate => "_sre.template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "_sre.ascii_iscased".to_string(),
@@ -251,12 +273,23 @@ impl Vm {
             | BuiltinFunction::SqliteConnectionExecute
             | BuiltinFunction::SqliteConnectionCommit
             | BuiltinFunction::SqliteConnectionRollback
+            | BuiltinFunction::SqliteConnectionBlobOpen
             | BuiltinFunction::SqliteCursorExecute
             | BuiltinFunction::SqliteCursorFetchOne
             | BuiltinFunction::SqliteCursorFetchAll
             | BuiltinFunction::SqliteCursorClose
             | BuiltinFunction::SqliteCursorIter
-            | BuiltinFunction::SqliteCursorNext => "_sqlite3",
+            | BuiltinFunction::SqliteCursorNext
+            | BuiltinFunction::SqliteBlobClose
+            | BuiltinFunction::SqliteBlobRead
+            | BuiltinFunction::SqliteBlobWrite
+            | BuiltinFunction::SqliteBlobSeek
+            | BuiltinFunction::SqliteBlobTell
+            | BuiltinFunction::SqliteBlobEnter
+            | BuiltinFunction::SqliteBlobExit
+            | BuiltinFunction::SqliteBlobLen
+            | BuiltinFunction::SqliteBlobGetItem
+            | BuiltinFunction::SqliteBlobSetItem => "_sqlite3",
             BuiltinFunction::SreCompile
             | BuiltinFunction::SreTemplate
             | BuiltinFunction::SreAsciiIsCased

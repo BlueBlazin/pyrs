@@ -5239,6 +5239,9 @@ impl Vm {
             BuiltinFunction::SqliteConnectionRollback => {
                 self.builtin_sqlite_connection_rollback(args, kwargs)
             }
+            BuiltinFunction::SqliteConnectionBlobOpen => {
+                self.builtin_sqlite_connection_blobopen(args, kwargs)
+            }
             BuiltinFunction::SqliteCursorExecute => {
                 self.builtin_sqlite_cursor_execute(args, kwargs)
             }
@@ -5251,6 +5254,16 @@ impl Vm {
             BuiltinFunction::SqliteCursorClose => self.builtin_sqlite_cursor_close(args, kwargs),
             BuiltinFunction::SqliteCursorIter => self.builtin_sqlite_cursor_iter(args, kwargs),
             BuiltinFunction::SqliteCursorNext => self.builtin_sqlite_cursor_next(args, kwargs),
+            BuiltinFunction::SqliteBlobClose => self.builtin_sqlite_blob_close(args, kwargs),
+            BuiltinFunction::SqliteBlobRead => self.builtin_sqlite_blob_read(args, kwargs),
+            BuiltinFunction::SqliteBlobWrite => self.builtin_sqlite_blob_write(args, kwargs),
+            BuiltinFunction::SqliteBlobSeek => self.builtin_sqlite_blob_seek(args, kwargs),
+            BuiltinFunction::SqliteBlobTell => self.builtin_sqlite_blob_tell(args, kwargs),
+            BuiltinFunction::SqliteBlobEnter => self.builtin_sqlite_blob_enter(args, kwargs),
+            BuiltinFunction::SqliteBlobExit => self.builtin_sqlite_blob_exit(args, kwargs),
+            BuiltinFunction::SqliteBlobLen => self.builtin_sqlite_blob_len(args, kwargs),
+            BuiltinFunction::SqliteBlobGetItem => self.builtin_sqlite_blob_getitem(args, kwargs),
+            BuiltinFunction::SqliteBlobSetItem => self.builtin_sqlite_blob_setitem(args, kwargs),
             BuiltinFunction::HashlibMd5 => self.builtin_hashlib_md5(args, kwargs),
             BuiltinFunction::HashlibSha224 => self.builtin_hashlib_sha224(args, kwargs),
             BuiltinFunction::HashlibSha256 => self.builtin_hashlib_sha256(args, kwargs),

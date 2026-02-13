@@ -2408,12 +2408,23 @@ pub enum BuiltinFunction {
     SqliteConnectionExecute,
     SqliteConnectionCommit,
     SqliteConnectionRollback,
+    SqliteConnectionBlobOpen,
     SqliteCursorExecute,
     SqliteCursorFetchOne,
     SqliteCursorFetchAll,
     SqliteCursorClose,
     SqliteCursorIter,
     SqliteCursorNext,
+    SqliteBlobClose,
+    SqliteBlobRead,
+    SqliteBlobWrite,
+    SqliteBlobSeek,
+    SqliteBlobTell,
+    SqliteBlobEnter,
+    SqliteBlobExit,
+    SqliteBlobLen,
+    SqliteBlobGetItem,
+    SqliteBlobSetItem,
     HashlibMd5,
     HashlibSha224,
     HashlibSha256,
@@ -5408,12 +5419,23 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteConnectionExecute
             | BuiltinFunction::SqliteConnectionCommit
             | BuiltinFunction::SqliteConnectionRollback
+            | BuiltinFunction::SqliteConnectionBlobOpen
             | BuiltinFunction::SqliteCursorExecute
             | BuiltinFunction::SqliteCursorFetchOne
             | BuiltinFunction::SqliteCursorFetchAll
             | BuiltinFunction::SqliteCursorClose
             | BuiltinFunction::SqliteCursorIter
             | BuiltinFunction::SqliteCursorNext
+            | BuiltinFunction::SqliteBlobClose
+            | BuiltinFunction::SqliteBlobRead
+            | BuiltinFunction::SqliteBlobWrite
+            | BuiltinFunction::SqliteBlobSeek
+            | BuiltinFunction::SqliteBlobTell
+            | BuiltinFunction::SqliteBlobEnter
+            | BuiltinFunction::SqliteBlobExit
+            | BuiltinFunction::SqliteBlobLen
+            | BuiltinFunction::SqliteBlobGetItem
+            | BuiltinFunction::SqliteBlobSetItem
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
             | BuiltinFunction::AtexitUnregister

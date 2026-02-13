@@ -13,6 +13,11 @@ struct Sqlite3Stmt {
     _private: [u8; 0],
 }
 
+#[repr(C)]
+struct Sqlite3Blob {
+    _private: [u8; 0],
+}
+
 type SqliteDestructor = Option<unsafe extern "C" fn(*mut c_void)>;
 
 #[link(name = "sqlite3")]
@@ -61,6 +66,25 @@ unsafe extern "C" {
         destructor: SqliteDestructor,
     ) -> c_int;
     fn sqlite3_complete(sql: *const c_char) -> c_int;
+    fn sqlite3_blob_open(
+        db: *mut Sqlite3Db,
+        db_name: *const c_char,
+        table_name: *const c_char,
+        column_name: *const c_char,
+        row_id: i64,
+        flags: c_int,
+        blob_out: *mut *mut Sqlite3Blob,
+    ) -> c_int;
+    fn sqlite3_blob_close(blob: *mut Sqlite3Blob) -> c_int;
+    fn sqlite3_blob_bytes(blob: *mut Sqlite3Blob) -> c_int;
+    fn sqlite3_blob_read(blob: *mut Sqlite3Blob, buf: *mut c_void, n: c_int, offset: c_int)
+        -> c_int;
+    fn sqlite3_blob_write(
+        blob: *mut Sqlite3Blob,
+        buf: *const c_void,
+        n: c_int,
+        offset: c_int,
+    ) -> c_int;
 }
 
 const SQLITE_OK: c_int = 0;
@@ -129,6 +153,46 @@ impl SqliteCursorState {
     }
 }
 
+#[derive(Debug)]
+pub(in crate::vm) struct SqliteBlobState {
+    handle: Option<NonNull<Sqlite3Blob>>,
+    pub(in crate::vm) connection_id: u64,
+    offset: usize,
+}
+
+impl SqliteBlobState {
+    fn new(handle: *mut Sqlite3Blob, connection_id: u64) -> Self {
+        Self {
+            handle: NonNull::new(handle),
+            connection_id,
+            offset: 0,
+        }
+    }
+
+    fn handle(&self) -> Option<*mut Sqlite3Blob> {
+        self.handle.map(NonNull::as_ptr)
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        let Some(handle) = self.handle.take() else {
+            return Ok(());
+        };
+        // SAFETY: handle was created by sqlite3_blob_open and is owned by this state.
+        let rc = unsafe { sqlite3_blob_close(handle.as_ptr()) };
+        if rc == SQLITE_OK {
+            Ok(())
+        } else {
+            Err(format!("sqlite3_blob_close failed with code {rc}"))
+        }
+    }
+}
+
+impl Drop for SqliteBlobState {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
 struct PreparedStatement {
     raw: NonNull<Sqlite3Stmt>,
 }
@@ -146,6 +210,16 @@ impl Drop for PreparedStatement {
             let _ = sqlite3_finalize(self.raw.as_ptr());
         }
     }
+}
+
+enum SqliteBlobSetOp {
+    Slice {
+        lower: Option<i64>,
+        upper: Option<i64>,
+        step: Option<i64>,
+        payload: Vec<u8>,
+    },
+    Index(i64, u8),
 }
 
 fn sqlite_error(kind: &str, message: impl Into<String>) -> RuntimeError {
@@ -233,6 +307,13 @@ impl Vm {
         }
     }
 
+    fn sqlite_blob_class(&self) -> Result<ObjRef, RuntimeError> {
+        match self.sqlite_module_global("Blob")? {
+            Value::Class(class_ref) => Ok(class_ref),
+            _ => Err(RuntimeError::new("_sqlite3.Blob must be a class")),
+        }
+    }
+
     fn sqlite_connection_id_from_value(
         &self,
         value: &Value,
@@ -267,6 +348,23 @@ impl Vm {
         }
     }
 
+    fn sqlite_blob_id_from_value(
+        &self,
+        value: &Value,
+        method_name: &str,
+    ) -> Result<u64, RuntimeError> {
+        let receiver = self.receiver_from_value(value)?;
+        let receiver_id = receiver.id();
+        if self.sqlite_blobs.contains_key(&receiver_id) {
+            Ok(receiver_id)
+        } else {
+            Err(sqlite_error(
+                "ProgrammingError",
+                format!("{method_name}() called on non-Blob object"),
+            ))
+        }
+    }
+
     fn sqlite_open_db_handle(&self, connection_id: u64) -> Result<*mut Sqlite3Db, RuntimeError> {
         let state = self
             .sqlite_connections
@@ -278,6 +376,57 @@ impl Vm {
                 "Cannot operate on a closed database.",
             )
         })
+    }
+
+    fn sqlite_blob_state_and_db(
+        &mut self,
+        blob_id: u64,
+    ) -> Result<(&mut SqliteBlobState, *mut Sqlite3Db), RuntimeError> {
+        let connection_id = self
+            .sqlite_blobs
+            .get(&blob_id)
+            .ok_or_else(|| sqlite_error("ProgrammingError", "invalid sqlite blob"))?
+            .connection_id;
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        let state = self
+            .sqlite_blobs
+            .get_mut(&blob_id)
+            .ok_or_else(|| sqlite_error("ProgrammingError", "invalid sqlite blob"))?;
+        Ok((state, db))
+    }
+
+    fn sqlite_blob_len(blob: *mut Sqlite3Blob) -> Result<usize, RuntimeError> {
+        // SAFETY: blob is an open sqlite blob handle.
+        let len = unsafe { sqlite3_blob_bytes(blob) };
+        if len < 0 {
+            return Err(sqlite_error(
+                "OperationalError",
+                "sqlite3_blob_bytes returned a negative length",
+            ));
+        }
+        usize::try_from(len).map_err(|_| sqlite_error("OverflowError", "blob length is too large"))
+    }
+
+    fn sqlite_blob_adjust_index(len: usize, index: i64) -> Option<usize> {
+        if index >= 0 {
+            let idx = usize::try_from(index).ok()?;
+            (idx < len).then_some(idx)
+        } else {
+            let abs = usize::try_from(index.unsigned_abs()).ok()?;
+            if abs > len {
+                None
+            } else {
+                Some(len - abs)
+            }
+        }
+    }
+
+    fn sqlite_blob_error(db: *mut Sqlite3Db, rc: c_int) -> RuntimeError {
+        let mut message = sqlite_last_error_message(db);
+        if message.is_empty() {
+            message = format!("sqlite3 blob operation failed with code {rc}");
+        }
+        sqlite_error("OperationalError", message)
     }
 
     fn sqlite_extract_database(value: Value) -> Result<String, RuntimeError> {
@@ -785,6 +934,11 @@ impl Vm {
                 cursor.next_row = 0;
             }
         }
+        for blob in self.sqlite_blobs.values_mut() {
+            if blob.connection_id == connection_id {
+                let _ = blob.close();
+            }
+        }
         Ok(Value::None)
     }
 
@@ -842,6 +996,609 @@ impl Vm {
             Ok(_) => Ok(Value::None),
             Err(err) if err.message.contains("no transaction is active") => Ok(Value::None),
             Err(err) => Err(err),
+        }
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_blobopen(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 4 || args.len() > 5 {
+            return Err(sqlite_error(
+                "TypeError",
+                "blobopen() takes 4 positional arguments",
+            ));
+        }
+        let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "blobopen")?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
+
+        let table = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => {
+                return Err(sqlite_error(
+                    "TypeError",
+                    "blobopen() argument 1 must be str",
+                ));
+            }
+        };
+        let column = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => {
+                return Err(sqlite_error(
+                    "TypeError",
+                    "blobopen() argument 2 must be str",
+                ));
+            }
+        };
+        let row_id = match args.remove(0) {
+            Value::Int(value) => value,
+            Value::Bool(value) => {
+                if value {
+                    1
+                } else {
+                    0
+                }
+            }
+            Value::BigInt(value) => value.to_i64().ok_or_else(|| {
+                sqlite_error("OverflowError", "row id too large to fit into 64-bit integer")
+            })?,
+            _ => {
+                return Err(sqlite_error(
+                    "TypeError",
+                    "blobopen() argument 3 must be int",
+                ));
+            }
+        };
+        let readonly = kwargs
+            .remove("readonly")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let name = match kwargs.remove("name") {
+            Some(Value::Str(value)) => value,
+            Some(_) => {
+                return Err(sqlite_error(
+                    "TypeError",
+                    "blobopen() argument 'name' must be str",
+                ));
+            }
+            None => "main".to_string(),
+        };
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("blobopen() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+
+        let db_name_c = CString::new(name.as_bytes())
+            .map_err(|_| sqlite_error("ProgrammingError", "blob database name contains embedded NUL"))?;
+        let table_c = CString::new(table.as_bytes())
+            .map_err(|_| sqlite_error("ProgrammingError", "blob table contains embedded NUL"))?;
+        let column_c = CString::new(column.as_bytes())
+            .map_err(|_| sqlite_error("ProgrammingError", "blob column contains embedded NUL"))?;
+        let flags = if readonly { 0 } else { 1 };
+        let mut blob_handle: *mut Sqlite3Blob = ptr::null_mut();
+        // SAFETY: db and C-string pointers are valid for this call and blob_handle is an out pointer.
+        let rc = unsafe {
+            sqlite3_blob_open(
+                db,
+                db_name_c.as_ptr(),
+                table_c.as_ptr(),
+                column_c.as_ptr(),
+                row_id,
+                flags,
+                &mut blob_handle as *mut *mut Sqlite3Blob,
+            )
+        };
+        if rc != SQLITE_OK {
+            return Err(Self::sqlite_blob_error(db, rc));
+        }
+
+        let class = self.sqlite_blob_class()?;
+        let blob = self.alloc_instance_for_class(&class);
+        self.sqlite_blobs
+            .insert(blob.id(), SqliteBlobState::new(blob_handle, connection_id));
+        Ok(Value::Instance(blob))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_close(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(sqlite_error("TypeError", "Blob.close() expects no arguments"));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "close")?;
+        if let Some(state) = self.sqlite_blobs.get_mut(&blob_id) {
+            state
+                .close()
+                .map_err(|message| sqlite_error("OperationalError", message))?;
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_read(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Blob.read() expects optional length argument",
+            ));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "read")?;
+        let requested_len = if args.len() == 2 {
+            self.io_index_arg_to_int(args.remove(1))?
+        } else {
+            -1
+        };
+        let out = {
+            let (state, db) = self.sqlite_blob_state_and_db(blob_id)?;
+            let Some(handle) = state.handle() else {
+                return Err(sqlite_error(
+                    "ProgrammingError",
+                    "Cannot operate on a closed blob.",
+                ));
+            };
+            let total_len = Self::sqlite_blob_len(handle)?;
+            if state.offset >= total_len {
+                Vec::new()
+            } else {
+                let remaining = total_len - state.offset;
+                let read_len = if requested_len < 0 {
+                    remaining
+                } else {
+                    let requested = usize::try_from(requested_len).map_err(|_| {
+                        sqlite_error("OverflowError", "read length must fit in machine word")
+                    })?;
+                    requested.min(remaining)
+                };
+                if read_len == 0 {
+                    Vec::new()
+                } else {
+                    let read_len_c = sqlite_len_to_c_int(read_len, "blob read length")?;
+                    let offset_c = sqlite_len_to_c_int(state.offset, "blob read offset")?;
+                    let mut out = vec![0u8; read_len];
+                    // SAFETY: handle is open, out points to valid writable memory, and size/offset are checked.
+                    let rc = unsafe {
+                        sqlite3_blob_read(
+                            handle,
+                            out.as_mut_ptr() as *mut c_void,
+                            read_len_c,
+                            offset_c,
+                        )
+                    };
+                    if rc != SQLITE_OK {
+                        return Err(Self::sqlite_blob_error(db, rc));
+                    }
+                    state.offset += read_len;
+                    out
+                }
+            }
+        };
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_write(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error("TypeError", "Blob.write() expects bytes-like data"));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "write")?;
+        let payload = bytes_like_from_value(args.remove(1))
+            .map_err(|_| sqlite_error("TypeError", "a bytes-like object is required"))?;
+        let (state, db) = self.sqlite_blob_state_and_db(blob_id)?;
+        let Some(handle) = state.handle() else {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "Cannot operate on a closed blob.",
+            ));
+        };
+        let total_len = Self::sqlite_blob_len(handle)?;
+        let remaining = total_len.saturating_sub(state.offset);
+        if payload.len() > remaining {
+            return Err(sqlite_error("ValueError", "data longer than blob length"));
+        }
+        if payload.is_empty() {
+            return Ok(Value::None);
+        }
+        let payload_len_c = sqlite_len_to_c_int(payload.len(), "blob write length")?;
+        let offset_c = sqlite_len_to_c_int(state.offset, "blob write offset")?;
+        // SAFETY: handle is open, payload pointer stays valid for call duration, and bounds are checked.
+        let rc = unsafe {
+            sqlite3_blob_write(
+                handle,
+                payload.as_ptr() as *const c_void,
+                payload_len_c,
+                offset_c,
+            )
+        };
+        if rc != SQLITE_OK {
+            return Err(Self::sqlite_blob_error(db, rc));
+        }
+        state.offset += payload.len();
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_seek(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Blob.seek() expects offset and optional origin",
+            ));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "seek")?;
+        let offset = if args.len() >= 2 {
+            self.io_index_arg_to_int(args.remove(1))?
+        } else {
+            0
+        };
+        let origin = if args.len() == 2 {
+            self.io_index_arg_to_int(args.remove(1))?
+        } else {
+            0
+        };
+        let (state, _) = self.sqlite_blob_state_and_db(blob_id)?;
+        let Some(handle) = state.handle() else {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "Cannot operate on a closed blob.",
+            ));
+        };
+        let len = Self::sqlite_blob_len(handle)?;
+        let base = match origin {
+            0 => 0i64,
+            1 => i64::try_from(state.offset)
+                .map_err(|_| sqlite_error("OverflowError", "seek offset results in overflow"))?,
+            2 => i64::try_from(len)
+                .map_err(|_| sqlite_error("OverflowError", "seek offset results in overflow"))?,
+            _ => {
+                return Err(sqlite_error(
+                    "ValueError",
+                    "'origin' should be os.SEEK_SET, os.SEEK_CUR, or os.SEEK_END",
+                ));
+            }
+        };
+        let Some(new_offset) = base.checked_add(offset) else {
+            return Err(sqlite_error(
+                "OverflowError",
+                "seek offset results in overflow",
+            ));
+        };
+        if new_offset < 0
+            || usize::try_from(new_offset)
+                .ok()
+                .is_none_or(|position| position > len)
+        {
+            return Err(sqlite_error("ValueError", "offset out of blob range"));
+        }
+        state.offset = usize::try_from(new_offset)
+            .map_err(|_| sqlite_error("OverflowError", "seek offset results in overflow"))?;
+        Ok(Value::Int(new_offset))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_tell(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(sqlite_error("TypeError", "Blob.tell() expects no arguments"));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "tell")?;
+        let (state, _) = self.sqlite_blob_state_and_db(blob_id)?;
+        if state.handle().is_none() {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "Cannot operate on a closed blob.",
+            ));
+        }
+        Ok(Value::Int(
+            i64::try_from(state.offset).map_err(|_| sqlite_error("OverflowError", "offset too large"))?,
+        ))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(sqlite_error("TypeError", "Blob.__enter__() expects no arguments"));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "__enter__")?;
+        let (state, _) = self.sqlite_blob_state_and_db(blob_id)?;
+        if state.handle().is_none() {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "Cannot operate on a closed blob.",
+            ));
+        }
+        Ok(args.remove(0))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_exit(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 4 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Blob.__exit__() expects exception triple",
+            ));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "__exit__")?;
+        {
+            let (state, _) = self.sqlite_blob_state_and_db(blob_id)?;
+            if state.handle().is_none() {
+                return Err(sqlite_error(
+                    "ProgrammingError",
+                    "Cannot operate on a closed blob.",
+                ));
+            }
+        }
+        self.builtin_sqlite_blob_close(vec![args[0].clone()], HashMap::new())?;
+        Ok(Value::Bool(false))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_len(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(sqlite_error("TypeError", "Blob.__len__() expects no arguments"));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "__len__")?;
+        let (state, _) = self.sqlite_blob_state_and_db(blob_id)?;
+        let Some(handle) = state.handle() else {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "Cannot operate on a closed blob.",
+            ));
+        };
+        Ok(Value::Int(
+            i64::try_from(Self::sqlite_blob_len(handle)?)
+                .map_err(|_| sqlite_error("OverflowError", "blob length too large"))?,
+        ))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_getitem(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Blob.__getitem__() expects an index or slice",
+            ));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "__getitem__")?;
+        let key = args.remove(1);
+        let parsed_index = match &key {
+            Value::Slice(_) => None,
+            other => Some(self.io_index_arg_to_int(other.clone())?),
+        };
+        let blob_bytes = {
+            let (state, db) = self.sqlite_blob_state_and_db(blob_id)?;
+            let Some(handle) = state.handle() else {
+                return Err(sqlite_error(
+                    "ProgrammingError",
+                    "Cannot operate on a closed blob.",
+                ));
+            };
+            let len = Self::sqlite_blob_len(handle)?;
+            match key {
+            Value::Slice(slice) => {
+                let indices = slice_indices(len, slice.lower, slice.upper, slice.step)?;
+                if indices.is_empty() {
+                    Some(Vec::new())
+                } else {
+                    let mut out = Vec::with_capacity(indices.len());
+                    for index in indices {
+                        let mut byte = [0u8; 1];
+                        let index_c = sqlite_len_to_c_int(index, "blob index")?;
+                        // SAFETY: handle is open and byte points to one writable byte.
+                        let rc = unsafe {
+                            sqlite3_blob_read(
+                                handle,
+                                byte.as_mut_ptr() as *mut c_void,
+                                1,
+                                index_c,
+                            )
+                        };
+                        if rc != SQLITE_OK {
+                            return Err(Self::sqlite_blob_error(db, rc));
+                        }
+                        out.push(byte[0]);
+                    }
+                    Some(out)
+                }
+            }
+                _ => {
+                let index = parsed_index.expect("non-slice branch precomputes index");
+                let Some(index) = Self::sqlite_blob_adjust_index(len, index) else {
+                    return Err(sqlite_error("IndexError", "Blob index out of range"));
+                };
+                let mut byte = [0u8; 1];
+                let index_c = sqlite_len_to_c_int(index, "blob index")?;
+                // SAFETY: handle is open and byte points to one writable byte.
+                let rc = unsafe {
+                    sqlite3_blob_read(
+                        handle,
+                        byte.as_mut_ptr() as *mut c_void,
+                        1,
+                        index_c,
+                    )
+                };
+                if rc != SQLITE_OK {
+                    return Err(Self::sqlite_blob_error(db, rc));
+                }
+                return Ok(Value::Int(byte[0] as i64));
+            }
+            }
+        };
+        Ok(self.heap.alloc_bytes(
+            blob_bytes.expect("slice branch always returns bytes"),
+        ))
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_blob_setitem(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Blob.__setitem__() expects index/slice and value",
+            ));
+        }
+        let blob_id = self.sqlite_blob_id_from_value(&args[0], "__setitem__")?;
+        {
+            let (state, _) = self.sqlite_blob_state_and_db(blob_id)?;
+            if state.handle().is_none() {
+                return Err(sqlite_error(
+                    "ProgrammingError",
+                    "Cannot operate on a closed blob.",
+                ));
+            }
+        }
+        let key = args.remove(1);
+        let replacement = args.remove(1);
+        let op = match key {
+            Value::Slice(slice) => {
+                let payload = bytes_like_from_value(replacement)
+                    .map_err(|_| sqlite_error("TypeError", "a bytes-like object is required"))?;
+                SqliteBlobSetOp::Slice {
+                    lower: slice.lower,
+                    upper: slice.upper,
+                    step: slice.step,
+                    payload,
+                }
+            }
+            other => {
+                let index = self.io_index_arg_to_int(other)?;
+                let byte_value = match replacement {
+                    Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => {
+                        value_to_int(replacement).map_err(|_| {
+                            sqlite_error("ValueError", "byte must be in range(0, 256)")
+                        })?
+                    }
+                    other => {
+                        return Err(sqlite_error(
+                            "TypeError",
+                            format!(
+                                "'{}' object cannot be interpreted as an integer",
+                                self.value_type_name_for_error(&other)
+                            ),
+                        ));
+                    }
+                };
+                let Ok(byte) = u8::try_from(byte_value) else {
+                    return Err(sqlite_error("ValueError", "byte must be in range(0, 256)"));
+                };
+                SqliteBlobSetOp::Index(index, byte)
+            }
+        };
+        let (state, db) = self.sqlite_blob_state_and_db(blob_id)?;
+        let Some(handle) = state.handle() else {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "Cannot operate on a closed blob.",
+            ));
+        };
+        let len = Self::sqlite_blob_len(handle)?;
+        match op {
+            SqliteBlobSetOp::Slice {
+                lower,
+                upper,
+                step,
+                payload,
+            } => {
+                let indices = slice_indices(len, lower, upper, step)?;
+                if payload.len() != indices.len() {
+                    return Err(sqlite_error(
+                        "IndexError",
+                        "Blob slice assignment is wrong size",
+                    ));
+                }
+                if payload.is_empty() {
+                    return Ok(Value::None);
+                }
+                if indices
+                    .windows(2)
+                    .all(|window| window[1] == window[0].saturating_add(1))
+                {
+                    let start = indices[0];
+                    let start_c = sqlite_len_to_c_int(start, "blob slice index")?;
+                    let payload_len_c = sqlite_len_to_c_int(payload.len(), "blob write length")?;
+                    // SAFETY: handle is open and payload pointer stays valid for this call.
+                    let rc = unsafe {
+                        sqlite3_blob_write(
+                            handle,
+                            payload.as_ptr() as *const c_void,
+                            payload_len_c,
+                            start_c,
+                        )
+                    };
+                    if rc != SQLITE_OK {
+                        return Err(Self::sqlite_blob_error(db, rc));
+                    }
+                } else {
+                    for (index, byte) in indices.into_iter().zip(payload.into_iter()) {
+                        let index_c = sqlite_len_to_c_int(index, "blob index")?;
+                        let data = [byte];
+                        // SAFETY: handle is open and data points to one readable byte.
+                        let rc = unsafe {
+                            sqlite3_blob_write(
+                                handle,
+                                data.as_ptr() as *const c_void,
+                                1,
+                                index_c,
+                            )
+                        };
+                        if rc != SQLITE_OK {
+                            return Err(Self::sqlite_blob_error(db, rc));
+                        }
+                    }
+                }
+                Ok(Value::None)
+            }
+            SqliteBlobSetOp::Index(index, byte) => {
+                let Some(index) = Self::sqlite_blob_adjust_index(len, index) else {
+                    return Err(sqlite_error("IndexError", "Blob index out of range"));
+                };
+                let index_c = sqlite_len_to_c_int(index, "blob index")?;
+                let data = [byte];
+                // SAFETY: handle is open and data points to one readable byte.
+                let rc = unsafe {
+                    sqlite3_blob_write(
+                        handle,
+                        data.as_ptr() as *const c_void,
+                        1,
+                        index_c,
+                    )
+                };
+                if rc != SQLITE_OK {
+                    return Err(Self::sqlite_blob_error(db, rc));
+                }
+                Ok(Value::None)
+            }
         }
     }
 

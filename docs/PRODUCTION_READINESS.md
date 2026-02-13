@@ -33,7 +33,7 @@ Canonical optimization status is tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 
 | Area | Status | Notes |
 |---|---|---|
-| Top stdlib common-functionality coverage (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`) | `[x]` | Baseline snapshot (2026-02-13): `26/26` imports pass, `26/26` common-usecase smokes pass, including `sqlite3` baseline (`_sqlite3` connect/cursor/execute/fetch/close path landed). |
+| Top stdlib common-functionality coverage (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`) | `[x]` | Baseline snapshot (2026-02-13): `26/26` imports pass, `26/26` common-usecase smokes pass, including `sqlite3` baseline (`_sqlite3` connect/cursor/execute/fetch/close + `Connection.blobopen`/`Blob` baseline path landed). |
 | `json` parity and hardening | `[~]` | Full semantic, malformed-input, and perf closure still required |
 | `_csv`/`csv` parity and hardening | `[~]` | Full parser/writer semantic and perf closure still required |
 | `pickle`/`pickletools`/`copyreg` parity and hardening | `[~]` | Still open; deferred strict pickle lane remains open |
@@ -72,7 +72,7 @@ Milestone 13 stdlib closure proceeds in this order:
 ### Active Stdlib Readiness
 - `[~]` `json`: pure-module-first default path and `_json` scanner integration are green; full malformed-input/perf closure still pending
 - `[~]` `csv`: native `_csv` substrate in place; full parity/perf closure pending
-- `[~]` `sqlite3`: `_sqlite3` baseline is landed (connect/cursor/execute/fetch/close); full DB-API long-tail parity remains
+- `[~]` `sqlite3`: `_sqlite3` baseline is landed (connect/cursor/execute/fetch/close, constant surface, `Connection.blobopen` + `_sqlite3.Blob` baseline methods); full DB-API long-tail parity remains
 - `[~]` `pickle`: native substrate partially in place; strict deferred lane still open
 - `[~]` `re`: `_sre` substrate partially in place; pure `Lib/re/*` default closure pending
 - `[x]` `hashlib` md5/sha2 minimum path (`_md5`, `_sha2`) with parity tests (`digest`/`hexdigest`/`update`/`copy`)

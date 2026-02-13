@@ -2317,6 +2317,42 @@ ok = (
 }
 
 #[test]
+fn sqlite3_blobopen_supports_read_write_seek_and_context_manager() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 blobopen test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+conn = sqlite3.connect(':memory:')
+conn.execute('create table t(b blob)')
+conn.execute('insert into t values (zeroblob(5))')
+with conn.blobopen('t', 'b', 1) as blob:
+    blob.write(b'abcde')
+    blob.seek(0)
+    first = blob.read(2)
+    pos = blob.tell()
+    byte2 = blob[2]
+    blob[3] = ord('Z')
+    full = blob[:]
+row = conn.execute('select b from t').fetchone()[0]
+conn.close()
+ok = (
+    first == b'ab'
+    and pos == 2
+    and byte2 == ord('c')
+    and full == b'abcZe'
+    and row == b'abcZe'
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn re_module_exposes_sre_surface_and_basic_match_works() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping re module surface test (CPython Lib path not available)");

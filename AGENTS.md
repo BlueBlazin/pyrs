@@ -120,6 +120,8 @@ Milestone 13 completion is blocked on P0 closure of:
   - deferred strict pickle suite still times out (`test/test_pickle.py` > 600s) and remains open; remaining work is throughput closure for heavy pure-`pickle._Unpickler` paths.
 - sqlite/json checkpoint:
   - `_sqlite3` baseline is landed: module import surface, `connect`, `Connection.cursor/execute/close`, `Cursor.execute/fetchone/fetchall/close`, adapter/converter registries, and core exception/type exports.
+  - `Connection.blobopen` and `_sqlite3.Blob` baseline native methods are wired (`close`, `read`, `write`, `seek`, `tell`, context-manager hooks, `__len__`, `__getitem__`, `__setitem__`) with regression coverage.
+  - `_sqlite3` constant export surface now includes CPython-style authorizer/limit/dbconfig constants (`SQLITE_LIMIT_*`, `SQLITE_DBCONFIG_*`, etc.).
   - pure-stdlib JSON remains the default when CPython `Lib/` is available, and `_json` scanner integration now handles `json.loads` decode flow with correct regex `pos/endpos` handling.
 - Hashlib checkpoint:
   - native `_md5` and `_sha2` backends are wired using Rust crypto crates with constructor/update/digest/hexdigest/copy parity tests.
