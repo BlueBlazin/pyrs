@@ -1323,16 +1323,22 @@ impl Vm {
         {
             exception_message = from_prefixed;
         }
+        let (exception_message, sqlite_metadata) =
+            strip_sqlite_exception_metadata(exception_message);
         let exception = ExceptionObject::new(exception_type, exception_message);
         let args = if let Some(message) = &exception.message {
             self.heap.alloc_tuple(vec![Value::Str(message.clone())])
         } else {
             self.heap.alloc_tuple(Vec::new())
         };
-        exception
-            .attrs
-            .borrow_mut()
-            .insert("args".to_string(), args);
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            attrs.insert("args".to_string(), args);
+            if let Some((code, name)) = sqlite_metadata {
+                attrs.insert("sqlite_errorcode".to_string(), Value::Int(code));
+                attrs.insert("sqlite_errorname".to_string(), Value::Str(name));
+            }
+        }
         Value::Exception(Box::new(exception))
     }
 
@@ -6140,6 +6146,15 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "TypeError" => Some("Exception"),
         "ValueError" => Some("Exception"),
         "Error" => Some("Exception"),
+        "Warning" => Some("Exception"),
+        "InterfaceError" => Some("Error"),
+        "DatabaseError" => Some("Error"),
+        "DataError" => Some("DatabaseError"),
+        "OperationalError" => Some("DatabaseError"),
+        "IntegrityError" => Some("DatabaseError"),
+        "InternalError" => Some("DatabaseError"),
+        "ProgrammingError" => Some("DatabaseError"),
+        "NotSupportedError" => Some("DatabaseError"),
         "UnicodeError" => Some("ValueError"),
         "UnicodeEncodeError" => Some("UnicodeError"),
         "UnicodeDecodeError" => Some("UnicodeError"),
@@ -7115,6 +7130,34 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
     if expected == "RuntimeError" && candidate == "PythonFinalizationError" {
         return true;
     }
+    if expected == "Error"
+        && matches!(
+            candidate,
+            "InterfaceError"
+                | "DatabaseError"
+                | "DataError"
+                | "OperationalError"
+                | "IntegrityError"
+                | "InternalError"
+                | "ProgrammingError"
+                | "NotSupportedError"
+        )
+    {
+        return true;
+    }
+    if expected == "DatabaseError"
+        && matches!(
+            candidate,
+            "DataError"
+                | "OperationalError"
+                | "IntegrityError"
+                | "InternalError"
+                | "ProgrammingError"
+                | "NotSupportedError"
+        )
+    {
+        return true;
+    }
     if expected == "PickleError" && matches!(candidate, "PicklingError" | "UnpicklingError") {
         return true;
     }
@@ -7226,6 +7269,33 @@ fn extract_prefixed_exception_message(message: &str, exception: &str) -> Option<
         .map(|(_, rest)| rest.trim_start().to_string())
         .filter(|rest| !rest.is_empty());
     Some(message)
+}
+
+fn strip_sqlite_exception_metadata(
+    message: Option<String>,
+) -> (Option<String>, Option<(i64, String)>) {
+    let Some(message) = message else {
+        return (None, None);
+    };
+    let Some((body, meta_line)) = message.rsplit_once('\n') else {
+        return (Some(message), None);
+    };
+    let Some(rest) = meta_line.strip_prefix("__pyrs_sqlite_meta__:") else {
+        return (Some(message), None);
+    };
+    let mut parts = rest.splitn(2, ':');
+    let (Some(code_text), Some(name)) = (parts.next(), parts.next()) else {
+        return (Some(message), None);
+    };
+    let Ok(code) = code_text.parse::<i64>() else {
+        return (Some(message), None);
+    };
+    let cleaned = if body.is_empty() {
+        None
+    } else {
+        Some(body.to_string())
+    };
+    (cleaned, Some((code, name.to_string())))
 }
 
 #[inline]

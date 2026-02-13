@@ -123,9 +123,19 @@ Milestone 13 completion is blocked on P0 closure of:
   - `Connection.blobopen` and `_sqlite3.Blob` baseline native methods are wired (`close`, `read`, `write`, `seek`, `tell`, context-manager hooks, `__len__`, `__getitem__`, `__setitem__`) with regression coverage.
   - `_sqlite3` constant export surface now includes CPython-style authorizer/limit/dbconfig constants (`SQLITE_LIMIT_*`, `SQLITE_DBCONFIG_*`, etc.).
   - `_sqlite3` connection/cursor surface now also includes `Connection.__del__`, descriptor-backed `Connection` attributes (`isolation_level`, `in_transaction`, `total_changes`), SQL-length/DataError parity guard, cursor `description`, row/text-factory plumbing, and `_sqlite3.Row` baseline methods (`keys`, `__len__`, `__getitem__`, `__iter__`, `__eq__`).
+  - `Connection.create_function()` now registers real sqlite callbacks (no-op shim removed), with callback execution/return-value conversion wired through VM state.
+  - `_sqlite3.connect(factory=...)` now accepts callable factories (not only subclasses), matching CPython DB-API behavior for `OpenTests.test_factory_database_arg`.
   - inspect signature closure landed for sqlite callables: `inspect.signature(obj)` now consumes `__text_signature__`, and inspect `Signature.__str__/__repr__` render CPython-style signature text.
-  - Current `test.test_sqlite3.test_dbapi` failfast frontier is `test_in_transaction` (transaction-state parity after DML + commit/rollback flows).
+  - Current `test.test_sqlite3.test_dbapi` failfast frontier is `test_open_undecodable_uri` (URI + undecodable path edge on this environment); prior `test_in_transaction`/multiprocess blockers are closed.
   - pure-stdlib JSON remains the default when CPython `Lib/` is available, and `_json` scanner integration now handles `json.loads` decode flow with correct regex `pos/endpos` handling.
+- subprocess checkpoint:
+  - `subprocess.Popen` now exposes `stdin`/`stdout`/`stderr` pipe attributes when `PIPE` is requested and supports `readline`/`write`/`flush`/`close` on those pipe objects.
+  - text-mode `communicate(input=...)` and pipe I/O now support UTF-8 encoding behavior needed by sqlite multiprocess DB-API tests.
+- runtime/object-model checkpoint:
+  - builtin `input()` is now wired (prompt + stdin line read).
+  - `str.format` now honors conversion + format-spec routing through `format()`, closing stdlib paths that require integer specifiers like `{:02X}`.
+  - dict-subclass `__missing__` behavior for `__getitem__` is now honored in runtime subscript paths (fixes stdlib urllib quoter behavior).
+  - bytes now includes `rstrip()`, unblocking urllib/sqlite undecodable-path call paths.
 - Hashlib checkpoint:
   - native `_md5` and `_sha2` backends are wired using Rust crypto crates with constructor/update/digest/hexdigest/copy parity tests.
   - common `hashlib.md5` and `hashlib.sha256` stdlib paths are now green.

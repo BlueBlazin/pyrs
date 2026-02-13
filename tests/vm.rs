@@ -2452,6 +2452,458 @@ conn.close()
 }
 
 #[test]
+fn sqlite3_in_transaction_tracks_implicit_dml_begin_like_cpython() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 in-transaction test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.connect(':memory:')
+cu = cx.cursor()
+cu.execute('create table transactiontest(id integer primary key, name text)')
+ok = (cx.in_transaction == False)
+cu.execute('insert into transactiontest(name) values (?)', ('foo',))
+ok = ok and (cx.in_transaction == True)
+cu.execute('select name from transactiontest where name=?', ['foo'])
+row = cu.fetchone()
+ok = ok and (row[0] == 'foo') and (cx.in_transaction == True)
+cx.commit()
+ok = ok and (cx.in_transaction == False)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_connection_interrupt_exists_and_matches_basic_contract() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 interrupt test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.connect(':memory:')
+ok = (cx.interrupt() is None)
+cx.close()
+raised = False
+try:
+    cx.interrupt()
+except sqlite3.ProgrammingError:
+    raised = True
+ok = ok and raised
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_create_function_registers_and_executes_python_callback() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 create_function callback test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+called = False
+def wait():
+    global called
+    called = True
+    return "ok"
+cx = sqlite3.connect(":memory:")
+cx.create_function("wait", 0, wait)
+row = cx.execute("select wait()").fetchone()
+ok = called and row[0] == "ok"
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_dbapi_constructor_aliases_accept_expected_arguments() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 constructor alias test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+ok = True
+sqlite3.Date(2004, 10, 28)
+sqlite3.Time(12, 39, 35)
+sqlite3.Timestamp(2004, 10, 28, 12, 39, 35)
+sqlite3.DateFromTicks(42)
+sqlite3.TimeFromTicks(42)
+sqlite3.TimestampFromTicks(42)
+sqlite3.Binary(b"\0'")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_cursor_exposes_connection_reference() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 cursor-connection test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.connect(':memory:')
+cu = cx.cursor()
+ok = (cu.connection == cx)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_cursor_lastrowid_and_rowcount_follow_execute_baseline() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 rowcount/lastrowid test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.connect(':memory:')
+cu = cx.cursor()
+ok = (cu.lastrowid is None)
+cu.execute('create table t(x)')
+ok = ok and (cu.rowcount == -1) and (cu.lastrowid == 0)
+cu.execute('insert into t values (42)')
+ok = ok and (cu.rowcount == 1) and (cu.lastrowid == 1)
+cu.execute('select x from t')
+ok = ok and (cu.rowcount == -1) and (cu.lastrowid == 1)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_named_parameters_accept_mapping_missing_hook() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 named-mapping test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+class D(dict):
+    def __missing__(self, key):
+        return "foo"
+cx = sqlite3.connect(':memory:')
+cu = cx.cursor()
+cu.execute("create table t(name)")
+cu.execute("insert into t(name) values ('foo')")
+cu.execute("select name from t where name=:name", D())
+row = cu.fetchone()
+ok = (row[0] == "foo")
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_named_placeholders_reject_sequence_parameters() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 named-sequence test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.connect(':memory:')
+queries = [
+    ("select :a", (1,)),
+    ("select :a, ?, ?", (1, 2, 3)),
+    ("select ?, :b, ?", (1, 2, 3)),
+]
+ok = True
+for query, params in queries:
+    try:
+        cx.execute(query, params)
+        ok = False
+    except sqlite3.ProgrammingError as exc:
+        ok = ok and ("named parameter" in str(exc))
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_execute_accepts_generic_sequence_parameters() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 generic-sequence test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+class L:
+    def __len__(self):
+        return 1
+    def __getitem__(self, idx):
+        assert idx == 0
+        return "foo"
+cx = sqlite3.connect(':memory:')
+cu = cx.cursor()
+cu.execute("create table t(name)")
+cu.execute("insert into t(name) values ('foo')")
+cu.execute("select name from t where name=?", L())
+row = cu.fetchone()
+ok = (row[0] == "foo")
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_execute_allows_trailing_sql_comments_after_single_statement() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 trailing-comment test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.connect(':memory:')
+cu = cx.cursor()
+cu.execute("select 1; -- trailing comment")
+row = cu.fetchone()
+ok = (row[0] == 1)
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_executescript_reports_cpython_sql_length_dataerror_message() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping sqlite3 executescript sql-length test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = r#"import sqlite3
+cx = sqlite3.connect(':memory:')
+cx.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 4)
+ok = False
+try:
+    cx.cursor().executescript('select 1;')
+except sqlite3.DataError as exc:
+    ok = ('query string is too large' in str(exc))
+cx.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_executescript_commits_active_transaction_before_script() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping sqlite3 executescript tx-control test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = r#"import sqlite3
+con = sqlite3.connect(':memory:')
+con.execute('begin')
+before = con.in_transaction
+con.executescript('select 1')
+after = con.in_transaction
+ok = (before is True) and (after is False)
+con.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_executescript_null_character_raises_value_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 executescript NUL test (CPython Lib path not available)");
+        return;
+    };
+    let source = "import sqlite3\ncx = sqlite3.connect(':memory:')\nok = False\ntry:\n    cx.executescript('select 1;\\x00')\nexcept ValueError:\n    ok = True\ncx.close()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_executescript_surrogate_payload_raises_unicode_encode_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 executescript surrogate test (CPython Lib path not available)");
+        return;
+    };
+    let source = "import sqlite3\ncx = sqlite3.connect(':memory:')\nok = False\ntry:\n    cx.executescript(\"select '\\ud8ff'\")\nexcept UnicodeEncodeError:\n    ok = True\ncx.close()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_exception_types_follow_dbapi_hierarchy() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 exception-hierarchy test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+ok = (
+    issubclass(sqlite3.Warning, Exception)
+    and issubclass(sqlite3.Error, Exception)
+    and issubclass(sqlite3.InterfaceError, sqlite3.Error)
+    and issubclass(sqlite3.DatabaseError, sqlite3.Error)
+    and issubclass(sqlite3.DataError, sqlite3.DatabaseError)
+    and issubclass(sqlite3.OperationalError, sqlite3.DatabaseError)
+    and issubclass(sqlite3.IntegrityError, sqlite3.DatabaseError)
+    and issubclass(sqlite3.InternalError, sqlite3.DatabaseError)
+    and issubclass(sqlite3.ProgrammingError, sqlite3.DatabaseError)
+    and issubclass(sqlite3.NotSupportedError, sqlite3.DatabaseError)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_db_errors_expose_error_code_and_name_attributes() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 errorcode-attr test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3, os
+missing = os.path.join('/tmp', 'pyrs_sqlite_missing_dir', 'missing.db')
+ok = False
+try:
+    sqlite3.connect(missing)
+except sqlite3.OperationalError as exc:
+    ok = (
+        exc.sqlite_errorcode == sqlite3.SQLITE_CANTOPEN
+        and exc.sqlite_errorname == 'SQLITE_CANTOPEN'
+    )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_extended_error_code_metadata_matches_constraint_check() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 extended-errorcode test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+con = sqlite3.connect(':memory:')
+con.execute('create table t(v integer check(v > 0))')
+ok = False
+try:
+    con.execute('insert into t values(-1)')
+except sqlite3.IntegrityError as exc:
+    ok = (
+        exc.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_CHECK
+        and exc.sqlite_errorname == 'SQLITE_CONSTRAINT_CHECK'
+    )
+con.close()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_validates_arraysize_and_fetchmany_size_bounds() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 size-validation test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+cu = sqlite3.connect(':memory:').cursor()
+UINT32_MAX = (1 << 32) - 1
+ok = True
+cu.setinputsizes([3, 4, 5])
+cu.setoutputsize(5, 0)
+cu.setoutputsize(42)
+for value, exc in ((1.0, TypeError), (-3, ValueError), (UINT32_MAX + 1, OverflowError)):
+    try:
+        cu.arraysize = value
+        ok = False
+    except exc:
+        pass
+    try:
+        cu.fetchmany(value)
+        ok = False
+    except exc:
+        pass
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn print_uses_str_dunder_and_validates_sep_end_contract() {
     let source = r#"import io
 class Message:
@@ -2510,6 +2962,19 @@ fn bytes_ljust_supports_bytes_and_bytearray() {
     let source = r#"b = b'xy'.ljust(5, b'_')
 ba = bytearray(b'xy').ljust(4)
 ok = (b == b'xy___' and ba == bytearray(b'xy  '))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_ljust_supports_optional_fill_character() {
+    let source = r#"a = 'x'.ljust(3)
+b = 'x'.ljust(4, '_')
+ok = (a == 'x  ' and b == 'x___')
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -9863,6 +10328,34 @@ ok = caught
 #[test]
 fn subprocess_args_from_interpreter_flags_returns_list() {
     let source = "import subprocess\nflags = subprocess._args_from_interpreter_flags()\nok = isinstance(flags, list)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn subprocess_popen_pipe_attrs_support_readline_and_write() {
+    let source = r#"import subprocess
+p = subprocess.Popen(
+    ["/bin/sh", "-c", "echo started; read line; echo seen:$line"],
+    encoding="utf-8",
+    bufsize=0,
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+)
+line = p.stdout.readline().strip()
+n = p.stdin.write("ack\n")
+out, err = p.communicate(timeout=10)
+ok = (
+    line == "started"
+    and n == 4
+    and "seen:ack" in out
+    and isinstance(err, str)
+    and p.returncode == 0
+)
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

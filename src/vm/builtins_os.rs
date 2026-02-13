@@ -4,6 +4,10 @@ const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
 const CODECS_ATTR_ERRORS: &str = "__pyrs_codec_errors__";
 const CODECS_ATTR_PENDING: &str = "__pyrs_codec_pending__";
 const CODECS_ATTR_STATE_FLAG: &str = "__pyrs_codec_state_flag__";
+const SUBPROCESS_PIPE_PID_ATTR: &str = "__pyrs_pid";
+const SUBPROCESS_PIPE_KIND_ATTR: &str = "__pyrs_kind";
+const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
+const SUBPROCESS_PIPE_TEXT_ATTR: &str = "__pyrs_text";
 
 impl Vm {
     pub(super) fn builtin_os_getcwd(
@@ -1769,6 +1773,85 @@ impl Vm {
         Ok(rewritten)
     }
 
+    fn subprocess_pipe_class_ref(&self) -> Result<ObjRef, RuntimeError> {
+        let Some(module) = self.modules.get("subprocess").cloned() else {
+            return Err(RuntimeError::new("module 'subprocess' not found"));
+        };
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("module 'subprocess' is invalid"));
+        };
+        let Some(Value::Class(class_ref)) = module_data.globals.get("_PyrsPipe").cloned() else {
+            return Err(RuntimeError::new("module 'subprocess' has no _PyrsPipe class"));
+        };
+        Ok(class_ref)
+    }
+
+    fn subprocess_pipe_instance(
+        &self,
+        pid: i64,
+        kind: &str,
+        text_mode: bool,
+        encoding: Option<&str>,
+    ) -> Result<Value, RuntimeError> {
+        let class_ref = self.subprocess_pipe_class_ref()?;
+        let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert(SUBPROCESS_PIPE_PID_ATTR.to_string(), Value::Int(pid));
+            instance_data.attrs.insert(
+                SUBPROCESS_PIPE_KIND_ATTR.to_string(),
+                Value::Str(kind.to_string()),
+            );
+            instance_data.attrs.insert(
+                SUBPROCESS_PIPE_TEXT_ATTR.to_string(),
+                Value::Bool(text_mode),
+            );
+            instance_data.attrs.insert(
+                SUBPROCESS_PIPE_ENCODING_ATTR.to_string(),
+                encoding
+                    .map(|value| Value::Str(value.to_string()))
+                    .unwrap_or(Value::None),
+            );
+        } else {
+            return Err(RuntimeError::new("invalid subprocess pipe instance"));
+        }
+        Ok(Value::Instance(instance))
+    }
+
+    fn subprocess_pipe_metadata(
+        &self,
+        instance: &Value,
+        method_name: &str,
+    ) -> Result<(i64, String, bool, Option<String>), RuntimeError> {
+        let Value::Instance(instance_ref) = instance else {
+            return Err(RuntimeError::new(format!("{method_name} expected pipe instance")));
+        };
+        let Object::Instance(instance_data) = &*instance_ref.kind() else {
+            return Err(RuntimeError::new(format!("{method_name} expected pipe instance")));
+        };
+        let pid = match instance_data.attrs.get(SUBPROCESS_PIPE_PID_ATTR) {
+            Some(Value::Int(pid)) => *pid,
+            _ => return Err(RuntimeError::new(format!("{method_name} missing process id"))),
+        };
+        let kind = match instance_data.attrs.get(SUBPROCESS_PIPE_KIND_ATTR) {
+            Some(Value::Str(kind)) => kind.clone(),
+            _ => return Err(RuntimeError::new(format!("{method_name} missing pipe kind"))),
+        };
+        let text_mode = matches!(
+            instance_data.attrs.get(SUBPROCESS_PIPE_TEXT_ATTR),
+            Some(Value::Bool(true))
+        );
+        let encoding = match instance_data.attrs.get(SUBPROCESS_PIPE_ENCODING_ATTR) {
+            Some(Value::Str(value)) => Some(value.clone()),
+            _ => None,
+        };
+        Ok((pid, kind, text_mode, encoding))
+    }
+
     pub(super) fn builtin_subprocess_popen_init(
         &mut self,
         mut args: Vec<Value>,
@@ -1799,6 +1882,24 @@ impl Vm {
         let stdin_spec = kwargs.remove("stdin").unwrap_or(Value::None);
         let stdout_spec = kwargs.remove("stdout").unwrap_or(Value::None);
         let stderr_spec = kwargs.remove("stderr").unwrap_or(Value::None);
+        let text_mode = kwargs
+            .remove("text")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let universal_newlines = kwargs
+            .remove("universal_newlines")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let encoding = kwargs
+            .remove("encoding")
+            .and_then(|value| match value {
+                Value::Str(text) => Some(text),
+                Value::None => None,
+                _ => None,
+            });
+        let explicit_text = text_mode || universal_newlines || encoding.is_some();
+        let _bufsize = kwargs.remove("bufsize");
+        let _errors = kwargs.remove("errors");
 
         let mut command = Command::new(&argv[0]);
         if argv.len() > 1 {
@@ -1838,6 +1939,24 @@ impl Vm {
         Self::instance_attr_set(&instance, "returncode", Value::None)?;
         Self::instance_attr_set(&instance, "_pyrs_stdout", Value::None)?;
         Self::instance_attr_set(&instance, "_pyrs_stderr", Value::None)?;
+        let stdin_pipe = if matches!(stdin_spec, Value::Int(-1)) {
+            self.subprocess_pipe_instance(pid, "stdin", explicit_text, encoding.as_deref())?
+        } else {
+            Value::None
+        };
+        let stdout_pipe = if matches!(stdout_spec, Value::Int(-1)) {
+            self.subprocess_pipe_instance(pid, "stdout", explicit_text, encoding.as_deref())?
+        } else {
+            Value::None
+        };
+        let stderr_pipe = if matches!(stderr_spec, Value::Int(-1)) {
+            self.subprocess_pipe_instance(pid, "stderr", explicit_text, encoding.as_deref())?
+        } else {
+            Value::None
+        };
+        Self::instance_attr_set(&instance, "stdin", stdin_pipe)?;
+        Self::instance_attr_set(&instance, "stdout", stdout_pipe)?;
+        Self::instance_attr_set(&instance, "stderr", stderr_pipe)?;
         Ok(Value::None)
     }
 
@@ -1866,10 +1985,41 @@ impl Vm {
             Some(Value::Int(pid)) => pid,
             _ => return Err(RuntimeError::new("invalid subprocess handle")),
         };
+        let text_mode = matches!(
+            Self::instance_attr_get(&instance, "stdout"),
+            Some(Value::Instance(_))
+        ) && match Self::instance_attr_get(&instance, "stdout") {
+            Some(ref stdout @ Value::Instance(_)) => self
+                .subprocess_pipe_metadata(stdout, "Popen.communicate")
+                .map(|(_, _, text, _)| text)
+                .unwrap_or(false),
+            _ => false,
+        };
+        let encoding = match Self::instance_attr_get(&instance, "stdout") {
+            Some(ref stdout @ Value::Instance(_)) => self
+                .subprocess_pipe_metadata(stdout, "Popen.communicate")
+                .ok()
+                .and_then(|(_, _, _, encoding)| encoding),
+            _ => None,
+        };
         if let Some(mut child) = self.child_processes.remove(&pid) {
             if let Some(input) = input {
                 if let Some(stdin) = child.stdin.as_mut() {
-                    let payload = self.value_to_bytes_payload(input)?;
+                    let payload = match input {
+                        Value::Str(text) if text_mode => {
+                            let codec = encoding
+                                .as_deref()
+                                .unwrap_or("utf-8")
+                                .to_ascii_lowercase();
+                            if codec != "utf-8" && codec != "utf8" {
+                                return Err(RuntimeError::new(
+                                    "only utf-8 subprocess text encoding is supported",
+                                ));
+                            }
+                            text.into_bytes()
+                        }
+                        other => self.value_to_bytes_payload(other)?,
+                    };
                     stdin
                         .write_all(&payload)
                         .map_err(|err| RuntimeError::new(format!("stdin write failed: {err}")))?;
@@ -1901,11 +2051,205 @@ impl Vm {
             )?;
         }
 
-        let stdout = Self::instance_attr_get(&instance, "_pyrs_stdout")
+        let stdout_bytes = Self::instance_attr_get(&instance, "_pyrs_stdout")
             .unwrap_or_else(|| self.heap.alloc_bytes(Vec::new()));
-        let stderr = Self::instance_attr_get(&instance, "_pyrs_stderr")
+        let stderr_bytes = Self::instance_attr_get(&instance, "_pyrs_stderr")
             .unwrap_or_else(|| self.heap.alloc_bytes(Vec::new()));
+        let stdout = if text_mode {
+            match &stdout_bytes {
+                Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                    Object::Bytes(bytes) => Value::Str(String::from_utf8_lossy(bytes).to_string()),
+                    _ => Value::Str(String::new()),
+                },
+                _ => Value::Str(String::new()),
+            }
+        } else {
+            stdout_bytes
+        };
+        let stderr = if text_mode {
+            match &stderr_bytes {
+                Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                    Object::Bytes(bytes) => Value::Str(String::from_utf8_lossy(bytes).to_string()),
+                    _ => Value::Str(String::new()),
+                },
+                _ => Value::Str(String::new()),
+            }
+        } else {
+            stderr_bytes
+        };
         Ok(self.heap.alloc_tuple(vec![stdout, stderr]))
+    }
+
+    pub(super) fn builtin_subprocess_pipe_readline(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("pipe.readline() expects no keyword arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "pipe.readline")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new("pipe.readline() expects no arguments"));
+        }
+        let (pid, kind, text_mode, encoding) =
+            self.subprocess_pipe_metadata(&Value::Instance(instance), "pipe.readline")?;
+        if kind != "stdout" && kind != "stderr" {
+            return Err(RuntimeError::new("pipe.readline() is only valid for stdout/stderr"));
+        }
+        let Some(child) = self.child_processes.get_mut(&pid) else {
+            return Ok(if text_mode {
+                Value::Str(String::new())
+            } else {
+                self.heap.alloc_bytes(Vec::new())
+            });
+        };
+        let reader = if kind == "stdout" {
+            child.stdout.as_mut().map(|stream| stream as &mut dyn std::io::Read)
+        } else {
+            child.stderr.as_mut().map(|stream| stream as &mut dyn std::io::Read)
+        };
+        let Some(reader) = reader else {
+            return Ok(if text_mode {
+                Value::Str(String::new())
+            } else {
+                self.heap.alloc_bytes(Vec::new())
+            });
+        };
+        let mut line = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            let read = reader
+                .read(&mut byte)
+                .map_err(|err| RuntimeError::new(format!("pipe readline failed: {err}")))?;
+            if read == 0 {
+                break;
+            }
+            line.push(byte[0]);
+            if byte[0] == b'\n' {
+                break;
+            }
+        }
+        if text_mode {
+            let codec = encoding
+                .as_deref()
+                .unwrap_or("utf-8")
+                .to_ascii_lowercase();
+            if codec != "utf-8" && codec != "utf8" {
+                return Err(RuntimeError::new(
+                    "only utf-8 subprocess text encoding is supported",
+                ));
+            }
+            Ok(Value::Str(String::from_utf8_lossy(&line).to_string()))
+        } else {
+            Ok(self.heap.alloc_bytes(line))
+        }
+    }
+
+    pub(super) fn builtin_subprocess_pipe_write(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("pipe.write() expects no keyword arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "pipe.write")?;
+        if args.len() != 1 {
+            return Err(RuntimeError::new("pipe.write() expects one argument"));
+        }
+        let input = args.remove(0);
+        let (pid, kind, text_mode, encoding) =
+            self.subprocess_pipe_metadata(&Value::Instance(instance), "pipe.write")?;
+        if kind != "stdin" {
+            return Err(RuntimeError::new("pipe.write() is only valid for stdin"));
+        }
+        let payload = match input {
+            Value::Str(text) if text_mode => {
+                let codec = encoding
+                    .as_deref()
+                    .unwrap_or("utf-8")
+                    .to_ascii_lowercase();
+                if codec != "utf-8" && codec != "utf8" {
+                    return Err(RuntimeError::new(
+                        "only utf-8 subprocess text encoding is supported",
+                    ));
+                }
+                text.into_bytes()
+            }
+            other => self.value_to_bytes_payload(other)?,
+        };
+        let Some(child) = self.child_processes.get_mut(&pid) else {
+            return Err(RuntimeError::new("write to closed pipe"));
+        };
+        let Some(stdin) = child.stdin.as_mut() else {
+            return Err(RuntimeError::new("write to closed pipe"));
+        };
+        stdin
+            .write_all(&payload)
+            .map_err(|err| RuntimeError::new(format!("pipe write failed: {err}")))?;
+        stdin
+            .flush()
+            .map_err(|err| RuntimeError::new(format!("pipe flush failed: {err}")))?;
+        Ok(Value::Int(payload.len() as i64))
+    }
+
+    pub(super) fn builtin_subprocess_pipe_flush(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("pipe.flush() expects no keyword arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "pipe.flush")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new("pipe.flush() expects no arguments"));
+        }
+        let (pid, kind, _, _) =
+            self.subprocess_pipe_metadata(&Value::Instance(instance), "pipe.flush")?;
+        if kind != "stdin" {
+            return Ok(Value::None);
+        }
+        if let Some(child) = self.child_processes.get_mut(&pid) {
+            if let Some(stdin) = child.stdin.as_mut() {
+                stdin
+                    .flush()
+                    .map_err(|err| RuntimeError::new(format!("pipe flush failed: {err}")))?;
+            }
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_subprocess_pipe_close(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("pipe.close() expects no keyword arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "pipe.close")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new("pipe.close() expects no arguments"));
+        }
+        let (pid, kind, _, _) =
+            self.subprocess_pipe_metadata(&Value::Instance(instance), "pipe.close")?;
+        if let Some(child) = self.child_processes.get_mut(&pid) {
+            match kind.as_str() {
+                "stdin" => {
+                    child.stdin.take();
+                }
+                "stdout" => {
+                    child.stdout.take();
+                }
+                "stderr" => {
+                    child.stderr.take();
+                }
+                _ => {}
+            }
+        }
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_subprocess_popen_wait(

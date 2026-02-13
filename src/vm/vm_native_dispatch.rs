@@ -376,14 +376,40 @@ impl Vm {
                 }
                 let key = args.first().cloned().expect("checked len");
                 ensure_hashable(&key)?;
-                if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new(
-                        "dict.__getitem__() receiver must be dict",
-                    ));
+                let (dict_receiver, missing_owner) = match &*receiver.kind() {
+                    Object::Dict(_) => (receiver.clone(), None),
+                    Object::Module(module_data) if module_data.name == "__dict_method__" => {
+                        let dict_receiver = match module_data.globals.get("dict") {
+                            Some(Value::Dict(dict_obj)) => dict_obj.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.__getitem__() receiver must be dict",
+                                ));
+                            }
+                        };
+                        let missing_owner = module_data.globals.get("owner").cloned();
+                        (dict_receiver, missing_owner)
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "dict.__getitem__() receiver must be dict",
+                        ));
+                    }
+                };
+                if let Some(value) = dict_get_value(&dict_receiver, &key) {
+                    return Ok(NativeCallResult::Value(value));
                 }
-                dict_get_value(&receiver, &key)
-                    .map(NativeCallResult::Value)
-                    .ok_or_else(|| RuntimeError::new("key not found"))
+                if let Some(owner) = missing_owner {
+                    if let Some(missing) = self.lookup_bound_special_method(&owner, "__missing__")? {
+                        return match self.call_internal(missing, vec![key], HashMap::new())? {
+                            InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
+                            InternalCallOutcome::CallerExceptionHandled => Err(
+                                self.runtime_error_from_active_exception("__missing__() failed"),
+                            ),
+                        };
+                    }
+                }
+                Err(RuntimeError::new("key not found"))
             }
             NativeMethodKind::DictPop => {
                 if args.is_empty() || args.len() > 2 || !kwargs.is_empty() {
@@ -1457,6 +1483,40 @@ impl Vm {
                     _ => self.heap.alloc_bytes(out),
                 }))
             }
+            NativeMethodKind::BytesRStrip => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("rstrip() expects at most one argument"));
+                }
+                let receiver_value = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("value")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let bytes = bytes_like_from_value(receiver_value.clone())?;
+                let chars = if args.is_empty() || matches!(args[0], Value::None) {
+                    None
+                } else {
+                    Some(bytes_like_from_value(args.remove(0))?)
+                };
+                let mut end = bytes.len();
+                if let Some(chars) = chars {
+                    while end > 0 && chars.contains(&bytes[end - 1]) {
+                        end -= 1;
+                    }
+                } else {
+                    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+                        end -= 1;
+                    }
+                }
+                let out = bytes[..end].to_vec();
+                Ok(NativeCallResult::Value(match receiver_value {
+                    Value::ByteArray(_) => self.heap.alloc_bytearray(out),
+                    _ => self.heap.alloc_bytes(out),
+                }))
+            }
             NativeMethodKind::CodecsIncrementalEncoderFactoryCall => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(
@@ -2194,20 +2254,25 @@ impl Vm {
                         }
                     }
 
-                    let rendered = if let Some(conv) = conversion {
-                        match conv.as_str() {
-                            "" | "s" => format_value(&value),
-                            "r" | "a" => format_repr(&value),
+                    if let Some(conv) = conversion {
+                        value = match conv.as_str() {
+                            "" | "s" => self.builtin_str(vec![value], HashMap::new())?,
+                            "r" => self.builtin_repr(vec![value], HashMap::new())?,
+                            "a" => self.builtin_ascii(vec![value], HashMap::new())?,
                             _ => {
                                 return Err(RuntimeError::new(
                                     "unsupported format conversion specifier",
                                 ));
                             }
-                        }
-                    } else {
-                        format_value(&value)
+                        };
+                    }
+                    let rendered = match self.builtin_format(
+                        vec![value, Value::Str(format_spec.unwrap_or_default())],
+                        HashMap::new(),
+                    )? {
+                        Value::Str(text) => text,
+                        _ => return Err(RuntimeError::new("format() returned non-string")),
                     };
-                    let _ = format_spec;
                     out.push_str(&rendered);
                 }
                 Ok(NativeCallResult::Value(Value::Str(out)))
@@ -2903,6 +2968,54 @@ impl Vm {
                     Some(_) => return Err(RuntimeError::new("lstrip() chars must be str or None")),
                 };
                 Ok(NativeCallResult::Value(Value::Str(stripped)))
+            }
+            NativeMethodKind::StrLJust => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "ljust() expects width and optional fillchar",
+                    ));
+                }
+                let width = value_to_int(args[0].clone())?;
+                let fillchar = if args.len() == 2 {
+                    match &args[1] {
+                        Value::Str(text) => {
+                            let mut chars = text.chars();
+                            let Some(ch) = chars.next() else {
+                                return Err(RuntimeError::new(
+                                    "The fill character must be exactly one character long",
+                                ));
+                            };
+                            if chars.next().is_some() {
+                                return Err(RuntimeError::new(
+                                    "The fill character must be exactly one character long",
+                                ));
+                            }
+                            ch
+                        }
+                        _ => return Err(RuntimeError::new("ljust() fillchar must be str")),
+                    }
+                } else {
+                    ' '
+                };
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                };
+                let text_len = text.chars().count() as i64;
+                if width <= text_len {
+                    return Ok(NativeCallResult::Value(Value::Str(text)));
+                }
+                let pad_len = usize::try_from(width - text_len)
+                    .map_err(|_| RuntimeError::new("ljust() width is too large"))?;
+                let mut out = String::with_capacity(text.len() + pad_len * fillchar.len_utf8());
+                out.push_str(&text);
+                for _ in 0..pad_len {
+                    out.push(fillchar);
+                }
+                Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::StrRStrip => {
                 if args.len() > 1 {
@@ -4958,6 +5071,7 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match builtin {
             BuiltinFunction::Print => self.builtin_print(args, kwargs),
+            BuiltinFunction::Input => self.builtin_input(args, kwargs),
             BuiltinFunction::Repr => self.builtin_repr(args, kwargs),
             BuiltinFunction::Ascii => self.builtin_ascii(args, kwargs),
             BuiltinFunction::Len => self.builtin_len(args, kwargs),
@@ -5247,6 +5361,12 @@ impl Vm {
             BuiltinFunction::SubprocessPopenExit => {
                 self.builtin_subprocess_popen_exit(args, kwargs)
             }
+            BuiltinFunction::SubprocessPipeReadline => {
+                self.builtin_subprocess_pipe_readline(args, kwargs)
+            }
+            BuiltinFunction::SubprocessPipeWrite => self.builtin_subprocess_pipe_write(args, kwargs),
+            BuiltinFunction::SubprocessPipeFlush => self.builtin_subprocess_pipe_flush(args, kwargs),
+            BuiltinFunction::SubprocessPipeClose => self.builtin_subprocess_pipe_close(args, kwargs),
             BuiltinFunction::SubprocessCleanup => self.builtin_subprocess_cleanup(args, kwargs),
             BuiltinFunction::SubprocessCheckCall => {
                 self.builtin_subprocess_check_call(args, kwargs)
@@ -5321,6 +5441,9 @@ impl Vm {
             BuiltinFunction::SqliteConnectionRollback => {
                 self.builtin_sqlite_connection_rollback(args, kwargs)
             }
+            BuiltinFunction::SqliteConnectionInterrupt => {
+                self.builtin_sqlite_connection_interrupt(args, kwargs)
+            }
             BuiltinFunction::SqliteConnectionCreateFunction => {
                 self.builtin_sqlite_connection_create_function(args, kwargs)
             }
@@ -5347,6 +5470,15 @@ impl Vm {
             }
             BuiltinFunction::SqliteConnectionBlobOpen => {
                 self.builtin_sqlite_connection_blobopen(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorSetAttribute => {
+                self.builtin_sqlite_cursor_setattr(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorSetInputSizes => {
+                self.builtin_sqlite_cursor_setinputsizes(args, kwargs)
+            }
+            BuiltinFunction::SqliteCursorSetOutputSize => {
+                self.builtin_sqlite_cursor_setoutputsize(args, kwargs)
             }
             BuiltinFunction::SqliteCursorExecute => {
                 self.builtin_sqlite_cursor_execute(args, kwargs)
@@ -5855,6 +5987,7 @@ impl Vm {
             BuiltinFunction::DateToday => self.builtin_datetime_today(args, kwargs),
             BuiltinFunction::DateTimeInit => self.builtin_datetime_init(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
+            BuiltinFunction::TimeInit => self.builtin_time_init(args, kwargs),
             BuiltinFunction::AsyncioRun => self.builtin_asyncio_run(args, kwargs),
             BuiltinFunction::AsyncioSleep => self.builtin_asyncio_sleep(args, kwargs),
             BuiltinFunction::AsyncioCreateTask => self.builtin_asyncio_create_task(args, kwargs),

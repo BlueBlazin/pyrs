@@ -1,4 +1,5 @@
 use super::super::*;
+use std::cell::Cell;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uchar, c_void};
 use std::ptr::{self, NonNull};
@@ -18,9 +19,21 @@ struct Sqlite3Blob {
     _private: [u8; 0],
 }
 
+#[repr(C)]
+struct Sqlite3Context {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+struct Sqlite3Value {
+    _private: [u8; 0],
+}
+
 type SqliteDestructor = Option<unsafe extern "C" fn(*mut c_void)>;
 type SqliteExecCallback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, *mut *mut c_char, *mut *mut c_char) -> c_int>;
+type SqliteFunctionCallback =
+    Option<unsafe extern "C" fn(*mut Sqlite3Context, c_int, *mut *mut Sqlite3Value)>;
 
 #[link(name = "sqlite3")]
 unsafe extern "C" {
@@ -51,6 +64,7 @@ unsafe extern "C" {
     fn sqlite3_column_bytes(stmt: *mut Sqlite3Stmt, col: c_int) -> c_int;
     fn sqlite3_column_name(stmt: *mut Sqlite3Stmt, col: c_int) -> *const c_char;
     fn sqlite3_bind_parameter_count(stmt: *mut Sqlite3Stmt) -> c_int;
+    fn sqlite3_bind_parameter_name(stmt: *mut Sqlite3Stmt, idx: c_int) -> *const c_char;
     fn sqlite3_bind_null(stmt: *mut Sqlite3Stmt, idx: c_int) -> c_int;
     fn sqlite3_bind_int64(stmt: *mut Sqlite3Stmt, idx: c_int, value: i64) -> c_int;
     fn sqlite3_bind_double(stmt: *mut Sqlite3Stmt, idx: c_int, value: f64) -> c_int;
@@ -103,7 +117,44 @@ unsafe extern "C" {
     fn sqlite3_db_config(db: *mut Sqlite3Db, op: c_int, ...) -> c_int;
     fn sqlite3_total_changes(db: *mut Sqlite3Db) -> c_int;
     fn sqlite3_get_autocommit(db: *mut Sqlite3Db) -> c_int;
-    fn sqlite3_errcode(db: *mut Sqlite3Db) -> c_int;
+    fn sqlite3_extended_errcode(db: *mut Sqlite3Db) -> c_int;
+    fn sqlite3_interrupt(db: *mut Sqlite3Db);
+    fn sqlite3_changes(db: *mut Sqlite3Db) -> c_int;
+    fn sqlite3_last_insert_rowid(db: *mut Sqlite3Db) -> i64;
+    fn sqlite3_create_function_v2(
+        db: *mut Sqlite3Db,
+        z_function_name: *const c_char,
+        n_arg: c_int,
+        e_text_rep: c_int,
+        p_app: *mut c_void,
+        x_func: SqliteFunctionCallback,
+        x_step: SqliteFunctionCallback,
+        x_final: SqliteFunctionCallback,
+        x_destroy: SqliteDestructor,
+    ) -> c_int;
+    fn sqlite3_user_data(context: *mut Sqlite3Context) -> *mut c_void;
+    fn sqlite3_value_type(value: *mut Sqlite3Value) -> c_int;
+    fn sqlite3_value_int64(value: *mut Sqlite3Value) -> i64;
+    fn sqlite3_value_double(value: *mut Sqlite3Value) -> f64;
+    fn sqlite3_value_text(value: *mut Sqlite3Value) -> *const c_uchar;
+    fn sqlite3_value_blob(value: *mut Sqlite3Value) -> *const c_void;
+    fn sqlite3_value_bytes(value: *mut Sqlite3Value) -> c_int;
+    fn sqlite3_result_null(context: *mut Sqlite3Context);
+    fn sqlite3_result_int64(context: *mut Sqlite3Context, value: i64);
+    fn sqlite3_result_double(context: *mut Sqlite3Context, value: f64);
+    fn sqlite3_result_text(
+        context: *mut Sqlite3Context,
+        value: *const c_char,
+        len: c_int,
+        destructor: SqliteDestructor,
+    );
+    fn sqlite3_result_blob(
+        context: *mut Sqlite3Context,
+        value: *const c_void,
+        len: c_int,
+        destructor: SqliteDestructor,
+    );
+    fn sqlite3_result_error(context: *mut Sqlite3Context, value: *const c_char, len: c_int);
 }
 
 const SQLITE_OK: c_int = 0;
@@ -113,6 +164,8 @@ const SQLITE_INTEGER: c_int = 1;
 const SQLITE_FLOAT: c_int = 2;
 const SQLITE_TEXT: c_int = 3;
 const SQLITE_BLOB: c_int = 4;
+const SQLITE_UTF8: c_int = 1;
+const SQLITE_DETERMINISTIC: c_int = 0x0000_0800;
 const SQLITE_ERROR: c_int = 1;
 const SQLITE_INTERNAL: c_int = 2;
 const SQLITE_PERM: c_int = 3;
@@ -149,6 +202,32 @@ const SQLITE_ROW_DESCRIPTION_ATTR: &str = "__pyrs_sqlite_row_description";
 const SQLITE_DBCONFIG_KNOWN_OPS: &[i64] = &[
     1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017,
 ];
+
+thread_local! {
+    static SQLITE_CALLBACK_VM: Cell<*mut Vm> = const { Cell::new(ptr::null_mut()) };
+}
+
+struct SqliteCallbackVmGuard {
+    previous: *mut Vm,
+}
+
+impl SqliteCallbackVmGuard {
+    fn enter(vm: &mut Vm) -> Self {
+        let previous = SQLITE_CALLBACK_VM.with(|slot| slot.replace(vm as *mut Vm));
+        Self { previous }
+    }
+}
+
+impl Drop for SqliteCallbackVmGuard {
+    fn drop(&mut self) {
+        SQLITE_CALLBACK_VM.with(|slot| slot.set(self.previous));
+    }
+}
+
+#[derive(Clone)]
+struct SqliteScalarFunctionCallbackState {
+    callable: Value,
+}
 
 #[derive(Debug)]
 pub(in crate::vm) struct SqliteConnectionState {
@@ -211,6 +290,11 @@ impl SqliteCursorState {
 struct SqliteQueryResult {
     rows: Vec<Value>,
     description: Option<Value>,
+}
+
+enum SqliteParams {
+    Positional(Vec<Value>),
+    Named(Value),
 }
 
 #[derive(Debug)]
@@ -283,6 +367,300 @@ fn sqlite_error(kind: &str, message: impl Into<String>) -> RuntimeError {
     RuntimeError::new(format!("{kind}: {}", message.into()))
 }
 
+fn sqlite_transient_destructor() -> SqliteDestructor {
+    // SAFETY: sqlite3 defines SQLITE_TRANSIENT as (sqlite3_destructor_type)-1.
+    unsafe { std::mem::transmute::<isize, SqliteDestructor>(-1isize) }
+}
+
+unsafe fn sqlite_result_error_message(context: *mut Sqlite3Context, message: &str) {
+    if let Ok(c_message) = CString::new(message) {
+        // SAFETY: context is provided by sqlite and c_message is null-terminated.
+        unsafe { sqlite3_result_error(context, c_message.as_ptr(), -1) };
+    } else {
+        let fallback = CString::new("sqlite callback error").expect("static string is valid");
+        // SAFETY: context is provided by sqlite and fallback is null-terminated.
+        unsafe { sqlite3_result_error(context, fallback.as_ptr(), -1) };
+    }
+}
+
+unsafe fn sqlite_value_to_vm_value(vm: &mut Vm, value: *mut Sqlite3Value) -> Value {
+    // SAFETY: value pointer is provided by sqlite for the current callback frame.
+    let value_type = unsafe { sqlite3_value_type(value) };
+    match value_type {
+        SQLITE_INTEGER => {
+            // SAFETY: sqlite conversion is valid for integer-typed value.
+            Value::Int(unsafe { sqlite3_value_int64(value) })
+        }
+        SQLITE_FLOAT => {
+            // SAFETY: sqlite conversion is valid for float-typed value.
+            Value::Float(unsafe { sqlite3_value_double(value) })
+        }
+        SQLITE_TEXT => {
+            // SAFETY: sqlite returns UTF-8 text pointer for SQLITE_TEXT.
+            let ptr = unsafe { sqlite3_value_text(value) };
+            if ptr.is_null() {
+                Value::None
+            } else {
+                // SAFETY: sqlite returns byte count for the same value pointer.
+                let len = unsafe { sqlite3_value_bytes(value) };
+                if len <= 0 {
+                    Value::Str(String::new())
+                } else {
+                    let len = usize::try_from(len).unwrap_or(0);
+                    // SAFETY: sqlite guarantees at least len bytes valid.
+                    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+                    Value::Str(String::from_utf8_lossy(bytes).to_string())
+                }
+            }
+        }
+        SQLITE_BLOB => {
+            // SAFETY: sqlite returns blob pointer and size for the same value.
+            let ptr = unsafe { sqlite3_value_blob(value) };
+            // SAFETY: sqlite conversion for byte length is valid.
+            let len = unsafe { sqlite3_value_bytes(value) };
+            if ptr.is_null() || len <= 0 {
+                vm.heap.alloc_bytes(Vec::new())
+            } else {
+                let len = usize::try_from(len).unwrap_or(0);
+                // SAFETY: sqlite guarantees at least len bytes valid.
+                let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+                vm.heap.alloc_bytes(bytes.to_vec())
+            }
+        }
+        _ => Value::None,
+    }
+}
+
+unsafe fn sqlite_result_from_vm_value(
+    vm: &mut Vm,
+    context: *mut Sqlite3Context,
+    value: Value,
+) -> Result<(), String> {
+    match value {
+        Value::None => {
+            // SAFETY: sqlite callback context is valid for result emission.
+            unsafe { sqlite3_result_null(context) };
+            Ok(())
+        }
+        Value::Bool(flag) => {
+            // SAFETY: sqlite callback context is valid for result emission.
+            unsafe { sqlite3_result_int64(context, if flag { 1 } else { 0 }) };
+            Ok(())
+        }
+        Value::Int(int_value) => {
+            // SAFETY: sqlite callback context is valid for result emission.
+            unsafe { sqlite3_result_int64(context, int_value) };
+            Ok(())
+        }
+        Value::BigInt(bigint_obj) => {
+            let int_value = bigint_obj
+                .to_i64()
+                .ok_or_else(|| "Python int too large to convert to SQLite INTEGER".to_string())?;
+            // SAFETY: sqlite callback context is valid for result emission.
+            unsafe { sqlite3_result_int64(context, int_value) };
+            Ok(())
+        }
+        Value::Float(float_value) => {
+            // SAFETY: sqlite callback context is valid for result emission.
+            unsafe { sqlite3_result_double(context, float_value) };
+            Ok(())
+        }
+        Value::Str(text) => {
+            let bytes = text.as_bytes();
+            let len = sqlite_len_to_c_int(bytes.len(), "sqlite callback text")
+                .map_err(|err| err.message)?;
+            // SAFETY: sqlite copies bytes because SQLITE_TRANSIENT is used.
+            unsafe {
+                sqlite3_result_text(
+                    context,
+                    bytes.as_ptr() as *const c_char,
+                    len,
+                    sqlite_transient_destructor(),
+                )
+            };
+            Ok(())
+        }
+        Value::Bytes(bytes_obj) => {
+            let Object::Bytes(bytes) = &*bytes_obj.kind() else {
+                return Err("user-defined function returned unsupported value".to_string());
+            };
+            let len =
+                sqlite_len_to_c_int(bytes.len(), "sqlite callback blob").map_err(|err| err.message)?;
+            // SAFETY: sqlite copies bytes because SQLITE_TRANSIENT is used.
+            unsafe {
+                sqlite3_result_blob(
+                    context,
+                    bytes.as_ptr() as *const c_void,
+                    len,
+                    sqlite_transient_destructor(),
+                )
+            };
+            Ok(())
+        }
+        Value::ByteArray(bytearray_obj) => {
+            let Object::ByteArray(bytes) = &*bytearray_obj.kind() else {
+                return Err("user-defined function returned unsupported value".to_string());
+            };
+            let len =
+                sqlite_len_to_c_int(bytes.len(), "sqlite callback blob").map_err(|err| err.message)?;
+            // SAFETY: sqlite copies bytes because SQLITE_TRANSIENT is used.
+            unsafe {
+                sqlite3_result_blob(
+                    context,
+                    bytes.as_ptr() as *const c_void,
+                    len,
+                    sqlite_transient_destructor(),
+                )
+            };
+            Ok(())
+        }
+        Value::MemoryView(_) => {
+            let bytes = vm
+                .value_to_bytes_payload(value)
+                .map_err(|_| "user-defined function returned unsupported value".to_string())?;
+            let len =
+                sqlite_len_to_c_int(bytes.len(), "sqlite callback blob").map_err(|err| err.message)?;
+            // SAFETY: sqlite copies bytes because SQLITE_TRANSIENT is used.
+            unsafe {
+                sqlite3_result_blob(
+                    context,
+                    bytes.as_ptr() as *const c_void,
+                    len,
+                    sqlite_transient_destructor(),
+                )
+            };
+            Ok(())
+        }
+        _ => Err("user-defined function returned unsupported value".to_string()),
+    }
+}
+
+unsafe extern "C" fn sqlite_scalar_function_destroy(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: sqlite invokes destroy exactly once for the pointer provided
+    // in sqlite3_create_function_v2 registration.
+    unsafe {
+        drop(Box::from_raw(
+            ptr as *mut SqliteScalarFunctionCallbackState
+        ));
+    }
+}
+
+unsafe extern "C" fn sqlite_scalar_function_callback(
+    context: *mut Sqlite3Context,
+    argc: c_int,
+    argv: *mut *mut Sqlite3Value,
+) {
+    if context.is_null() {
+        return;
+    }
+    // SAFETY: sqlite provided user data pointer for this callback registration.
+    let callback_state = unsafe { sqlite3_user_data(context) as *mut SqliteScalarFunctionCallbackState };
+    if callback_state.is_null() {
+        // SAFETY: context is valid for result emission.
+        unsafe { sqlite3_result_null(context) };
+        return;
+    }
+
+    let vm_ptr = SQLITE_CALLBACK_VM.with(|slot| slot.get());
+    if vm_ptr.is_null() {
+        // SAFETY: context is valid for result emission.
+        unsafe { sqlite_result_error_message(context, "sqlite callback VM context is unavailable") };
+        return;
+    }
+
+    // SAFETY: callback executes while VM guard keeps pointer valid.
+    let vm = unsafe { &mut *vm_ptr };
+    let callback_state = unsafe { &*callback_state };
+    let argc = usize::try_from(argc).unwrap_or(0);
+    let mut args = Vec::with_capacity(argc);
+    for index in 0..argc {
+        // SAFETY: sqlite guarantees argv has argc elements.
+        let value_ptr = unsafe { *argv.add(index) };
+        // SAFETY: pointer originates from sqlite callback argument array.
+        args.push(unsafe { sqlite_value_to_vm_value(vm, value_ptr) });
+    }
+
+    let outcome =
+        vm.call_internal_preserving_caller(callback_state.callable.clone(), args, HashMap::new());
+    match outcome {
+        Ok(InternalCallOutcome::Value(value)) => {
+            // SAFETY: context is valid for result emission.
+            if let Err(message) = unsafe { sqlite_result_from_vm_value(vm, context, value) } {
+                // SAFETY: context is valid for result emission.
+                unsafe { sqlite_result_error_message(context, &message) };
+            }
+        }
+        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+            let message = vm
+                .runtime_error_from_active_exception("sqlite callback failed")
+                .message;
+            vm.clear_active_exception();
+            // SAFETY: context is valid for result emission.
+            unsafe { sqlite_result_error_message(context, &message) };
+        }
+        Err(err) => {
+            // SAFETY: context is valid for result emission.
+            unsafe { sqlite_result_error_message(context, &err.message) };
+        }
+    }
+}
+
+fn sqlite_error_name_for_code(code: c_int) -> &'static str {
+    match code {
+        SQLITE_OK => "SQLITE_OK",
+        SQLITE_ERROR => "SQLITE_ERROR",
+        SQLITE_INTERNAL => "SQLITE_INTERNAL",
+        SQLITE_PERM => "SQLITE_PERM",
+        SQLITE_ABORT => "SQLITE_ABORT",
+        SQLITE_BUSY => "SQLITE_BUSY",
+        SQLITE_LOCKED => "SQLITE_LOCKED",
+        SQLITE_NOMEM => "SQLITE_NOMEM",
+        SQLITE_READONLY => "SQLITE_READONLY",
+        SQLITE_INTERRUPT => "SQLITE_INTERRUPT",
+        SQLITE_IOERR => "SQLITE_IOERR",
+        SQLITE_CORRUPT => "SQLITE_CORRUPT",
+        SQLITE_NOTFOUND => "SQLITE_NOTFOUND",
+        SQLITE_FULL => "SQLITE_FULL",
+        SQLITE_CANTOPEN => "SQLITE_CANTOPEN",
+        SQLITE_PROTOCOL => "SQLITE_PROTOCOL",
+        SQLITE_EMPTY => "SQLITE_EMPTY",
+        SQLITE_SCHEMA => "SQLITE_SCHEMA",
+        SQLITE_TOOBIG => "SQLITE_TOOBIG",
+        SQLITE_CONSTRAINT => "SQLITE_CONSTRAINT",
+        SQLITE_MISMATCH => "SQLITE_MISMATCH",
+        SQLITE_MISUSE => "SQLITE_MISUSE",
+        SQLITE_RANGE => "SQLITE_RANGE",
+        275 => "SQLITE_CONSTRAINT_CHECK",
+        531 => "SQLITE_CONSTRAINT_COMMITHOOK",
+        787 => "SQLITE_CONSTRAINT_FOREIGNKEY",
+        1043 => "SQLITE_CONSTRAINT_FUNCTION",
+        1299 => "SQLITE_CONSTRAINT_NOTNULL",
+        1555 => "SQLITE_CONSTRAINT_PRIMARYKEY",
+        1811 => "SQLITE_CONSTRAINT_TRIGGER",
+        2067 => "SQLITE_CONSTRAINT_UNIQUE",
+        2323 => "SQLITE_CONSTRAINT_VTAB",
+        2579 => "SQLITE_CONSTRAINT_ROWID",
+        526 => "SQLITE_CANTOPEN_ISDIR",
+        270 => "SQLITE_CANTOPEN_NOTEMPDIR",
+        782 => "SQLITE_CANTOPEN_FULLPATH",
+        1038 => "SQLITE_CANTOPEN_CONVPATH",
+        1294 => "SQLITE_CANTOPEN_DIRTYWAL",
+        1550 => "SQLITE_CANTOPEN_SYMLINK",
+        _ => "SQLITE_ERROR",
+    }
+}
+
+fn sqlite_error_with_code(kind: &str, message: impl Into<String>, code: c_int) -> RuntimeError {
+    let message = message.into();
+    let name = sqlite_error_name_for_code(code);
+    RuntimeError::new(format!(
+        "{kind}: {message}\n__pyrs_sqlite_meta__:{code}:{name}"
+    ))
+}
+
 fn sqlite_error_kind_for_code(code: c_int, default_kind: &str) -> &'static str {
     match code {
         SQLITE_INTERNAL | SQLITE_NOTFOUND => "InternalError",
@@ -308,11 +686,12 @@ fn sqlite_error_kind_for_code(code: c_int, default_kind: &str) -> &'static str {
 }
 
 fn sqlite_error_from_db_status(db: *mut Sqlite3Db, default_kind: &str) -> RuntimeError {
-    // SAFETY: sqlite3_errcode accepts a valid sqlite3* handle.
-    let code = unsafe { sqlite3_errcode(db) };
+    // SAFETY: sqlite3_extended_errcode accepts a valid sqlite3* handle.
+    let code = unsafe { sqlite3_extended_errcode(db) };
     let message = sqlite_last_error_message(db);
-    let kind = sqlite_error_kind_for_code(code, default_kind);
-    sqlite_error(kind, message)
+    let primary = code & 0xff;
+    let kind = sqlite_error_kind_for_code(primary, default_kind);
+    sqlite_error_with_code(kind, message, code)
 }
 
 fn sqlite_last_error_message(db: *mut Sqlite3Db) -> String {
@@ -340,9 +719,44 @@ fn sqlite_has_extra_sql(tail: *const c_char) -> bool {
         return false;
     }
     // SAFETY: tail points into the SQL text buffer passed to sqlite3_prepare_v2.
-    unsafe { CStr::from_ptr(tail).to_bytes() }
-        .iter()
-        .any(|byte| !byte.is_ascii_whitespace())
+    let tail_bytes = unsafe { CStr::from_ptr(tail).to_bytes() };
+    let tail_text = String::from_utf8_lossy(tail_bytes);
+    sqlite_lstrip_sql(&tail_text).is_some()
+}
+
+fn sqlite_lstrip_sql(mut sql: &str) -> Option<&str> {
+    while !sql.is_empty() {
+        let bytes = sql.as_bytes();
+        match bytes[0] {
+            b' ' | b'\t' | b'\n' | b'\r' | 0x0c => {
+                sql = &sql[1..];
+            }
+            b'-' if bytes.len() >= 2 && bytes[1] == b'-' => {
+                let Some(newline) = sql.find('\n') else {
+                    return None;
+                };
+                sql = &sql[(newline + 1)..];
+            }
+            b'/' if bytes.len() >= 2 && bytes[1] == b'*' => {
+                let Some(end_comment) = sql.find("*/") else {
+                    return None;
+                };
+                sql = &sql[(end_comment + 2)..];
+            }
+            _ => return Some(sql),
+        }
+    }
+    None
+}
+
+fn sqlite_is_dml_statement(sql: &str) -> bool {
+    let Some(head) = sqlite_lstrip_sql(sql) else {
+        return false;
+    };
+    (head.len() >= 6 && head[..6].eq_ignore_ascii_case("insert"))
+        || (head.len() >= 6 && head[..6].eq_ignore_ascii_case("update"))
+        || (head.len() >= 6 && head[..6].eq_ignore_ascii_case("delete"))
+        || (head.len() >= 7 && head[..7].eq_ignore_ascii_case("replace"))
 }
 
 fn sqlite_normalize_isolation_level(level: Value) -> Result<Value, RuntimeError> {
@@ -363,6 +777,31 @@ fn sqlite_normalize_isolation_level(level: Value) -> Result<Value, RuntimeError>
             "isolation_level must be str or None",
         )),
     }
+}
+
+fn sqlite_non_negative_u32(
+    value: Value,
+    type_message: &str,
+    value_message: &str,
+    overflow_message: &str,
+) -> Result<i64, RuntimeError> {
+    let number = match value_to_int(value) {
+        Ok(number) => number,
+        Err(err)
+            if err.message.contains("integer overflow")
+                || classify_runtime_error(&err.message) == "OverflowError" =>
+        {
+            return Err(sqlite_error("OverflowError", overflow_message));
+        }
+        Err(_) => return Err(sqlite_error("TypeError", type_message)),
+    };
+    if number < 0 {
+        return Err(sqlite_error("ValueError", value_message));
+    }
+    if number > i64::from(u32::MAX) {
+        return Err(sqlite_error("OverflowError", overflow_message));
+    }
+    Ok(number)
 }
 
 fn sqlite_connection_readonly_attr_error(name: &str) -> RuntimeError {
@@ -519,6 +958,43 @@ impl Vm {
         }
     }
 
+    fn sqlite_maybe_begin_legacy_transaction(
+        &mut self,
+        connection_id: u64,
+        sql: &str,
+    ) -> Result<(), RuntimeError> {
+        if !sqlite_is_dml_statement(sql) {
+            return Ok(());
+        }
+        let connection = self
+            .heap
+            .find_object_by_id(connection_id)
+            .ok_or_else(|| sqlite_error("ProgrammingError", "invalid sqlite connection"))?;
+        let isolation_level =
+            Self::instance_attr_get(&connection, SQLITE_CONNECTION_ISOLATION_LEVEL_ATTR)
+                .unwrap_or_else(|| Value::Str(String::new()));
+        let Value::Str(isolation_level) = isolation_level else {
+            return Ok(());
+        };
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        // SAFETY: db is a valid sqlite handle.
+        if unsafe { sqlite3_get_autocommit(db) == 0 } {
+            return Ok(());
+        }
+
+        let begin_sql = if isolation_level.is_empty() {
+            "BEGIN".to_string()
+        } else {
+            format!("BEGIN {isolation_level}")
+        };
+        let _ = self.sqlite_execute_query(
+            connection_id,
+            &begin_sql,
+            SqliteParams::Positional(Vec::new()),
+        )?;
+        Ok(())
+    }
+
     fn sqlite_limit_category(value: Value) -> Result<c_int, RuntimeError> {
         let category = value_to_int(value)
             .map_err(|_| sqlite_error("TypeError", "'category' must be an integer"))?;
@@ -633,31 +1109,88 @@ impl Vm {
         }
     }
 
-    fn sqlite_extract_params(&self, value: Value) -> Result<Vec<Value>, RuntimeError> {
+    fn sqlite_extract_params(&mut self, value: Value) -> Result<SqliteParams, RuntimeError> {
         match value {
-            Value::None => Ok(Vec::new()),
+            Value::None => Ok(SqliteParams::Positional(Vec::new())),
             Value::Tuple(obj) => match &*obj.kind() {
-                Object::Tuple(items) => Ok(items.clone()),
+                Object::Tuple(items) => Ok(SqliteParams::Positional(items.clone())),
                 _ => Err(sqlite_error(
                     "ProgrammingError",
                     "parameters are of unsupported type",
                 )),
             },
             Value::List(obj) => match &*obj.kind() {
-                Object::List(items) => Ok(items.clone()),
+                Object::List(items) => Ok(SqliteParams::Positional(items.clone())),
                 _ => Err(sqlite_error(
                     "ProgrammingError",
                     "parameters are of unsupported type",
                 )),
             },
-            Value::Dict(_) => Err(sqlite_error(
-                "ProgrammingError",
-                "named parameters are not supported yet",
-            )),
-            _ => Err(sqlite_error(
-                "ProgrammingError",
-                "parameters are of unsupported type",
-            )),
+            Value::Dict(obj) => Ok(SqliteParams::Named(Value::Dict(obj))),
+            candidate => {
+                if matches!(
+                    candidate,
+                    Value::Bool(_)
+                        | Value::Int(_)
+                        | Value::BigInt(_)
+                        | Value::Float(_)
+                        | Value::Str(_)
+                        | Value::Bytes(_)
+                        | Value::ByteArray(_)
+                ) {
+                    Err(sqlite_error(
+                        "ProgrammingError",
+                        "parameters are of unsupported type",
+                    ))
+                } else {
+                    if let Value::Instance(instance) = &candidate {
+                        if self.instance_backing_dict(instance).is_some() {
+                            return Ok(SqliteParams::Named(candidate));
+                        }
+                    }
+                    let has_keys = matches!(
+                        self.builtin_hasattr(
+                            vec![candidate.clone(), Value::Str("keys".to_string())],
+                            HashMap::new(),
+                        )?,
+                        Value::Bool(true)
+                    );
+                    if has_keys {
+                        return Ok(SqliteParams::Named(candidate));
+                    }
+                    let length = match self.builtin_len(vec![candidate.clone()], HashMap::new()) {
+                        Ok(value) => value_to_int(value).map_err(|_| {
+                            sqlite_error("ProgrammingError", "parameters are of unsupported type")
+                        })?,
+                        Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+                            return Err(sqlite_error(
+                                "ProgrammingError",
+                                "parameters are of unsupported type",
+                            ));
+                        }
+                        Err(err) => return Err(err),
+                    };
+                    if length < 0 {
+                        return Err(sqlite_error(
+                            "ProgrammingError",
+                            "parameters are of unsupported type",
+                        ));
+                    }
+                    let mut values = Vec::with_capacity(length as usize);
+                    for idx in 0..length {
+                        values.push(
+                            self.getitem_value(candidate.clone(), Value::Int(idx))
+                                .map_err(|_| {
+                                    sqlite_error(
+                                        "ProgrammingError",
+                                        "parameters are of unsupported type",
+                                    )
+                                })?,
+                        );
+                    }
+                    Ok(SqliteParams::Positional(values))
+                }
+            }
         }
     }
 
@@ -911,7 +1444,7 @@ impl Vm {
         &mut self,
         connection_id: u64,
         sql: &str,
-        params: Vec<Value>,
+        params: SqliteParams,
     ) -> Result<SqliteQueryResult, RuntimeError> {
         let db = self.sqlite_open_db_handle(connection_id)?;
         // Match CPython statement.c preflight: SQL length over the sqlite limit
@@ -953,54 +1486,218 @@ impl Vm {
         let statement = PreparedStatement { raw: stmt_ptr };
         // SAFETY: statement pointer is valid while statement wrapper is alive.
         let expected_params = unsafe { sqlite3_bind_parameter_count(statement.as_ptr()) };
-        if expected_params != params.len() as i32 {
-            return Err(sqlite_error(
-                "ProgrammingError",
-                format!(
-                    "Incorrect number of bindings supplied. The current statement uses {expected_params}, and there are {} supplied.",
-                    params.len()
-                ),
-            ));
-        }
 
         let mut text_buffers = Vec::new();
         let mut blob_buffers = Vec::new();
-        for (index, value) in params.iter().enumerate() {
-            self.sqlite_bind_value(
-                db,
-                statement.as_ptr(),
-                index,
-                value,
-                &mut text_buffers,
-                &mut blob_buffers,
-            )?;
+        match params {
+            SqliteParams::Positional(values) => {
+                for idx in 1..=expected_params {
+                    // SAFETY: statement pointer is valid while statement wrapper is alive.
+                    let raw_name = unsafe { sqlite3_bind_parameter_name(statement.as_ptr(), idx) };
+                    if raw_name.is_null() {
+                        continue;
+                    }
+                    // SAFETY: sqlite returns a valid null-terminated parameter name for this index.
+                    let raw_name = unsafe { CStr::from_ptr(raw_name) }.to_string_lossy();
+                    if !raw_name.starts_with('?') {
+                        return Err(sqlite_error(
+                            "ProgrammingError",
+                            format!(
+                                "Binding {idx} ('{raw_name}') is a named parameter, but you supplied a sequence."
+                            ),
+                        ));
+                    }
+                }
+                if expected_params != values.len() as i32 {
+                    return Err(sqlite_error(
+                        "ProgrammingError",
+                        format!(
+                            "Incorrect number of bindings supplied. The current statement uses {expected_params}, and there are {} supplied.",
+                            values.len()
+                        ),
+                    ));
+                }
+                for (index, value) in values.iter().enumerate() {
+                    self.sqlite_bind_value(
+                        db,
+                        statement.as_ptr(),
+                        index,
+                        value,
+                        &mut text_buffers,
+                        &mut blob_buffers,
+                    )?;
+                }
+            }
+            SqliteParams::Named(mapping) => {
+                for idx in 1..=expected_params {
+                    // SAFETY: statement pointer is valid while statement wrapper is alive.
+                    let raw_name = unsafe { sqlite3_bind_parameter_name(statement.as_ptr(), idx) };
+                    if raw_name.is_null() {
+                        return Err(sqlite_error(
+                            "ProgrammingError",
+                            format!(
+                                "Binding {idx} has no name, but you supplied a dictionary (which has only names)."
+                            ),
+                        ));
+                    }
+                    // SAFETY: sqlite returns a valid null-terminated parameter name for this index.
+                    let raw_name = unsafe { CStr::from_ptr(raw_name) }.to_string_lossy();
+                    let key = raw_name
+                        .strip_prefix(':')
+                        .or_else(|| raw_name.strip_prefix('@'))
+                        .or_else(|| raw_name.strip_prefix('$'))
+                        .unwrap_or(raw_name.as_ref());
+                    let value = if let Value::Dict(dict_obj) = &mapping {
+                        dict_get_value(dict_obj, &Value::Str(key.to_string()))
+                    } else {
+                        if let Some(getitem) =
+                            self.lookup_bound_special_method(&mapping, "__getitem__")?
+                        {
+                            match self.call_internal(
+                                getitem,
+                                vec![Value::Str(key.to_string())],
+                                HashMap::new(),
+                            ) {
+                                Ok(InternalCallOutcome::Value(value)) => Some(value),
+                                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                                    if self.active_exception_is("KeyError") {
+                                        self.clear_active_exception();
+                                        None
+                                    } else {
+                                        return Err(self.runtime_error_from_active_exception(
+                                            "__getitem__() failed",
+                                        ));
+                                    }
+                                }
+                                Err(err) if classify_runtime_error(&err.message) == "KeyError" => {
+                                    None
+                                }
+                                Err(err) => return Err(err),
+                            }
+                        } else if let Value::Instance(instance) = &mapping {
+                            if let Some(backing_dict) = self.instance_backing_dict(instance) {
+                                if let Some(value) =
+                                    dict_get_value(&backing_dict, &Value::Str(key.to_string()))
+                                {
+                                    Some(value)
+                                } else if let Some(missing) =
+                                    self.lookup_bound_special_method(&mapping, "__missing__")?
+                                {
+                                    match self.call_internal(
+                                        missing,
+                                        vec![Value::Str(key.to_string())],
+                                        HashMap::new(),
+                                    ) {
+                                        Ok(InternalCallOutcome::Value(value)) => Some(value),
+                                        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                                            if self.active_exception_is("KeyError") {
+                                                self.clear_active_exception();
+                                                None
+                                            } else {
+                                                return Err(self
+                                                    .runtime_error_from_active_exception(
+                                                        "__missing__() failed",
+                                                    ));
+                                            }
+                                        }
+                                        Err(err)
+                                            if classify_runtime_error(&err.message)
+                                                == "KeyError" =>
+                                        {
+                                            None
+                                        }
+                                        Err(err) => return Err(err),
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                return Err(sqlite_error(
+                                    "ProgrammingError",
+                                    "parameters are of unsupported type",
+                                ));
+                            }
+                        } else {
+                            return Err(sqlite_error(
+                                "ProgrammingError",
+                                "parameters are of unsupported type",
+                            ));
+                        }
+                    };
+                    let Some(value) = value else {
+                        return Err(sqlite_error(
+                            "ProgrammingError",
+                            format!("You did not supply a value for binding parameter {raw_name}."),
+                        ));
+                    };
+                    self.sqlite_bind_value(
+                        db,
+                        statement.as_ptr(),
+                        usize::try_from(idx - 1).expect("sqlite bind index should be non-negative"),
+                        &value,
+                        &mut text_buffers,
+                        &mut blob_buffers,
+                    )?;
+                }
+            }
         }
 
         // SAFETY: statement pointer is valid while statement wrapper is alive.
         let column_count = unsafe { sqlite3_column_count(statement.as_ptr()) };
         let description = self.sqlite_collect_description(statement.as_ptr(), column_count);
         let mut rows = Vec::new();
-        loop {
-            // SAFETY: statement pointer is valid while statement wrapper is alive.
-            let step_rc = unsafe { sqlite3_step(statement.as_ptr()) };
-            match step_rc {
-                SQLITE_ROW => {
-                    rows.push(self.sqlite_collect_row(statement.as_ptr(), column_count)?);
-                }
-                SQLITE_DONE => break,
-                _ => {
-                    return Err(sqlite_error_from_db_status(db, "OperationalError"));
+        {
+            let _callback_vm_guard = SqliteCallbackVmGuard::enter(self);
+            loop {
+                // SAFETY: statement pointer is valid while statement wrapper is alive.
+                let step_rc = unsafe { sqlite3_step(statement.as_ptr()) };
+                match step_rc {
+                    SQLITE_ROW => {
+                        rows.push(self.sqlite_collect_row(statement.as_ptr(), column_count)?);
+                    }
+                    SQLITE_DONE => break,
+                    _ => {
+                        return Err(sqlite_error_from_db_status(db, "OperationalError"));
+                    }
                 }
             }
         }
         Ok(SqliteQueryResult { rows, description })
     }
 
-    fn sqlite_execute_script(&self, connection_id: u64, script: &str) -> Result<(), RuntimeError> {
+    fn sqlite_execute_script(
+        &mut self,
+        connection_id: u64,
+        script: &str,
+    ) -> Result<(), RuntimeError> {
         let db = self.sqlite_open_db_handle(connection_id)?;
+        // Match CPython statement.c preflight for oversized script payloads.
+        // SAFETY: db is valid and the category id is a valid sqlite constant.
+        let max_sql_length = unsafe { sqlite3_limit(db, SQLITE_LIMIT_SQL_LENGTH_ID, -1) };
+        if max_sql_length >= 0 && script.len() > max_sql_length as usize {
+            return Err(sqlite_error("DataError", "query string is too large"));
+        }
+        if script.chars().any(|ch| ch == '\u{fffd}') {
+            return Err(sqlite_error("UnicodeEncodeError", "surrogates not allowed"));
+        }
+        // CPython executescript() commits an active transaction in legacy
+        // transaction mode before running the script payload.
+        // SAFETY: db is valid for autocommit and exec checks.
+        if unsafe { sqlite3_get_autocommit(db) == 0 } {
+            let commit_sql = CString::new("COMMIT").expect("static SQL should be valid C string");
+            let mut err_out: *mut c_char = ptr::null_mut();
+            // SAFETY: db is live and commit_sql is a valid C string.
+            let commit_rc = unsafe {
+                sqlite3_exec(db, commit_sql.as_ptr(), None, ptr::null_mut(), &mut err_out)
+            };
+            if commit_rc != SQLITE_OK {
+                return Err(sqlite_error_from_db_status(db, "OperationalError"));
+            }
+        }
         let sql_c = CString::new(script.as_bytes())
-            .map_err(|_| sqlite_error("ProgrammingError", "SQL contains embedded NUL"))?;
+            .map_err(|_| sqlite_error("ValueError", "embedded null character"))?;
         let mut err_out: *mut c_char = ptr::null_mut();
+        let _callback_vm_guard = SqliteCallbackVmGuard::enter(self);
         // SAFETY: db is live, sql_c is valid, callback is null, and err_out is a valid out pointer.
         let rc = unsafe { sqlite3_exec(db, sql_c.as_ptr(), None, ptr::null_mut(), &mut err_out) };
         if rc == SQLITE_OK {
@@ -1078,6 +1775,29 @@ impl Vm {
             ));
         }
 
+        if let Some(factory_callable) = factory.clone() {
+            if !matches!(factory_callable, Value::Class(_)) {
+                if !self.is_callable_value(&factory_callable) {
+                    return Err(sqlite_error(
+                        "TypeError",
+                        "factory must be a callable or Connection subclass",
+                    ));
+                }
+                return match self.call_internal_preserving_caller(
+                    factory_callable,
+                    vec![database],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => Ok(value),
+                    InternalCallOutcome::CallerExceptionHandled => Err(
+                        self.runtime_error_from_active_exception(
+                            "sqlite connect factory callable failed",
+                        ),
+                    ),
+                };
+            }
+        }
+
         let database = Self::sqlite_extract_database(database)?;
         let db_path = CString::new(database.as_bytes())
             .map_err(|_| sqlite_error("ProgrammingError", "database path contains embedded NUL"))?;
@@ -1104,23 +1824,12 @@ impl Vm {
                     let _ = sqlite3_close_v2(handle);
                 }
             }
-            return Err(sqlite_error("OperationalError", message));
+            return Err(sqlite_error_with_code("OperationalError", message, open_rc));
         }
 
         let class = match factory {
             Some(Value::Class(class_ref)) => class_ref,
-            Some(_) => {
-                if !handle.is_null() {
-                    // SAFETY: handle is live and owned by this method before state insertion.
-                    unsafe {
-                        let _ = sqlite3_close_v2(handle);
-                    }
-                }
-                return Err(sqlite_error(
-                    "TypeError",
-                    "factory must be a Connection subclass",
-                ));
-            }
+            Some(_) => unreachable!("non-class factory is handled before sqlite open"),
             None => self.sqlite_connection_class()?,
         };
         let connection = self.alloc_instance_for_class(&class);
@@ -1257,7 +1966,7 @@ impl Vm {
                 SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR,
                 Value::Bool(false),
             );
-            return Err(sqlite_error("OperationalError", message));
+            return Err(sqlite_error_with_code("OperationalError", message, open_rc));
         }
 
         self.sqlite_connections
@@ -1467,6 +2176,12 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("row_factory".to_string(), row_factory);
+            instance_data
+                .attrs
+                .insert("lastrowid".to_string(), Value::None);
+            instance_data
+                .attrs
+                .insert("connection".to_string(), args[0].clone());
         }
         self.sqlite_cursors
             .insert(cursor.id(), SqliteCursorState::new(connection_id));
@@ -1749,7 +2464,11 @@ impl Vm {
             ));
         }
         let connection_id = self.sqlite_connection_id_from_value(&args[0], "commit")?;
-        match self.sqlite_execute_query(connection_id, "COMMIT", Vec::new()) {
+        match self.sqlite_execute_query(
+            connection_id,
+            "COMMIT",
+            SqliteParams::Positional(Vec::new()),
+        ) {
             Ok(_) => Ok(Value::None),
             Err(err) if err.message.contains("no transaction is active") => Ok(Value::None),
             Err(err) => Err(err),
@@ -1768,11 +2487,35 @@ impl Vm {
             ));
         }
         let connection_id = self.sqlite_connection_id_from_value(&args[0], "rollback")?;
-        match self.sqlite_execute_query(connection_id, "ROLLBACK", Vec::new()) {
+        match self.sqlite_execute_query(
+            connection_id,
+            "ROLLBACK",
+            SqliteParams::Positional(Vec::new()),
+        ) {
             Ok(_) => Ok(Value::None),
             Err(err) if err.message.contains("no transaction is active") => Ok(Value::None),
             Err(err) => Err(err),
         }
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_interrupt(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Connection.interrupt() expects no arguments",
+            ));
+        }
+        let connection_id = self.sqlite_connection_id_from_value(&args[0], "interrupt")?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        // SAFETY: db is a valid sqlite handle and sqlite3_interrupt has no return value.
+        unsafe {
+            sqlite3_interrupt(db);
+        }
+        Ok(Value::None)
     }
 
     pub(in crate::vm) fn builtin_sqlite_connection_create_function(
@@ -1788,7 +2531,7 @@ impl Vm {
         }
         let receiver = args.remove(0);
         let connection_id = self.sqlite_connection_id_from_value(&receiver, "create_function")?;
-        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
         let name = args.remove(0);
         let num_params = args.remove(0);
         let func = args.remove(0);
@@ -1798,33 +2541,87 @@ impl Vm {
                 "create_function() takes 3 positional arguments",
             ));
         }
-        match name {
-            Value::Str(_) => {}
+        let name = match name {
+            Value::Str(name) => name,
             _ => {
-                return Err(sqlite_error(
-                    "TypeError",
-                    "create_function() name must be str",
-                ));
+                return Err(sqlite_error("TypeError", "create_function() name must be str"));
             }
-        }
-        let _ = value_to_int(num_params).map_err(|_| {
+        };
+        let num_params = value_to_int(num_params).map_err(|_| {
             sqlite_error(
                 "TypeError",
                 "create_function() num_params must be an integer",
             )
         })?;
+        if !(-1..=127).contains(&num_params) {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "create_function() parameter count out of range",
+            ));
+        }
         if !matches!(func, Value::None) && !self.is_callable_value(&func) {
             return Err(sqlite_error(
                 "TypeError",
                 "create_function() expected a callable or None",
             ));
         }
-        if let Some(_deterministic) = kwargs.remove("deterministic") {}
+        let deterministic = kwargs
+            .remove("deterministic")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
         if let Some(unexpected) = kwargs.keys().next() {
             return Err(sqlite_error(
                 "TypeError",
                 format!("create_function() got an unexpected keyword argument '{unexpected}'"),
             ));
+        }
+        let name_c = CString::new(name.as_bytes())
+            .map_err(|_| sqlite_error("ProgrammingError", "function name contains embedded NUL"))?;
+        let mut text_rep = SQLITE_UTF8;
+        if deterministic {
+            text_rep |= SQLITE_DETERMINISTIC;
+        }
+
+        let rc = if matches!(func, Value::None) {
+            // SAFETY: db is valid and name_c points to a valid C string.
+            unsafe {
+                sqlite3_create_function_v2(
+                    db,
+                    name_c.as_ptr(),
+                    num_params as c_int,
+                    text_rep,
+                    ptr::null_mut(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+        } else {
+            let callback_state = Box::new(SqliteScalarFunctionCallbackState { callable: func });
+            let callback_ptr = Box::into_raw(callback_state) as *mut c_void;
+            // SAFETY: db is valid and callback pointer remains valid until sqlite invokes destroy.
+            let rc = unsafe {
+                sqlite3_create_function_v2(
+                    db,
+                    name_c.as_ptr(),
+                    num_params as c_int,
+                    text_rep,
+                    callback_ptr,
+                    Some(sqlite_scalar_function_callback),
+                    None,
+                    None,
+                    Some(sqlite_scalar_function_destroy),
+                )
+            };
+            if rc != SQLITE_OK {
+                // SAFETY: sqlite did not take ownership on failed registration.
+                unsafe { sqlite_scalar_function_destroy(callback_ptr) };
+            }
+            rc
+        };
+        if rc != SQLITE_OK {
+            return Err(sqlite_error_from_db_status(db, "OperationalError"));
         }
         Ok(Value::None)
     }
@@ -2906,6 +3703,78 @@ impl Vm {
         Ok(Value::Bool(desc_equal && data_equal))
     }
 
+    pub(in crate::vm) fn builtin_sqlite_cursor_setattr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Cursor.__setattr__() expects three arguments",
+            ));
+        }
+        let receiver = args.remove(0);
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(sqlite_error("TypeError", "attribute name must be string")),
+        };
+        let value = args.remove(0);
+        if name == "arraysize" {
+            let parsed = sqlite_non_negative_u32(
+                value,
+                "arraysize must be an integer",
+                "arraysize must be non-negative",
+                "arraysize value is too large",
+            )?;
+            return self.builtin_object_setattr(
+                vec![receiver, Value::Str(name), Value::Int(parsed)],
+                HashMap::new(),
+            );
+        }
+        self.builtin_object_setattr(vec![receiver, Value::Str(name), value], HashMap::new())
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_cursor_setinputsizes(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Cursor.setinputsizes() expects one argument",
+            ));
+        }
+        let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "setinputsizes")?;
+        if let Some(state) = self.sqlite_cursors.get(&cursor_id) {
+            if state.closed {
+                return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
+            }
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_cursor_setoutputsize(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(sqlite_error(
+                "TypeError",
+                "Cursor.setoutputsize() expects one or two arguments",
+            ));
+        }
+        let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "setoutputsize")?;
+        if let Some(state) = self.sqlite_cursors.get(&cursor_id) {
+            if state.closed {
+                return Err(self.sqlite_cursor_closed_runtime_error(state.connection_id));
+            }
+        }
+        Ok(Value::None)
+    }
+
     pub(in crate::vm) fn builtin_sqlite_cursor_execute(
         &mut self,
         mut args: Vec<Value>,
@@ -2935,7 +3804,7 @@ impl Vm {
             }
         };
         let params = if args.is_empty() {
-            Vec::new()
+            SqliteParams::Positional(Vec::new())
         } else {
             self.sqlite_extract_params(args.remove(0))?
         };
@@ -2949,7 +3818,18 @@ impl Vm {
             }
             state.connection_id
         };
+        let is_dml = sqlite_is_dml_statement(&sql);
+        self.sqlite_maybe_begin_legacy_transaction(connection_id, &sql)?;
         let query_result = self.sqlite_execute_query(connection_id, &sql, params)?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        // SAFETY: db is a valid sqlite handle.
+        let rowcount = if is_dml {
+            unsafe { sqlite3_changes(db) as i64 }
+        } else {
+            -1
+        };
+        // SAFETY: db is a valid sqlite handle.
+        let lastrowid = unsafe { sqlite3_last_insert_rowid(db) };
         if let Some(state) = self.sqlite_cursors.get_mut(&cursor_id) {
             state.rows = query_result.rows;
             state.next_row = 0;
@@ -2962,6 +3842,8 @@ impl Vm {
             "description",
             query_result.description.unwrap_or(Value::None),
         );
+        let _ = Self::instance_attr_set(&receiver_obj, "rowcount", Value::Int(rowcount));
+        let _ = Self::instance_attr_set(&receiver_obj, "lastrowid", Value::Int(lastrowid));
         Ok(receiver)
     }
 
@@ -2993,9 +3875,15 @@ impl Vm {
                 ));
             }
         };
+        if !sqlite_is_dml_statement(&sql) {
+            return Err(sqlite_error(
+                "ProgrammingError",
+                "executemany() can only execute DML statements.",
+            ));
+        }
         let parameter_sets = self.collect_iterable_values(args.remove(0)).map_err(|_| {
             sqlite_error(
-                "ProgrammingError",
+                "TypeError",
                 "executemany() second argument must be iterable",
             )
         })?;
@@ -3009,6 +3897,8 @@ impl Vm {
             }
             state.connection_id
         };
+        self.sqlite_maybe_begin_legacy_transaction(connection_id, &sql)?;
+        let mut rowcount_total: i64 = 0;
 
         let mut last_result = SqliteQueryResult {
             rows: Vec::new(),
@@ -3017,6 +3907,9 @@ impl Vm {
         for param_set in parameter_sets {
             let params = self.sqlite_extract_params(param_set)?;
             last_result = self.sqlite_execute_query(connection_id, &sql, params)?;
+            let db = self.sqlite_open_db_handle(connection_id)?;
+            // SAFETY: db is a valid sqlite handle.
+            rowcount_total += unsafe { sqlite3_changes(db) as i64 };
         }
         if let Some(state) = self.sqlite_cursors.get_mut(&cursor_id) {
             state.rows = last_result.rows;
@@ -3030,6 +3923,7 @@ impl Vm {
             "description",
             last_result.description.unwrap_or(Value::None),
         );
+        let _ = Self::instance_attr_set(&receiver_obj, "rowcount", Value::Int(rowcount_total));
         Ok(receiver)
     }
 
@@ -3090,28 +3984,35 @@ impl Vm {
         }
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "fetchmany")?;
         let size = if args.len() == 2 {
-            value_to_int(args.remove(1)).map_err(|_| {
-                sqlite_error("TypeError", "fetchmany() size argument must be integer")
-            })?
+            sqlite_non_negative_u32(
+                args.remove(1),
+                "fetchmany() size argument must be integer",
+                "fetchmany() size must be non-negative",
+                "fetchmany() size is too large",
+            )?
         } else if let Some(size_kw) = kwargs.remove("size") {
-            value_to_int(size_kw)
-                .map_err(|_| sqlite_error("TypeError", "fetchmany() size must be integer"))?
+            sqlite_non_negative_u32(
+                size_kw,
+                "fetchmany() size must be integer",
+                "fetchmany() size must be non-negative",
+                "fetchmany() size is too large",
+            )?
         } else {
             let receiver = self.receiver_from_value(&args[0])?;
             let arraysize =
                 Self::instance_attr_get(&receiver, "arraysize").unwrap_or(Value::Int(1));
-            value_to_int(arraysize).unwrap_or(1)
+            sqlite_non_negative_u32(
+                arraysize,
+                "arraysize must be an integer",
+                "arraysize must be non-negative",
+                "arraysize value is too large",
+            )
+            .unwrap_or(1)
         };
         if let Some(unexpected) = kwargs.keys().next() {
             return Err(sqlite_error(
                 "TypeError",
                 format!("fetchmany() got an unexpected keyword argument '{unexpected}'"),
-            ));
-        }
-        if size < 0 {
-            return Err(sqlite_error(
-                "ValueError",
-                "fetchmany() size must be non-negative",
             ));
         }
         let raw_rows = {

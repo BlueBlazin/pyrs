@@ -505,6 +505,85 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_time_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("time.__init__() missing instance"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        if args.len() > 4 {
+            return Err(RuntimeError::new(
+                "time.__init__() expects hour, minute, second and optional microsecond",
+            ));
+        }
+
+        let mut hour = Some(0_i64);
+        let mut minute = Some(0_i64);
+        let mut second = Some(0_i64);
+        let mut microsecond = Some(0_i64);
+        let mut tzinfo = None;
+        if let Some(value) = args.first() {
+            hour = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(1) {
+            minute = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(2) {
+            second = Some(value_to_int(value.clone())?);
+        }
+        if let Some(value) = args.get(3) {
+            microsecond = Some(value_to_int(value.clone())?);
+        }
+
+        if let Some(value) = kwargs.remove("hour") {
+            hour = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("minute") {
+            minute = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("second") {
+            second = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("microsecond") {
+            microsecond = Some(value_to_int(value)?);
+        }
+        if let Some(value) = kwargs.remove("tzinfo") {
+            tzinfo = Some(value);
+        }
+        if kwargs.contains_key("fold") {
+            let _ = kwargs.remove("fold");
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("time.__init__() got unexpected keyword"));
+        }
+
+        let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
+            return Err(RuntimeError::new(
+                "time.__init__() expects instance receiver",
+            ));
+        };
+        instance_data
+            .attrs
+            .insert("hour".to_string(), Value::Int(hour.unwrap_or(0)));
+        instance_data
+            .attrs
+            .insert("minute".to_string(), Value::Int(minute.unwrap_or(0)));
+        instance_data
+            .attrs
+            .insert("second".to_string(), Value::Int(second.unwrap_or(0)));
+        instance_data.attrs.insert(
+            "microsecond".to_string(),
+            Value::Int(microsecond.unwrap_or(0)),
+        );
+        if let Some(tzinfo) = tzinfo {
+            instance_data.attrs.insert("tzinfo".to_string(), tzinfo);
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_asyncio_run(
         &mut self,
         mut args: Vec<Value>,

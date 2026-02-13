@@ -41,7 +41,7 @@ Scope list (user-priority):
 | `itertools` | P0 | GREEN | `cycle/islice/count/repeat/chain` common composition paths | Iterator laziness depth remains tracked separately |
 | `functools` | P1 | GREEN | `lru_cache`, `partial`, comparator helpers | expand interaction tests |
 | `logging` | P1 | GREEN | logger creation, levels, handler/formatter baseline | keep traceback formatting parity |
-| `subprocess` | P0 | GREEN | `run`, `CompletedProcess`, stdio capture basics | Process/pipe edge semantics remain strict-suite tracked |
+| `subprocess` | P0 | GREEN | `run`, `CompletedProcess`, stdio capture basics | `Popen` pipe attrs (`stdin/stdout/stderr`) with `readline`/`write`/`communicate` text-mode paths are now wired; deeper process-edge parity remains strict-suite tracked |
 | `typing` | P1 | GREEN | basic aliases/generics (`Optional`, `Union`, parametric forms) | modern edge semantics still pending |
 | `argparse` | P1 | GREEN | parser creation, positional/optional args, errors | keep parse/error parity |
 | `unittest` | P1 | GREEN | case execution, assertions, suite/runner baseline | keep exception formatting parity |
@@ -49,7 +49,7 @@ Scope list (user-priority):
 | `multiprocessing` | P1 | YELLOW | process start/join/queue basics (or explicit, documented limitation) | only minimal probe currently verified |
 | `asyncio` | P1 | GREEN | `asyncio.run`, task scheduling baseline, coroutine correctness | expand real-world task patterns |
 | `csv` | P0 | GREEN | reader/writer basics via `Lib/csv.py` + `_csv` substrate | long-tail dialect/error parity pending |
-| `sqlite3` | P0 | GREEN | in-memory connect/execute/fetch/close | `_sqlite3` now includes descriptor-backed connection attrs (`isolation_level`/`in_transaction`/`total_changes`), SQL-length DataError precheck, row/text-factory plumbing, and `_sqlite3.Row` baseline behavior; inspect signature rendering for sqlite callables is now aligned; remaining DB-API long-tail frontier is transaction-state parity (`test_in_transaction`) plus autocommit/factory/type edges |
+| `sqlite3` | P0 | GREEN | in-memory connect/execute/fetch/close | `_sqlite3` now includes descriptor-backed connection attrs (`isolation_level`/`in_transaction`/`total_changes`), SQL-length DataError precheck, row/text-factory plumbing, `_sqlite3.Row` baseline behavior, real `create_function()` callback registration, and callable `factory=` handling; inspect signature rendering for sqlite callables is aligned; remaining DB-API long-tail frontier is URI undecodable-path handling (`test_open_undecodable_uri`) plus autocommit/type edges |
 | `urllib` | P0 | GREEN | URL parse/join/quote basics used by apps | Extended URL policy/IDNA edge parity pending |
 | `http` | P0 | GREEN | `http.client` import + request object baseline | deeper enum-member semantics still pending before enum shim retirement |
 | `hashlib` | P0 | GREEN | `sha256/md5` digest baseline + constructor paths | md5/sha2 native backends are active; broader algorithm surface remains tracked separately |

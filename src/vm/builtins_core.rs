@@ -249,6 +249,35 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_input(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new("input() expects an optional prompt"));
+        }
+        if let Some(prompt) = args.pop() {
+            let text = match self.builtin_str(vec![prompt], HashMap::new())? {
+                Value::Str(text) => text,
+                _ => return Err(RuntimeError::new("str() returned non-string")),
+            };
+            print!("{text}");
+            let _ = std::io::stdout().flush();
+        }
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|err| RuntimeError::new(format!("input() failed: {err}")))?;
+        if line.ends_with('\n') {
+            line.pop();
+            if line.ends_with('\r') {
+                line.pop();
+            }
+        }
+        Ok(Value::Str(line))
+    }
+
     pub(super) fn builtin_repr(
         &mut self,
         mut args: Vec<Value>,

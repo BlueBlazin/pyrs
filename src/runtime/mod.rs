@@ -249,6 +249,7 @@ pub enum NativeMethodKind {
     BytesTranslate,
     BytesJoin,
     BytesLJust,
+    BytesRStrip,
     ByteArrayExtend,
     ByteArrayClear,
     ByteArrayResize,
@@ -283,6 +284,7 @@ pub enum NativeMethodKind {
     StrLStrip,
     StrRStrip,
     StrStrip,
+    StrLJust,
     StrExpandTabs,
     SetContains,
     SetAdd,
@@ -2117,6 +2119,7 @@ impl Eq for Value {}
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinFunction {
     Print,
+    Input,
     Repr,
     Ascii,
     DictTypeRepr,
@@ -2393,6 +2396,10 @@ pub enum BuiltinFunction {
     SubprocessPopenPoll,
     SubprocessPopenEnter,
     SubprocessPopenExit,
+    SubprocessPipeReadline,
+    SubprocessPipeWrite,
+    SubprocessPipeFlush,
+    SubprocessPipeClose,
     SubprocessCleanup,
     SubprocessCheckCall,
     SubprocessCompletedProcessInit,
@@ -2421,6 +2428,7 @@ pub enum BuiltinFunction {
     SqliteConnectionExecuteScript,
     SqliteConnectionCommit,
     SqliteConnectionRollback,
+    SqliteConnectionInterrupt,
     SqliteConnectionCreateFunction,
     SqliteConnectionCreateAggregate,
     SqliteConnectionSetAuthorizer,
@@ -2430,6 +2438,9 @@ pub enum BuiltinFunction {
     SqliteConnectionGetConfig,
     SqliteConnectionSetConfig,
     SqliteConnectionBlobOpen,
+    SqliteCursorSetAttribute,
+    SqliteCursorSetInputSizes,
+    SqliteCursorSetOutputSize,
     SqliteCursorExecute,
     SqliteCursorExecuteMany,
     SqliteCursorExecuteScript,
@@ -2798,6 +2809,7 @@ pub enum BuiltinFunction {
     DateToday,
     DateTimeInit,
     DateInit,
+    TimeInit,
     AsyncioRun,
     AsyncioSleep,
     AsyncioCreateTask,
@@ -2908,6 +2920,25 @@ impl BuiltinFunction {
                 }
                 println!("{}", parts.join(" "));
                 Ok(Value::None)
+            }
+            BuiltinFunction::Input => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("input() expects an optional prompt"));
+                }
+                if let Some(prompt) = args.first() {
+                    print!("{}", format_value(prompt));
+                }
+                let mut line = String::new();
+                std::io::stdin()
+                    .read_line(&mut line)
+                    .map_err(|err| RuntimeError::new(format!("input() failed: {err}")))?;
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Ok(Value::Str(line))
             }
             BuiltinFunction::Repr => {
                 if args.len() != 1 {
@@ -5212,6 +5243,10 @@ impl BuiltinFunction {
             | BuiltinFunction::SubprocessPopenPoll
             | BuiltinFunction::SubprocessPopenEnter
             | BuiltinFunction::SubprocessPopenExit
+            | BuiltinFunction::SubprocessPipeReadline
+            | BuiltinFunction::SubprocessPipeWrite
+            | BuiltinFunction::SubprocessPipeFlush
+            | BuiltinFunction::SubprocessPipeClose
             | BuiltinFunction::SubprocessCleanup
             | BuiltinFunction::SubprocessCheckCall
             | BuiltinFunction::SubprocessCompletedProcessInit
@@ -5373,6 +5408,7 @@ impl BuiltinFunction {
             | BuiltinFunction::DateToday
             | BuiltinFunction::DateTimeInit
             | BuiltinFunction::DateInit
+            | BuiltinFunction::TimeInit
             | BuiltinFunction::AsyncioRun
             | BuiltinFunction::AsyncioSleep
             | BuiltinFunction::AsyncioCreateTask
@@ -5464,6 +5500,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteConnectionExecuteScript
             | BuiltinFunction::SqliteConnectionCommit
             | BuiltinFunction::SqliteConnectionRollback
+            | BuiltinFunction::SqliteConnectionInterrupt
             | BuiltinFunction::SqliteConnectionCreateFunction
             | BuiltinFunction::SqliteConnectionCreateAggregate
             | BuiltinFunction::SqliteConnectionSetAuthorizer
@@ -5473,6 +5510,9 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteConnectionGetConfig
             | BuiltinFunction::SqliteConnectionSetConfig
             | BuiltinFunction::SqliteConnectionBlobOpen
+            | BuiltinFunction::SqliteCursorSetAttribute
+            | BuiltinFunction::SqliteCursorSetInputSizes
+            | BuiltinFunction::SqliteCursorSetOutputSize
             | BuiltinFunction::SqliteCursorExecute
             | BuiltinFunction::SqliteCursorExecuteMany
             | BuiltinFunction::SqliteCursorExecuteScript
@@ -6726,6 +6766,7 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
                     NativeMethodKind::BytesLJust => "<bound method bytes.ljust>".to_string(),
+                    NativeMethodKind::BytesRStrip => "<bound method bytes.rstrip>".to_string(),
                     NativeMethodKind::ByteArrayExtend => {
                         "<bound method bytearray.extend>".to_string()
                     }
@@ -6784,6 +6825,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
                     NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
                     NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),
+                    NativeMethodKind::StrLJust => "<bound method str.ljust>".to_string(),
                     NativeMethodKind::StrExpandTabs => "<bound method str.expandtabs>".to_string(),
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),

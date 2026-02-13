@@ -119,7 +119,32 @@ impl Vm {
                 return self.getitem_value(Value::List(backing_list), index);
             }
             if let Some(backing_dict) = self.instance_backing_dict(instance) {
-                return self.getitem_value(Value::Dict(backing_dict), index);
+                let is_exact_builtin_dict = match &*instance.kind() {
+                    Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                        Object::Class(class_data) => class_data.name == "dict",
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if is_exact_builtin_dict {
+                    return self.getitem_value(Value::Dict(backing_dict), index);
+                }
+                ensure_hashable(&index)?;
+                if let Some(value) = dict_get_value(&backing_dict, &index) {
+                    return Ok(value);
+                }
+                let receiver_value = Value::Instance(instance.clone());
+                if let Some(missing) =
+                    self.lookup_bound_special_method(&receiver_value, "__missing__")?
+                {
+                    return match self.call_internal(missing, vec![index], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => Ok(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            Err(self.runtime_error_from_active_exception("__missing__() failed"))
+                        }
+                    };
+                }
+                return Err(RuntimeError::new("key not found"));
             }
         }
         match index {
@@ -642,6 +667,8 @@ impl Vm {
     pub(super) fn install_builtins(&mut self) {
         self.builtins
             .insert("print".to_string(), Value::Builtin(BuiltinFunction::Print));
+        self.builtins
+            .insert("input".to_string(), Value::Builtin(BuiltinFunction::Input));
         self.builtins
             .insert("repr".to_string(), Value::Builtin(BuiltinFunction::Repr));
         self.builtins

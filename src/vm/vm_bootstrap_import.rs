@@ -980,10 +980,6 @@ impl Vm {
                 .attrs
                 .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
             class_data.attrs.insert(
-                "__pyrs_disallow_instantiation__".to_string(),
-                Value::Bool(true),
-            );
-            class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionInit),
             );
@@ -1084,6 +1080,10 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::SqliteConnectionRollback),
             );
             class_data.attrs.insert(
+                "interrupt".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionInterrupt),
+            );
+            class_data.attrs.insert(
                 "create_function".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionCreateFunction),
             );
@@ -1134,6 +1134,18 @@ impl Vm {
             class_data.attrs.insert(
                 "__pyrs_disallow_instantiation__".to_string(),
                 Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "__setattr__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorSetAttribute),
+            );
+            class_data.attrs.insert(
+                "setinputsizes".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorSetInputSizes),
+            );
+            class_data.attrs.insert(
+                "setoutputsize".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteCursorSetOutputSize),
             );
             class_data.attrs.insert(
                 "execute".to_string(),
@@ -1406,6 +1418,110 @@ impl Vm {
                 ("SQLITE_DBCONFIG_ENABLE_VIEW", Value::Int(1015)),
                 ("SQLITE_DBCONFIG_LEGACY_FILE_FORMAT", Value::Int(1016)),
                 ("SQLITE_DBCONFIG_TRUSTED_SCHEMA", Value::Int(1017)),
+                ("SQLITE_ABORT", Value::Int(4)),
+                ("SQLITE_ABORT_ROLLBACK", Value::Int(516)),
+                ("SQLITE_AUTH", Value::Int(23)),
+                ("SQLITE_AUTH_USER", Value::Int(279)),
+                ("SQLITE_BUSY", Value::Int(5)),
+                ("SQLITE_BUSY_RECOVERY", Value::Int(261)),
+                ("SQLITE_BUSY_SNAPSHOT", Value::Int(517)),
+                ("SQLITE_BUSY_TIMEOUT", Value::Int(773)),
+                ("SQLITE_CANTOPEN", Value::Int(14)),
+                ("SQLITE_CANTOPEN_CONVPATH", Value::Int(1038)),
+                ("SQLITE_CANTOPEN_DIRTYWAL", Value::Int(1294)),
+                ("SQLITE_CANTOPEN_FULLPATH", Value::Int(782)),
+                ("SQLITE_CANTOPEN_ISDIR", Value::Int(526)),
+                ("SQLITE_CANTOPEN_NOTEMPDIR", Value::Int(270)),
+                ("SQLITE_CANTOPEN_SYMLINK", Value::Int(1550)),
+                ("SQLITE_CONSTRAINT", Value::Int(19)),
+                ("SQLITE_CONSTRAINT_CHECK", Value::Int(275)),
+                ("SQLITE_CONSTRAINT_COMMITHOOK", Value::Int(531)),
+                ("SQLITE_CONSTRAINT_FOREIGNKEY", Value::Int(787)),
+                ("SQLITE_CONSTRAINT_FUNCTION", Value::Int(1043)),
+                ("SQLITE_CONSTRAINT_NOTNULL", Value::Int(1299)),
+                ("SQLITE_CONSTRAINT_PINNED", Value::Int(2835)),
+                ("SQLITE_CONSTRAINT_PRIMARYKEY", Value::Int(1555)),
+                ("SQLITE_CONSTRAINT_ROWID", Value::Int(2579)),
+                ("SQLITE_CONSTRAINT_TRIGGER", Value::Int(1811)),
+                ("SQLITE_CONSTRAINT_UNIQUE", Value::Int(2067)),
+                ("SQLITE_CONSTRAINT_VTAB", Value::Int(2323)),
+                ("SQLITE_CORRUPT", Value::Int(11)),
+                ("SQLITE_CORRUPT_INDEX", Value::Int(779)),
+                ("SQLITE_CORRUPT_SEQUENCE", Value::Int(523)),
+                ("SQLITE_CORRUPT_VTAB", Value::Int(267)),
+                ("SQLITE_DONE", Value::Int(101)),
+                ("SQLITE_EMPTY", Value::Int(16)),
+                ("SQLITE_ERROR", Value::Int(1)),
+                ("SQLITE_ERROR_MISSING_COLLSEQ", Value::Int(257)),
+                ("SQLITE_ERROR_RETRY", Value::Int(513)),
+                ("SQLITE_ERROR_SNAPSHOT", Value::Int(769)),
+                ("SQLITE_FORMAT", Value::Int(24)),
+                ("SQLITE_FULL", Value::Int(13)),
+                ("SQLITE_INTERNAL", Value::Int(2)),
+                ("SQLITE_INTERRUPT", Value::Int(9)),
+                ("SQLITE_IOERR", Value::Int(10)),
+                ("SQLITE_IOERR_ACCESS", Value::Int(3338)),
+                ("SQLITE_IOERR_AUTH", Value::Int(7178)),
+                ("SQLITE_IOERR_BEGIN_ATOMIC", Value::Int(7434)),
+                ("SQLITE_IOERR_BLOCKED", Value::Int(2826)),
+                ("SQLITE_IOERR_CHECKRESERVEDLOCK", Value::Int(3594)),
+                ("SQLITE_IOERR_CLOSE", Value::Int(4106)),
+                ("SQLITE_IOERR_COMMIT_ATOMIC", Value::Int(7690)),
+                ("SQLITE_IOERR_CONVPATH", Value::Int(6666)),
+                ("SQLITE_IOERR_CORRUPTFS", Value::Int(8458)),
+                ("SQLITE_IOERR_DATA", Value::Int(8202)),
+                ("SQLITE_IOERR_DELETE", Value::Int(2570)),
+                ("SQLITE_IOERR_DELETE_NOENT", Value::Int(5898)),
+                ("SQLITE_IOERR_DIR_CLOSE", Value::Int(4362)),
+                ("SQLITE_IOERR_DIR_FSYNC", Value::Int(1290)),
+                ("SQLITE_IOERR_FSTAT", Value::Int(1802)),
+                ("SQLITE_IOERR_FSYNC", Value::Int(1034)),
+                ("SQLITE_IOERR_GETTEMPPATH", Value::Int(6410)),
+                ("SQLITE_IOERR_LOCK", Value::Int(3850)),
+                ("SQLITE_IOERR_MMAP", Value::Int(6154)),
+                ("SQLITE_IOERR_NOMEM", Value::Int(3082)),
+                ("SQLITE_IOERR_RDLOCK", Value::Int(2314)),
+                ("SQLITE_IOERR_READ", Value::Int(266)),
+                ("SQLITE_IOERR_ROLLBACK_ATOMIC", Value::Int(7946)),
+                ("SQLITE_IOERR_SEEK", Value::Int(5642)),
+                ("SQLITE_IOERR_SHMLOCK", Value::Int(5130)),
+                ("SQLITE_IOERR_SHMMAP", Value::Int(5386)),
+                ("SQLITE_IOERR_SHMOPEN", Value::Int(4618)),
+                ("SQLITE_IOERR_SHMSIZE", Value::Int(4874)),
+                ("SQLITE_IOERR_SHORT_READ", Value::Int(522)),
+                ("SQLITE_IOERR_TRUNCATE", Value::Int(1546)),
+                ("SQLITE_IOERR_UNLOCK", Value::Int(2058)),
+                ("SQLITE_IOERR_VNODE", Value::Int(6922)),
+                ("SQLITE_IOERR_WRITE", Value::Int(778)),
+                ("SQLITE_LOCKED", Value::Int(6)),
+                ("SQLITE_LOCKED_SHAREDCACHE", Value::Int(262)),
+                ("SQLITE_LOCKED_VTAB", Value::Int(518)),
+                ("SQLITE_MISMATCH", Value::Int(20)),
+                ("SQLITE_MISUSE", Value::Int(21)),
+                ("SQLITE_NOLFS", Value::Int(22)),
+                ("SQLITE_NOMEM", Value::Int(7)),
+                ("SQLITE_NOTADB", Value::Int(26)),
+                ("SQLITE_NOTFOUND", Value::Int(12)),
+                ("SQLITE_NOTICE", Value::Int(27)),
+                ("SQLITE_NOTICE_RECOVER_ROLLBACK", Value::Int(539)),
+                ("SQLITE_NOTICE_RECOVER_WAL", Value::Int(283)),
+                ("SQLITE_OK_LOAD_PERMANENTLY", Value::Int(256)),
+                ("SQLITE_OK_SYMLINK", Value::Int(512)),
+                ("SQLITE_PERM", Value::Int(3)),
+                ("SQLITE_PROTOCOL", Value::Int(15)),
+                ("SQLITE_RANGE", Value::Int(25)),
+                ("SQLITE_READONLY", Value::Int(8)),
+                ("SQLITE_READONLY_CANTINIT", Value::Int(1288)),
+                ("SQLITE_READONLY_CANTLOCK", Value::Int(520)),
+                ("SQLITE_READONLY_DBMOVED", Value::Int(1032)),
+                ("SQLITE_READONLY_DIRECTORY", Value::Int(1544)),
+                ("SQLITE_READONLY_RECOVERY", Value::Int(264)),
+                ("SQLITE_READONLY_ROLLBACK", Value::Int(776)),
+                ("SQLITE_ROW", Value::Int(100)),
+                ("SQLITE_SCHEMA", Value::Int(17)),
+                ("SQLITE_TOOBIG", Value::Int(18)),
+                ("SQLITE_WARNING", Value::Int(28)),
+                ("SQLITE_WARNING_AUTOINDEX", Value::Int(284)),
                 ("adapters", self.heap.alloc_dict(Vec::new())),
                 ("converters", self.heap.alloc_dict(Vec::new())),
                 ("Blob", Value::Class(sqlite_blob_class)),
@@ -4036,6 +4152,31 @@ impl Vm {
                 Value::Str("pyrs _posixsubprocess stub".to_string()),
             )],
         );
+        let subprocess_pipe_class = match self
+            .heap
+            .alloc_class(ClassObject::new("_PyrsPipe".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *subprocess_pipe_class.kind_mut() {
+            class_data.attrs.insert(
+                "readline".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPipeReadline),
+            );
+            class_data.attrs.insert(
+                "write".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPipeWrite),
+            );
+            class_data.attrs.insert(
+                "flush".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPipeFlush),
+            );
+            class_data.attrs.insert(
+                "close".to_string(),
+                Value::Builtin(BuiltinFunction::SubprocessPipeClose),
+            );
+        }
         let subprocess_popen_class = match self
             .heap
             .alloc_class(ClassObject::new("Popen".to_string(), Vec::new()))
@@ -4097,6 +4238,7 @@ impl Vm {
                 ("PIPE", Value::Int(-1)),
                 ("STDOUT", Value::Int(-2)),
                 ("DEVNULL", Value::Int(-3)),
+                ("_PyrsPipe", Value::Class(subprocess_pipe_class)),
                 ("Popen", Value::Class(subprocess_popen_class)),
                 (
                     "CompletedProcess",
@@ -4109,6 +4251,10 @@ impl Vm {
                 (
                     "SubprocessError",
                     Value::ExceptionType("SubprocessError".to_string()),
+                ),
+                (
+                    "TimeoutExpired",
+                    Value::ExceptionType("TimeoutExpired".to_string()),
                 ),
             ],
         );
@@ -4180,6 +4326,12 @@ impl Vm {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };
+        if let Object::Class(class_data) = &mut *time_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::TimeInit),
+            );
+        }
         self.install_builtin_module(
             "datetime",
             &[

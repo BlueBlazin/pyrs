@@ -108,6 +108,7 @@ impl Vm {
             BuiltinFunction::SqliteConnectionExecuteScript => "executescript".to_string(),
             BuiltinFunction::SqliteConnectionCommit => "commit".to_string(),
             BuiltinFunction::SqliteConnectionRollback => "rollback".to_string(),
+            BuiltinFunction::SqliteConnectionInterrupt => "interrupt".to_string(),
             BuiltinFunction::SqliteConnectionCreateFunction => "create_function".to_string(),
             BuiltinFunction::SqliteConnectionCreateAggregate => "create_aggregate".to_string(),
             BuiltinFunction::SqliteConnectionSetAuthorizer => "set_authorizer".to_string(),
@@ -119,6 +120,9 @@ impl Vm {
             BuiltinFunction::SqliteConnectionGetConfig => "getconfig".to_string(),
             BuiltinFunction::SqliteConnectionSetConfig => "setconfig".to_string(),
             BuiltinFunction::SqliteConnectionBlobOpen => "blobopen".to_string(),
+            BuiltinFunction::SqliteCursorSetAttribute => "__setattr__".to_string(),
+            BuiltinFunction::SqliteCursorSetInputSizes => "setinputsizes".to_string(),
+            BuiltinFunction::SqliteCursorSetOutputSize => "setoutputsize".to_string(),
             BuiltinFunction::SqliteCursorExecute => "execute".to_string(),
             BuiltinFunction::SqliteCursorExecuteMany => "executemany".to_string(),
             BuiltinFunction::SqliteCursorExecuteScript => "executescript".to_string(),
@@ -205,6 +209,9 @@ impl Vm {
             }
             BuiltinFunction::SqliteConnectionCommit => "_sqlite3.Connection.commit".to_string(),
             BuiltinFunction::SqliteConnectionRollback => "_sqlite3.Connection.rollback".to_string(),
+            BuiltinFunction::SqliteConnectionInterrupt => {
+                "_sqlite3.Connection.interrupt".to_string()
+            }
             BuiltinFunction::SqliteConnectionCreateFunction => {
                 "_sqlite3.Connection.create_function".to_string()
             }
@@ -226,6 +233,13 @@ impl Vm {
                 "_sqlite3.Connection.setconfig".to_string()
             }
             BuiltinFunction::SqliteConnectionBlobOpen => "_sqlite3.Connection.blobopen".to_string(),
+            BuiltinFunction::SqliteCursorSetAttribute => "_sqlite3.Cursor.__setattr__".to_string(),
+            BuiltinFunction::SqliteCursorSetInputSizes => {
+                "_sqlite3.Cursor.setinputsizes".to_string()
+            }
+            BuiltinFunction::SqliteCursorSetOutputSize => {
+                "_sqlite3.Cursor.setoutputsize".to_string()
+            }
             BuiltinFunction::SqliteCursorExecute => "_sqlite3.Cursor.execute".to_string(),
             BuiltinFunction::SqliteCursorExecuteMany => "_sqlite3.Cursor.executemany".to_string(),
             BuiltinFunction::SqliteCursorExecuteScript => {
@@ -362,6 +376,7 @@ impl Vm {
             | BuiltinFunction::SqliteConnectionExecuteScript
             | BuiltinFunction::SqliteConnectionCommit
             | BuiltinFunction::SqliteConnectionRollback
+            | BuiltinFunction::SqliteConnectionInterrupt
             | BuiltinFunction::SqliteConnectionCreateFunction
             | BuiltinFunction::SqliteConnectionCreateAggregate
             | BuiltinFunction::SqliteConnectionSetAuthorizer
@@ -371,6 +386,9 @@ impl Vm {
             | BuiltinFunction::SqliteConnectionGetConfig
             | BuiltinFunction::SqliteConnectionSetConfig
             | BuiltinFunction::SqliteConnectionBlobOpen
+            | BuiltinFunction::SqliteCursorSetAttribute
+            | BuiltinFunction::SqliteCursorSetInputSizes
+            | BuiltinFunction::SqliteCursorSetOutputSize
             | BuiltinFunction::SqliteCursorExecute
             | BuiltinFunction::SqliteCursorExecuteMany
             | BuiltinFunction::SqliteCursorExecuteScript
@@ -871,6 +889,7 @@ impl Vm {
             "lstrip" => NativeMethodKind::StrLStrip,
             "rstrip" => NativeMethodKind::StrRStrip,
             "strip" => NativeMethodKind::StrStrip,
+            "ljust" => NativeMethodKind::StrLJust,
             "expandtabs" => NativeMethodKind::StrExpandTabs,
             _ => {
                 return Err(RuntimeError::new(format!(
@@ -916,6 +935,7 @@ impl Vm {
             "translate" => NativeMethodKind::BytesTranslate,
             "join" => NativeMethodKind::BytesJoin,
             "ljust" => NativeMethodKind::BytesLJust,
+            "rstrip" => NativeMethodKind::BytesRStrip,
             "extend" if matches!(receiver_value, Value::ByteArray(_)) => {
                 NativeMethodKind::ByteArrayExtend
             }
@@ -1123,6 +1143,15 @@ impl Vm {
         dict: ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        self.load_attr_dict_method_with_owner(dict, None, attr_name)
+    }
+
+    pub(super) fn load_attr_dict_method_with_owner(
+        &self,
+        dict: ObjRef,
+        owner: Option<Value>,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
         if attr_name == "__contains__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorContains, dict));
         }
@@ -1147,7 +1176,26 @@ impl Vm {
                 )));
             }
         };
-        Ok(self.alloc_native_bound_method(kind, dict))
+        if matches!(kind, NativeMethodKind::DictGetItem) && owner.is_some() {
+            let receiver = match self
+                .heap
+                .alloc_module(ModuleObject::new("__dict_method__".to_string()))
+            {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                module_data
+                    .globals
+                    .insert("dict".to_string(), Value::Dict(dict));
+                module_data
+                    .globals
+                    .insert("owner".to_string(), owner.expect("checked"));
+            }
+            Ok(self.alloc_native_bound_method(kind, receiver))
+        } else {
+            Ok(self.alloc_native_bound_method(kind, dict))
+        }
     }
 
     pub(super) fn dict_lookup_str_key(
@@ -3386,7 +3434,18 @@ impl Vm {
         }
         if let Some(backing_dict) = self.instance_backing_dict(instance) {
             if !reduce_attr {
-                if let Ok(bound_method) = self.load_attr_dict_method(backing_dict, attr_name) {
+                let is_exact_dict = matches!(
+                    &*class_ref.kind(),
+                    Object::Class(class_data) if class_data.name == "dict"
+                );
+                let owner = if attr_name == "__getitem__" && !is_exact_dict {
+                    Some(Value::Instance(instance.clone()))
+                } else {
+                    None
+                };
+                if let Ok(bound_method) =
+                    self.load_attr_dict_method_with_owner(backing_dict, owner, attr_name)
+                {
                     return Ok(AttrAccessOutcome::Value(bound_method));
                 }
             }

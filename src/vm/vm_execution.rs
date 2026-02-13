@@ -4635,6 +4635,8 @@ impl Vm {
         {
             exception_message = from_prefixed;
         }
+        let (exception_message, sqlite_metadata) =
+            strip_sqlite_exception_metadata(exception_message);
         let exception = ExceptionObject::new(exception_type.clone(), exception_message);
         let mut os_errno = None;
         let mut os_strerror = None;
@@ -4665,6 +4667,16 @@ impl Vm {
                     .borrow_mut()
                     .insert("name".to_string(), Value::Str(name));
             }
+        }
+        if let Some((code, name)) = sqlite_metadata {
+            exception
+                .attrs
+                .borrow_mut()
+                .insert("sqlite_errorcode".to_string(), Value::Int(code));
+            exception
+                .attrs
+                .borrow_mut()
+                .insert("sqlite_errorname".to_string(), Value::Str(name));
         }
         let args = if is_os_error_family(exception_type.as_str()) {
             if let Some(errno) = os_errno {
