@@ -1,58 +1,51 @@
 # Compatibility Tracker (CPython 3.14)
 
-This file tracks compatibility state.
-For release blockers, use `docs/PRODUCTION_READINESS.md`.
-For partial implementation ownership, use `docs/STUB_ACCOUNTING.md`.
+This file tracks compatibility by subsystem.
+For release blockers, see `docs/PRODUCTION_READINESS.md`.
+For partial implementations and owners, see `docs/STUB_ACCOUNTING.md`.
 
 Status:
 - `[ ]` not started
 - `[~]` in progress
 - `[x]` complete
 
-## Parser and Language Surface
+## Language and Parser
 - `[x]` Core parser/compiler foundations through Milestone 12
-- `[x]` Major modern syntax landed (`match`/`case`, comprehensions, assignment expressions, async syntax, decorators, annotations baseline)
-- `[x]` `\N{...}` Unicode-name escapes: canonical names + aliases accepted, named-sequence escapes rejected (CPython parity)
-- `[~]` Full tokenizer/grammar long-tail parity still pending
-- `[~]` Remaining pattern/exception-group/f-string edge parity still pending
+- `[x]` Major modern syntax baseline (`match`/`case`, comprehensions, assignment expressions, async syntax, decorators, annotations baseline)
+- `[x]` `\N{...}` Unicode-name escape support (canonical + alias accepted, named sequence rejected)
+- `[~]` Full tokenizer/grammar long-tail parity
 
 ## Bytecode and VM
-- `[x]` CPython 3.14 opcode table and supported decode/translate/execute paths
-- `[x]` Supported `.pyc` read/write foundation
-- `[~]` Full opcode family parity still pending
+- `[x]` CPython 3.14 opcode-table foundation and decode/translate/execute support
+- `[x]` `.pyc` read/write baseline
+- `[~]` Full opcode-family parity
 
 ## Runtime and Object Model
 - `[x]` Identity/refcount/cycle-GC foundations
-- `[x]` Core runtime object model and class/function/frame foundations
-- `[x]` Core truth-value protocol semantics (`__bool__` then `__len__`) in VM control flow and key builtins
-- `[x]` Core membership protocol fallback order (`__contains__` -> iterator -> `__getitem__`) in `in`/`not in`
-- `[~]` Long-tail data-model parity (descriptor/attribute/metaclass/slots edges) pending
-- `[~]` Numeric long-tail parity (big-int conversion/formatting/error-edge behavior) pending
-- `[~]` Hash-container semantic/perf closure (`dict`/`set`/`frozenset`) pending
+- `[x]` Core object/class/function/frame foundations
+- `[x]` Core truthiness and membership fallback baselines
+- `[~]` Descriptor/attribute/metaclass/slots long-tail parity
+- `[~]` Numeric long-tail parity (big-int conversion/formatting/error edges)
+- `[~]` Hash-container semantic/perf closure (`dict`/`set`/`frozenset`)
 
-## Import and Module System
-- `[x]` Curated import-system foundations (`sys.path`, hooks, namespace packages, module metadata)
-- `[x]` Curated language/import CPython harness suites with empty allowlist
-- `[~]` Full importlib/resources/pkgutil/packaging long-tail behavior pending
+## Import System
+- `[x]` Curated import-system foundations
+- `[x]` Curated language/import harness suites with empty allowlist
+- `[~]` Full importlib/resources/pkgutil/packaging long-tail parity
 
-## Stdlib Compatibility
-- `[x]` Foundational stdlib bootstrap in place (math/time/os/pathlib/io/json/re/etc. at varying depth)
-- `[x]` Top stdlib common-usecase closure tracker (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`) is currently green (`26/26` imports, `26/26` common-usecase smokes; baseline snapshot 2026-02-13)
-- `[~]` P0 closure still pending for `json`, `_csv`/`csv`, `pickle`/`pickletools`/`copyreg`
-- `[x]` `hashlib` md5/sha2 minimum constructor/update/digest/hexdigest/copy paths are landed (`_md5`, `_sha2`)
-- `[~]` `_io` parity advanced (`io.FileIO` + `_io.FileIO.__init__`, `IOBase` close/flush/finalizer defaults, `RawIOBase` default `read`/`readall`, `BufferedIOBase` default `readinto`/`readinto1`, `_io.StringIO`/`_io.BytesIO` close/context/open-state/readable/writable/seekable, `read1`/`readlines`/`writelines`/`truncate`/`flush`/`isatty`, `getbuffer`/`detach`, `__getstate__`/`__setstate__`, buffer-export resize guards, and incremental codec factory/state support; buffered-reader close-ordering/context, detach/peek/read1/readinto1, readonly-attribute + recursive-repr behavior, char-device seek/tell sanity, threaded buffered reads, and readonly truncate semantics now covered); full pure-`_pyio` `test_memoryio` lane is green under `sys.implementation.name == 'pyrs'` (CPython-only tests skipped), and current failfast blocker is outside `_io` (regex alternation in `_sre`)
-- `[~]` Core bytes surface advanced (`bytes.count`/`bytearray.count` now implemented with start/end support), with remaining long-tail still pending
-- `[~]` Native-core-first parity work in progress (`_io`, `_csv`, `_sre`, `_pickle`)
-- `[~]` `_pickle` fast decode now supports mixed framed/unframed streams and memo opcodes (`MEMOIZE`/`BINGET`/`LONG_BINGET`/`BINPUT`/`LONG_BINPUT`), and unseekable `Unpickler.load` probe fallback semantics match CPython
-- `[~]` Strict stdlib lane active for non-pickle scope; deferred strict pickle lane still open due subprocess timeout closure work (`test_pickle.py` still exceeds 600s; `test_pickletools.py` is green)
+## Stdlib
+- `[x]` Top-stdlib common-usecase baseline (`26/26` import + smoke; enforced in `tests/stdlib_common_usecases.rs`)
+- `[x]` Builtin surface parity gate (`145/145`, no allowlist entries)
+- `[x]` `hashlib` md5/sha2 baseline path (`_md5`, `_sha2`)
+- `[~]` P0 closure still pending for `json`, `_csv`/`csv`, `pickle`/`pickletools`/`copyreg`, `_io`, and `_sre`
+- `[~]` Deferred strict pickle lane closure
 
-## Test and Gate Status
+## Test/Gate Status
 - `[x]` Differential tests and fuzz foundations active
-- `[x]` Coverage gate and no-op inventory gates active
-- `[~]` Full strict stdlib closure remains pending due deferred pickle lane timeout closure
+- `[x]` Coverage/no-op inventory/builtin parity gates active
+- `[~]` Full strict stdlib closure pending deferred pickle lane
 
 ## Notes
 - Active strict suite: `tests/cpython_suite_strict_stdlib.txt`
 - Deferred strict pickle suite: `tests/cpython_suite_deferred_pickle.txt`
-- Deferred strict pickle opt-in run: `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite`
-- Canonical milestone plan: `docs/ROADMAP.md`
+- Deferred strict pickle opt-in: `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite`

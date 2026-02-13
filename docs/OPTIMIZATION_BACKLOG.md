@@ -20,11 +20,8 @@ Last updated: 2026-02-13
 - `scripts/bench_dispatch_hotpath.sh 5`
 - `scripts/bench_dict_backend.sh 5`
 
-Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.56s` user vs `python3.10 ~0.49s` user (`~1.15x`)
-- dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
-- dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
-- pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
+Use benchmark artifacts in `perf/` as current truth for deltas.
+Do not rely on stale point-in-time numbers in this document.
 
 ## CPython Reference Map
 
@@ -88,32 +85,9 @@ Latest local snapshot (2026-02-11):
 
 ## Current Notes
 
-- Latest optimization checkpoint:
-  - `load_attr_instance` now bypasses generic bound-method invocation when `__getattribute__` resolves to builtin `object.__getattribute__`, routing directly to default slot-style attribute resolution.
-  - Added guarded per-site `LOAD_ATTR` instance cache for function/builtin/classmethod/staticmethod descriptors with class/version invalidation (receiver + owner class versions).
-  - Upgraded load-attr inline cache to two-way polymorphic slots per site.
-  - Added class attribute version tracking and mutation bump points (`STORE_ATTR` / `DELETE_ATTR` / `setattr` / `delattr` class targets).
-- Additional checkpoint:
-  - `CALL_FUNCTION` now has one/two/three-argument bound-method fast paths that inject the receiver directly into function fast-call lanes instead of routing through generic call dispatch.
-  - Extended no-keyword small-arity fast dispatch into `CallCpython`, `CallCpythonKwStack`, and `CallFunctionKw` lanes (including arity-0).
-  - Added a no-keyword single-argument builtin `len` fast lane in call dispatch to avoid generic builtin-call argument plumbing on hot `len(list)` loops.
-  - Added no-keyword builtin `bool` fast lanes for zero-arg and single-arg calls in opcode dispatch.
-  - `CALL_FUNCTION`/`CALL_FUNCTION1` builtin branches now attempt direct zero/one-arg no-kwargs fast-lane resolution before falling back to generic builtin dispatch.
-  - Added no-keyword small-arity internal-call fast paths in `call_internal` to reduce call/arg churn in stdlib-heavy paths (notably pickle stack).
-  - Reduced `LOAD_NAME`/`STORE_NAME` churn in module-scope hot loops by removing `String` clone in `LOAD_NAME` and routing `STORE_NAME` through indexed name storage (`store_name_by_index`) with in-place module/global updates.
-  - Added guarded module-scope `LOAD_NAME` site caching (reusing global cache slots with module+builtins version guards) to reduce repeated name lookup/hash churn in top-level loops.
-  - Synced module-frame fast-local slots on global writes (`STORE_GLOBAL`/module upserts) to preserve correctness for accelerated `LOAD_NAME` resolution.
-  - `LOAD_NAME` local resolution now uses opcode name-index directly for fast-local slot lookup (`lookup_name_with_index`) instead of hashing through `name_to_index`; `store_name_by_index` now writes fast-local slots by index directly.
-  - `LOAD_NAME` cache guards now read `frame.function_globals_version` directly (avoiding per-op module-kind version lookup in hot module loops).
-  - Dispatch benchmark now sits around `~0.44-0.60s` in current local runs while preserving vm + curated harness parity.
-- Container checkpoint:
-  - Dict backend now keeps an explicit entry-to-slot backreference map, removing O(slots) delete slot scans and replacing broad slot-index decrements with live-entry-directed updates after removal.
-  - Added backend tests for index-removal + retain/rebuild paths to lock backreference invariants.
-- CI checkpoint:
-  - parity workflow now runs `scripts/bench_dispatch_hotpath.sh` in non-blocking mode and uploads the perf artifact for regression visibility.
-- Fib recursion gate is near `python3.10` on this machine and now serves as a regression smoke, not the sole optimization target.
-- Largest remaining throughput gaps are dispatch hotpath and pickle/container-heavy workloads.
-- Active foundational items for closure: `OPT-022`, `OPT-023`, `OPT-024`, `OPT-025`, `OPT-026`.
-- Optimization phase-1 checkpoint is complete; this backlog remains the source of truth for Milestone 14 throughput closure and any regression-driven pull-forward work.
-- Builtin parity drift gate (`scripts/run_builtin_parity_gate.sh`) is now part of the optimization safety rail for builtin call-path work.
-- Detailed historical optimization deltas are tracked in git history; keep this section to current-state notes only.
+- Phase-1 optimization checkpoint is complete; this backlog now tracks remaining throughput closure.
+- Dispatch and call-path specialization is active (`OPT-023`, `OPT-024`) with parity-first guardrails.
+- Container performance closure remains open (`OPT-025`) after dict backend architecture improvements.
+- String interning and allocation strategy closure remain active (`OPT-022`, `OPT-026`).
+- Benchmarks run in CI as telemetry; regressions must be investigated before item closure.
+- Builtin parity gate is a mandatory safety rail for builtin call-path optimization work.

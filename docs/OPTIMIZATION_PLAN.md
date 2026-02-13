@@ -1,107 +1,60 @@
 # Optimization Plan (CPython-Referenced)
 
 ## Scope
+This document defines optimization execution policy and workstreams.
+Functional closure remains Milestone 13 priority; optimization changes are merged continuously behind correctness gates.
+Canonical optimization status lives in `docs/OPTIMIZATION_BACKLOG.md`.
 
-This is the active execution plan for the optimization sprint.
-During this sprint, broad runtime throughput work takes precedence over Milestone 13 functional closure.
-The canonical optimization status ledger is `docs/OPTIMIZATION_BACKLOG.md`.
-Builtin heat-class policy and targets are tracked in `docs/BUILTIN_OPTIMIZATION_POLICY.md`.
-
-## Current Benchmark Suite (Not Fib-Only)
-
-Run these in release mode:
-
+## Benchmark Suite (Canonical)
+Run in release mode:
 1. `scripts/bench_fib_gate.sh 5`
 2. `scripts/bench_dispatch_hotpath.sh 5`
 3. `scripts/bench_dict_backend.sh 5`
 
-Latest local snapshot (2026-02-11):
-
-- `fib(29)x5`: `pyrs ~0.56s` user vs `python3.10 ~0.49s` user (`~1.15x`)
-- Dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
-- Dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
-- Pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
-
-Interpretation:
-- Recursive arithmetic is no longer the dominant performance blocker.
-- Remaining P0 performance risk is dispatch/call/container and stdlib-hotpath overhead.
-- Foundational optimization phase-1 is complete; remaining items are tracked and can be pulled forward as needed while Milestone 13 continues.
+Use benchmark outputs in `perf/` as the current source of truth.
+Do not treat point-in-time numbers in docs as authoritative.
 
 ## Ground Rules
-
-1. No tactical micro-fixes without architecture rationale.
-2. Every optimization wave must include:
+1. No optimization without semantic parity coverage.
+2. No benchmark-only shortcuts that weaken architecture.
+3. Every optimization wave must include:
    - targeted correctness tests (`cargo test --lib`, `cargo test --test vm`)
-   - benchmark deltas from the suite above
+   - benchmark deltas (suite above)
    - profiler evidence (`cargo flamegraph` or `sample` artifacts in `perf/`)
-3. Every wave must map to a CPython reference surface.
-4. `docs/OPTIMIZATION_BACKLOG.md` must be updated in the same checkpoint as behavior/perf changes.
+4. Every wave must map to CPython references and update `docs/OPTIMIZATION_BACKLOG.md` in the same commit.
 
-## CPython Source Reference Map
-
+## CPython Reference Map
 - Eval loop and specialization:
   - `/Users/$USER/Downloads/Python-3.14.3/Python/ceval.c`
   - `/Users/$USER/Downloads/Python-3.14.3/Python/generated_cases.c.h`
-- Frame model and lifecycle:
+- Frame model/lifecycle:
   - `/Users/$USER/Downloads/Python-3.14.3/Include/internal/pycore_frame.h`
   - `/Users/$USER/Downloads/Python-3.14.3/Python/frame.c`
 - Call protocol/vectorcall:
   - `/Users/$USER/Downloads/Python-3.14.3/Objects/call.c`
   - `/Users/$USER/Downloads/Python-3.14.3/Include/cpython/abstract.h`
-- Integer/small-int behavior:
+- Integer model:
   - `/Users/$USER/Downloads/Python-3.14.3/Objects/longobject.c`
-- Unicode/interning:
+- Unicode/interning model:
   - `/Users/$USER/Downloads/Python-3.14.3/Objects/unicodeobject.c`
   - `/Users/$USER/Downloads/Python-3.14.3/Include/internal/pycore_unicodeobject.h`
 - Dict/set internals:
   - `/Users/$USER/Downloads/Python-3.14.3/Objects/dictobject.c`
   - `/Users/$USER/Downloads/Python-3.14.3/Objects/setobject.c`
 
-## Execution Workstreams
+## Active Workstreams
+1. Dispatch and attribute/method specialization (`OPT-023`, `OPT-014`)
+2. Call-path throughput and specialization breadth (`OPT-024`, `OPT-010`)
+3. Container throughput tuning with parity guarantees (`OPT-025`, `OPT-015`)
+4. String interning + allocation strategy closure (`OPT-022`, `OPT-026`)
+5. Startup and end-to-end import overhead closure (`OPT-016`)
+6. Builtin hot-path optimization under parity gate (`OPT-029`, policy in `docs/BUILTIN_OPTIMIZATION_POLICY.md`)
 
-### 1) Dispatch and Attribute/Method Specialization (P0)
-
-- Complete `OPT-023`: guarded `LOAD_ATTR` and method-call inline cache paths.
-- Reduce eval-loop indirection and branch overhead in generic opcode dispatch.
-- Ensure cache invalidation parity (type/version mutation paths).
-
-### 2) Call Path Throughput (P0)
-
-- Complete `OPT-024`: broaden call specialization coverage (`CALL_KW`, bound methods, builtin-style fast paths).
-  - Current checkpoint: no-keyword single-argument builtin `len` call-site fast lane is in place for hot container loops.
-  - Current checkpoint: module-scope `LOAD_NAME`/`STORE_NAME` overhead reduced by avoiding per-opcode name cloning and using indexed store path.
-  - Current checkpoint: no-keyword builtin `bool` zero/single-arg fast lanes are in place in dispatch.
-  - Current checkpoint: `CALL_FUNCTION`/`CALL_FUNCTION1` builtin branches now hit zero/one-arg no-kwargs fast lanes before generic builtin dispatch.
-  - Current checkpoint: module-scope `LOAD_NAME` now uses version-guarded site caching for hash-churn reduction in top-level loops.
-  - Current checkpoint: module global upserts now synchronize module-frame fast-local slots for correctness under accelerated `LOAD_NAME`.
-  - Current checkpoint: `LOAD_NAME` and indexed `STORE_NAME` now resolve fast-local slots by opcode name-index directly (no `name_to_index` hash lookup on the hot path).
-  - Current checkpoint: `LOAD_NAME` cache checks now use `frame.function_globals_version` directly instead of module-kind version lookup per opcode.
-- Remove avoidable temporary allocations/clone churn in argument plumbing.
-- Align frame setup/teardown with CPython fast-call lifecycle patterns.
-
-### 3) Container/Lookup Throughput (P1 with P0 impact)
-
-- Complete `OPT-025`: dict/set probe/load-factor/resizing tuning against CPython behavior.
-  - Current checkpoint: dict entry->slot backreference map landed to remove O(slots) delete scans; continue with probe/load-factor tuning and set parity/perf closure.
-- Continue clone/allocation audit for container hot paths.
-- Keep semantic parity checks in lockstep with perf changes.
-
-### 4) String Interning and Allocation Strategy (P0/P1)
-
-- Complete `OPT-022`: explicit interning policy for identifiers, attribute names, and module-global keys.
-- Complete `OPT-026`: freelist/buffer reuse strategy for hot temporary objects and call buffers.
-
-### 5) Startup and End-to-End Throughput (P1)
-
-- Execute `OPT-016`: import/startup overhead audit and reductions where semantics permit.
-- Keep strict stdlib and curated harness lanes green after each perf wave.
-
-## Exit Criteria for Optimization Sprint
-
-1. No single microbenchmark dominates optimization priorities.
-2. Dispatch hotpath and dict/pickle hotspot ratios are materially reduced (tracked in backlog).
-3. P0 optimization backlog items are `[x]` or have documented closure criteria/owners.
-4. No correctness regressions in:
+## Exit Criteria (Optimization Milestone)
+1. P0 optimization items in `docs/OPTIMIZATION_BACKLOG.md` are closed or explicitly downgraded with rationale.
+2. Benchmark deltas show sustained throughput improvements on dispatch/container-heavy workloads.
+3. No regressions in:
    - `cargo test --lib`
    - `cargo test --test vm`
-   - `cargo test --test cpython_harness` (curated non-strict lane)
+   - `cargo test --test cpython_harness` (curated lane)
+4. Builtin parity gate remains green.

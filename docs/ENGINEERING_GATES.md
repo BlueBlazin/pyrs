@@ -18,7 +18,7 @@ Quick patches are not an acceptable replacement for correct design on core paths
 
 Required rules:
 1. Prefer root-cause/fundamental fixes over tactical symptom patches.
-2. No \"ship now, clean later\" merges for P0 runtime/stdlib behavior.
+2. No "ship now, clean later" merges for P0 runtime/stdlib behavior.
 3. If a temporary workaround is unavoidable, it must be explicitly documented with:
    - reason temporary path is required,
    - owner,

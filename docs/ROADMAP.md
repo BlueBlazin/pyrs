@@ -1,15 +1,15 @@
 # Design and Roadmap
 
 ## Purpose
-This roadmap is the canonical plan for delivering production-grade CPython 3.14 compatibility.
-It is intentionally forward-looking and should not be used as an append-only changelog.
+This is the canonical forward plan for delivering a production-grade CPython 3.14-compatible interpreter.
+It is intentionally state-oriented, not a historical changelog.
 
 ## Project Direction
 - Correctness first, then performance.
-- Prefer CPython behavior fidelity over local convenience APIs.
-- Keep dependencies minimal and justified.
-- Keep runtime boundaries clean: parser, compiler, VM, runtime, stdlib.
-- Avoid "basic compat" completion criteria. A milestone is complete only when in-scope parity gates are met.
+- CPython behavior fidelity over local convenience APIs.
+- Minimal, justified dependencies.
+- Clean boundaries between parser, compiler, VM, runtime, and stdlib substrate.
+- Milestones close only when parity gates are satisfied (not "basic compat").
 
 ## Milestone State
 | Milestone | Scope | Status |
@@ -19,7 +19,7 @@ It is intentionally forward-looking and should not be used as an append-only cha
 | 2 | CPython bytecode intake foundations | Complete |
 | 3 | Closures + frames + traceback foundations | Complete |
 | 4 | Generator/iteration parity core | Complete |
-| 5 | Opcode hardening + supported `.pyc` write/read path | Complete |
+| 5 | Opcode hardening + supported `.pyc` read/write | Complete |
 | 6 | Import-system parity foundations | Complete |
 | 7 | Language surface expansion (core modern syntax) | Complete |
 | 8 | Data-model semantics foundations | Complete |
@@ -32,116 +32,72 @@ It is intentionally forward-looking and should not be used as an append-only cha
 | 15 | Native extension ecosystem compatibility | Pending |
 | 16 | Release hardening/certification | Pending |
 
-## Performance Checkpoint (Phase 1 Complete)
+## Active Milestone: 13
 
-Foundational optimization phase-1 is complete. Milestone 13 functional closure is active again, with benchmark regressions monitored continuously.
-
-Canonical benchmark suite:
-- `scripts/bench_fib_gate.sh 5`
-- `scripts/bench_dispatch_hotpath.sh 5`
-- `scripts/bench_dict_backend.sh 5`
-
-Latest local snapshot (2026-02-11):
-- `fib(29)x5`: `pyrs ~0.56s` vs `python3.10 ~0.49s` (`~1.15x`)
-- dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
-- dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
-- pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
-
-Interpretation:
-- fib recursion is no longer the sole bottleneck.
-- remaining performance risk is dispatch/call/container/startup closure.
-- unresolved optimization items remain tracked in `docs/OPTIMIZATION_BACKLOG.md` and are expected Milestone 14 deliverables unless pulled forward for regressions.
-
-This sprint is implementation-driven from CPython internals:
-- Eval loop and opcode specialization patterns: `Python/ceval.c`, `Python/generated_cases.c.h`
-- Frame/local layout patterns (`f_localsplus`, frame lifecycle): `Include/internal/pycore_frame.h`, `Python/frame.c`
-- Call/fastcall/vectorcall behavior: `Objects/call.c`, `Include/cpython/abstract.h`
-- Integer fast paths and small-int behavior: `Objects/longobject.c`
-
-Detailed execution plan: `docs/OPTIMIZATION_PLAN.md`
-Canonical optimization status tracker: `docs/OPTIMIZATION_BACKLOG.md`
-
-Mandatory foundational optimization scope during sprint includes:
-- explicit string interning strategy closure (`OPT-022`)
-- `LOAD_ATTR`/method-call cache specialization (`OPT-023`)
-- broadened call-path specialization (`OPT-024`)
-- dict/set throughput tuning against CPython behavior (`OPT-025`)
-- temporary allocation/freelist strategy closure (`OPT-026`)
-
-## Active Milestone: 13 (Paused During Perf Sprint)
-
-### Milestone 13 Exit Criteria
+### Exit Criteria
 Milestone 13 is complete only when all are true:
-1. P0 stdlib blockers are closed: `json`, `_csv`/`csv`, `pickle`/`pickletools`/`copyreg`.
-2. Native-core runtime surfaces needed by pure stdlib are implemented with CPython-referenced semantics (`_io`, `_csv`, `_sre`, `_pickle`, object protocol hooks).
-3. Remaining in-scope runtime/language parity gaps are closed (long-tail attribute/data-model/pattern/exception edges tracked in readiness docs).
-4. Strict stdlib harness lane for active modules is green with empty allowlist.
-5. Deferred pickle strict lane is re-enabled and closed.
-6. Engineering gates in `docs/ENGINEERING_GATES.md` and P0 audit backlog in `docs/ALGO_AUDIT_BACKLOG.md` are satisfied for Milestone 13 scope.
-7. Builtin parity gate (`docs/BUILTIN_PARITY.md`) is green with empty allowlists.
+1. P0 blockers in `docs/PRODUCTION_READINESS.md` are closed.
+2. Milestone-13 P0 rows in `docs/STUB_ACCOUNTING.md` are closed.
+3. Active strict stdlib lane is green with empty allowlist.
+4. Deferred strict pickle lane is re-enabled and green.
+5. Engineering gates in `docs/ENGINEERING_GATES.md` are satisfied for Milestone 13 scope.
+6. Builtin parity gate (`docs/BUILTIN_PARITY.md`) is green with empty allowlists.
 
-### Milestone 13 Implementation Strategy
-1. Native-core-first, then pure-stdlib expansion.
+### Implementation Strategy
+1. Native-core-first, then strict pure-stdlib expansion.
 2. Use CPython sources as implementation references:
    - `Modules/*.c`
    - `Objects/*.c`
    - `Lib/*.py`
-3. Prefer official pure-Python stdlib modules for high-level behavior.
+3. Prefer official pure-Python stdlib modules for high-level semantics.
 4. Keep native VM stdlib code as accelerator/runtime substrate only.
-5. Drive near-term execution by common-functionality closure for top stdlib modules:
-   - canonical tracker: `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`
+5. Track all partial behavior in `docs/STUB_ACCOUNTING.md`.
 
-### Milestone 13 Workstreams
+### Workstreams
 - Runtime/native core parity:
-  - `_io` semantic closure required by stdlib
-  - `_csv` parity for `Lib/csv.py`
-  - `_sre` parity for `Lib/re/*`
-  - `_pickle` and object reduction protocol parity for `Lib/pickle.py`
-  - object-model protocol closure (`__bool__`/`__len__` truthiness and core membership fallback order landed; long-tail slot/error edges pending)
+  - `_io`, `_csv`, `_sre`, `_pickle`
+  - object-model protocol long-tail parity
 - Pure-stdlib handoff:
-  - Make CPython pure modules primary where available
-  - Remove compatibility shims once corresponding native core is sufficient
-- Test gates:
-  - Fast loops: targeted/unit + curated harness
-  - Strict stdlib: opt-in locally, mandatory in parity-gate profiles
-  - Deferred pickle lane: tracked until full closure
-- Robustness/performance proof:
-  - malformed-input differential tests
-  - benchmark deltas and hotspot profiling for blockers
-  - landed optimization baseline: CPython-style fast-locals design (`f_localsplus`-like slot-backed locals with lazy dict sync), object-backed function-call dispatch (no full `FunctionObject` clone in opcode call paths), per-site `LOAD_GLOBAL` inline caching with namespace-version guards, arity-2/arity-3 call-path specialization, and release build tuning (`lto = "thin"`, `codegen-units = 1`)
+  - make CPython pure modules the default behavior path where feasible
+  - retire temporary shims once parity blockers close
+- Gate-driven closure:
+  - targeted unit/regression tests
+  - curated + strict harness lanes
+  - differential tests against CPython
 
 ## Milestone 14 (Performance and Architecture)
 Deliverables:
-- Hot-path algorithmic closure for runtime containers and VM dispatch paths.
-- Clone/allocation discipline closure for hot code paths.
-- Continued decomposition of large VM/runtime modules into focused components.
-- Benchmark and observability gates integrated into CI policy.
+- close remaining throughput backlog in `docs/OPTIMIZATION_BACKLOG.md`
+- enforce clone/allocation discipline on hot paths
+- continue VM/runtime decomposition for maintainability
+- keep benchmark and observability gates integrated into CI
 
 ## Milestone 15 (Extension Ecosystem)
 Deliverables:
-- Limited C-API/abi3 execution path for supported extension surfaces.
-- HPy path and compatibility matrix.
-- Extension-backed ecosystem smoke suites and explicit unsupported-surface diagnostics.
+- limited C-API/abi3 execution path for supported surfaces
+- HPy path and compatibility matrix
+- extension-backed ecosystem smoke suites + explicit unsupported-surface diagnostics
 
 ## Milestone 16 (Release Hardening)
 Deliverables:
-- Security/reliability CI gates on release branches.
-- Cross-platform qualification matrix (Linux/macOS/Windows).
-- Reproducible/signed artifacts and release playbook.
+- security/reliability release gates
+- Linux/macOS/Windows qualification matrix
+- reproducible/signed artifacts and release playbook
 
 ## Operating Rules
 - Commit in small focused checkpoints.
-- Do not keep long-lived dirty worktrees.
+- Keep worktree clean.
 - Update docs in the same checkpoint as behavior changes.
-- Keep this file as plan/state, not history log.
 
-## Canonical Companion Docs
-- `docs/PRODUCTION_READINESS.md`: global production checklist and blocker status.
-- `docs/STUB_ACCOUNTING.md`: explicit partial/stub ledger and closure ownership.
-- `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`: top stdlib common-usecase closure tracker and execution waves.
-- `docs/STDLIB_MIGRATION_PLAN.md`: pure-stdlib migration policy.
-- `docs/ENGINEERING_GATES.md`: mandatory quality gates.
-- `docs/ALGO_AUDIT_BACKLOG.md`: algorithmic/semantic audit tasks.
-- `docs/OPTIMIZATION_BACKLOG.md`: permanent optimization checklist and status ledger.
-- `docs/BUILTIN_PARITY.md`: builtin surface parity gate and closure status.
-- `docs/BUILTIN_OPTIMIZATION_POLICY.md`: builtin optimization classes and targets.
+## Companion Docs
+- `docs/README.md`
+- `docs/PRODUCTION_READINESS.md`
+- `docs/STUB_ACCOUNTING.md`
+- `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`
+- `docs/STDLIB_MIGRATION_PLAN.md`
+- `docs/ENGINEERING_GATES.md`
+- `docs/ALGO_AUDIT_BACKLOG.md`
+- `docs/OPTIMIZATION_PLAN.md`
+- `docs/OPTIMIZATION_BACKLOG.md`
+- `docs/BUILTIN_PARITY.md`
+- `docs/BUILTIN_OPTIMIZATION_POLICY.md`

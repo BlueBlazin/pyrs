@@ -54,7 +54,7 @@ Rules:
 3. net-new semantic probe mismatches fail the gate
 4. stale allowlist entries fail the gate
 
-## Current Snapshot (2026-02-13)
+## Current Baseline
 
 - CPython builtin count: `145`
 - pyrs builtin count: `145`

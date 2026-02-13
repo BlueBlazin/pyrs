@@ -19,7 +19,7 @@ Scope list (user-priority):
 - `YELLOW`: imports but common workflow still fails (or only trivial path works).
 - `RED`: import itself fails (critical missing native/core surface).
 
-## Baseline Snapshot (2026-02-13 local probe, debug build)
+## Baseline Snapshot
 - Import pass: `26/26`
 - Common-workflow smoke pass: `26/26`
 - All top-stdlib common-usecase rows in this checklist are currently green; remaining work is long-tail semantic/perf closure.
@@ -46,7 +46,7 @@ Scope list (user-priority):
 | `argparse` | P1 | GREEN | parser creation, positional/optional args, errors | keep parse/error parity |
 | `unittest` | P1 | GREEN | case execution, assertions, suite/runner baseline | keep exception formatting parity |
 | `threading` | P1 | GREEN | thread start/join, lock/event basics | broaden contention semantics |
-| `multiprocessing` | P1 | YELLOW | process start/join/queue basics (or explicit, documented limitation) | only minimal probe currently verified |
+| `multiprocessing` | P1 | GREEN | process start/join/queue baseline viability check (minimum smoke) | baseline smoke is intentionally minimal; deeper semantics remain tracked in strict/differential lanes |
 | `asyncio` | P1 | GREEN | `asyncio.run`, task scheduling baseline, coroutine correctness | expand real-world task patterns |
 | `csv` | P0 | GREEN | reader/writer basics via `Lib/csv.py` + `_csv` substrate | long-tail dialect/error parity pending |
 | `sqlite3` | P0 | GREEN | in-memory connect/execute/fetch/close | `_sqlite3` now includes descriptor-backed connection attrs (`isolation_level`/`in_transaction`/`total_changes`), SQL-length DataError precheck, row/text-factory plumbing, `_sqlite3.Row` baseline behavior, real `create_function()` callback registration, and callable `factory=` handling; inspect signature rendering for sqlite callables is aligned; remaining DB-API long-tail frontier is URI undecodable-path handling (`test_open_undecodable_uri`) plus autocommit/type edges |

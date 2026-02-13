@@ -72,7 +72,7 @@ Minimum validation for builtin optimization checkpoints:
    - `scripts/bench_dispatch_hotpath.sh 5`
    - `scripts/bench_dict_backend.sh 5`
 
-## Current Status (2026-02-13)
+## Current Status
 
 - HOT path checkpoint landed:
   - direct no-keyword fast lanes for `len` and `bool`
