@@ -129,6 +129,7 @@ impl Vm {
             BuiltinFunction::SqliteConnectionGetConfig => "getconfig".to_string(),
             BuiltinFunction::SqliteConnectionSetConfig => "setconfig".to_string(),
             BuiltinFunction::SqliteConnectionBlobOpen => "blobopen".to_string(),
+            BuiltinFunction::SqliteConnectionBackup => "backup".to_string(),
             BuiltinFunction::SqliteCursorInit => "__init__".to_string(),
             BuiltinFunction::SqliteCursorSetAttribute => "__setattr__".to_string(),
             BuiltinFunction::SqliteCursorSetInputSizes => "setinputsizes".to_string(),
@@ -256,6 +257,7 @@ impl Vm {
                 "_sqlite3.Connection.setconfig".to_string()
             }
             BuiltinFunction::SqliteConnectionBlobOpen => "_sqlite3.Connection.blobopen".to_string(),
+            BuiltinFunction::SqliteConnectionBackup => "_sqlite3.Connection.backup".to_string(),
             BuiltinFunction::SqliteCursorInit => "_sqlite3.Cursor.__init__".to_string(),
             BuiltinFunction::SqliteCursorSetAttribute => "_sqlite3.Cursor.__setattr__".to_string(),
             BuiltinFunction::SqliteCursorSetInputSizes => {
@@ -415,6 +417,7 @@ impl Vm {
             | BuiltinFunction::SqliteConnectionGetConfig
             | BuiltinFunction::SqliteConnectionSetConfig
             | BuiltinFunction::SqliteConnectionBlobOpen
+            | BuiltinFunction::SqliteConnectionBackup
             | BuiltinFunction::SqliteCursorInit
             | BuiltinFunction::SqliteCursorSetAttribute
             | BuiltinFunction::SqliteCursorSetInputSizes

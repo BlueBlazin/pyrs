@@ -1136,6 +1136,10 @@ impl Vm {
                 "blobopen".to_string(),
                 Value::Builtin(BuiltinFunction::SqliteConnectionBlobOpen),
             );
+            class_data.attrs.insert(
+                "backup".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteConnectionBackup),
+            );
         }
         let sqlite_cursor_class = match self
             .heap

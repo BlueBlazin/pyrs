@@ -2456,6 +2456,7 @@ pub enum BuiltinFunction {
     SqliteConnectionGetConfig,
     SqliteConnectionSetConfig,
     SqliteConnectionBlobOpen,
+    SqliteConnectionBackup,
     SqliteCursorInit,
     SqliteCursorSetAttribute,
     SqliteCursorSetInputSizes,
@@ -5581,6 +5582,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteConnectionGetConfig
             | BuiltinFunction::SqliteConnectionSetConfig
             | BuiltinFunction::SqliteConnectionBlobOpen
+            | BuiltinFunction::SqliteConnectionBackup
             | BuiltinFunction::SqliteCursorInit
             | BuiltinFunction::SqliteCursorSetAttribute
             | BuiltinFunction::SqliteCursorSetInputSizes

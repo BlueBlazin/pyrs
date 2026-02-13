@@ -15,6 +15,11 @@ struct Sqlite3Stmt {
 }
 
 #[repr(C)]
+struct Sqlite3Backup {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
 struct Sqlite3Blob {
     _private: [u8; 0],
 }
@@ -82,6 +87,17 @@ unsafe extern "C" {
         len: c_int,
         destructor: SqliteDestructor,
     ) -> c_int;
+    fn sqlite3_backup_init(
+        dest: *mut Sqlite3Db,
+        dest_name: *const c_char,
+        src: *mut Sqlite3Db,
+        src_name: *const c_char,
+    ) -> *mut Sqlite3Backup;
+    fn sqlite3_backup_step(backup: *mut Sqlite3Backup, pages: c_int) -> c_int;
+    fn sqlite3_backup_finish(backup: *mut Sqlite3Backup) -> c_int;
+    fn sqlite3_backup_remaining(backup: *mut Sqlite3Backup) -> c_int;
+    fn sqlite3_backup_pagecount(backup: *mut Sqlite3Backup) -> c_int;
+    fn sqlite3_sleep(ms: c_int) -> c_int;
     fn sqlite3_complete(sql: *const c_char) -> c_int;
     fn sqlite3_blob_open(
         db: *mut Sqlite3Db,
@@ -3063,6 +3079,164 @@ impl Vm {
         // SAFETY: db is a valid sqlite handle and sqlite3_interrupt has no return value.
         unsafe {
             sqlite3_interrupt(db);
+        }
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_sqlite_connection_backup(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(sqlite_error("TypeError", "backup() missing self"));
+        }
+        if args.len() > 2 {
+            return Err(sqlite_error(
+                "TypeError",
+                "backup() takes exactly one positional argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let target = if args.is_empty() {
+            kwargs.remove("target").ok_or_else(|| {
+                sqlite_error("TypeError", "backup() missing required argument 'target'")
+            })?
+        } else {
+            args.remove(0)
+        };
+        let pages_arg = kwargs.remove("pages").unwrap_or(Value::Int(-1));
+        let progress = kwargs.remove("progress").unwrap_or(Value::None);
+        let name = match kwargs
+            .remove("name")
+            .unwrap_or_else(|| Value::Str("main".to_string()))
+        {
+            Value::Str(name) => name,
+            other => {
+                return Err(sqlite_error(
+                    "TypeError",
+                    format!("name must be str, not {}", self.value_type_name_for_error(&other)),
+                ));
+            }
+        };
+        let sleep = match kwargs.remove("sleep").unwrap_or(Value::Float(0.25)) {
+            Value::Float(value) => value,
+            Value::Int(value) => value as f64,
+            Value::Bool(flag) => {
+                if flag {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            other => value_to_f64(other).map_err(|_| {
+                sqlite_error(
+                    "TypeError",
+                    "sleep must be a real number (int or float)",
+                )
+            })?,
+        };
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("backup() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+        if !self.sqlite_value_is_connection_instance(&target) {
+            return Err(sqlite_error("TypeError", "target must be a sqlite3.Connection"));
+        }
+        if !matches!(progress, Value::None) && !self.is_callable_value(&progress) {
+            return Err(sqlite_error(
+                "TypeError",
+                "progress argument must be a callable",
+            ));
+        }
+
+        let mut pages = value_to_int(pages_arg)
+            .map_err(|_| sqlite_error("TypeError", "pages must be an integer"))?;
+        if pages == 0 {
+            pages = -1;
+        }
+        let pages_c = c_int::try_from(pages)
+            .map_err(|_| sqlite_error("OverflowError", "pages out of range"))?;
+        let sleep_ms = if sleep <= 0.0 {
+            0
+        } else {
+            let millis = sleep * 1000.0;
+            if millis > c_int::MAX as f64 {
+                c_int::MAX
+            } else {
+                millis as c_int
+            }
+        };
+
+        let source_id = self.sqlite_connection_id_from_value(&receiver, "backup")?;
+        let target_id = self.sqlite_connection_id_from_value(&target, "backup")?;
+        if source_id == target_id {
+            return Err(sqlite_error(
+                "ValueError",
+                "target cannot be the same connection instance",
+            ));
+        }
+        let source_db = self.sqlite_open_db_handle(source_id)?;
+        let target_db = self.sqlite_open_db_handle(target_id)?;
+        let dest_name = CString::new("main").expect("valid static sqlite db name");
+        let source_name =
+            CString::new(name).map_err(|_| sqlite_error("ValueError", "embedded null character"))?;
+
+        let _callback_vm_guard = SqliteCallbackVmGuard::enter(self);
+        // SAFETY: handles and C strings are valid for backup initialization.
+        let backup =
+            unsafe { sqlite3_backup_init(target_db, dest_name.as_ptr(), source_db, source_name.as_ptr()) };
+        if backup.is_null() {
+            return Err(sqlite_error_from_db_status(target_db, "OperationalError"));
+        }
+
+        let mut rc: c_int;
+        loop {
+            // SAFETY: backup handle is valid until backup_finish is called.
+            rc = unsafe { sqlite3_backup_step(backup, pages_c) };
+            if !matches!(progress, Value::None) {
+                // SAFETY: backup handle is valid and functions are read-only.
+                let remaining = unsafe { sqlite3_backup_remaining(backup) } as i64;
+                // SAFETY: backup handle is valid and functions are read-only.
+                let total = unsafe { sqlite3_backup_pagecount(backup) } as i64;
+                match self.call_internal_preserving_caller(
+                    progress.clone(),
+                    vec![
+                        Value::Int(rc as i64),
+                        Value::Int(remaining),
+                        Value::Int(total),
+                    ],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(_) => {}
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        // SAFETY: backup handle is valid and must be finalized exactly once.
+                        unsafe {
+                            let _ = sqlite3_backup_finish(backup);
+                        }
+                        return Err(self
+                            .runtime_error_from_active_exception("sqlite backup progress failed"));
+                    }
+                }
+            }
+            if rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED {
+                if rc == SQLITE_BUSY || rc == SQLITE_LOCKED {
+                    // SAFETY: sqlite3_sleep does not require additional invariants.
+                    unsafe {
+                        sqlite3_sleep(sleep_ms);
+                    }
+                }
+                continue;
+            }
+            break;
+        }
+
+        // SAFETY: backup handle is valid and must be finalized exactly once.
+        let finish_rc = unsafe { sqlite3_backup_finish(backup) };
+        if finish_rc != SQLITE_OK {
+            return Err(sqlite_error_from_db_status(target_db, "OperationalError"));
         }
         Ok(Value::None)
     }
