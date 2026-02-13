@@ -1404,6 +1404,22 @@ impl Vm {
         }
     }
 
+    fn alloc_synthetic_reprenum_data_class(&mut self, name: &str) -> ObjRef {
+        let class = self.alloc_synthetic_class(name);
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            let new_builtin = match name {
+                "int" => BuiltinFunction::Int,
+                "float" => BuiltinFunction::Float,
+                _ => BuiltinFunction::ObjectNew,
+            };
+            class_data
+                .attrs
+                .entry("__new__".to_string())
+                .or_insert(Value::Builtin(new_builtin));
+        }
+        class
+    }
+
     pub(super) fn class_from_base_value(&mut self, base: Value) -> Result<ObjRef, RuntimeError> {
         match base {
             Value::Class(class) => Ok(class),
@@ -1412,9 +1428,15 @@ impl Vm {
                 .default_type_metaclass()
                 .ok_or_else(|| RuntimeError::new("class base must be a class object")),
             Value::Builtin(BuiltinFunction::Bool) => Ok(self.alloc_synthetic_class("bool")),
-            Value::Builtin(BuiltinFunction::Int) => Ok(self.alloc_synthetic_class("int")),
-            Value::Builtin(BuiltinFunction::Float) => Ok(self.alloc_synthetic_class("float")),
-            Value::Builtin(BuiltinFunction::Str) => Ok(self.alloc_synthetic_class("str")),
+            Value::Builtin(BuiltinFunction::Int) => {
+                Ok(self.alloc_synthetic_reprenum_data_class("int"))
+            }
+            Value::Builtin(BuiltinFunction::Float) => {
+                Ok(self.alloc_synthetic_reprenum_data_class("float"))
+            }
+            Value::Builtin(BuiltinFunction::Str) => {
+                Ok(self.alloc_synthetic_reprenum_data_class("str"))
+            }
             Value::Builtin(BuiltinFunction::List) => Ok(self.alloc_synthetic_class("list")),
             Value::Builtin(BuiltinFunction::Tuple) => Ok(self.alloc_synthetic_class("tuple")),
             Value::Builtin(BuiltinFunction::Dict) => {

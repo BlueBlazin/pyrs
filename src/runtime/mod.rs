@@ -315,6 +315,7 @@ pub enum NativeMethodKind {
     ObjectReduceExBound,
     BoundMethodReduceEx,
     ComplexReduceEx,
+    FunctionDescriptorGet,
     ClassRegister,
     PropertyGet,
     PropertySet,
@@ -6877,6 +6878,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::DescriptorReduceTypeError => {
                         "<bound method descriptor.__reduce_ex__>".to_string()
+                    }
+                    NativeMethodKind::FunctionDescriptorGet => {
+                        "<bound method function.__get__>".to_string()
                     }
                     NativeMethodKind::ObjectReduceExBound => {
                         "<bound method object.__reduce_ex__>".to_string()

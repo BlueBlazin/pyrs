@@ -3338,6 +3338,20 @@ impl Vm {
             NativeMethodKind::DescriptorReduceTypeError => Err(RuntimeError::new(
                 "TypeError: cannot pickle descriptor objects",
             )),
+            NativeMethodKind::FunctionDescriptorGet => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
+                }
+                let obj = args.remove(0);
+                if matches!(obj, Value::None) {
+                    return Ok(NativeCallResult::Value(Value::Function(receiver)));
+                }
+                let bound_receiver = self.receiver_from_value(&obj)?;
+                Ok(NativeCallResult::Value(
+                    self.heap
+                        .alloc_bound_method(BoundMethod::new(receiver, bound_receiver)),
+                ))
+            }
             NativeMethodKind::ObjectReduceExBound => {
                 let receiver_kind = receiver.kind();
                 let Object::Module(module_data) = &*receiver_kind else {

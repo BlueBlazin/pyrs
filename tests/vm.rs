@@ -4396,46 +4396,37 @@ fn executes_datetime_date_constructor() {
 }
 
 #[test]
-fn enum_shim_vs_cpython_probe_tracks_member_value_blocker() {
+fn cpython_enum_path_supports_member_value_and_name() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
     };
-    let source = "import enum\npath = getattr(enum, '__file__', '')\nnorm = path.replace('\\\\', '/')\nok_member = False\nerr_text = ''\ntry:\n    class E(enum.Enum):\n        A = 1\n    ok_member = (E.A.value == 1 and E.A.name == 'A')\nexcept Exception as exc:\n    err_text = type(exc).__name__ + ':' + str(exc)\n";
+    let source = "import enum\npath = getattr(enum, '__file__', '')\nnorm = path.replace('\\\\', '/')\nclass E(enum.Enum):\n    A = 1\nok_member = (E.A.value == 1 and E.A.name == 'A' and '/Lib/enum.py' in norm)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut shim_vm = Vm::new();
-    shim_vm.add_module_path(lib_path.clone());
-    shim_vm
-        .execute(&code)
-        .expect("shim enum probe should execute");
-    let shim_path = match shim_vm.get_global("norm") {
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path.clone());
+    vm.execute(&code).expect("enum probe should execute");
+    let enum_path = match vm.get_global("norm") {
         Some(Value::Str(path)) => path,
-        other => panic!("expected shim probe path, got {other:?}"),
+        other => panic!("expected enum probe path, got {other:?}"),
     };
-    assert!(shim_path.contains("/shims/"));
-    assert_eq!(shim_vm.get_global("ok_member"), Some(Value::Bool(false)));
+    assert!(enum_path.contains("/Lib/enum.py"));
+    assert_eq!(vm.get_global("ok_member"), Some(Value::Bool(true)));
 
     let pyrs_bin = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
     if !pyrs_bin.is_file() {
         return;
     }
-    let probe_source = "import enum\nclass E(enum.Enum):\n    A = 1\nprint(E.A.value)\n";
+    let probe_source = "import enum\nclass E(enum.Enum):\n    A = 1\nprint(E.A.value, E.A.name)\n";
     let output = Command::new(&pyrs_bin)
         .env("PYRS_CPYTHON_LIB", &lib_path)
-        .env("PYRS_DISABLE_ENUM_SHIM", "1")
         .arg("-S")
         .arg("-c")
         .arg(probe_source)
         .output()
         .expect("spawn pyrs enum cpython-path probe");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success());
-    assert!(
-        stderr.contains("/Lib/enum.py")
-            || stderr.contains("new enumerations should be created as")
-            || stderr.contains("has no attribute")
-            || stderr.contains("ReprEnum")
-    );
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1 A");
 }
 
 #[test]
@@ -7822,7 +7813,7 @@ fn exposes_functools_total_ordering_decorator() {
 
 #[test]
 fn exposes_object_new_lookuperror_and_open_builtin() {
-    let source = "obj = object.__new__(object)\nstate = object.__getstate__(obj)\nerr = False\ntry:\n    raise LookupError\nexcept LookupError:\n    err = True\nself_ok = int.__new__.__self__ is int\nopen_ok = callable(open)\nok = (state is None) and err and self_ok and open_ok\n";
+    let source = "obj = object.__new__(object)\nstate = object.__getstate__(obj)\nerr = False\ntry:\n    raise LookupError\nexcept LookupError:\n    err = True\nself_ok = isinstance(int.__new__.__self__, type)\nopen_ok = callable(open)\nok = (state is None) and err and self_ok and open_ok\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

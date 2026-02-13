@@ -712,7 +712,7 @@ impl Vm {
             weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
             local_shim_fallback_enabled: env_flag_enabled("PYRS_ENABLE_LOCAL_SHIMS"),
-            enum_shim_enabled: !env_flag_enabled("PYRS_DISABLE_ENUM_SHIM"),
+            enum_shim_enabled: env_flag_enabled("PYRS_ENABLE_ENUM_SHIM"),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,

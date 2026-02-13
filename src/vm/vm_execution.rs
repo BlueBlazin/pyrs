@@ -5315,8 +5315,12 @@ impl Vm {
 
         if !uses_plain_type {
             let Some(meta) = effective_metaclass else {
-                let class_value =
-                    self.build_default_class_value(name, attrs, default_bases, resolved_metaclass);
+                let class_value = self.build_default_class_value(
+                    name,
+                    attrs,
+                    default_bases,
+                    resolved_metaclass,
+                )?;
                 if let Value::Class(class_ref) = &class_value {
                     if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                         return Ok(ClassBuildOutcome::ExceptionHandled);
@@ -5351,8 +5355,12 @@ impl Vm {
             };
         }
 
-        let class_value =
-            self.build_default_class_value(name, attrs, default_bases, resolved_metaclass);
+        let class_value = self.build_default_class_value(
+            name,
+            attrs,
+            default_bases,
+            resolved_metaclass,
+        )?;
         if let Value::Class(class_ref) = &class_value {
             if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                 return Ok(ClassBuildOutcome::ExceptionHandled);
@@ -5447,7 +5455,7 @@ impl Vm {
         attrs: HashMap<String, Value>,
         bases: Vec<ObjRef>,
         metaclass: Option<ObjRef>,
-    ) -> Value {
+    ) -> Result<Value, RuntimeError> {
         let module_name = self
             .frames
             .last()
@@ -5466,10 +5474,12 @@ impl Vm {
                     class_data.name.as_str(),
                     "Enum" | "IntEnum" | "StrEnum" | "Flag" | "IntFlag" | "ReprEnum"
                 ) {
+                    let default_use_args =
+                        matches!(class_data.name.as_str(), "IntEnum" | "StrEnum" | "IntFlag");
                     class_data
                         .attrs
                         .entry("_use_args_".to_string())
-                        .or_insert(Value::Bool(false));
+                        .or_insert(Value::Bool(default_use_args));
                     let member_type = match class_data.name.as_str() {
                         "IntEnum" | "IntFlag" => Value::Builtin(BuiltinFunction::Int),
                         "StrEnum" => Value::Builtin(BuiltinFunction::Str),
@@ -5541,9 +5551,41 @@ impl Vm {
                         .insert("__mro__".to_string(), self.heap.alloc_tuple(mro_values));
                 }
             }
+            self.call_class_set_name_hooks(class_ref)?;
             self.record_exception_parent_for_class(class_ref);
         }
-        class_value
+        Ok(class_value)
+    }
+
+    pub(super) fn call_class_set_name_hooks(
+        &mut self,
+        class_ref: &ObjRef,
+    ) -> Result<(), RuntimeError> {
+        let attrs = match &*class_ref.kind() {
+            Object::Class(class_data) => class_data
+                .attrs
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect::<Vec<_>>(),
+            _ => return Ok(()),
+        };
+        for (name, value) in attrs {
+            let Some(set_name) = self.lookup_bound_special_method(&value, "__set_name__")? else {
+                continue;
+            };
+            match self.call_internal_preserving_caller(
+                set_name,
+                vec![Value::Class(class_ref.clone()), Value::Str(name)],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self
+                        .runtime_error_from_active_exception("__set_name__ during class creation failed"))
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn attach_owner_class_to_attrs(&mut self, class_ref: &ObjRef) {

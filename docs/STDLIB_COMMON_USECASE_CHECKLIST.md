@@ -51,7 +51,7 @@ Scope list (user-priority):
 | `csv` | P0 | GREEN | reader/writer basics via `Lib/csv.py` + `_csv` substrate | long-tail dialect/error parity pending |
 | `sqlite3` | P0 | GREEN | in-memory connect/execute/fetch/close | `_sqlite3` now includes descriptor-backed connection attrs (`isolation_level`/`in_transaction`/`total_changes`), SQL-length DataError precheck, row/text-factory plumbing, `_sqlite3.Row` baseline behavior, real `create_function()` callback registration, and callable `factory=` handling; inspect signature rendering for sqlite callables is aligned; remaining DB-API long-tail frontier is URI undecodable-path handling (`test_open_undecodable_uri`) plus autocommit/type edges |
 | `urllib` | P0 | GREEN | URL parse/join/quote basics used by apps | Extended URL policy/IDNA edge parity pending |
-| `http` | P0 | GREEN | `http.client` import + request object baseline | deeper enum/object-model long-tail semantics remain tracked (enum shim still preferred by default) |
+| `http` | P0 | GREEN | `http.client` import + request object baseline | deeper enum/object-model long-tail semantics remain tracked (CPython `Lib/enum.py` path is now default) |
 | `hashlib` | P0 | GREEN | `sha256/md5` digest baseline + constructor paths | md5/sha2 native backends are active; broader algorithm surface remains tracked separately |
 | `dataclasses` | P0 | GREEN | decorator, generated `__init__`, defaults, repr/eq baseline | Advanced slots/frozen/post-init edge behavior tracked separately |
 
@@ -68,7 +68,7 @@ For each module above:
 ### Wave 1 (P0 foundation unlockers)
 1. `hashlib` native crypto substrates (`md5`, `sha2`) are landed with parity tests.
 2. `_sqlite3` baseline import/connect/execute/fetch path is landed with regression tests.
-3. Keep enum/http behavior closure tracked on CPython `Lib/enum.py` path; remove default enum-shim preference once probe is green.
+3. Keep enum/http behavior closure tracked on CPython `Lib/enum.py` path; retain `enum` shim only as explicit emergency fallback.
 4. Keep constructor/object-model and iterator fixes covered with targeted regressions (no regressions to resolved rows).
 
 ### Wave 2 (P0 module closure pass)

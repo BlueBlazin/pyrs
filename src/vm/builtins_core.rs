@@ -2037,12 +2037,25 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if let Some(Value::Class(class)) = args.first() {
             if self.class_has_builtin_int_base(class) {
-                let class = class.clone();
+                let mut class = class.clone();
                 args.remove(0);
-                let int_value = if kwargs.is_empty() {
-                    BuiltinFunction::Int.call(&self.heap, args)?
+                if let Some(Value::Class(explicit_class)) = args.first() {
+                    if self.class_has_builtin_int_base(explicit_class) {
+                        class = explicit_class.clone();
+                        args.remove(0);
+                    }
+                }
+                let int_value = if matches!(
+                    args.first(),
+                    Some(Value::Class(candidate)) if self.class_has_builtin_int_base(candidate)
+                ) {
+                    if kwargs.is_empty() {
+                        BuiltinFunction::Int.call(&self.heap, args)?
+                    } else {
+                        call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)?
+                    }
                 } else {
-                    call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)?
+                    self.builtin_int(args, kwargs)?
                 };
                 let instance = self.alloc_instance_for_class(&class);
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
@@ -2095,12 +2108,25 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if let Some(Value::Class(class)) = args.first() {
             if self.class_has_builtin_float_base(class) {
-                let class = class.clone();
+                let mut class = class.clone();
                 args.remove(0);
-                let float_value = if kwargs.is_empty() {
-                    BuiltinFunction::Float.call(&self.heap, args)?
+                if let Some(Value::Class(explicit_class)) = args.first() {
+                    if self.class_has_builtin_float_base(explicit_class) {
+                        class = explicit_class.clone();
+                        args.remove(0);
+                    }
+                }
+                let float_value = if matches!(
+                    args.first(),
+                    Some(Value::Class(candidate)) if self.class_has_builtin_float_base(candidate)
+                ) {
+                    if kwargs.is_empty() {
+                        BuiltinFunction::Float.call(&self.heap, args)?
+                    } else {
+                        call_builtin_with_kwargs(&self.heap, BuiltinFunction::Float, args, kwargs)?
+                    }
                 } else {
-                    call_builtin_with_kwargs(&self.heap, BuiltinFunction::Float, args, kwargs)?
+                    self.builtin_float(args, kwargs)?
                 };
                 let instance = self.alloc_instance_for_class(&class);
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
@@ -2753,7 +2779,7 @@ impl Vm {
                 namespace,
                 base_classes,
                 Some(metaclass),
-            );
+            )?;
             if let Value::Class(class_ref) = &class_value {
                 if self.call_init_subclass_hook(class_ref, &kwargs)? {
                     return Err(self.runtime_error_from_active_exception("type.__new__ failed"));
@@ -3271,6 +3297,9 @@ impl Vm {
         let class_value = args.remove(0);
         let mut class_ref = match class_value {
             Value::Class(class) => class,
+            Value::Builtin(builtin) if self.builtin_is_type_object(builtin) => {
+                self.class_from_base_value(Value::Builtin(builtin))?
+            }
             _ => {
                 return Err(RuntimeError::new(
                     "object.__new__(X): X is not a type object",
@@ -3279,9 +3308,18 @@ impl Vm {
         };
         // `super(...).__new__(cls)` can arrive here as a bound built-in call shape
         // where the explicit `cls` argument is still present in `args`.
-        if let Some(Value::Class(explicit_class)) = args.first() {
-            class_ref = explicit_class.clone();
-            args.remove(0);
+        if let Some(explicit_class) = args.first().cloned() {
+            match explicit_class {
+                Value::Class(explicit_class) => {
+                    class_ref = explicit_class;
+                    args.remove(0);
+                }
+                Value::Builtin(builtin) if self.builtin_is_type_object(builtin) => {
+                    class_ref = self.class_from_base_value(Value::Builtin(builtin))?;
+                    args.remove(0);
+                }
+                _ => {}
+            }
         }
         if let Some(message) = self.class_disallow_instantiation_message(&class_ref) {
             return Err(RuntimeError::new(message));

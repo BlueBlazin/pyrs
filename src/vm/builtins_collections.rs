@@ -1210,7 +1210,7 @@ impl Vm {
             HashMap::new(),
             vec![enum_base],
             enum_metaclass,
-        );
+        )?;
         let class_ref = match &class_value {
             Value::Class(class) => class.clone(),
             _ => unreachable!(),

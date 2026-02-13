@@ -42,9 +42,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Prefer official CPython pure-Python stdlib implementations where feasible.
 - Keep native handlers as substrate/accelerator layers, not replacement semantics.
 - Local shim policy:
-  - `enum` shim remains temporarily preferred by default while CPython `Lib/enum.py` path is still blocked (`TypeError: ReprEnum subclasses must be mixed with a data type ...` in probe mode; `__prepare__` class-namespace baseline is landed, but enum metaclass/base-resolution semantics are still incomplete).
+  - CPython `Lib/enum.py` path is now the default.
+  - `enum` shim is emergency fallback only and must be enabled explicitly with `PYRS_ENABLE_ENUM_SHIM=1`.
   - `pkgutil`/`importlib.resources` local shims are fallback-only and require `PYRS_ENABLE_LOCAL_SHIMS=1`.
-  - CPython-enum probe mode: `PYRS_DISABLE_ENUM_SHIM=1`.
+  - CPython enum probe regression: `tests/vm.rs::cpython_enum_path_supports_member_value_and_name`.
 - Keep docs updated in the same checkpoint as behavior changes.
 - Keep worktrees clean; commit small focused checkpoints.
 - End every assistant turn with immediate next `3-6` concrete steps.

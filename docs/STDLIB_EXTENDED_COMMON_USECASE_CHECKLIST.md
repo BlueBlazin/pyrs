@@ -76,8 +76,8 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 - XML parser backend gap (`pyexpat`): `xml`
 
 ## Shim and Probe Notes
-- Default runtime behavior still prefers local `enum` shim to avoid broad stdlib regressions.
-- CPython enum probe mode: set `PYRS_DISABLE_ENUM_SHIM=1` to force `Lib/enum.py` and observe current blocker (`TypeError: ReprEnum subclasses must be mixed with a data type ...`, remaining enum metaclass/base-resolution semantics).
+- Default runtime behavior now uses CPython `Lib/enum.py`.
+- Local `enum` shim is emergency fallback only and must be explicitly enabled with `PYRS_ENABLE_ENUM_SHIM=1`.
 - Local shim fallback for `pkgutil` and `importlib.resources` is disabled by default and can be enabled explicitly with `PYRS_ENABLE_LOCAL_SHIMS=1`.
 
 ## Refresh Procedure

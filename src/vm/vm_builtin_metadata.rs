@@ -458,14 +458,54 @@ impl Vm {
             }
         }
         match attr_name {
-            "__dict__" => Ok(self
-                .heap
-                .alloc_dict(self.builtin_type_dict_entries(builtin))),
+            "__dict__" => {
+                let mut entries = self.builtin_type_dict_entries(builtin);
+                if self.builtin_is_type_object(builtin)
+                    && !entries
+                        .iter()
+                        .any(|(name, _)| matches!(name, Value::Str(key) if key == "__new__"))
+                {
+                    entries.push((
+                        Value::Str("__new__".to_string()),
+                        Value::Builtin(builtin),
+                    ));
+                }
+                Ok(self.heap.alloc_dict(entries))
+            }
             "__name__" => Ok(Value::Str(self.builtin_attribute_name(builtin))),
             "__qualname__" => Ok(Value::Str(self.builtin_attribute_qualname(builtin))),
+            "__base__" if self.builtin_is_type_object(builtin) => {
+                if builtin == BuiltinFunction::ObjectNew {
+                    Ok(Value::None)
+                } else {
+                    Ok(self
+                        .builtins
+                        .get("object")
+                        .cloned()
+                        .unwrap_or(Value::Builtin(BuiltinFunction::ObjectNew)))
+                }
+            }
+            "__mro__" if self.builtin_is_type_object(builtin) => {
+                let mut entries = vec![Value::Builtin(builtin)];
+                if builtin != BuiltinFunction::ObjectNew {
+                    entries.push(
+                        self.builtins
+                            .get("object")
+                            .cloned()
+                            .unwrap_or(Value::Builtin(BuiltinFunction::ObjectNew)),
+                    );
+                }
+                Ok(self.heap.alloc_tuple(entries))
+            }
             "__module__" => Ok(Value::Str(builtin_module_name)),
             "__self__" => Ok(Value::Builtin(builtin)),
             "__flags__" => Ok(Value::Int(0)),
+            "__new__"
+                if builtin != BuiltinFunction::Type
+                    && self.builtin_is_type_object(builtin) =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::ObjectNew))
+            }
             "__new__" => Ok(Value::Builtin(builtin)),
             "__init__" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::ObjectInit))
@@ -688,6 +728,34 @@ impl Vm {
         class: &ObjRef,
         attr_name: &str,
     ) -> Option<Value> {
+        if (self.class_has_builtin_int_base(class)
+            || self.class_has_builtin_float_base(class)
+            || self.class_has_builtin_str_base(class))
+            && attr_name == "__format__"
+        {
+            return Some(Value::Builtin(BuiltinFunction::Format));
+        }
+        if (self.class_has_builtin_int_base(class)
+            || self.class_has_builtin_float_base(class)
+            || self.class_has_builtin_str_base(class))
+            && attr_name == "__str__"
+        {
+            return Some(Value::Builtin(BuiltinFunction::Str));
+        }
+        if (self.class_has_builtin_int_base(class)
+            || self.class_has_builtin_float_base(class)
+            || self.class_has_builtin_str_base(class))
+            && attr_name == "__repr__"
+        {
+            return Some(Value::Builtin(BuiltinFunction::Repr));
+        }
+        if (self.class_has_builtin_int_base(class)
+            || self.class_has_builtin_float_base(class)
+            || self.class_has_builtin_str_base(class))
+            && (attr_name == "__reduce_ex__" || attr_name == "__reduce__")
+        {
+            return Some(Value::Builtin(BuiltinFunction::ObjectReduceEx));
+        }
         if self.class_has_builtin_tuple_base(class) && attr_name == "count" {
             let receiver = match self
                 .heap
@@ -1389,6 +1457,11 @@ impl Vm {
             }
             "__doc__" => Ok(Value::None),
             "__call__" => Ok(Value::Function(func.clone())),
+            "__func__" => Ok(Value::Function(func.clone())),
+            "__get__" => Ok(self.alloc_native_bound_method(
+                NativeMethodKind::FunctionDescriptorGet,
+                func.clone(),
+            )),
             "__defaults__" => {
                 let defaults = {
                     let func_ref = func.kind();
@@ -2725,11 +2798,25 @@ impl Vm {
             let Object::Class(class_data) = &*class_kind else {
                 return Err(RuntimeError::new("attribute access unsupported type"));
             };
-            let entries = class_data
+            let mut entries = class_data
                 .attrs
                 .iter()
                 .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
                 .collect::<Vec<_>>();
+            let is_user_class = matches!(
+                class_data.attrs.get("__pyrs_user_class__"),
+                Some(Value::Bool(true))
+            );
+            if !is_user_class
+                && !entries
+                    .iter()
+                    .any(|(name, _)| matches!(name, Value::Str(key) if key == "__new__"))
+            {
+                entries.push((
+                    Value::Str("__new__".to_string()),
+                    Value::Builtin(BuiltinFunction::ObjectNew),
+                ));
+            }
             self.heap.alloc_dict(entries)
         } else if attr_name == "register" {
             return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
@@ -2742,6 +2829,14 @@ impl Vm {
             Value::Builtin(BuiltinFunction::ObjectInit)
         } else if attr_name == "__getstate__" {
             Value::Builtin(BuiltinFunction::ObjectGetState)
+        } else if attr_name == "__repr__" {
+            Value::Builtin(BuiltinFunction::Repr)
+        } else if attr_name == "__str__" {
+            Value::Builtin(BuiltinFunction::Str)
+        } else if attr_name == "__format__" {
+            Value::Builtin(BuiltinFunction::Format)
+        } else if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
+            Value::Builtin(BuiltinFunction::ObjectReduceEx)
         } else if attr_name == "__doc__" {
             Value::None
         } else if attr_name == "__flags__" {
@@ -3425,6 +3520,29 @@ impl Vm {
                 if let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string())) {
                     return Ok(AttrAccessOutcome::Value(attr));
                 }
+            }
+        }
+
+        if attr_name == "__init__" {
+            let enum_like = class_attr_walk(&class_ref).into_iter().any(|candidate| {
+                matches!(
+                    &*candidate.kind(),
+                    Object::Class(class_data)
+                        if matches!(
+                            class_data.name.as_str(),
+                            "Enum" | "IntEnum" | "StrEnum" | "Flag" | "IntFlag" | "ReprEnum"
+                        )
+                )
+            });
+            if enum_like
+                || self.class_has_builtin_int_base(&class_ref)
+                || self.class_has_builtin_float_base(&class_ref)
+                || self.class_has_builtin_str_base(&class_ref)
+            {
+                return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                    BuiltinFunction::NoOp,
+                    instance.clone(),
+                )));
             }
         }
 

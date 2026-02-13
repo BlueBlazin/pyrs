@@ -61,7 +61,7 @@ Shims are temporary bootstrap fallbacks and are not allowed to shadow CPython `L
 
 | Shim surface | Current state | Closure criteria | Status |
 |---|---|---|---|
-| `enum` | Local shim is still preferred by default to prevent broad stdlib regressions while CPython enum path remains blocked (`PYRS_DISABLE_ENUM_SHIM=1` currently reaches `Lib/enum.py` but fails on `TypeError: ReprEnum subclasses must be mixed with a data type ...`, tied to remaining enum metaclass/base-resolution semantics). | Remove default enum-shim preference once CPython enum probe is green (`tests/vm.rs::enum_shim_vs_cpython_probe_tracks_member_value_blocker` CPython-side path). | IN_PROGRESS |
+| `enum` | CPython `Lib/enum.py` path is now default; local `shims/enum.py` is emergency fallback only via `PYRS_ENABLE_ENUM_SHIM=1`. | Remove `shims/enum.py` entirely once strict stdlib + curated real-world suites remain green without fallback toggles. Probe guard: `tests/vm.rs::cpython_enum_path_supports_member_value_and_name`. | IN_PROGRESS |
 | `pkgutil` | Local shim is fallback-only and disabled by default. | Remove shim after stdlib-less bootstrap requirement is removed or replaced by native/runtime capability. | IN_PROGRESS |
 | `importlib.resources` | Local shim is fallback-only and disabled by default. | Remove shim after stdlib-less bootstrap requirement is removed or replaced by native/runtime capability. | IN_PROGRESS |
 
