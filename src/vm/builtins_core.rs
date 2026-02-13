@@ -2717,6 +2717,61 @@ impl Vm {
             }
             return BuiltinFunction::Type.call(&self.heap, args);
         }
+        if args.len() == 4 || args.len() == 5 {
+            let (metaclass_index, name_index) = if args.len() == 4 { (0, 1) } else { (1, 2) };
+            let metaclass = match &args[metaclass_index] {
+                Value::Class(class) => class.clone(),
+                _ => return Err(RuntimeError::new("type.__new__() argument 1 must be a type")),
+            };
+            let class_name = match &args[name_index] {
+                Value::Str(name) => name.clone(),
+                _ => return Err(RuntimeError::new("type() first argument must be string")),
+            };
+            let base_values = match &args[name_index + 1] {
+                Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                    Object::Tuple(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                },
+                Value::List(list_obj) => match &*list_obj.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                },
+                _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+            };
+            let mut base_classes = Vec::with_capacity(base_values.len());
+            for base in base_values {
+                base_classes.push(self.class_from_base_value(base)?);
+            }
+            let namespace = match &args[name_index + 2] {
+                Value::Dict(dict_obj) => match &*dict_obj.kind() {
+                    Object::Dict(entries) => {
+                        let mut attrs = HashMap::new();
+                        for (key, value) in entries {
+                            let Value::Str(name) = key else {
+                                return Err(RuntimeError::new("type() dict keys must be strings"));
+                            };
+                            attrs.insert(name.clone(), value.clone());
+                        }
+                        attrs
+                    }
+                    _ => return Err(RuntimeError::new("type() third argument must be dict")),
+                },
+                _ => return Err(RuntimeError::new("type() third argument must be dict")),
+            };
+
+            let class_value = self.build_default_class_value(
+                class_name,
+                namespace,
+                base_classes,
+                Some(metaclass),
+            );
+            if let Value::Class(class_ref) = &class_value {
+                if self.call_init_subclass_hook(class_ref, &kwargs)? {
+                    return Err(self.runtime_error_from_active_exception("type.__new__ failed"));
+                }
+            }
+            return Ok(class_value);
+        }
         if args.len() == 3 {
             let mut class_keywords = kwargs;
             let explicit_metaclass = class_keywords

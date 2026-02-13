@@ -46,7 +46,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `fractions` | P0 | PASS | FAIL | AttributeError: module 'math' has no attribute 'gcd' |
 | `pprint` | DONE | PASS | PASS | - |
 | `copy` | DONE | PASS | PASS | - |
-| `enum` | P0 | PASS | FAIL | AttributeError: int has no attribute 'value' |
+| `enum` | P0 | PASS | FAIL | AttributeError: dict has no attribute '_member_names' |
 | `abc` | DONE | PASS | PASS | - |
 | `inspect` | DONE | PASS | PASS | - |
 | `contextlib` | DONE | PASS | PASS | - |
@@ -77,7 +77,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 
 ## Shim and Probe Notes
 - Default runtime behavior still prefers local `enum` shim to avoid broad stdlib regressions.
-- CPython enum probe mode: set `PYRS_DISABLE_ENUM_SHIM=1` to force `Lib/enum.py` and observe current blocker (`class constructor takes no arguments` / builtin class-keyword handling gaps).
+- CPython enum probe mode: set `PYRS_DISABLE_ENUM_SHIM=1` to force `Lib/enum.py` and observe current blocker (`AttributeError: dict has no attribute '_member_names'`, driven by class-namespace/metaclass long-tail).
 - Local shim fallback for `pkgutil` and `importlib.resources` is disabled by default and can be enabled explicitly with `PYRS_ENABLE_LOCAL_SHIMS=1`.
 
 ## Refresh Procedure

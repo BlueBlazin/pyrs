@@ -5147,11 +5147,19 @@ impl Vm {
         };
 
         let resolved_metaclass = self.resolve_class_metaclass(&bases, metaclass.as_ref())?;
-        if let Some(meta) = metaclass {
-            if matches!(
-                meta,
-                Value::Builtin(BuiltinFunction::Type) | Value::Class(_)
-            ) {
+        let explicit_metaclass = metaclass.clone();
+        let effective_metaclass = metaclass.or_else(|| resolved_metaclass.clone().map(Value::Class));
+        let plain_type_metaclass_id = self.default_type_metaclass().map(|meta| meta.id());
+        let uses_plain_type = matches!(
+            &effective_metaclass,
+            Some(Value::Builtin(BuiltinFunction::Type))
+        ) || matches!(
+            (&effective_metaclass, plain_type_metaclass_id),
+            (Some(Value::Class(meta)), Some(type_id)) if meta.id() == type_id
+        );
+
+        if !uses_plain_type {
+            let Some(meta) = effective_metaclass else {
                 let class_value =
                     self.build_default_class_value(name, attrs, bases, resolved_metaclass);
                 if let Value::Class(class_ref) = &class_value {
@@ -5160,10 +5168,7 @@ impl Vm {
                     }
                 }
                 return Ok(ClassBuildOutcome::Value(class_value));
-            }
-            if self.frames.is_empty() {
-                return Err(RuntimeError::new("metaclass call requires active frame"));
-            }
+            };
             let namespace = self.heap.alloc_dict(
                 attrs
                     .iter()
@@ -5201,6 +5206,11 @@ impl Vm {
         if let Value::Class(class_ref) = &class_value {
             if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                 return Ok(ClassBuildOutcome::ExceptionHandled);
+            }
+            if let Some(Value::Class(meta)) = explicit_metaclass {
+                if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    class_data.metaclass = Some(meta);
+                }
             }
         }
         Ok(ClassBuildOutcome::Value(class_value))

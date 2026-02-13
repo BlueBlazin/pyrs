@@ -2522,6 +2522,29 @@ impl Vm {
                                         "frozenset instance construction failed",
                                     ));
                                 }
+                            } else if self.class_has_builtin_property_base(&class) {
+                                let descriptor_value =
+                                    self.call_builtin(BuiltinFunction::Property, args, kwargs)?;
+                                let Value::Instance(descriptor_instance) = descriptor_value else {
+                                    return Err(RuntimeError::new(
+                                        "property constructor returned non-property",
+                                    ));
+                                };
+                                let descriptor_attrs = match &*descriptor_instance.kind() {
+                                    Object::Instance(descriptor_data) => descriptor_data.attrs.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "property descriptor construction failed",
+                                        ));
+                                    }
+                                };
+                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                                    instance_data.attrs.extend(descriptor_attrs);
+                                } else {
+                                    return Err(RuntimeError::new(
+                                        "property instance construction failed",
+                                    ));
+                                }
                             } else if !kwargs.is_empty() || !args.is_empty() {
                                 return Err(RuntimeError::new(
                                     "class constructor takes no arguments",
@@ -2922,6 +2945,15 @@ impl Vm {
             })
     }
 
+    pub(super) fn class_has_builtin_property_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "property",
+                _ => false,
+            })
+    }
+
     pub(super) fn class_has_builtin_type_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
@@ -2943,60 +2975,59 @@ impl Vm {
                 args.len()
             )));
         }
-        let name = match &args[0] {
-            Value::Str(name) => name.clone(),
-            _ => return Err(RuntimeError::new("type() first argument must be string")),
-        };
-        let base_values = match &args[1] {
-            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
-                Object::Tuple(values) => values.clone(),
-                _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
-            },
-            Value::List(list_obj) => match &*list_obj.kind() {
-                Object::List(values) => values.clone(),
-                _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
-            },
-            _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
-        };
-        let mut base_classes = Vec::with_capacity(base_values.len());
-        for base in base_values {
-            base_classes.push(self.class_from_base_value(base)?);
-        }
-        let namespace = match &args[2] {
-            Value::Dict(dict_obj) => match &*dict_obj.kind() {
-                Object::Dict(entries) => {
-                    let mut attrs = HashMap::new();
-                    for (key, value) in entries {
-                        let Value::Str(name) = key else {
-                            return Err(RuntimeError::new("type() dict keys must be strings"));
-                        };
-                        attrs.insert(name.clone(), value.clone());
-                    }
-                    attrs
+        let custom_new = class_attr_lookup_direct(&metaclass, "__new__").filter(|callable| {
+            !matches!(callable, Value::Builtin(BuiltinFunction::Type))
+        });
+        if let Some(new_callable) = custom_new {
+            let mut new_args = Vec::with_capacity(4);
+            new_args.push(Value::Class(metaclass.clone()));
+            new_args.extend(args.clone());
+            let created = match self.call_internal(new_callable, new_args, kwargs.clone())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("metaclass call failed"));
                 }
-                _ => return Err(RuntimeError::new("type() third argument must be dict")),
-            },
-            _ => return Err(RuntimeError::new("type() third argument must be dict")),
-        };
-
-        let class_module = match self.heap.alloc_module(ModuleObject::new(name)) {
-            Value::Module(module) => module,
-            _ => unreachable!(),
-        };
-        if let Object::Module(module_data) = &mut *class_module.kind_mut() {
-            module_data.globals = namespace;
-        }
-        match self.class_value_from_module(
-            &class_module,
-            base_classes,
-            Some(Value::Class(metaclass)),
-            kwargs,
-        )? {
-            ClassBuildOutcome::Value(value) => Ok(value),
-            ClassBuildOutcome::ExceptionHandled => {
-                Err(self.runtime_error_from_active_exception("metaclass call failed"))
+            };
+            if !matches!(created, Value::Class(_)) {
+                return Err(RuntimeError::new("metaclass __new__ must return a class object"));
             }
+            if let Some(init_callable) = class_attr_lookup_direct(&metaclass, "__init__").filter(
+                |callable| !matches!(callable, Value::Builtin(BuiltinFunction::NoOp)),
+            ) {
+                let init_result = self.call_internal(
+                    init_callable,
+                    vec![
+                        created.clone(),
+                        args[0].clone(),
+                        args[1].clone(),
+                        args[2].clone(),
+                    ],
+                    kwargs,
+                )?;
+                match init_result {
+                    InternalCallOutcome::Value(Value::None) => {}
+                    InternalCallOutcome::Value(_) => {
+                        return Err(RuntimeError::new("__init__() should return None"));
+                    }
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "metaclass __init__ failed",
+                        ));
+                    }
+                }
+            }
+            return Ok(created);
         }
+        self.call_builtin(
+            BuiltinFunction::Type,
+            vec![
+                Value::Class(metaclass),
+                args[0].clone(),
+                args[1].clone(),
+                args[2].clone(),
+            ],
+            kwargs,
+        )
     }
 
     pub(super) fn alloc_instance_for_class(&mut self, class: &ObjRef) -> ObjRef {

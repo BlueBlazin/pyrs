@@ -898,6 +898,9 @@ impl Vm {
             );
             type_data
                 .attrs
+                .insert("__new__".to_string(), Value::Builtin(BuiltinFunction::Type));
+            type_data
+                .attrs
                 .insert("__flags__".to_string(), Value::Int(0));
         }
         if let Object::Class(class_data) = &mut *object_class.kind_mut() {

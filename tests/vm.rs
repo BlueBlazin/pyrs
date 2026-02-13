@@ -4390,10 +4390,12 @@ fn enum_shim_vs_cpython_probe_tracks_member_value_blocker() {
         stderr.contains("class constructor takes no arguments")
             || stderr.contains("keyword arguments not supported for builtin")
             || stderr.contains("has overflowed its stack")
+            || stderr.contains("dict has no attribute '_member_names'")
     );
     assert!(
         stderr.contains("keyword arguments not supported for builtin")
             || stderr.contains("class constructor takes no arguments")
+            || stderr.contains("dict has no attribute '_member_names'")
             || stderr.contains("/Lib/enum.py")
     );
 }
@@ -4983,6 +4985,16 @@ fn class_invocation_uses_metaclass_call_when_present() {
 #[test]
 fn class_metaclass_conflict_raises_type_error() {
     let source = "class M1(type):\n    pass\nclass M2(type):\n    pass\nclass A(metaclass=M1):\n    pass\nclass B(metaclass=M2):\n    pass\nok = False\ntry:\n    class C(A, B):\n        pass\nexcept TypeError:\n    ok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dynamic_class_attribute_subclass_is_constructible() {
+    let source = "from types import DynamicClassAttribute\nclass P(DynamicClassAttribute):\n    pass\nclass Box:\n    @P\n    def value(self):\n        return 42\nok = Box().value == 42\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
