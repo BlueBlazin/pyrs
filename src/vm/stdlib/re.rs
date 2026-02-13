@@ -682,6 +682,10 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let pattern = re_pattern_from_compiled_module(&receiver)?;
         let target = args.remove(0);
+        let target = match target {
+            Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
+            other => Value::Str(format_value(&other)),
+        };
 
         let clamp_index = |len: usize, raw: i64| -> usize {
             if raw < 0 {
@@ -841,6 +845,10 @@ impl Vm {
         let receiver = self.receiver_from_value(&pattern_arg)?;
         let pattern = re_pattern_from_compiled_module(&receiver)?;
         let target = args.remove(0);
+        let target = match target {
+            Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
+            other => Value::Str(format_value(&other)),
+        };
         let groupindex = self.re_match_groupindex_from_pattern_arg(&pattern_arg);
 
         let clamp_index = |len: usize, raw: i64| -> usize {
@@ -985,6 +993,149 @@ impl Vm {
         };
 
         self.builtin_iter(vec![self.heap.alloc_list(match_values)], HashMap::new())
+    }
+
+    pub(in crate::vm) fn builtin_re_pattern_split(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "Pattern.split() expects string and optional maxsplit",
+            ));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        let pattern = re_pattern_from_compiled_module(&receiver)?;
+        let target = args.remove(0);
+        let target = match target {
+            Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
+            other => Value::Str(format_value(&other)),
+        };
+        let mut maxsplit = if !args.is_empty() {
+            Some(value_to_int(args.remove(0))?)
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("maxsplit") {
+            if maxsplit.is_some() {
+                return Err(RuntimeError::new(
+                    "Pattern.split() got multiple values for argument 'maxsplit'",
+                ));
+            }
+            maxsplit = Some(value_to_int(value)?);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "Pattern.split() got an unexpected keyword argument",
+            ));
+        }
+        let maxsplit = maxsplit.unwrap_or(0).max(0) as usize;
+
+        match target {
+            Value::Str(text) => {
+                if !matches!(pattern, RePatternValue::Str(_)) {
+                    return Err(RuntimeError::new(
+                        "cannot use a bytes pattern on a string-like object",
+                    ));
+                }
+                let stop = text.len();
+                let mut cursor = 0usize;
+                let mut splits = 0usize;
+                let mut out = Vec::new();
+                while cursor <= stop && (maxsplit == 0 || splits < maxsplit) {
+                    let segment = Value::Str(text[cursor..stop].to_string());
+                    let Some(detail) = re_match_details(&pattern, &segment, ReMode::Search)? else {
+                        break;
+                    };
+                    let absolute_start = cursor + detail.start;
+                    let absolute_end = cursor + detail.end;
+                    if absolute_start > stop || absolute_end > stop {
+                        break;
+                    }
+                    out.push(Value::Str(text[cursor..absolute_start].to_string()));
+                    if detail.captures.len() > 1 {
+                        for capture in detail.captures.iter().skip(1) {
+                            match capture {
+                                Some((capture_start, capture_end)) => {
+                                    let capture_start = cursor + capture_start;
+                                    let capture_end = cursor + capture_end;
+                                    out.push(Value::Str(text[capture_start..capture_end].to_string()));
+                                }
+                                None => out.push(Value::None),
+                            }
+                        }
+                    }
+                    splits += 1;
+                    if absolute_end == absolute_start {
+                        if absolute_end >= stop {
+                            break;
+                        }
+                        let mut next = absolute_end + 1;
+                        while next < stop && !text.is_char_boundary(next) {
+                            next += 1;
+                        }
+                        cursor = next;
+                    } else {
+                        cursor = absolute_end;
+                    }
+                }
+                out.push(Value::Str(text[cursor..].to_string()));
+                Ok(self.heap.alloc_list(out))
+            }
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                if !matches!(pattern, RePatternValue::Bytes(_)) {
+                    return Err(RuntimeError::new(
+                        "cannot use a string pattern on a bytes-like object",
+                    ));
+                }
+                let bytes = bytes_like_from_value(target)?;
+                let stop = bytes.len();
+                let mut cursor = 0usize;
+                let mut splits = 0usize;
+                let mut out = Vec::new();
+                while cursor <= stop && (maxsplit == 0 || splits < maxsplit) {
+                    let segment = self.heap.alloc_bytes(bytes[cursor..stop].to_vec());
+                    let Some(detail) = re_match_details(&pattern, &segment, ReMode::Search)? else {
+                        break;
+                    };
+                    let absolute_start = cursor + detail.start;
+                    let absolute_end = cursor + detail.end;
+                    if absolute_start > stop || absolute_end > stop {
+                        break;
+                    }
+                    out.push(self.heap.alloc_bytes(bytes[cursor..absolute_start].to_vec()));
+                    if detail.captures.len() > 1 {
+                        for capture in detail.captures.iter().skip(1) {
+                            match capture {
+                                Some((capture_start, capture_end)) => {
+                                    let capture_start = cursor + capture_start;
+                                    let capture_end = cursor + capture_end;
+                                    out.push(
+                                        self.heap.alloc_bytes(bytes[capture_start..capture_end].to_vec()),
+                                    );
+                                }
+                                None => out.push(Value::None),
+                            }
+                        }
+                    }
+                    splits += 1;
+                    if absolute_end == absolute_start {
+                        if absolute_end >= stop {
+                            break;
+                        }
+                        cursor = absolute_end + 1;
+                    } else {
+                        cursor = absolute_end;
+                    }
+                }
+                out.push(self.heap.alloc_bytes(bytes[cursor..].to_vec()));
+                Ok(self.heap.alloc_list(out))
+            }
+            _ => Err(RuntimeError::new(
+                "Pattern.split() expects string or bytes-like object",
+            )),
+        }
     }
 
     pub(in crate::vm) fn builtin_re_match_mode(

@@ -2547,6 +2547,7 @@ pub enum BuiltinFunction {
     SreUnicodeToLower,
     RePatternFindAll,
     RePatternFindIter,
+    RePatternSplit,
     OperatorAdd,
     OperatorSub,
     OperatorMul,
@@ -2598,6 +2599,16 @@ pub enum BuiltinFunction {
     FunctoolsLruCache,
     CollectionsCounter,
     CollectionsDeque,
+    CollectionsDequeInit,
+    CollectionsDequeAppend,
+    CollectionsDequeAppendLeft,
+    CollectionsDequePop,
+    CollectionsDequePopleft,
+    CollectionsDequeClear,
+    CollectionsDequeExtend,
+    CollectionsDequeExtendLeft,
+    CollectionsDequeLen,
+    CollectionsDequeIter,
     CollectionsOrderedDict,
     CollectionsChainMapInit,
     CollectionsChainMapNewChild,
@@ -2819,6 +2830,10 @@ pub enum BuiltinFunction {
     DateToday,
     DateTimeInit,
     DateInit,
+    DateTimeTimezoneInit,
+    DateToOrdinal,
+    DateWeekday,
+    DateIsoWeekday,
     DateStrFTime,
     TimeInit,
     AsyncioRun,
@@ -3108,6 +3123,7 @@ impl BuiltinFunction {
             | BuiltinFunction::IoRawReadAll
             | BuiltinFunction::RePatternFindAll
             | BuiltinFunction::RePatternFindIter
+            | BuiltinFunction::RePatternSplit
             | BuiltinFunction::SreCompile
             | BuiltinFunction::SreTemplate
             | BuiltinFunction::SreAsciiIsCased
@@ -5365,6 +5381,16 @@ impl BuiltinFunction {
             | BuiltinFunction::FunctoolsCmpToKey
             | BuiltinFunction::CollectionsCounter
             | BuiltinFunction::CollectionsDeque
+            | BuiltinFunction::CollectionsDequeInit
+            | BuiltinFunction::CollectionsDequeAppend
+            | BuiltinFunction::CollectionsDequeAppendLeft
+            | BuiltinFunction::CollectionsDequePop
+            | BuiltinFunction::CollectionsDequePopleft
+            | BuiltinFunction::CollectionsDequeClear
+            | BuiltinFunction::CollectionsDequeExtend
+            | BuiltinFunction::CollectionsDequeExtendLeft
+            | BuiltinFunction::CollectionsDequeLen
+            | BuiltinFunction::CollectionsDequeIter
             | BuiltinFunction::CollectionsDefaultDict
             | BuiltinFunction::InspectIsFunction
             | BuiltinFunction::InspectIsMethod
@@ -5427,6 +5453,10 @@ impl BuiltinFunction {
             | BuiltinFunction::DateToday
             | BuiltinFunction::DateTimeInit
             | BuiltinFunction::DateInit
+            | BuiltinFunction::DateTimeTimezoneInit
+            | BuiltinFunction::DateToOrdinal
+            | BuiltinFunction::DateWeekday
+            | BuiltinFunction::DateIsoWeekday
             | BuiltinFunction::DateStrFTime
             | BuiltinFunction::TimeInit
             | BuiltinFunction::AsyncioRun

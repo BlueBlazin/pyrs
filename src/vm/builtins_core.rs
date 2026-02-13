@@ -2306,6 +2306,147 @@ impl Vm {
         }
     }
 
+    fn parse_bytes_constructor_args(
+        &self,
+        constructor_name: &str,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<(Option<Value>, Option<Value>, Option<Value>), RuntimeError> {
+        let mut object = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut encoding = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut errors = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "{constructor_name}() expects at most three arguments"
+            )));
+        }
+        if let Some(value) = kwargs.remove("source") {
+            if object.is_some() {
+                return Err(RuntimeError::new(format!(
+                    "{constructor_name}() got multiple values for argument 'source'"
+                )));
+            }
+            object = Some(value);
+        }
+        if let Some(value) = kwargs.remove("encoding") {
+            if encoding.is_some() {
+                return Err(RuntimeError::new(format!(
+                    "{constructor_name}() got multiple values for argument 'encoding'"
+                )));
+            }
+            encoding = Some(value);
+        }
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new(format!(
+                    "{constructor_name}() got multiple values for argument 'errors'"
+                )));
+            }
+            errors = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "{constructor_name}() got an unexpected keyword argument"
+            )));
+        }
+        Ok((object, encoding, errors))
+    }
+
+    fn bytes_payload_from_constructor_parts(
+        &mut self,
+        constructor_name: &str,
+        object: Option<Value>,
+        encoding: Option<Value>,
+        errors: Option<Value>,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        if object.is_none() {
+            if encoding.is_some() || errors.is_some() {
+                return Err(RuntimeError::new(format!(
+                    "{constructor_name}() argument 'encoding' without a string argument"
+                )));
+            }
+            return Ok(Vec::new());
+        }
+        let object = object.unwrap_or(Value::None);
+
+        if encoding.is_some() || errors.is_some() {
+            let Value::Str(text) = object else {
+                return Err(RuntimeError::new(format!(
+                    "{constructor_name}() argument 'encoding' without a string argument"
+                )));
+            };
+            let encoding =
+                normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
+            let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+            return encode_text_bytes(&text, &encoding, &errors);
+        }
+
+        match object {
+            Value::Int(count) => {
+                if count < 0 {
+                    return Err(RuntimeError::new("negative count"));
+                }
+                Ok(vec![0; count as usize])
+            }
+            Value::Str(_) => Err(RuntimeError::new(
+                "string argument without an encoding",
+            )),
+            Value::None => Err(RuntimeError::new(format!(
+                "cannot convert '{}' object to bytes",
+                self.value_type_name_for_error(&Value::None)
+            ))),
+            value => match self.value_to_bytes_payload(value.clone()) {
+                Ok(payload) => Ok(payload),
+                Err(_) => {
+                    let mut out = Vec::new();
+                    for item in self.collect_iterable_values(value)? {
+                        let byte = value_to_int(item)?;
+                        if !(0..=255).contains(&byte) {
+                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        }
+                        out.push(byte as u8);
+                    }
+                    Ok(out)
+                }
+            },
+        }
+    }
+
+    pub(super) fn builtin_bytes_constructor(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (object, encoding, errors) = self.parse_bytes_constructor_args("bytes", args, kwargs)?;
+        let payload =
+            self.bytes_payload_from_constructor_parts("bytes", object, encoding, errors)?;
+        Ok(self.heap.alloc_bytes(payload))
+    }
+
+    pub(super) fn builtin_bytearray_constructor(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (object, encoding, errors) =
+            self.parse_bytes_constructor_args("bytearray", args, kwargs)?;
+        let payload =
+            self.bytes_payload_from_constructor_parts("bytearray", object, encoding, errors)?;
+        Ok(self.heap.alloc_bytearray(payload))
+    }
+
     pub(super) fn builtin_bytes_maketrans(
         &self,
         mut args: Vec<Value>,

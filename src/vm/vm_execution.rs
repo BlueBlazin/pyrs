@@ -5524,6 +5524,10 @@ impl Vm {
                     .or_insert(Value::Str(module_name));
                 class_data
                     .attrs
+                    .entry("__doc__".to_string())
+                    .or_insert(Value::None);
+                class_data
+                    .attrs
                     .entry("__pyrs_user_class__".to_string())
                     .or_insert(Value::Bool(true));
                 class_data

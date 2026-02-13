@@ -1540,15 +1540,336 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() > 1 {
-            return Err(RuntimeError::new("deque() expects at most one argument"));
+        let collections = self
+            .modules
+            .get("collections")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("collections module is not loaded"))?;
+        let Object::Module(module_data) = &*collections.kind() else {
+            return Err(RuntimeError::new("collections module is not loaded"));
+        };
+        let deque_class = module_data
+            .globals
+            .get("deque")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("collections.deque is unavailable"))?;
+        self.call_internal(deque_class, args, kwargs)
+            .and_then(|outcome| match outcome {
+                InternalCallOutcome::Value(value) => Ok(value),
+                InternalCallOutcome::CallerExceptionHandled => Err(
+                    self.runtime_error_from_active_exception("deque() raised an exception"),
+                ),
+            })
+    }
+
+    fn dequeue_storage_list(
+        &self,
+        instance: &ObjRef,
+        method_name: &str,
+    ) -> Result<ObjRef, RuntimeError> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new(format!(
+                "{method_name}() expected deque instance"
+            )));
+        };
+        match instance_data.attrs.get(DEQUE_BACKING_STORAGE_ATTR) {
+            Some(Value::List(list)) => Ok(list.clone()),
+            _ => Err(RuntimeError::new(format!(
+                "{method_name}() expected deque instance"
+            ))),
         }
-        if let Some(source) = args.into_iter().next() {
-            let values = self.collect_iterable_values(source)?;
-            Ok(self.heap.alloc_list(values))
+    }
+
+    fn dequeue_maxlen(&self, instance: &ObjRef) -> Result<Option<usize>, RuntimeError> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new("deque instance expected"));
+        };
+        match instance_data.attrs.get("__pyrs_deque_maxlen__") {
+            None | Some(Value::None) => Ok(None),
+            Some(value) => {
+                let maxlen = value_to_int(value.clone())?;
+                if maxlen < 0 {
+                    return Err(RuntimeError::new("maxlen must be non-negative"));
+                }
+                Ok(Some(maxlen as usize))
+            }
+        }
+    }
+
+    fn dequeue_apply_maxlen_right(
+        values: &mut Vec<Value>,
+        maxlen: Option<usize>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(limit) = maxlen {
+            while values.len() > limit {
+                if values.is_empty() {
+                    return Err(RuntimeError::new("deque underflow"));
+                }
+                values.remove(0);
+            }
+        }
+        Ok(())
+    }
+
+    fn dequeue_apply_maxlen_left(
+        values: &mut Vec<Value>,
+        maxlen: Option<usize>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(limit) = maxlen {
+            while values.len() > limit {
+                if values.pop().is_none() {
+                    return Err(RuntimeError::new("deque underflow"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn builtin_collections_deque_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "deque.__init__")?;
+        let mut iterable = if !args.is_empty() {
+            Some(args.remove(0))
         } else {
-            Ok(self.heap.alloc_list(Vec::new()))
+            None
+        };
+        let mut maxlen = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new("deque.__init__() takes at most 2 arguments"));
         }
+        if let Some(value) = kwargs.remove("iterable") {
+            if iterable.is_some() {
+                return Err(RuntimeError::new(
+                    "deque.__init__() got multiple values for argument 'iterable'",
+                ));
+            }
+            iterable = Some(value);
+        }
+        if let Some(value) = kwargs.remove("maxlen") {
+            if maxlen.is_some() {
+                return Err(RuntimeError::new(
+                    "deque.__init__() got multiple values for argument 'maxlen'",
+                ));
+            }
+            maxlen = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "deque.__init__() got an unexpected keyword argument",
+            ));
+        }
+
+        let mut values = if let Some(source) = iterable {
+            self.collect_iterable_values(source)?
+        } else {
+            Vec::new()
+        };
+        let maxlen = match maxlen {
+            None | Some(Value::None) => None,
+            Some(value) => {
+                let maxlen = value_to_int(value)?;
+                if maxlen < 0 {
+                    return Err(RuntimeError::new("maxlen must be non-negative"));
+                }
+                Some(maxlen as usize)
+            }
+        };
+        Self::dequeue_apply_maxlen_right(&mut values, maxlen)?;
+
+        let storage = self.heap.alloc_list(values);
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new("deque.__init__() expected deque instance"));
+        };
+        instance_data
+            .attrs
+            .insert(DEQUE_BACKING_STORAGE_ATTR.to_string(), storage);
+        instance_data.attrs.insert(
+            "__pyrs_deque_maxlen__".to_string(),
+            maxlen
+                .map(|limit| Value::Int(limit as i64))
+                .unwrap_or(Value::None),
+        );
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_collections_deque_append(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("deque.append() expects one argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.append")?;
+        let item = args.remove(0);
+        let maxlen = self.dequeue_maxlen(&instance)?;
+        let storage = self.dequeue_storage_list(&instance, "deque.append")?;
+        let Object::List(values) = &mut *storage.kind_mut() else {
+            return Err(RuntimeError::new("deque.append() expected deque instance"));
+        };
+        values.push(item);
+        Self::dequeue_apply_maxlen_right(values, maxlen)?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_collections_deque_appendleft(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("deque.appendleft() expects one argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.appendleft")?;
+        let item = args.remove(0);
+        let maxlen = self.dequeue_maxlen(&instance)?;
+        let storage = self.dequeue_storage_list(&instance, "deque.appendleft")?;
+        let Object::List(values) = &mut *storage.kind_mut() else {
+            return Err(RuntimeError::new("deque.appendleft() expected deque instance"));
+        };
+        values.insert(0, item);
+        Self::dequeue_apply_maxlen_left(values, maxlen)?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_collections_deque_pop(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("deque.pop() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.pop")?;
+        let storage = self.dequeue_storage_list(&instance, "deque.pop")?;
+        let Object::List(values) = &mut *storage.kind_mut() else {
+            return Err(RuntimeError::new("deque.pop() expected deque instance"));
+        };
+        values
+            .pop()
+            .ok_or_else(|| RuntimeError::new("IndexError: pop from an empty deque"))
+    }
+
+    pub(super) fn builtin_collections_deque_popleft(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("deque.popleft() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.popleft")?;
+        let storage = self.dequeue_storage_list(&instance, "deque.popleft")?;
+        let Object::List(values) = &mut *storage.kind_mut() else {
+            return Err(RuntimeError::new("deque.popleft() expected deque instance"));
+        };
+        if values.is_empty() {
+            return Err(RuntimeError::new("IndexError: pop from an empty deque"));
+        }
+        Ok(values.remove(0))
+    }
+
+    pub(super) fn builtin_collections_deque_clear(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("deque.clear() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.clear")?;
+        let storage = self.dequeue_storage_list(&instance, "deque.clear")?;
+        let Object::List(values) = &mut *storage.kind_mut() else {
+            return Err(RuntimeError::new("deque.clear() expected deque instance"));
+        };
+        values.clear();
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_collections_deque_extend(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("deque.extend() expects one argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.extend")?;
+        let source = args.remove(0);
+        let maxlen = self.dequeue_maxlen(&instance)?;
+        let storage = self.dequeue_storage_list(&instance, "deque.extend")?;
+        let values_to_add = self.collect_iterable_values(source)?;
+        let Object::List(values) = &mut *storage.kind_mut() else {
+            return Err(RuntimeError::new("deque.extend() expected deque instance"));
+        };
+        for value in values_to_add {
+            values.push(value);
+            Self::dequeue_apply_maxlen_right(values, maxlen)?;
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_collections_deque_extendleft(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("deque.extendleft() expects one argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.extendleft")?;
+        let source = args.remove(0);
+        let maxlen = self.dequeue_maxlen(&instance)?;
+        let storage = self.dequeue_storage_list(&instance, "deque.extendleft")?;
+        let values_to_add = self.collect_iterable_values(source)?;
+        let Object::List(values) = &mut *storage.kind_mut() else {
+            return Err(RuntimeError::new("deque.extendleft() expected deque instance"));
+        };
+        for value in values_to_add {
+            values.insert(0, value);
+            Self::dequeue_apply_maxlen_left(values, maxlen)?;
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_collections_deque_len(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("deque.__len__() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.__len__")?;
+        let storage = self.dequeue_storage_list(&instance, "deque.__len__")?;
+        let Object::List(values) = &*storage.kind() else {
+            return Err(RuntimeError::new("deque.__len__() expected deque instance"));
+        };
+        Ok(Value::Int(values.len() as i64))
+    }
+
+    pub(super) fn builtin_collections_deque_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("deque.__iter__() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "deque.__iter__")?;
+        let storage = self.dequeue_storage_list(&instance, "deque.__iter__")?;
+        let snapshot = match &*storage.kind() {
+            Object::List(values) => values.clone(),
+            _ => return Err(RuntimeError::new("deque.__iter__() expected deque instance")),
+        };
+        self.to_iterator_value(self.heap.alloc_list(snapshot))
     }
 
     pub(super) fn builtin_collections_chainmap_init(

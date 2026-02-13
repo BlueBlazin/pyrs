@@ -116,6 +116,7 @@ const SIGNAL_SIGINT: i64 = 2;
 const SIGNAL_SIGTERM: i64 = 15;
 const PY_TPFLAGS_HEAPTYPE: i64 = 1 << 9;
 const LIST_BACKING_STORAGE_ATTR: &str = "__pyrs_list_storage__";
+const DEQUE_BACKING_STORAGE_ATTR: &str = "__pyrs_deque_storage__";
 const TUPLE_BACKING_STORAGE_ATTR: &str = "__pyrs_tuple_storage__";
 const STR_BACKING_STORAGE_ATTR: &str = "__pyrs_str_storage__";
 const BYTES_BACKING_STORAGE_ATTR: &str = "__pyrs_bytes_storage__";

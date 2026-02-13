@@ -10,6 +10,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 - Common-usecase smoke pass: `39/50`
 - Runtime: `target/debug/pyrs`
 - CPython Lib: `/Users/$USER/Downloads/Python-3.14.3/Lib`
+- Note: targeted closures landed after this snapshot (`queue`, `smtplib` import chain, `imaplib` import chain). Refresh artifact pending.
 
 ## Checklist
 
@@ -51,13 +52,13 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `inspect` | DONE | PASS | PASS | - |
 | `contextlib` | DONE | PASS | PASS | - |
 | `weakref` | DONE | PASS | PASS | - |
-| `queue` | P0 | PASS | FAIL | AttributeError: list has no attribute 'popleft' |
+| `queue` | DONE | PASS | PASS | - |
 | `concurrent.futures` | DONE | PASS | PASS | - |
 | `socket` | DONE | PASS | PASS | - |
 | `ssl` | P0 | FAIL | FAIL | ModuleNotFoundError: module '_ssl' not found |
 | `email` | P0 | PASS | FAIL | AttributeError: module '__re_pattern__' has no attribute 'split' |
-| `smtplib` | P0 | FAIL | FAIL | TypeError: expected iterable |
-| `imaplib` | P0 | FAIL | FAIL | AttributeError: 'date' object has no attribute 'toordinal' |
+| `smtplib` | P0 | PASS | FAIL | RuntimeError: object.__init__() takes exactly one argument (email stack during `EmailMessage` common flow) |
+| `imaplib` | P0 | PASS | FAIL | AttributeError: class 'datetime' has no attribute 'fromtimestamp' (via `Time2Internaldate`) |
 | `ftplib` | DONE | PASS | PASS | - |
 | `xml` | P1 | PASS | FAIL | ImportError: No module named expat; use SimpleXMLTreeBuilder instead |
 | `html` | DONE | PASS | PASS | - |
@@ -69,11 +70,10 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 ## Open Blockers (Grouped)
 
 - Native extension/module gaps: `ssl`, `gzip`, `bz2`, `lzma`
-- Iterable/bytes-constructor gap impacting import chains: `smtplib` (`hmac` path)
-- Concurrency container gap: `queue` (`deque.popleft` surface)
+- Email stack long-tail gap impacting `smtplib` common flow (`EmailMessage` path)
 - Numeric core parity gaps: `statistics`, `decimal`
 - Regex accelerator parity gaps: `email`
-- Date object-model parity gaps: `imaplib` (`date.toordinal` and related date methods)
+- Date object-model parity gaps: `imaplib` (`datetime.fromtimestamp` / timezone flow)
 - XML parser backend gap (`pyexpat`): `xml`
 
 ## Shim and Probe Notes

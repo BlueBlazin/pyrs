@@ -505,6 +505,97 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_date_toordinal(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("date.toordinal() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "date.toordinal")?;
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new(
+                "date.toordinal() expects date/datetime instance receiver",
+            ));
+        };
+        let year = match instance_data.attrs.get("year") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.toordinal() missing year")),
+        };
+        let month = match instance_data.attrs.get("month") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.toordinal() missing month")),
+        };
+        let day = match instance_data.attrs.get("day") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.toordinal() missing day")),
+        };
+        const UNIX_EPOCH_ORDINAL: i64 = 719_163;
+        let days = days_from_civil(year, month as u32, day as u32);
+        Ok(Value::Int(days + UNIX_EPOCH_ORDINAL))
+    }
+
+    pub(super) fn builtin_date_weekday(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("date.weekday() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "date.weekday")?;
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new(
+                "date.weekday() expects date/datetime instance receiver",
+            ));
+        };
+        let year = match instance_data.attrs.get("year") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.weekday() missing year")),
+        };
+        let month = match instance_data.attrs.get("month") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.weekday() missing month")),
+        };
+        let day = match instance_data.attrs.get("day") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.weekday() missing day")),
+        };
+        let days = days_from_civil(year, month as u32, day as u32);
+        Ok(Value::Int((days + 3).rem_euclid(7)))
+    }
+
+    pub(super) fn builtin_date_isoweekday(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("date.isoweekday() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "date.isoweekday")?;
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new(
+                "date.isoweekday() expects date/datetime instance receiver",
+            ));
+        };
+        let year = match instance_data.attrs.get("year") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.isoweekday() missing year")),
+        };
+        let month = match instance_data.attrs.get("month") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.isoweekday() missing month")),
+        };
+        let day = match instance_data.attrs.get("day") {
+            Some(value) => value_to_int(value.clone())?,
+            None => return Err(RuntimeError::new("date.isoweekday() missing day")),
+        };
+        let days = days_from_civil(year, month as u32, day as u32);
+        Ok(Value::Int((days + 3).rem_euclid(7) + 1))
+    }
+
     pub(super) fn builtin_date_strftime(
         &mut self,
         mut args: Vec<Value>,
@@ -571,6 +662,71 @@ impl Vm {
             isdst: -1,
         };
         Ok(Value::Str(format_strftime(&format, parts)))
+    }
+
+    pub(super) fn builtin_datetime_timezone_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("timezone.__init__() missing instance"));
+        }
+        let instance = self.receiver_from_value(&args.remove(0))?;
+        let mut offset = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut name = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new(
+                "timezone.__init__() takes at most 2 positional arguments",
+            ));
+        }
+        if let Some(value) = kwargs.remove("offset") {
+            if offset.is_some() {
+                return Err(RuntimeError::new(
+                    "timezone.__init__() got multiple values for argument 'offset'",
+                ));
+            }
+            offset = Some(value);
+        }
+        if let Some(value) = kwargs.remove("name") {
+            if name.is_some() {
+                return Err(RuntimeError::new(
+                    "timezone.__init__() got multiple values for argument 'name'",
+                ));
+            }
+            name = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "timezone.__init__() got an unexpected keyword argument",
+            ));
+        }
+        let Some(offset) = offset else {
+            return Err(RuntimeError::new(
+                "timezone.__init__() missing required argument 'offset'",
+            ));
+        };
+        let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+            return Err(RuntimeError::new(
+                "timezone.__init__() expects instance receiver",
+            ));
+        };
+        instance_data
+            .attrs
+            .insert("offset".to_string(), offset.clone());
+        instance_data.attrs.insert(
+            "name".to_string(),
+            name.unwrap_or(Value::Str("UTC".to_string())),
+        );
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_time_init(

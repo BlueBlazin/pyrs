@@ -3705,6 +3705,9 @@ impl Vm {
                 self.alloc_reduce_ex_bound_method(Value::Instance(instance.clone())),
             ));
         }
+        if attr_name == "__doc__" {
+            return Ok(AttrAccessOutcome::Value(Value::None));
+        }
 
         let class_name = match &*class_ref.kind() {
             Object::Class(class_data) => class_data.name.clone(),
@@ -3915,6 +3918,7 @@ impl Vm {
                 "finditer" => Some(NativeMethodKind::Builtin(
                     BuiltinFunction::RePatternFindIter,
                 )),
+                "split" => Some(NativeMethodKind::Builtin(BuiltinFunction::RePatternSplit)),
                 _ => None,
             };
             if let Some(kind) = kind {

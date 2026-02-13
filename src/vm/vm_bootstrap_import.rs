@@ -1960,6 +1960,59 @@ impl Vm {
         );
         // Do not shadow CPython's pure-Python dataclasses implementation with a partial
         // built-in shim; we import from Lib/dataclasses.py for correctness.
+        let deque_class = match self
+            .heap
+            .alloc_class(ClassObject::new("deque".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *deque_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeInit),
+            );
+            class_data.attrs.insert(
+                "append".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeAppend),
+            );
+            class_data.attrs.insert(
+                "appendleft".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeAppendLeft),
+            );
+            class_data.attrs.insert(
+                "pop".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequePop),
+            );
+            class_data.attrs.insert(
+                "popleft".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequePopleft),
+            );
+            class_data.attrs.insert(
+                "clear".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeClear),
+            );
+            class_data.attrs.insert(
+                "extend".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeExtend),
+            );
+            class_data.attrs.insert(
+                "extendleft".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeExtendLeft),
+            );
+            class_data.attrs.insert(
+                "__len__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeLen),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeIter),
+            );
+        }
         let chain_map_class = match self
             .heap
             .alloc_class(ClassObject::new("ChainMap".to_string(), Vec::new()))
@@ -2072,12 +2125,12 @@ impl Vm {
             "collections",
             &[
                 ("Counter", BuiltinFunction::CollectionsCounter),
-                ("deque", BuiltinFunction::CollectionsDeque),
                 ("namedtuple", BuiltinFunction::CollectionsNamedTuple),
                 ("defaultdict", BuiltinFunction::CollectionsDefaultDict),
                 ("_count_elements", BuiltinFunction::CollectionsCountElements),
             ],
             vec![
+                ("deque", Value::Class(deque_class)),
                 ("ChainMap", Value::Class(chain_map_class)),
                 (
                     "OrderedDict",
@@ -4305,6 +4358,18 @@ impl Vm {
                 "strftime".to_string(),
                 Value::Builtin(BuiltinFunction::DateStrFTime),
             );
+            class_data.attrs.insert(
+                "toordinal".to_string(),
+                Value::Builtin(BuiltinFunction::DateToOrdinal),
+            );
+            class_data.attrs.insert(
+                "weekday".to_string(),
+                Value::Builtin(BuiltinFunction::DateWeekday),
+            );
+            class_data.attrs.insert(
+                "isoweekday".to_string(),
+                Value::Builtin(BuiltinFunction::DateIsoWeekday),
+            );
         }
         let date_class = match self
             .heap
@@ -4325,6 +4390,18 @@ impl Vm {
             class_data.attrs.insert(
                 "strftime".to_string(),
                 Value::Builtin(BuiltinFunction::DateStrFTime),
+            );
+            class_data.attrs.insert(
+                "toordinal".to_string(),
+                Value::Builtin(BuiltinFunction::DateToOrdinal),
+            );
+            class_data.attrs.insert(
+                "weekday".to_string(),
+                Value::Builtin(BuiltinFunction::DateWeekday),
+            );
+            class_data.attrs.insert(
+                "isoweekday".to_string(),
+                Value::Builtin(BuiltinFunction::DateIsoWeekday),
             );
         }
         let timedelta_class = match self
@@ -4347,6 +4424,39 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::TimeInit),
             );
         }
+        let timezone_class = match self
+            .heap
+            .alloc_class(ClassObject::new("timezone".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *timezone_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeTimezoneInit),
+            );
+        }
+        let timezone_utc = match self
+            .heap
+            .alloc_instance(InstanceObject::new(timezone_class.clone()))
+        {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *timezone_utc.kind_mut() {
+            instance_data
+                .attrs
+                .insert("offset".to_string(), Value::Int(0));
+            instance_data
+                .attrs
+                .insert("name".to_string(), Value::Str("UTC".to_string()));
+        }
+        if let Object::Class(class_data) = &mut *timezone_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("utc".to_string(), Value::Instance(timezone_utc.clone()));
+        }
         self.install_builtin_module(
             "datetime",
             &[
@@ -4358,6 +4468,8 @@ impl Vm {
                 ("date", Value::Class(date_class)),
                 ("timedelta", Value::Class(timedelta_class)),
                 ("time", Value::Class(time_class)),
+                ("timezone", Value::Class(timezone_class)),
+                ("UTC", Value::Instance(timezone_utc)),
             ],
         );
         let uuid_class = match self

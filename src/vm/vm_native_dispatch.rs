@@ -5207,6 +5207,8 @@ impl Vm {
             BuiltinFunction::Float => self.builtin_float(args, kwargs),
             BuiltinFunction::Complex => self.builtin_complex(args, kwargs),
             BuiltinFunction::Str => self.builtin_str(args, kwargs),
+            BuiltinFunction::Bytes => self.builtin_bytes_constructor(args, kwargs),
+            BuiltinFunction::ByteArray => self.builtin_bytearray_constructor(args, kwargs),
             BuiltinFunction::MemoryView => self.builtin_memoryview(args, kwargs),
             BuiltinFunction::FloatFromHex => self.builtin_float_fromhex(args, kwargs),
             BuiltinFunction::FloatHex => self.builtin_float_hex(args, kwargs),
@@ -5749,6 +5751,7 @@ impl Vm {
             BuiltinFunction::SreUnicodeToLower => self.builtin_sre_unicode_tolower(args, kwargs),
             BuiltinFunction::RePatternFindAll => self.builtin_re_pattern_findall(args, kwargs),
             BuiltinFunction::RePatternFindIter => self.builtin_re_pattern_finditer(args, kwargs),
+            BuiltinFunction::RePatternSplit => self.builtin_re_pattern_split(args, kwargs),
             BuiltinFunction::OperatorAdd => self.builtin_operator_add(args, kwargs),
             BuiltinFunction::OperatorSub => self.builtin_operator_sub(args, kwargs),
             BuiltinFunction::OperatorMul => self.builtin_operator_mul(args, kwargs),
@@ -5823,6 +5826,32 @@ impl Vm {
             }
             BuiltinFunction::CollectionsCounter => self.builtin_collections_counter(args, kwargs),
             BuiltinFunction::CollectionsDeque => self.builtin_collections_deque(args, kwargs),
+            BuiltinFunction::CollectionsDequeInit => {
+                self.builtin_collections_deque_init(args, kwargs)
+            }
+            BuiltinFunction::CollectionsDequeAppend => {
+                self.builtin_collections_deque_append(args, kwargs)
+            }
+            BuiltinFunction::CollectionsDequeAppendLeft => {
+                self.builtin_collections_deque_appendleft(args, kwargs)
+            }
+            BuiltinFunction::CollectionsDequePop => self.builtin_collections_deque_pop(args, kwargs),
+            BuiltinFunction::CollectionsDequePopleft => {
+                self.builtin_collections_deque_popleft(args, kwargs)
+            }
+            BuiltinFunction::CollectionsDequeClear => {
+                self.builtin_collections_deque_clear(args, kwargs)
+            }
+            BuiltinFunction::CollectionsDequeExtend => {
+                self.builtin_collections_deque_extend(args, kwargs)
+            }
+            BuiltinFunction::CollectionsDequeExtendLeft => {
+                self.builtin_collections_deque_extendleft(args, kwargs)
+            }
+            BuiltinFunction::CollectionsDequeLen => self.builtin_collections_deque_len(args, kwargs),
+            BuiltinFunction::CollectionsDequeIter => {
+                self.builtin_collections_deque_iter(args, kwargs)
+            }
             BuiltinFunction::CollectionsOrderedDict => self.builtin_dict(args, kwargs),
             BuiltinFunction::CollectionsChainMapInit => {
                 self.builtin_collections_chainmap_init(args, kwargs)
@@ -6091,6 +6120,12 @@ impl Vm {
             BuiltinFunction::DateToday => self.builtin_datetime_today(args, kwargs),
             BuiltinFunction::DateTimeInit => self.builtin_datetime_init(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
+            BuiltinFunction::DateTimeTimezoneInit => {
+                self.builtin_datetime_timezone_init(args, kwargs)
+            }
+            BuiltinFunction::DateToOrdinal => self.builtin_date_toordinal(args, kwargs),
+            BuiltinFunction::DateWeekday => self.builtin_date_weekday(args, kwargs),
+            BuiltinFunction::DateIsoWeekday => self.builtin_date_isoweekday(args, kwargs),
             BuiltinFunction::DateStrFTime => self.builtin_date_strftime(args, kwargs),
             BuiltinFunction::TimeInit => self.builtin_time_init(args, kwargs),
             BuiltinFunction::AsyncioRun => self.builtin_asyncio_run(args, kwargs),

@@ -1848,7 +1848,7 @@ d = list('ab')\n";
 fn executes_set_bytes_memoryview_and_complex_builtins() {
     let source = "s = set([1, 2, 2])\n\
 fs = frozenset((1, 2, 2))\n\
-b = bytes('ab')\n\
+b = bytes('ab', 'utf-8')\n\
 ba = bytearray([65, 66, 67])\n\
 mv = memoryview(ba)\n\
 x = b[1]\n\
@@ -2174,6 +2174,7 @@ reduced = functools.reduce(operator.add, [1, 2, 3], 0)\n\
 \n\
 counter = collections.Counter('abca')\n\
 dq = collections.deque((4, 5))\n\
+dq_vals = list(dq)\n\
 mod = types.ModuleType('tmp')\n\
 class Dummy:\n    pass\n\
 \n\
@@ -2278,9 +2279,90 @@ m = time.monotonic()\n";
     assert!(counter_entries.contains(&(Value::Str("a".to_string()), Value::Int(2))));
     assert!(counter_entries.contains(&(Value::Str("b".to_string()), Value::Int(1))));
     assert_eq!(
-        list_values(vm.get_global("dq")),
+        list_values(vm.get_global("dq_vals")),
         Some(vec![Value::Int(4), Value::Int(5)])
     );
+}
+
+#[test]
+fn collections_deque_supports_queue_style_operations() {
+    let source = r#"import collections
+d = collections.deque([1, 2])
+d.append(3)
+left = d.popleft()
+right = d.pop()
+d.appendleft(9)
+remaining = list(d)
+size = len(d)
+
+bounded = collections.deque([1, 2, 3], maxlen=2)
+bounded_init = list(bounded)
+bounded.append(4)
+bounded_after_append = list(bounded)
+bounded.appendleft(0)
+bounded_after_appendleft = list(bounded)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+
+    assert_eq!(vm.get_global("left"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("right"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("size"), Some(Value::Int(2)));
+    assert_eq!(
+        list_values(vm.get_global("remaining")),
+        Some(vec![Value::Int(9), Value::Int(2)])
+    );
+    assert_eq!(
+        list_values(vm.get_global("bounded_init")),
+        Some(vec![Value::Int(2), Value::Int(3)])
+    );
+    assert_eq!(
+        list_values(vm.get_global("bounded_after_append")),
+        Some(vec![Value::Int(3), Value::Int(4)])
+    );
+    assert_eq!(
+        list_values(vm.get_global("bounded_after_appendleft")),
+        Some(vec![Value::Int(0), Value::Int(3)])
+    );
+}
+
+#[test]
+fn bytes_and_bytearray_accept_generators_in_constructor() {
+    let source = r#"b = bytes((x for x in [65, 66, 67]))
+ba = bytearray((x for x in [68, 69, 70]))
+named = bytes("ab", encoding="utf-8", errors="strict")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+
+    assert_eq!(bytes_values(vm.get_global("b")), Some(vec![65, 66, 67]));
+    assert_eq!(bytes_values(vm.get_global("ba")), Some(vec![68, 69, 70]));
+    assert_eq!(bytes_values(vm.get_global("named")), Some(vec![97, 98]));
+}
+
+#[test]
+fn date_methods_toordinal_and_weekday_are_available() {
+    let source = r#"import datetime
+d = datetime.date(2024, 1, 1)
+weekday = d.weekday()
+isoweekday = d.isoweekday()
+ordinal = d.toordinal()
+dt = datetime.datetime(2024, 1, 1, 12, 30, 5)
+dt_ordinal = dt.toordinal()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+
+    assert_eq!(vm.get_global("weekday"), Some(Value::Int(0)));
+    assert_eq!(vm.get_global("isoweekday"), Some(Value::Int(1)));
+    assert_eq!(vm.get_global("ordinal"), Some(Value::Int(738_886)));
+    assert_eq!(vm.get_global("dt_ordinal"), Some(Value::Int(738_886)));
 }
 
 #[test]

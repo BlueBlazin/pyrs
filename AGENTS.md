@@ -39,8 +39,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `threading.Condition.__enter__/__exit__` baseline.
   - `datetime.date/datetime.strftime()` baseline.
   - `_operator._compare_digest` baseline and `_operator` module registration.
+  - `collections.deque` class surface (`__init__`, `append*`, `pop*`, `extend*`, `clear`, `__len__`, `__iter__`) wired into module bootstrap.
+  - `bytes` / `bytearray` constructor VM paths now accept generator/iterator/iterable payloads and explicit `encoding`/`errors` argument forms.
+  - `datetime.date/datetime` gained `toordinal`, `weekday`, `isoweekday`; `datetime.timezone` baseline symbol added for stdlib import-chain compatibility.
+  - `_sre` pattern object gained `split`; class/instance `__doc__` fallback parity tightened for stdlib object-model paths.
 - Extended probe remaining red modules:
-  - `statistics`, `decimal`, `queue`, `ssl`, `email`, `smtplib`, `imaplib`, `xml`, `gzip`, `bz2`, `lzma`.
+  - `statistics`, `decimal`, `ssl`, `email`, `smtplib`, `imaplib`, `xml`, `gzip`, `bz2`, `lzma`.
 
 ## Execution Policy
 - CPython behavior is the source of truth:
