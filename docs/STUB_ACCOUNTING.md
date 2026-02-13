@@ -21,11 +21,11 @@ Status values:
 
 | Surface | Gap summary | Closure criteria | Required evidence | Status | Milestone |
 |---|---|---|---|---|---|
-| `pickle`/`pickletools`/`copyreg` | Deferred strict pickle lane still times out. | Deferred strict pickle suite is re-enabled, green, and allowlist is empty. | `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite` | IN_PROGRESS | 13 |
-| `_io` | Strict stdlib still depends on remaining `_io` edge semantics. | Remaining `_io`-dependent strict-lane failures are closed. | strict harness pass + targeted `tests/vm.rs` regressions for each closed edge | IN_PROGRESS | 13 |
+| `pickle`/`pickletools`/`copyreg` | Deferred strict pickle harness lane still times out. | Deferred strict pickle harness lane is re-enabled, green, and allowlist is empty. | `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite` | IN_PROGRESS | 13 |
+| `_io` | Strict stdlib still depends on remaining `_io` edge semantics. | Remaining `_io`-dependent strict-harness-lane failures are closed. | strict harness pass + targeted `tests/vm.rs` regressions for each closed edge | IN_PROGRESS | 13 |
 | `json` | Common workflows are green; long-tail semantics/hardening/perf closure is open. | `json` pure + accelerator parity closed, malformed-input differential coverage closed, perf baseline recorded. | `test_json` parity + differential probes + benchmark artifact | IN_PROGRESS | 13 |
 | `_csv`/`csv` | Common workflows are green; long-tail dialect/error parity is open. | `test_csv` parity closed with malformed-input hardening and perf baseline. | `test_csv` parity + differential probes + benchmark artifact | IN_PROGRESS | 13 |
-| `_sre` | Core surface works; long-tail regex behavior blocks full pure-`re` closure. | Pure `Lib/re/*` path passes curated/strict lanes in scope. | strict/curated harness green for `re`-dependent suites | IN_PROGRESS | 13 |
+| `_sre` | Core surface works; long-tail regex behavior blocks full pure-`re` closure. | Pure `Lib/re/*` path passes curated/strict harness lanes in scope. | strict/curated harness green for `re`-dependent suites | IN_PROGRESS | 13 |
 | Hash containers (`dict`/`set`/`frozenset`) | Architecture upgrade landed; long-tail semantic/perf closure remains. | CPython parity on edge behavior and performance closure criteria from readiness/audit docs. | targeted parity tests + benchmark/profile artifacts | IN_PROGRESS | 13/14 |
 | Builtin symbol surface (`builtins`) | Parity gate currently green. | Keep `145/145`, zero probe mismatches, and empty allowlists. | `./scripts/run_builtin_parity_gate.sh` | CLOSED | 13 |
 
@@ -44,16 +44,16 @@ Status values:
 | Object-model protocol dispatch | Truthiness/membership baseline landed; long-tail slot/error semantics remain. | Align remaining protocol edge semantics with CPython data model/tests. | IN_PROGRESS | 13 |
 | VM/module decomposition | VM still has large modules. | Continue concern-based extraction with behavior-preserving tests. | IN_PROGRESS | 14 |
 
-## Strict Harness Accounting
+## Strict Harness Lane Accounting
 - Active strict suite: `tests/cpython_suite_strict_stdlib.txt`
 - Deferred strict pickle suite: `tests/cpython_suite_deferred_pickle.txt`
 - Active strict allowlist: `tests/cpython_allowlist_strict.txt` (target: empty)
 - Deferred strict pickle allowlist: `tests/cpython_allowlist_deferred_pickle.txt` (target: empty)
 
 Policy:
-1. Active strict suite stays green with empty allowlist.
-2. Deferred pickle suite stays explicit until re-enabled and closed.
-3. Deferred pickle suite remains opt-in locally (`PYRS_RUN_DEFERRED_PICKLE=1`) for bounded fast loops.
+1. Active strict harness lane stays green with empty allowlist.
+2. Deferred strict pickle harness lane stays explicit until re-enabled and closed.
+3. Deferred strict pickle harness lane remains opt-in locally (`PYRS_RUN_DEFERRED_PICKLE=1`) for bounded fast loops.
 
 ## Remaining Intentional NoOp Scope
 - Test-only CPython helper modules (`_testcapi`, `_testinternalcapi` family)

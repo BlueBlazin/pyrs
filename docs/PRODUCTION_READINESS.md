@@ -15,13 +15,13 @@ Status:
 
 ## P0 Release Blockers
 
-| Area | Status | Closure requirement |
+| Area | Status | Closure criteria |
 |---|---|---|
 | Top stdlib common-usecase baseline (`docs/STDLIB_COMMON_USECASE_CHECKLIST.md`) | `[x]` | Keep `26/26` import + smoke baseline green in `tests/stdlib_common_usecases.rs` |
 | `json` parity + hardening | `[~]` | Full semantic parity for pure + accelerator paths, malformed-input differential coverage, and perf baseline |
 | `_csv`/`csv` parity + hardening | `[~]` | Full parser/writer parity, malformed-input differential coverage, and perf baseline |
-| `pickle`/`pickletools`/`copyreg` parity + hardening | `[~]` | Re-enable deferred strict pickle lane and close it without timeouts |
-| `_io` stdlib-required behavioral parity | `[~]` | Close remaining strict-lane `_io` dependencies and edge semantics |
+| `pickle`/`pickletools`/`copyreg` parity + hardening | `[~]` | Re-enable deferred strict pickle harness lane and close it without timeouts |
+| `_io` stdlib-required behavioral parity | `[~]` | Close remaining strict-harness-lane `_io` dependencies and edge semantics |
 | `_sre` parity needed for pure `re` closure | `[~]` | Close long-tail regex semantics needed by strict stdlib and differential tests |
 | Hash-container semantic/perf closure (`dict`/`set`/`frozenset`) | `[~]` | CPython parity on edge semantics and expected throughput characteristics |
 | VM throughput closure for production workloads | `[~]` | Close P0/P1 performance items tracked in `docs/OPTIMIZATION_BACKLOG.md` |
@@ -53,7 +53,7 @@ Status:
 
 ## Test and Quality Gates
 - `[x]` Curated CPython harness lanes green
-- `[~]` Active strict stdlib lane green; deferred strict pickle lane open
+- `[~]` Active strict harness lane green; deferred strict pickle harness lane open
 - `[x]` Differential + fuzz foundations in place
 - `[x]` Coverage gate workflow in place
 - `[x]` Builtin parity gate active and green
@@ -63,7 +63,7 @@ Status:
 Milestone 13 closes only when:
 1. all P0 blockers above are `[x]`
 2. `docs/STUB_ACCOUNTING.md` has no open Milestone-13 P0 rows
-3. strict lanes and allowlists are closed as defined in `docs/STUB_ACCOUNTING.md`
+3. strict harness lanes and allowlists are closed as defined in `docs/STUB_ACCOUNTING.md`
 
 ## Companion Docs
 - `docs/README.md`

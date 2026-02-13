@@ -38,14 +38,14 @@ Status:
 - `[x]` Builtin surface parity gate (`145/145`, no allowlist entries)
 - `[x]` `hashlib` md5/sha2 baseline path (`_md5`, `_sha2`)
 - `[~]` P0 closure still pending for `json`, `_csv`/`csv`, `pickle`/`pickletools`/`copyreg`, `_io`, and `_sre`
-- `[~]` Deferred strict pickle lane closure
+- `[~]` Deferred strict pickle harness lane closure
 
 ## Test/Gate Status
 - `[x]` Differential tests and fuzz foundations active
 - `[x]` Coverage/no-op inventory/builtin parity gates active
-- `[~]` Full strict stdlib closure pending deferred pickle lane
+- `[~]` Full strict stdlib closure pending deferred pickle harness lane
 
 ## Notes
-- Active strict suite: `tests/cpython_suite_strict_stdlib.txt`
-- Deferred strict pickle suite: `tests/cpython_suite_deferred_pickle.txt`
-- Deferred strict pickle opt-in: `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite`
+- Active strict harness lane suite: `tests/cpython_suite_strict_stdlib.txt`
+- Deferred strict pickle harness lane suite: `tests/cpython_suite_deferred_pickle.txt`
+- Deferred strict pickle harness lane opt-in: `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite`
