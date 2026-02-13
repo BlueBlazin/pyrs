@@ -195,6 +195,7 @@ const SQLITE_LIMIT_SQL_LENGTH_ID: c_int = 1;
 const SQLITE_LIMIT_MAX_CATEGORY: i64 = 11;
 const SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR: &str = "__pyrs_sqlite_base_init_called";
 const SQLITE_CONNECTION_ISOLATION_LEVEL_ATTR: &str = "isolation_level";
+const SQLITE_LEGACY_TRANSACTION_CONTROL: i64 = -1;
 const SQLITE_CONNECTION_ISOLATION_LEVEL_VALUE_ERROR: &str =
     "isolation_level string must be '', 'DEFERRED', 'IMMEDIATE', or 'EXCLUSIVE'";
 const SQLITE_ROW_DATA_ATTR: &str = "__pyrs_sqlite_row_data";
@@ -209,6 +210,13 @@ thread_local! {
 
 struct SqliteCallbackVmGuard {
     previous: *mut Vm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SqliteAutocommitMode {
+    Legacy,
+    Enabled,
+    Disabled,
 }
 
 impl SqliteCallbackVmGuard {
@@ -234,14 +242,22 @@ pub(in crate::vm) struct SqliteConnectionState {
     handle: Option<NonNull<Sqlite3Db>>,
     check_same_thread: bool,
     creator_thread_ident: i64,
+    autocommit_mode: SqliteAutocommitMode,
+    trace_callback: Option<Value>,
 }
 
 impl SqliteConnectionState {
-    pub(in crate::vm) fn new(handle: *mut Sqlite3Db, check_same_thread: bool) -> Self {
+    fn new(
+        handle: *mut Sqlite3Db,
+        check_same_thread: bool,
+        autocommit_mode: SqliteAutocommitMode,
+    ) -> Self {
         Self {
             handle: NonNull::new(handle),
             check_same_thread,
             creator_thread_ident: sqlite_current_thread_ident(),
+            autocommit_mode,
+            trace_callback: None,
         }
     }
 
@@ -802,6 +818,38 @@ fn sqlite_normalize_isolation_level(level: Value) -> Result<Value, RuntimeError>
     }
 }
 
+fn sqlite_normalize_autocommit(
+    value: Option<Value>,
+) -> Result<SqliteAutocommitMode, RuntimeError> {
+    let Some(value) = value else {
+        return Ok(SqliteAutocommitMode::Legacy);
+    };
+    match value {
+        Value::Bool(true) => Ok(SqliteAutocommitMode::Enabled),
+        Value::Bool(false) => Ok(SqliteAutocommitMode::Disabled),
+        Value::Int(number) if number == SQLITE_LEGACY_TRANSACTION_CONTROL => {
+            Ok(SqliteAutocommitMode::Legacy)
+        }
+        Value::BigInt(number)
+            if number.as_ref() == &BigInt::from_i64(SQLITE_LEGACY_TRANSACTION_CONTROL) =>
+        {
+            Ok(SqliteAutocommitMode::Legacy)
+        }
+        _ => Err(sqlite_error(
+            "ValueError",
+            "autocommit must be True, False, or sqlite3.LEGACY_TRANSACTION_CONTROL",
+        )),
+    }
+}
+
+fn sqlite_autocommit_mode_to_value(mode: SqliteAutocommitMode) -> Value {
+    match mode {
+        SqliteAutocommitMode::Legacy => Value::Int(SQLITE_LEGACY_TRANSACTION_CONTROL),
+        SqliteAutocommitMode::Enabled => Value::Bool(true),
+        SqliteAutocommitMode::Disabled => Value::Bool(false),
+    }
+}
+
 fn sqlite_non_negative_u32(
     value: Value,
     type_message: &str,
@@ -1023,6 +1071,9 @@ impl Vm {
         connection_id: u64,
         sql: &str,
     ) -> Result<(), RuntimeError> {
+        if self.sqlite_connection_autocommit_mode(connection_id)? != SqliteAutocommitMode::Legacy {
+            return Ok(());
+        }
         if !sqlite_is_dml_statement(sql) {
             return Ok(());
         }
@@ -1043,7 +1094,7 @@ impl Vm {
         }
 
         let begin_sql = if isolation_level.is_empty() {
-            "BEGIN".to_string()
+            "BEGIN ".to_string()
         } else {
             format!("BEGIN {isolation_level}")
         };
@@ -1053,6 +1104,92 @@ impl Vm {
             SqliteParams::Positional(Vec::new()),
         )?;
         Ok(())
+    }
+
+    fn sqlite_connection_autocommit_mode(
+        &self,
+        connection_id: u64,
+    ) -> Result<SqliteAutocommitMode, RuntimeError> {
+        self.sqlite_connections
+            .get(&connection_id)
+            .map(|state| state.autocommit_mode)
+            .ok_or_else(|| sqlite_error("ProgrammingError", "invalid sqlite connection"))
+    }
+
+    fn sqlite_set_connection_autocommit_mode(
+        &mut self,
+        connection_id: u64,
+        mode: SqliteAutocommitMode,
+    ) {
+        if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
+            state.autocommit_mode = mode;
+        }
+    }
+
+    fn sqlite_transition_autocommit_mode(
+        &mut self,
+        connection_id: u64,
+        new_mode: SqliteAutocommitMode,
+    ) -> Result<(), RuntimeError> {
+        let old_mode = self.sqlite_connection_autocommit_mode(connection_id)?;
+        if old_mode == new_mode {
+            return Ok(());
+        }
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        // SAFETY: db is a valid sqlite handle.
+        let in_transaction = unsafe { sqlite3_get_autocommit(db) == 0 };
+        match new_mode {
+            SqliteAutocommitMode::Enabled => {
+                if in_transaction {
+                    let _ = self.sqlite_execute_query(
+                        connection_id,
+                        "COMMIT",
+                        SqliteParams::Positional(Vec::new()),
+                    )?;
+                }
+            }
+            SqliteAutocommitMode::Disabled => {
+                if !in_transaction {
+                    let _ = self.sqlite_execute_query(
+                        connection_id,
+                        "BEGIN",
+                        SqliteParams::Positional(Vec::new()),
+                    )?;
+                }
+            }
+            SqliteAutocommitMode::Legacy => {}
+        }
+        self.sqlite_set_connection_autocommit_mode(connection_id, new_mode);
+        Ok(())
+    }
+
+    fn sqlite_emit_trace_callback(
+        &mut self,
+        connection_id: u64,
+        statement: &str,
+    ) -> Result<(), RuntimeError> {
+        let callback = self
+            .sqlite_connections
+            .get(&connection_id)
+            .and_then(|state| state.trace_callback.clone());
+        let Some(callback) = callback else {
+            return Ok(());
+        };
+        match self.call_internal_preserving_caller(
+            callback,
+            vec![Value::Str(statement.to_string())],
+            HashMap::new(),
+        ) {
+            Ok(InternalCallOutcome::Value(_)) => Ok(()),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                self.clear_active_exception();
+                Ok(())
+            }
+            Err(_) => {
+                self.clear_active_exception();
+                Ok(())
+            }
+        }
     }
 
     fn sqlite_limit_category(value: Value) -> Result<c_int, RuntimeError> {
@@ -1516,6 +1653,7 @@ impl Vm {
         if max_sql_length >= 0 && sql.len() > max_sql_length as usize {
             return Err(sqlite_error("DataError", "query string is too large"));
         }
+        self.sqlite_emit_trace_callback(connection_id, sql)?;
         let sql_c = CString::new(sql.as_bytes())
             .map_err(|_| sqlite_error("ProgrammingError", "SQL contains embedded NUL"))?;
         let mut raw_stmt: *mut Sqlite3Stmt = ptr::null_mut();
@@ -1744,8 +1882,11 @@ impl Vm {
         }
         // CPython executescript() commits an active transaction in legacy
         // transaction mode before running the script payload.
-        // SAFETY: db is valid for autocommit and exec checks.
-        if unsafe { sqlite3_get_autocommit(db) == 0 } {
+        // SAFETY: db is valid for autocommit checks.
+        if self.sqlite_connection_autocommit_mode(connection_id)? == SqliteAutocommitMode::Legacy
+            && unsafe { sqlite3_get_autocommit(db) == 0 }
+        {
+            self.sqlite_emit_trace_callback(connection_id, "COMMIT")?;
             let commit_sql = CString::new("COMMIT").expect("static SQL should be valid C string");
             let mut err_out: *mut c_char = ptr::null_mut();
             // SAFETY: db is live and commit_sql is a valid C string.
@@ -1758,6 +1899,7 @@ impl Vm {
         }
         let sql_c = CString::new(script.as_bytes())
             .map_err(|_| sqlite_error("ValueError", "embedded null character"))?;
+        self.sqlite_emit_trace_callback(connection_id, script)?;
         let mut err_out: *mut c_char = ptr::null_mut();
         let _callback_vm_guard = SqliteCallbackVmGuard::enter(self);
         // SAFETY: db is live, sql_c is valid, callback is null, and err_out is a valid out pointer.
@@ -1832,7 +1974,7 @@ impl Vm {
             .remove("uri")
             .map(|value| is_truthy(&value))
             .unwrap_or(false);
-        let _autocommit = kwargs.remove("autocommit");
+        let autocommit_mode = sqlite_normalize_autocommit(kwargs.remove("autocommit"))?;
         if let Some(unexpected) = kwargs.keys().next() {
             return Err(sqlite_error(
                 "TypeError",
@@ -1919,8 +2061,15 @@ impl Vm {
         }
         self.sqlite_connections.insert(
             connection.id(),
-            SqliteConnectionState::new(handle, check_same_thread),
+            SqliteConnectionState::new(handle, check_same_thread, autocommit_mode),
         );
+        if autocommit_mode == SqliteAutocommitMode::Disabled {
+            let _ = self.sqlite_execute_query(
+                connection.id(),
+                "BEGIN",
+                SqliteParams::Positional(Vec::new()),
+            )?;
+        }
         Ok(Value::Instance(connection))
     }
 
@@ -1990,7 +2139,7 @@ impl Vm {
             .unwrap_or(true);
         let _ = kwargs.remove("factory");
         let _ = kwargs.remove("cached_statements");
-        let _ = kwargs.remove("autocommit");
+        let autocommit_mode = sqlite_normalize_autocommit(kwargs.remove("autocommit"))?;
         if let Some(unexpected) = kwargs.keys().next() {
             return Err(sqlite_error(
                 "TypeError",
@@ -2003,7 +2152,11 @@ impl Vm {
         } else {
             self.sqlite_connections.insert(
                 receiver_id,
-                SqliteConnectionState::new(ptr::null_mut(), check_same_thread),
+                SqliteConnectionState::new(
+                    ptr::null_mut(),
+                    check_same_thread,
+                    autocommit_mode,
+                ),
             );
         }
 
@@ -2042,8 +2195,12 @@ impl Vm {
 
         self.sqlite_connections.insert(
             receiver_id,
-            SqliteConnectionState::new(handle, check_same_thread),
+            SqliteConnectionState::new(handle, check_same_thread, autocommit_mode),
         );
+        if autocommit_mode == SqliteAutocommitMode::Disabled {
+            let _ =
+                self.sqlite_execute_query(receiver_id, "BEGIN", SqliteParams::Positional(Vec::new()))?;
+        }
         let _ = Self::instance_attr_set(
             &receiver,
             SQLITE_CONNECTION_BASE_INIT_CALLED_ATTR,
@@ -2289,6 +2446,12 @@ impl Vm {
                         .unwrap_or_else(|| Value::Str(String::new())),
                 )
             }
+            "autocommit" => {
+                let connection_id = self.sqlite_connection_id_from_value(&receiver, "autocommit")?;
+                let _ = self.sqlite_open_db_handle(connection_id)?;
+                let mode = self.sqlite_connection_autocommit_mode(connection_id)?;
+                Ok(sqlite_autocommit_mode_to_value(mode))
+            }
             "total_changes" => {
                 let connection_id =
                     self.sqlite_connection_id_from_value(&receiver, "total_changes")?;
@@ -2343,6 +2506,13 @@ impl Vm {
                 )?;
                 Ok(Value::None)
             }
+            "autocommit" => {
+                let connection_id = self.sqlite_connection_id_from_value(&receiver, "autocommit")?;
+                let _ = self.sqlite_open_db_handle(connection_id)?;
+                let mode = sqlite_normalize_autocommit(Some(value))?;
+                self.sqlite_transition_autocommit_mode(connection_id, mode)?;
+                Ok(Value::None)
+            }
             "in_transaction" | "total_changes" => Err(sqlite_connection_readonly_attr_error(&name)),
             _ => {
                 self.builtin_object_setattr(vec![receiver, Value::Str(name), value], HashMap::new())
@@ -2367,7 +2537,8 @@ impl Vm {
             _ => return Err(sqlite_error("TypeError", "attribute name must be string")),
         };
         match name.as_str() {
-            SQLITE_CONNECTION_ISOLATION_LEVEL_ATTR | "in_transaction" | "total_changes" => {
+            SQLITE_CONNECTION_ISOLATION_LEVEL_ATTR | "autocommit" | "in_transaction"
+            | "total_changes" => {
                 Err(sqlite_error("AttributeError", "cannot delete attribute"))
             }
             _ => self.builtin_object_delattr(vec![receiver, Value::Str(name)], HashMap::new()),
@@ -2386,8 +2557,28 @@ impl Vm {
             ));
         }
         let connection_id = self.sqlite_connection_id_from_value(&args[0], "close")?;
-        if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
+        if let Some(state) = self.sqlite_connections.get(&connection_id) {
             state.ensure_thread_affinity()?;
+        }
+        let is_open = self
+            .sqlite_connections
+            .get(&connection_id)
+            .and_then(|state| state.db_handle())
+            .is_some();
+        if is_open
+            && self.sqlite_connection_autocommit_mode(connection_id)? == SqliteAutocommitMode::Disabled
+        {
+            let db = self.sqlite_open_db_handle(connection_id)?;
+            // SAFETY: db is a valid sqlite handle.
+            if unsafe { sqlite3_get_autocommit(db) == 0 } {
+                let _ = self.sqlite_execute_query(
+                    connection_id,
+                    "ROLLBACK",
+                    SqliteParams::Positional(Vec::new()),
+                )?;
+            }
+        }
+        if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
             state
                 .close()
                 .map_err(|message| sqlite_error("OperationalError", message))?;
@@ -2436,6 +2627,10 @@ impl Vm {
             ));
         }
         let receiver = args.remove(0);
+        let connection_id = self.sqlite_connection_id_from_value(&receiver, "__exit__")?;
+        if self.sqlite_connection_autocommit_mode(connection_id)? == SqliteAutocommitMode::Enabled {
+            return Ok(Value::Bool(false));
+        }
         let exc_type = args.remove(0);
         if matches!(exc_type, Value::None) {
             self.builtin_sqlite_connection_commit(vec![receiver], HashMap::new())?;
@@ -2538,13 +2733,56 @@ impl Vm {
             ));
         }
         let connection_id = self.sqlite_connection_id_from_value(&args[0], "commit")?;
+        let autocommit_mode = self.sqlite_connection_autocommit_mode(connection_id)?;
+        if autocommit_mode == SqliteAutocommitMode::Enabled {
+            return Ok(Value::None);
+        }
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        // SAFETY: db is a valid sqlite handle.
+        let in_transaction = unsafe { sqlite3_get_autocommit(db) == 0 };
+        if !in_transaction {
+            if autocommit_mode == SqliteAutocommitMode::Disabled {
+                let _ = self.sqlite_execute_query(
+                    connection_id,
+                    "BEGIN",
+                    SqliteParams::Positional(Vec::new()),
+                )?;
+            }
+            return Ok(Value::None);
+        }
         match self.sqlite_execute_query(
             connection_id,
             "COMMIT",
             SqliteParams::Positional(Vec::new()),
         ) {
-            Ok(_) => Ok(Value::None),
-            Err(err) if err.message.contains("no transaction is active") => Ok(Value::None),
+            Ok(_) => {
+                if autocommit_mode == SqliteAutocommitMode::Disabled {
+                    let db = self.sqlite_open_db_handle(connection_id)?;
+                    // SAFETY: db is a valid sqlite handle.
+                    if unsafe { sqlite3_get_autocommit(db) != 0 } {
+                        let _ = self.sqlite_execute_query(
+                            connection_id,
+                            "BEGIN",
+                            SqliteParams::Positional(Vec::new()),
+                        )?;
+                    }
+                }
+                Ok(Value::None)
+            }
+            Err(err) if err.message.contains("no transaction is active") => {
+                if autocommit_mode == SqliteAutocommitMode::Disabled {
+                    let db = self.sqlite_open_db_handle(connection_id)?;
+                    // SAFETY: db is a valid sqlite handle.
+                    if unsafe { sqlite3_get_autocommit(db) != 0 } {
+                        let _ = self.sqlite_execute_query(
+                            connection_id,
+                            "BEGIN",
+                            SqliteParams::Positional(Vec::new()),
+                        )?;
+                    }
+                }
+                Ok(Value::None)
+            }
             Err(err) => Err(err),
         }
     }
@@ -2561,13 +2799,56 @@ impl Vm {
             ));
         }
         let connection_id = self.sqlite_connection_id_from_value(&args[0], "rollback")?;
+        let autocommit_mode = self.sqlite_connection_autocommit_mode(connection_id)?;
+        if autocommit_mode == SqliteAutocommitMode::Enabled {
+            return Ok(Value::None);
+        }
+        let db = self.sqlite_open_db_handle(connection_id)?;
+        // SAFETY: db is a valid sqlite handle.
+        let in_transaction = unsafe { sqlite3_get_autocommit(db) == 0 };
+        if !in_transaction {
+            if autocommit_mode == SqliteAutocommitMode::Disabled {
+                let _ = self.sqlite_execute_query(
+                    connection_id,
+                    "BEGIN",
+                    SqliteParams::Positional(Vec::new()),
+                )?;
+            }
+            return Ok(Value::None);
+        }
         match self.sqlite_execute_query(
             connection_id,
             "ROLLBACK",
             SqliteParams::Positional(Vec::new()),
         ) {
-            Ok(_) => Ok(Value::None),
-            Err(err) if err.message.contains("no transaction is active") => Ok(Value::None),
+            Ok(_) => {
+                if autocommit_mode == SqliteAutocommitMode::Disabled {
+                    let db = self.sqlite_open_db_handle(connection_id)?;
+                    // SAFETY: db is a valid sqlite handle.
+                    if unsafe { sqlite3_get_autocommit(db) != 0 } {
+                        let _ = self.sqlite_execute_query(
+                            connection_id,
+                            "BEGIN",
+                            SqliteParams::Positional(Vec::new()),
+                        )?;
+                    }
+                }
+                Ok(Value::None)
+            }
+            Err(err) if err.message.contains("no transaction is active") => {
+                if autocommit_mode == SqliteAutocommitMode::Disabled {
+                    let db = self.sqlite_open_db_handle(connection_id)?;
+                    // SAFETY: db is a valid sqlite handle.
+                    if unsafe { sqlite3_get_autocommit(db) != 0 } {
+                        let _ = self.sqlite_execute_query(
+                            connection_id,
+                            "BEGIN",
+                            SqliteParams::Positional(Vec::new()),
+                        )?;
+                    }
+                }
+                Ok(Value::None)
+            }
             Err(err) => Err(err),
         }
     }
@@ -2852,6 +3133,14 @@ impl Vm {
                 "TypeError",
                 "set_trace_callback() expected a callable or None",
             ));
+        }
+        let trace_callback = if matches!(callback, Value::None) {
+            None
+        } else {
+            Some(callback)
+        };
+        if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
+            state.trace_callback = trace_callback;
         }
         Ok(Value::None)
     }

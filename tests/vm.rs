@@ -2691,6 +2691,54 @@ ok = (
 }
 
 #[test]
+fn sqlite3_trace_callback_records_legacy_ctx_manager_statements() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 trace-callback legacy test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+traced = []
+cx = sqlite3.connect(':memory:')
+cx.execute("create table t(t)")
+cx.set_trace_callback(lambda stmt: traced.append(stmt))
+with cx:
+    cx.execute("INSERT INTO T VALUES(1)")
+cx.close()
+ok = (traced == ["BEGIN ", "INSERT INTO T VALUES(1)", "COMMIT"])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sqlite3_trace_callback_none_disables_trace_delivery() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping sqlite3 trace-callback disable test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import sqlite3
+traced = []
+cx = sqlite3.connect(':memory:')
+cx.set_trace_callback(lambda stmt: traced.append(stmt))
+cx.execute("select 1")
+cx.set_trace_callback(None)
+cx.execute("select 2")
+cx.close()
+ok = (traced == ["select 1"])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn sqlite3_blobopen_supports_read_write_seek_and_context_manager() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping sqlite3 blobopen test (CPython Lib path not available)");
