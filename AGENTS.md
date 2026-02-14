@@ -85,6 +85,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `threading.Semaphore`/`BoundedSemaphore` bound semantics were corrected (`Semaphore` unbounded by default; `BoundedSemaphore` enforces initial bound), removing `Semaphore released too many times` failures in threadpool shutdown flows.
   - range-iterator parity checkpoint: `iterator_next_value()` now advances `IteratorKind::RangeObject`, fixing `bytes(range(...))` / `bytearray(range(...))` constructor semantics.
   - loop-compiler parity checkpoint: `for`/`while` loop contexts no longer leak into `else` blocks; `continue` in loop-`else` now correctly targets enclosing loops (or raises compile error if no enclosing loop), and CPython `re._parser` no longer underflows at `FOR_ITER`.
+  - GC control checkpoint: `gc` module now exposes `get_threshold`, `set_threshold`, and `get_count` (in addition to `collect`/`enable`/`disable`/`isenabled`); automatic cycle collection is threshold-driven after explicit threshold configuration and uses parity-safe guardrails.
+  - dispatch/cache checkpoint: `CALL_FUNCTION` site quickening metadata now includes zero-arg and two-arg direct function lanes; `LOAD_ATTR` instance cache now covers plain value attributes in addition to function/descriptor forms.
+  - local validation checkpoint: `cargo test -q`, `cargo test -q --test vm`, `cargo test -q --test cpython_harness runs_cpython_language_suite`, and `PYRS_RUN_STRICT_STDLIB=1 cargo test -q --test cpython_harness runs_cpython_strict_stdlib_suite` are green.
   - local shim retirement checkpoint: `shims/pyexpat.py` and `shims/pkgutil.py` are removed; native runtime fallbacks now cover `pyexpat` and `pkgutil` surfaces.
   - allowlist-restricted local shim fallback remains enabled by default (opt-out via `PYRS_DISABLE_LOCAL_SHIMS=1`) for `importlib.resources` only.
 - Extended probe remaining red modules: none (`50/50` smoke green).

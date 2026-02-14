@@ -236,15 +236,15 @@ pub(super) fn sub_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     if let Value::DictKeys(_) = left
         && let (Some(left_values), Some(right_values)) =
             (as_set_values(&left), iterable_values_for_setop(&right))
-        {
-            let mut difference = Vec::new();
-            for value in left_values {
-                if !right_values.contains(&value) {
-                    difference.push(value);
-                }
+    {
+        let mut difference = Vec::new();
+        for value in left_values {
+            if !right_values.contains(&value) {
+                difference.push(value);
             }
-            return Ok(heap.alloc_set(dedup_hashable_values(difference)?));
         }
+        return Ok(heap.alloc_set(dedup_hashable_values(difference)?));
+    }
     if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
         let mut difference = Vec::new();
         for value in left_values {
@@ -919,15 +919,15 @@ pub(super) fn and_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     if let Value::DictKeys(_) = left
         && let (Some(left_values), Some(right_values)) =
             (as_set_values(&left), iterable_values_for_setop(&right))
-        {
-            let mut intersection = Vec::new();
-            for value in left_values {
-                if right_values.contains(&value) {
-                    intersection.push(value);
-                }
+    {
+        let mut intersection = Vec::new();
+        for value in left_values {
+            if right_values.contains(&value) {
+                intersection.push(value);
             }
-            return Ok(heap.alloc_set(dedup_hashable_values(intersection)?));
         }
+        return Ok(heap.alloc_set(dedup_hashable_values(intersection)?));
+    }
     if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
         let mut intersection = Vec::new();
         for value in left_values {
@@ -949,20 +949,20 @@ pub(super) fn xor_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     if let Value::DictKeys(_) = left
         && let (Some(left_values), Some(right_values)) =
             (as_set_values(&left), iterable_values_for_setop(&right))
-        {
-            let mut out = Vec::new();
-            for value in &left_values {
-                if !right_values.iter().any(|candidate| candidate == value) {
-                    out.push(value.clone());
-                }
+    {
+        let mut out = Vec::new();
+        for value in &left_values {
+            if !right_values.iter().any(|candidate| candidate == value) {
+                out.push(value.clone());
             }
-            for value in &right_values {
-                if !left_values.iter().any(|candidate| candidate == value) {
-                    out.push(value.clone());
-                }
-            }
-            return Ok(heap.alloc_set(dedup_hashable_values(out)?));
         }
+        for value in &right_values {
+            if !left_values.iter().any(|candidate| candidate == value) {
+                out.push(value.clone());
+            }
+        }
+        return Ok(heap.alloc_set(dedup_hashable_values(out)?));
+    }
     if let (Some(left_values), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
         let mut out = Vec::new();
         for value in &left_values {
@@ -989,14 +989,14 @@ pub(super) fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value,
     if let Value::DictKeys(_) = left
         && let (Some(mut merged), Some(right_values)) =
             (as_set_values(&left), iterable_values_for_setop(&right))
-        {
-            for value in right_values {
-                if !merged.contains(&value) {
-                    merged.push(value);
-                }
+    {
+        for value in right_values {
+            if !merged.contains(&value) {
+                merged.push(value);
             }
-            return Ok(heap.alloc_set(dedup_hashable_values(merged)?));
         }
+        return Ok(heap.alloc_set(dedup_hashable_values(merged)?));
+    }
     if let (Some(mut merged), Some(right_values)) = (as_set_values(&left), as_set_values(&right)) {
         for value in right_values {
             if !merged.contains(&value) {
@@ -1093,14 +1093,15 @@ fn is_type_union_operand(value: &Value) -> bool {
 fn append_type_union_members(value: Value, members: &mut Vec<Value>) {
     if let Value::Tuple(obj) = &value
         && let Object::Tuple(values) = &*obj.kind()
-            && values.iter().all(is_type_union_operand) {
-                for member in values.iter().cloned() {
-                    if !members.contains(&member) {
-                        members.push(member);
-                    }
-                }
-                return;
+        && values.iter().all(is_type_union_operand)
+    {
+        for member in values.iter().cloned() {
+            if !members.contains(&member) {
+                members.push(member);
             }
+        }
+        return;
+    }
     if !members.contains(&value) {
         members.push(value);
     }

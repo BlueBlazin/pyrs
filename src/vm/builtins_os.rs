@@ -1,4 +1,16 @@
-use super::{Vm, Value, HashMap, RuntimeError, Object, dict_get_value, ModuleObject, value_to_int, fs, AsRawFd, Stdio, ExitStatusExt, UnixStream, FromRawFd, IntoRawFd, Read, Write, SeekFrom, Seek, IsTerminal, is_truthy, value_to_f64, SystemTime, UNIX_EPOCH, seconds_to_system_time, ClassObject, BuiltinFunction, PathBuf, Path, ExceptionObject, InternalCallOutcome, format_value, collect_process_argv, collect_env_entries, Command, value_to_process_text, is_pyrs_executable, parse_modules_to_block_literal, ObjRef, InstanceObject, system_time_to_secs_f64, TUPLE_BACKING_STORAGE_ATTR, value_to_bigint, value_from_bigint, parse_decimal_bigint_literal, BigInt, parse_string_formatter, split_formatter_field_name, FormatterFieldKey, normalize_codec_encoding, normalize_codec_errors, encode_text_bytes, bytes_like_from_value, decode_text_bytes, decode_escape_bytes, NativeMethodKind, AtexitHandler, Duration};
+use super::{
+    AsRawFd, AtexitHandler, BigInt, BuiltinFunction, ClassObject, Command, Duration,
+    ExceptionObject, ExitStatusExt, FormatterFieldKey, FromRawFd, HashMap, InstanceObject,
+    InternalCallOutcome, IntoRawFd, IsTerminal, ModuleObject, NativeMethodKind, ObjRef, Object,
+    Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio, SystemTime,
+    TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, UnixStream, Value, Vm, Write, bytes_like_from_value,
+    collect_env_entries, collect_process_argv, decode_escape_bytes, decode_text_bytes,
+    dict_get_value, encode_text_bytes, format_value, fs, is_pyrs_executable, is_truthy,
+    normalize_codec_encoding, normalize_codec_errors, parse_decimal_bigint_literal,
+    parse_modules_to_block_literal, parse_string_formatter, seconds_to_system_time,
+    split_formatter_field_name, system_time_to_secs_f64, value_from_bigint, value_to_bigint,
+    value_to_f64, value_to_int, value_to_process_text,
+};
 
 const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
 const CODECS_ATTR_ERRORS: &str = "__pyrs_codec_errors__";
@@ -746,9 +758,10 @@ impl Vm {
             0o777
         };
         if let Some(dir_fd) = kwargs.remove("dir_fd")
-            && !matches!(dir_fd, Value::None) {
-                return Err(RuntimeError::new("mkdir() dir_fd is unsupported"));
-            }
+            && !matches!(dir_fd, Value::None)
+        {
+            return Err(RuntimeError::new("mkdir() dir_fd is unsupported"));
+        }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "mkdir() got an unexpected keyword argument",
@@ -778,13 +791,15 @@ impl Vm {
         let path = self.path_arg_to_string(args.remove(0))?;
         let mode = value_to_int(args.remove(0))?;
         if let Some(dir_fd) = kwargs.remove("dir_fd")
-            && !matches!(dir_fd, Value::None) {
-                return Err(RuntimeError::new("chmod() dir_fd is unsupported"));
-            }
+            && !matches!(dir_fd, Value::None)
+        {
+            return Err(RuntimeError::new("chmod() dir_fd is unsupported"));
+        }
         if let Some(follow_symlinks) = kwargs.remove("follow_symlinks")
-            && !is_truthy(&follow_symlinks) {
-                return Err(RuntimeError::new("chmod() follow_symlinks is unsupported"));
-            }
+            && !is_truthy(&follow_symlinks)
+        {
+            return Err(RuntimeError::new("chmod() follow_symlinks is unsupported"));
+        }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "chmod() got an unexpected keyword argument",
@@ -1366,17 +1381,20 @@ impl Vm {
         let (path, _) = self.path_arg_to_string_and_type(args.remove(0))?;
         let mode = value_to_int(args.remove(0))?;
         if let Some(dir_fd) = kwargs.remove("dir_fd")
-            && !matches!(dir_fd, Value::None) {
-                return Err(RuntimeError::new("access() dir_fd is unsupported"));
-            }
+            && !matches!(dir_fd, Value::None)
+        {
+            return Err(RuntimeError::new("access() dir_fd is unsupported"));
+        }
         if let Some(effective_ids) = kwargs.remove("effective_ids")
-            && is_truthy(&effective_ids) {
-                return Err(RuntimeError::new("access() effective_ids is unsupported"));
-            }
+            && is_truthy(&effective_ids)
+        {
+            return Err(RuntimeError::new("access() effective_ids is unsupported"));
+        }
         if let Some(follow_symlinks) = kwargs.remove("follow_symlinks")
-            && !is_truthy(&follow_symlinks) {
-                return Err(RuntimeError::new("access() follow_symlinks is unsupported"));
-            }
+            && !is_truthy(&follow_symlinks)
+        {
+            return Err(RuntimeError::new("access() follow_symlinks is unsupported"));
+        }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "access() got an unexpected keyword argument",
@@ -2008,23 +2026,24 @@ impl Vm {
         };
         if let Some(mut child) = self.child_processes.remove(&pid) {
             if let Some(input) = input
-                && let Some(stdin) = child.stdin.as_mut() {
-                    let payload = match input {
-                        Value::Str(text) if text_mode => {
-                            let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
-                            if codec != "utf-8" && codec != "utf8" {
-                                return Err(RuntimeError::new(
-                                    "only utf-8 subprocess text encoding is supported",
-                                ));
-                            }
-                            text.into_bytes()
+                && let Some(stdin) = child.stdin.as_mut()
+            {
+                let payload = match input {
+                    Value::Str(text) if text_mode => {
+                        let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
+                        if codec != "utf-8" && codec != "utf8" {
+                            return Err(RuntimeError::new(
+                                "only utf-8 subprocess text encoding is supported",
+                            ));
                         }
-                        other => self.value_to_bytes_payload(other)?,
-                    };
-                    stdin
-                        .write_all(&payload)
-                        .map_err(|err| RuntimeError::new(format!("stdin write failed: {err}")))?;
-                }
+                        text.into_bytes()
+                    }
+                    other => self.value_to_bytes_payload(other)?,
+                };
+                stdin
+                    .write_all(&payload)
+                    .map_err(|err| RuntimeError::new(format!("stdin write failed: {err}")))?;
+            }
             let output = child
                 .wait_with_output()
                 .map_err(|err| RuntimeError::new(format!("communicate failed: {err}")))?;
@@ -2220,11 +2239,12 @@ impl Vm {
             return Ok(Value::None);
         }
         if let Some(child) = self.child_processes.get_mut(&pid)
-            && let Some(stdin) = child.stdin.as_mut() {
-                stdin
-                    .flush()
-                    .map_err(|err| RuntimeError::new(format!("pipe flush failed: {err}")))?;
-            }
+            && let Some(stdin) = child.stdin.as_mut()
+        {
+            stdin
+                .flush()
+                .map_err(|err| RuntimeError::new(format!("pipe flush failed: {err}")))?;
+        }
         Ok(Value::None)
     }
 
@@ -2327,16 +2347,16 @@ impl Vm {
             && let Some(status) = child
                 .try_wait()
                 .map_err(|err| RuntimeError::new(format!("poll failed: {err}")))?
-            {
-                #[cfg(unix)]
-                let wait_status = Self::status_to_wait_status(status);
-                #[cfg(not(unix))]
-                let wait_status = 0;
-                self.child_exit_status.insert(pid, wait_status);
-                self.child_processes.remove(&pid);
-                let returncode = status.code().unwrap_or(-1) as i64;
-                Self::instance_attr_set(&instance, "returncode", Value::Int(returncode))?;
-            }
+        {
+            #[cfg(unix)]
+            let wait_status = Self::status_to_wait_status(status);
+            #[cfg(not(unix))]
+            let wait_status = 0;
+            self.child_exit_status.insert(pid, wait_status);
+            self.child_processes.remove(&pid);
+            let returncode = status.code().unwrap_or(-1) as i64;
+            Self::instance_attr_set(&instance, "returncode", Value::Int(returncode))?;
+        }
         Ok(Self::instance_attr_get(&instance, "returncode").unwrap_or(Value::None))
     }
 
@@ -4618,12 +4638,13 @@ impl Vm {
             .remove("timeout")
             .or_else(|| if args.len() > 3 { args.pop() } else { None });
         if let Some(timeout) = timeout
-            && !matches!(timeout, Value::None) {
-                let timeout_secs = value_to_f64(timeout)?;
-                if timeout_secs > 0.0 {
-                    std::thread::sleep(Duration::from_secs_f64(timeout_secs.min(0.01)));
-                }
+            && !matches!(timeout, Value::None)
+        {
+            let timeout_secs = value_to_f64(timeout)?;
+            if timeout_secs > 0.0 {
+                std::thread::sleep(Duration::from_secs_f64(timeout_secs.min(0.01)));
             }
+        }
         let read_values = match args.first() {
             Some(value) => self
                 .collect_iterable_values(value.clone())

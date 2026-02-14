@@ -1,4 +1,17 @@
-use super::{Vm, NativeMethodKind, ObjRef, Value, HashMap, NativeCallResult, RuntimeError, BuiltinFunction, Object, GeneratorResumeKind, GeneratorResumeOutcome, exception_is_named, InternalCallOutcome, dict_set_value_checked, ensure_hashable, dict_get_value, dict_set_value, dict_remove_value, value_to_int, is_truthy, value_to_bigint, bigint_to_fixed_bytes, normalize_codec_encoding, normalize_codec_errors, encode_text_bytes, bytes_like_from_value, decode_text_bytes, find_bytes_subslice, InstanceObject, with_bytes_like_source, memoryview_bounds, parse_string_formatter, split_formatter_field_name, FormatterFieldKey, py_split_whitespace, py_splitlines, py_rsplit_whitespace, runtime_error_matches_exception, ReMode, re_pattern_from_compiled_module, RePatternValue, BoundMethod, dedup_hashable_values, AttrMutationOutcome, ModuleObject, CodeObject, Instruction, Opcode, Rc, Frame, GeneratorObject, class_attr_lookup, IteratorObject, IteratorKind, Block, BigInt, Ordering, value_from_bigint, call_builtin_with_kwargs};
+use super::{
+    AttrMutationOutcome, BigInt, Block, BoundMethod, BuiltinFunction, CodeObject,
+    FormatterFieldKey, Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome,
+    HashMap, InstanceObject, Instruction, InternalCallOutcome, IteratorKind, IteratorObject,
+    ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering, Rc, ReMode,
+    RePatternValue, RuntimeError, Value, Vm, bigint_to_fixed_bytes, bytes_like_from_value,
+    call_builtin_with_kwargs, class_attr_lookup, decode_text_bytes, dedup_hashable_values,
+    dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked, encode_text_bytes,
+    ensure_hashable, exception_is_named, find_bytes_subslice, is_truthy, memoryview_bounds,
+    normalize_codec_encoding, normalize_codec_errors, parse_string_formatter, py_rsplit_whitespace,
+    py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
+    runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
+    value_to_bigint, value_to_int, with_bytes_like_source,
+};
 
 impl Vm {
     pub(super) fn call_native_method(
@@ -311,14 +324,25 @@ impl Vm {
                         "dict.update() expects at most one argument",
                     ));
                 }
-                let mut incoming = Vec::new();
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
+                    return Err(RuntimeError::new("dict.update() receiver must be dict"));
+                }
                 if let Some(source) = args.first() {
                     if let Value::Dict(other) = source {
                         let Object::Dict(entries) = &*other.kind() else {
                             return Err(RuntimeError::new("dict.update() expects dict"));
                         };
-                        incoming.extend(entries.clone());
+                        if other.id() == receiver.id() {
+                            for (key, value) in entries.to_vec() {
+                                dict_set_value_checked(&receiver, key, value)?;
+                            }
+                        } else {
+                            for (key, value) in entries.iter() {
+                                dict_set_value_checked(&receiver, key.clone(), value.clone())?;
+                            }
+                        }
                     } else {
+                        let mut incoming = Vec::new();
                         let keys_callable = self
                             .builtin_getattr(
                                 vec![source.clone(), Value::Str("keys".to_string())],
@@ -374,16 +398,13 @@ impl Vm {
                                 incoming.push((values[0].clone(), values[1].clone()));
                             }
                         }
+                        for (key, value) in incoming {
+                            dict_set_value_checked(&receiver, key, value)?;
+                        }
                     }
                 }
                 for (name, value) in kwargs.drain() {
-                    incoming.push((Value::Str(name), value));
-                }
-                if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("dict.update() receiver must be dict"));
-                }
-                for (key, value) in incoming {
-                    dict_set_value_checked(&receiver, key, value)?;
+                    dict_set_value_checked(&receiver, Value::Str(name), value)?;
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -450,15 +471,14 @@ impl Vm {
                 if let Some(owner) = missing_owner
                     && let Some(missing) =
                         self.lookup_bound_special_method(&owner, "__missing__")?
-                    {
-                        return match self.call_internal(missing, vec![key], HashMap::new())? {
-                            InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
-                            InternalCallOutcome::CallerExceptionHandled => {
-                                Err(self
-                                    .runtime_error_from_active_exception("__missing__() failed"))
-                            }
-                        };
-                    }
+                {
+                    return match self.call_internal(missing, vec![key], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            Err(self.runtime_error_from_active_exception("__missing__() failed"))
+                        }
+                    };
+                }
                 Err(RuntimeError::new("key not found"))
             }
             NativeMethodKind::DictSetItem => {
@@ -2372,10 +2392,11 @@ impl Vm {
                     .heap
                     .alloc_memoryview_with(source, itemsize, Some(format));
                 if let Value::MemoryView(view_obj) = &view
-                    && let Object::MemoryView(view_data) = &mut *view_obj.kind_mut() {
-                        view_data.start = start;
-                        view_data.length = length;
-                    }
+                    && let Object::MemoryView(view_data) = &mut *view_obj.kind_mut()
+                {
+                    view_data.start = start;
+                    view_data.length = length;
+                }
                 Ok(NativeCallResult::Value(view))
             }
             NativeMethodKind::MemoryViewToList => {
@@ -2611,9 +2632,7 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::new("str receiver is invalid")),
                 };
-                Ok(NativeCallResult::Value(Value::Bool(
-                    text.is_ascii(),
-                )))
+                Ok(NativeCallResult::Value(Value::Bool(text.is_ascii())))
             }
             NativeMethodKind::StrIsAlpha => {
                 if !args.is_empty() {
@@ -3533,10 +3552,11 @@ impl Vm {
                 if let Some(frame) = self.frames.last_mut() {
                     let append_matching_note = |value: &mut Value| {
                         if let Value::Exception(candidate) = value
-                            && candidate.name == target_name && candidate.message == target_message
-                            {
-                                candidate.notes.push(note.clone());
-                            }
+                            && candidate.name == target_name
+                            && candidate.message == target_message
+                        {
+                            candidate.notes.push(note.clone());
+                        }
                     };
                     for value in frame.locals.values_mut() {
                         append_matching_note(value);
@@ -3551,11 +3571,12 @@ impl Vm {
                         append_matching_note(active_exception);
                     }
                     if frame.is_module
-                        && let Object::Module(module_data) = &mut *frame.module.kind_mut() {
-                            for value in module_data.globals.values_mut() {
-                                append_matching_note(value);
-                            }
+                        && let Object::Module(module_data) = &mut *frame.module.kind_mut()
+                    {
+                        for value in module_data.globals.values_mut() {
+                            append_matching_note(value);
                         }
+                    }
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -3988,9 +4009,10 @@ impl Vm {
                     return Err(RuntimeError::new("cached_property is missing attrname"));
                 };
                 if let Object::Instance(instance_data) = &*instance.kind()
-                    && let Some(existing) = instance_data.attrs.get(&attr_name).cloned() {
-                        return Ok(NativeCallResult::Value(existing));
-                    }
+                    && let Some(existing) = instance_data.attrs.get(&attr_name).cloned()
+                {
+                    return Ok(NativeCallResult::Value(existing));
+                }
                 let value = match self.call_internal(
                     func,
                     vec![Value::Instance(instance.clone())],
@@ -4093,13 +4115,14 @@ impl Vm {
                         };
                         let mut call_kwargs = HashMap::new();
                         if let Some(Value::Dict(obj)) = module_data.globals.get("kwargs")
-                            && let Object::Dict(entries) = &*obj.kind() {
-                                for (key, value) in entries {
-                                    if let Value::Str(name) = key {
-                                        call_kwargs.insert(name.clone(), value.clone());
-                                    }
+                            && let Object::Dict(entries) = &*obj.kind()
+                        {
+                            for (key, value) in entries {
+                                if let Value::Str(name) = key {
+                                    call_kwargs.insert(name.clone(), value.clone());
                                 }
                             }
+                        }
                         (method_name, call_args, call_kwargs)
                     }
                     _ => return Err(RuntimeError::new("methodcaller receiver is invalid")),
@@ -4151,13 +4174,14 @@ impl Vm {
                         };
                         let mut frozen_kwargs = HashMap::new();
                         if let Some(Value::Dict(obj)) = module_data.globals.get("kwargs")
-                            && let Object::Dict(entries) = &*obj.kind() {
-                                for (key, value) in entries {
-                                    if let Value::Str(name) = key {
-                                        frozen_kwargs.insert(name.clone(), value.clone());
-                                    }
+                            && let Object::Dict(entries) = &*obj.kind()
+                        {
+                            for (key, value) in entries {
+                                if let Value::Str(name) = key {
+                                    frozen_kwargs.insert(name.clone(), value.clone());
                                 }
                             }
+                        }
                         (callable, frozen_args, frozen_kwargs)
                     }
                     _ => return Err(RuntimeError::new("partial receiver is invalid")),
@@ -4258,11 +4282,12 @@ impl Vm {
                     InternalCallOutcome::Value(awaitable) => match awaitable {
                         Value::Generator(generator) => {
                             if let Object::Generator(state) = &*generator.kind()
-                                && state.is_async_generator {
-                                    return Err(RuntimeError::new(
-                                        "__await__() returned an async generator",
-                                    ));
-                                }
+                                && state.is_async_generator
+                            {
+                                return Err(RuntimeError::new(
+                                    "__await__() returned an async generator",
+                                ));
+                            }
                             Ok(Value::Generator(generator))
                         }
                         Value::Iterator(iterator) => Ok(Value::Iterator(iterator)),
@@ -4313,9 +4338,10 @@ impl Vm {
     pub(super) fn ensure_sync_iterator_target(&self, value: &Value) -> Result<(), RuntimeError> {
         if let Value::Generator(generator) = value
             && let Object::Generator(state) = &*generator.kind()
-                && (state.is_coroutine || state.is_async_generator) {
-                    return Err(RuntimeError::new("object is not iterable"));
-                }
+            && (state.is_coroutine || state.is_async_generator)
+        {
+            return Err(RuntimeError::new("object is not iterable"));
+        }
         Ok(())
     }
 
@@ -4341,22 +4367,32 @@ impl Vm {
 
     pub(super) fn to_iterator_value(&mut self, source: Value) -> Result<Value, RuntimeError> {
         match source {
-            Value::Iterator(obj) => match &*obj.kind() {
-                Object::Iterator(state) => match &state.kind {
-                    IteratorKind::RangeObject { start, stop, step } => {
-                        Ok(self.heap.alloc_iterator(IteratorObject {
-                            kind: IteratorKind::Range {
-                                current: start.clone(),
-                                stop: stop.clone(),
-                                step: step.clone(),
-                            },
-                            index: 0,
-                        }))
+            Value::Iterator(obj) => {
+                let range_parts = {
+                    let iter_kind = obj.kind();
+                    match &*iter_kind {
+                        Object::Iterator(state) => match &state.kind {
+                            IteratorKind::RangeObject { start, stop, step } => {
+                                Some((start.clone(), stop.clone(), step.clone()))
+                            }
+                            _ => None,
+                        },
+                        _ => return Err(RuntimeError::new("yield from expects iterable")),
                     }
-                    _ => Ok(Value::Iterator(obj.clone())),
-                },
-                _ => Err(RuntimeError::new("yield from expects iterable")),
-            },
+                };
+                if let Some((start, stop, step)) = range_parts {
+                    Ok(self.heap.alloc_iterator(IteratorObject {
+                        kind: IteratorKind::Range {
+                            current: start,
+                            stop,
+                            step,
+                        },
+                        index: 0,
+                    }))
+                } else {
+                    Ok(Value::Iterator(obj))
+                }
+            }
             Value::Generator(_) => Ok(source),
             Value::DictKeys(keys_view) => match &*keys_view.kind() {
                 Object::DictKeysView(view) => {
@@ -4430,31 +4466,43 @@ impl Vm {
                     }
                 }
             }
-            Value::List(obj) => match &*obj.kind() {
-                Object::List(_) => Ok(self.heap.alloc_iterator(IteratorObject {
-                    kind: IteratorKind::List(obj.clone()),
-                    index: 0,
-                })),
-                _ => Err(RuntimeError::new("yield from expects iterable")),
-            },
-            Value::Tuple(obj) => match &*obj.kind() {
-                Object::Tuple(_) => Ok(self.heap.alloc_iterator(IteratorObject {
-                    kind: IteratorKind::Tuple(obj.clone()),
-                    index: 0,
-                })),
-                _ => Err(RuntimeError::new("yield from expects iterable")),
-            },
+            Value::List(obj) => {
+                let is_list = matches!(&*obj.kind(), Object::List(_));
+                if is_list {
+                    Ok(self.heap.alloc_iterator(IteratorObject {
+                        kind: IteratorKind::List(obj),
+                        index: 0,
+                    }))
+                } else {
+                    Err(RuntimeError::new("yield from expects iterable"))
+                }
+            }
+            Value::Tuple(obj) => {
+                let is_tuple = matches!(&*obj.kind(), Object::Tuple(_));
+                if is_tuple {
+                    Ok(self.heap.alloc_iterator(IteratorObject {
+                        kind: IteratorKind::Tuple(obj),
+                        index: 0,
+                    }))
+                } else {
+                    Err(RuntimeError::new("yield from expects iterable"))
+                }
+            }
             Value::Str(value) => Ok(self.heap.alloc_iterator(IteratorObject {
                 kind: IteratorKind::Str(value),
                 index: 0,
             })),
-            Value::Dict(obj) => match &*obj.kind() {
-                Object::Dict(_) => Ok(self.heap.alloc_iterator(IteratorObject {
-                    kind: IteratorKind::Dict(obj.clone()),
-                    index: 0,
-                })),
-                _ => Err(RuntimeError::new("yield from expects iterable")),
-            },
+            Value::Dict(obj) => {
+                let is_dict = matches!(&*obj.kind(), Object::Dict(_));
+                if is_dict {
+                    Ok(self.heap.alloc_iterator(IteratorObject {
+                        kind: IteratorKind::Dict(obj),
+                        index: 0,
+                    }))
+                } else {
+                    Err(RuntimeError::new("yield from expects iterable"))
+                }
+            }
             Value::Set(obj) | Value::FrozenSet(obj) => {
                 Ok(self.heap.alloc_iterator(IteratorObject {
                     kind: IteratorKind::Set(obj),
@@ -4527,9 +4575,10 @@ impl Vm {
             }
             other => {
                 if let Value::Class(class) = &other
-                    && let Some(iterator) = self.class_fallback_iterator(class) {
-                        return Ok(iterator);
-                    }
+                    && let Some(iterator) = self.class_fallback_iterator(class)
+                {
+                    return Ok(iterator);
+                }
 
                 let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
                 else {
@@ -4741,12 +4790,13 @@ impl Vm {
                 match self.call_internal(method, Vec::new(), HashMap::new()) {
                     Ok(InternalCallOutcome::Value(value)) => {
                         if self.frames.len() == caller_depth
-                            && let Some(frame) = self.frames.last_mut() {
-                                frame.ip = caller_ip;
-                                frame.stack.truncate(caller_stack_len);
-                                frame.blocks = caller_blocks.clone();
-                                frame.active_exception = caller_active_exception.clone();
-                            }
+                            && let Some(frame) = self.frames.last_mut()
+                        {
+                            frame.ip = caller_ip;
+                            frame.stack.truncate(caller_stack_len);
+                            frame.blocks = caller_blocks.clone();
+                            frame.active_exception = caller_active_exception.clone();
+                        }
                         if exception_is_named(&value, "StopIteration") {
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
                         } else {
@@ -4777,12 +4827,13 @@ impl Vm {
                     }
                     Err(err) => {
                         if self.frames.len() == caller_depth
-                            && let Some(frame) = self.frames.last_mut() {
-                                frame.ip = caller_ip;
-                                frame.stack.truncate(caller_stack_len);
-                                frame.blocks = caller_blocks.clone();
-                                frame.active_exception = caller_active_exception.clone();
-                            }
+                            && let Some(frame) = self.frames.last_mut()
+                        {
+                            frame.ip = caller_ip;
+                            frame.stack.truncate(caller_stack_len);
+                            frame.blocks = caller_blocks.clone();
+                            frame.active_exception = caller_active_exception.clone();
+                        }
                         if runtime_error_matches_exception(&err.message, "StopIteration") {
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
                         } else {
@@ -5111,9 +5162,10 @@ impl Vm {
                         GeneratorResumeOutcome::Complete(_) => {
                             let mut iter = iterator_ref.kind_mut();
                             if let Object::Iterator(state) = &mut *iter
-                                && let IteratorKind::Map { exhausted, .. } = &mut state.kind {
-                                    *exhausted = true;
-                                }
+                                && let IteratorKind::Map { exhausted, .. } = &mut state.kind
+                            {
+                                *exhausted = true;
+                            }
                             return Ok(None);
                         }
                         GeneratorResumeOutcome::PropagatedException => {
@@ -5131,11 +5183,12 @@ impl Vm {
 
                 let mut iter = iterator_ref.kind_mut();
                 if let Object::Iterator(state) = &mut *iter
-                    && let IteratorKind::Map { values, .. } = &mut state.kind {
-                        values.push(value.clone());
-                        state.index += 1;
-                        return Ok(Some(value));
-                    }
+                    && let IteratorKind::Map { values, .. } = &mut state.kind
+                {
+                    values.push(value.clone());
+                    state.index += 1;
+                    return Ok(Some(value));
+                }
                 Ok(None)
             }
             PendingIteratorStep::SequenceGetItem {
@@ -5150,9 +5203,10 @@ impl Vm {
                         {
                             let mut iter = iterator_ref.kind_mut();
                             if let Object::Iterator(state) = &mut *iter
-                                && let IteratorKind::SequenceGetItem { .. } = &mut state.kind {
-                                    state.index += 1;
-                                }
+                                && let IteratorKind::SequenceGetItem { .. } = &mut state.kind
+                            {
+                                state.index += 1;
+                            }
                         }
                         Ok(Some(value))
                     }
@@ -5205,13 +5259,15 @@ impl Vm {
                 .unwrap_or(Value::None);
             return Ok(GeneratorResumeOutcome::Complete(value));
         }
-        if thrown.is_none() && !started
+        if thrown.is_none()
+            && !started
             && let Some(value) = &sent
-                && *value != Value::None {
-                    return Err(RuntimeError::new(
-                        "can't send non-None value to a just-started generator",
-                    ));
-                }
+            && *value != Value::None
+        {
+            return Err(RuntimeError::new(
+                "can't send non-None value to a just-started generator",
+            ));
+        }
 
         let mut frame = self
             .generator_states
@@ -5353,9 +5409,10 @@ impl Vm {
         });
         let result = self.builtin_setattr(args, kwargs);
         if result.is_ok()
-            && let Some(class_id) = class_target_id {
-                self.touch_class_attr_version_by_id(class_id);
-            }
+            && let Some(class_id) = class_target_id
+        {
+            self.touch_class_attr_version_by_id(class_id);
+        }
         result
     }
 
@@ -5370,9 +5427,10 @@ impl Vm {
         });
         let result = self.builtin_delattr(args, kwargs);
         if result.is_ok()
-            && let Some(class_id) = class_target_id {
-                self.touch_class_attr_version_by_id(class_id);
-            }
+            && let Some(class_id) = class_target_id
+        {
+            self.touch_class_attr_version_by_id(class_id);
+        }
         result
     }
 
@@ -5392,6 +5450,12 @@ impl Vm {
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
             BuiltinFunction::Vars => self.builtin_vars(args, kwargs),
             BuiltinFunction::GcCollect => self.builtin_gc_collect(args, kwargs),
+            BuiltinFunction::GcEnable => self.builtin_gc_enable(args, kwargs),
+            BuiltinFunction::GcDisable => self.builtin_gc_disable(args, kwargs),
+            BuiltinFunction::GcIsEnabled => self.builtin_gc_is_enabled(args, kwargs),
+            BuiltinFunction::GcGetThreshold => self.builtin_gc_get_threshold(args, kwargs),
+            BuiltinFunction::GcSetThreshold => self.builtin_gc_set_threshold(args, kwargs),
+            BuiltinFunction::GcGetCount => self.builtin_gc_get_count(args, kwargs),
             BuiltinFunction::Dir => self.builtin_dir(args, kwargs),
             BuiltinFunction::Hash => self.builtin_hash(args, kwargs),
             BuiltinFunction::Breakpoint => self.builtin_breakpoint(args, kwargs),
@@ -5498,15 +5562,11 @@ impl Vm {
             BuiltinFunction::Eval => self.builtin_eval(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
             BuiltinFunction::PkgutilGetData => self.builtin_pkgutil_get_data(args, kwargs),
-            BuiltinFunction::PkgutilIterModules => {
-                self.builtin_pkgutil_iter_modules(args, kwargs)
-            }
+            BuiltinFunction::PkgutilIterModules => self.builtin_pkgutil_iter_modules(args, kwargs),
             BuiltinFunction::PkgutilWalkPackages => {
                 self.builtin_pkgutil_walk_packages(args, kwargs)
             }
-            BuiltinFunction::PkgutilResolveName => {
-                self.builtin_pkgutil_resolve_name(args, kwargs)
-            }
+            BuiltinFunction::PkgutilResolveName => self.builtin_pkgutil_resolve_name(args, kwargs),
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
             BuiltinFunction::ImportlibInvalidateCaches => {
                 self.builtin_importlib_invalidate_caches(args, kwargs)
@@ -5905,18 +5965,14 @@ impl Vm {
             BuiltinFunction::Bz2CompressorCompress => {
                 self.builtin_bz2_compressor_compress(args, kwargs)
             }
-            BuiltinFunction::Bz2CompressorFlush => {
-                self.builtin_bz2_compressor_flush(args, kwargs)
-            }
+            BuiltinFunction::Bz2CompressorFlush => self.builtin_bz2_compressor_flush(args, kwargs),
             BuiltinFunction::Bz2DecompressorInit => {
                 self.builtin_bz2_decompressor_init(args, kwargs)
             }
             BuiltinFunction::Bz2DecompressorDecompress => {
                 self.builtin_bz2_decompressor_decompress(args, kwargs)
             }
-            BuiltinFunction::LzmaCompressorInit => {
-                self.builtin_lzma_compressor_init(args, kwargs)
-            }
+            BuiltinFunction::LzmaCompressorInit => self.builtin_lzma_compressor_init(args, kwargs),
             BuiltinFunction::LzmaCompressorCompress => {
                 self.builtin_lzma_compressor_compress(args, kwargs)
             }

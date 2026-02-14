@@ -1,4 +1,13 @@
-use super::{Value, Vm, HashMap, RuntimeError, value_to_int, is_truthy, InternalCallOutcome, fs, Read, Write, Seek, SeekFrom, BuiltinFunction, ObjRef, Object, format_value, ClassObject, InstanceObject, bytes_like_from_value, class_attr_walk, ExceptionObject, classify_runtime_error, extract_runtime_error_exception_name, extract_runtime_error_final_message, extract_prefixed_exception_message, is_os_error_family, extract_os_error_errno, infer_os_error_errno, extract_os_error_strerror, memoryview_bounds, AsRawFd, GeneratorResumeOutcome, StructFormatSpec, StructEndian, StructFieldKind, StructFieldSpec, value_to_f64, BigInt};
+use super::{
+    AsRawFd, BigInt, BuiltinFunction, ClassObject, ExceptionObject, GeneratorResumeOutcome,
+    HashMap, InstanceObject, InternalCallOutcome, ObjRef, Object, Read, RuntimeError, Seek,
+    SeekFrom, StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
+    bytes_like_from_value, class_attr_walk, classify_runtime_error, extract_os_error_errno,
+    extract_os_error_strerror, extract_prefixed_exception_message,
+    extract_runtime_error_exception_name, extract_runtime_error_final_message, format_value, fs,
+    infer_os_error_errno, is_os_error_family, is_truthy, memoryview_bounds, value_to_f64,
+    value_to_int,
+};
 
 const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
 const IO_BUFFERED_ATTR_BUF_SIZE: &str = "__pyrs_buffer_size";
@@ -223,11 +232,12 @@ impl Vm {
             _ => return Err(RuntimeError::new("open() newline must be str or None")),
         };
         if let Some(value) = newline.as_deref()
-            && !matches!(value, "" | "\n" | "\r" | "\r\n") {
-                return Err(RuntimeError::new(format!(
-                    "ValueError: illegal newline value: {value}",
-                )));
-            }
+            && !matches!(value, "" | "\n" | "\r" | "\r\n")
+        {
+            return Err(RuntimeError::new(format!(
+                "ValueError: illegal newline value: {value}",
+            )));
+        }
         if binary_mode && encoding.is_some() {
             return Err(RuntimeError::new(
                 "binary mode doesn't take an encoding argument",
@@ -367,9 +377,10 @@ impl Vm {
             }
         };
         if mode_kind == 'a'
-            && let Some(file) = self.find_open_file_mut(fd) {
-                let _ = file.seek(SeekFrom::End(0));
-            }
+            && let Some(file) = self.find_open_file_mut(fd)
+        {
+            let _ = file.seek(SeekFrom::End(0));
+        }
 
         let raw_mode = if binary_mode {
             mode.clone()
@@ -1705,10 +1716,11 @@ impl Vm {
             Value::Exception(exception) => {
                 let mut line = exception.name.clone();
                 if let Some(message) = &exception.message
-                    && !message.is_empty() {
-                        line.push_str(": ");
-                        line.push_str(message);
-                    }
+                    && !message.is_empty()
+                {
+                    line.push_str(": ");
+                    line.push_str(message);
+                }
                 RuntimeError::new(line)
             }
             _ => RuntimeError::new(fallback),
@@ -3364,9 +3376,10 @@ impl Vm {
             _ => {
                 for key in ["buffer", "raw"] {
                     if let Some(Value::Instance(inner)) = Self::instance_attr_get(instance, key)
-                        && inner.id() != instance.id() {
-                            return self.io_file_fd_from_instance_inner(&inner, depth + 1);
-                        }
+                        && inner.id() != instance.id()
+                    {
+                        return self.io_file_fd_from_instance_inner(&inner, depth + 1);
+                    }
                 }
                 Err(RuntimeError::new("invalid file object"))
             }
@@ -3481,13 +3494,16 @@ impl Vm {
 
         let mut linked = Vec::new();
         if let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer")
-            && buffer.id() != instance.id() {
-                linked.push(buffer);
-            }
+            && buffer.id() != instance.id()
+        {
+            linked.push(buffer);
+        }
         if let Some(Value::Instance(raw)) = Self::instance_attr_get(instance, "raw")
-            && raw.id() != instance.id() && !linked.iter().any(|item| item.id() == raw.id()) {
-                linked.push(raw);
-            }
+            && raw.id() != instance.id()
+            && !linked.iter().any(|item| item.id() == raw.id())
+        {
+            linked.push(raw);
+        }
 
         if let Some(Value::Int(fd)) = Self::instance_attr_get(instance, "_fd") {
             let closefd = !matches!(
@@ -3667,10 +3683,9 @@ impl Vm {
                 break;
             }
             out.push(byte[0]);
-            if byte[0] == b'\n'
-                && (binary || newline.as_deref() != Some("\r")) {
-                    break;
-                }
+            if byte[0] == b'\n' && (binary || newline.as_deref() != Some("\r")) {
+                break;
+            }
             if !binary {
                 match newline.as_deref() {
                     None | Some("") => {
@@ -3707,22 +3722,21 @@ impl Vm {
                         }
                     }
                     Some("\r\n") => {
-                        if byte[0] == b'\r'
-                            && limit.map(|max| out.len() < max).unwrap_or(true) {
-                                let mut next = [0u8; 1];
-                                let next_count = file.read(&mut next).map_err(|err| {
+                        if byte[0] == b'\r' && limit.map(|max| out.len() < max).unwrap_or(true) {
+                            let mut next = [0u8; 1];
+                            let next_count = file.read(&mut next).map_err(|err| {
+                                RuntimeError::new(format!("readline failed: {err}"))
+                            })?;
+                            if next_count == 1 {
+                                if next[0] == b'\n' {
+                                    out.push(next[0]);
+                                    break;
+                                }
+                                file.seek(SeekFrom::Current(-1)).map_err(|err| {
                                     RuntimeError::new(format!("readline failed: {err}"))
                                 })?;
-                                if next_count == 1 {
-                                    if next[0] == b'\n' {
-                                        out.push(next[0]);
-                                        break;
-                                    }
-                                    file.seek(SeekFrom::Current(-1)).map_err(|err| {
-                                        RuntimeError::new(format!("readline failed: {err}"))
-                                    })?;
-                                }
                             }
+                        }
                     }
                     Some(_) => {}
                 }
@@ -4180,13 +4194,14 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "detach")?;
         if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer")
-            && buffer.id() != instance.id() {
-                Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
-                Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
-                Self::instance_attr_set(&instance, "buffer", Value::None)?;
-                Self::instance_attr_set(&instance, "raw", Value::None)?;
-                return Ok(Value::Instance(buffer));
-            }
+            && buffer.id() != instance.id()
+        {
+            Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
+            Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
+            Self::instance_attr_set(&instance, "buffer", Value::None)?;
+            Self::instance_attr_set(&instance, "raw", Value::None)?;
+            return Ok(Value::Instance(buffer));
+        }
         Err(RuntimeError::new("detach"))
     }
 
@@ -4231,19 +4246,20 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "seekable")?;
         if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer")
-            && buffer.id() != instance.id() {
-                let seekable = self.builtin_getattr(
-                    vec![Value::Instance(buffer), Value::Str("seekable".to_string())],
-                    HashMap::new(),
-                )?;
-                return match self.call_internal(seekable, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(value) => Ok(Value::Bool(is_truthy(&value))),
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        self.clear_active_exception();
-                        Ok(Value::Bool(false))
-                    }
-                };
-            }
+            && buffer.id() != instance.id()
+        {
+            let seekable = self.builtin_getattr(
+                vec![Value::Instance(buffer), Value::Str("seekable".to_string())],
+                HashMap::new(),
+            )?;
+            return match self.call_internal(seekable, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => Ok(Value::Bool(is_truthy(&value))),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    self.clear_active_exception();
+                    Ok(Value::Bool(false))
+                }
+            };
+        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let file = self
             .open_files

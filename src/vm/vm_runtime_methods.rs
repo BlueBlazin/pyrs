@@ -1,4 +1,11 @@
-use super::{Vm, Value, HashMap, RuntimeError, ModuleObject, Object, ObjRef, BigInt, IteratorKind, Ordering, value_from_bigint, ensure_hashable, dict_get_value, InternalCallOutcome, slice_indices, with_bytes_like_source, memoryview_bounds, slice_bounds_for_step_one, value_to_int, dict_set_value_checked, NativeMethodKind, BuiltinFunction, InstanceObject, classify_runtime_error, format_repr, GeneratorResumeOutcome, value_to_bytes_payload, ClassObject, Frame, module_globals_version, builtin_exception_parent};
+use super::{
+    BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
+    InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind, ObjRef, Object, Ordering,
+    RuntimeError, Value, Vm, builtin_exception_parent, classify_runtime_error, dict_get_value,
+    dict_set_value_checked, ensure_hashable, format_repr, memoryview_bounds,
+    module_globals_version, slice_bounds_for_step_one, slice_indices, value_from_bigint,
+    value_to_bytes_payload, value_to_int, with_bytes_like_source,
+};
 use crate::runtime::SliceValue;
 
 impl Vm {
@@ -230,12 +237,12 @@ impl Vm {
                                     if let Value::MemoryView(sliced_obj) = &sliced
                                         && let Object::MemoryView(sliced_view) =
                                             &mut *sliced_obj.kind_mut()
-                                        {
-                                            sliced_view.start = view_start.saturating_add(start);
-                                            sliced_view.length = Some(stop.saturating_sub(start));
-                                            sliced_view.export_owner = view.export_owner.clone();
-                                            sliced_view.released = view.released;
-                                        }
+                                    {
+                                        sliced_view.start = view_start.saturating_add(start);
+                                        sliced_view.length = Some(stop.saturating_sub(start));
+                                        sliced_view.export_owner = view.export_owner.clone();
+                                        sliced_view.released = view.released;
+                                    }
                                     Ok(sliced)
                                 } else {
                                     let indices = slice_indices(view_len, lower, upper, step)?;
@@ -255,13 +262,13 @@ impl Vm {
                                     if let Value::MemoryView(sliced_obj) = &sliced
                                         && let Object::MemoryView(sliced_view) =
                                             &mut *sliced_obj.kind_mut()
-                                        {
-                                            sliced_view.contiguous = false;
-                                            sliced_view.export_owner = view.export_owner.clone();
-                                            sliced_view.released = view.released;
-                                            sliced_view.start = 0;
-                                            sliced_view.length = None;
-                                        }
+                                    {
+                                        sliced_view.contiguous = false;
+                                        sliced_view.export_owner = view.export_owner.clone();
+                                        sliced_view.released = view.released;
+                                        sliced_view.start = 0;
+                                        sliced_view.length = None;
+                                    }
                                     Ok(sliced)
                                 }
                             })
@@ -1505,38 +1512,41 @@ impl Vm {
             Value::Builtin(BuiltinFunction::Dict) => {
                 let class = self.alloc_synthetic_class("dict");
                 if let Object::Class(class_data) = &mut *class.kind_mut()
-                    && !class_data.attrs.contains_key("fromkeys") {
-                        class_data.attrs.insert(
-                            "fromkeys".to_string(),
-                            self.alloc_builtin_unbound_method(
-                                "__dict_unbound_method__",
-                                Value::Class(class.clone()),
-                                BuiltinFunction::DictFromKeys,
-                            ),
-                        );
-                    }
+                    && !class_data.attrs.contains_key("fromkeys")
+                {
+                    class_data.attrs.insert(
+                        "fromkeys".to_string(),
+                        self.alloc_builtin_unbound_method(
+                            "__dict_unbound_method__",
+                            Value::Class(class.clone()),
+                            BuiltinFunction::DictFromKeys,
+                        ),
+                    );
+                }
                 Ok(class)
             }
             Value::Builtin(BuiltinFunction::Set) => {
                 let class = self.alloc_synthetic_class("set");
                 if let Object::Class(class_data) = &mut *class.kind_mut()
-                    && !class_data.attrs.contains_key("__reduce__") {
-                        class_data.attrs.insert(
-                            "__reduce__".to_string(),
-                            Value::Builtin(BuiltinFunction::SetReduce),
-                        );
-                    }
+                    && !class_data.attrs.contains_key("__reduce__")
+                {
+                    class_data.attrs.insert(
+                        "__reduce__".to_string(),
+                        Value::Builtin(BuiltinFunction::SetReduce),
+                    );
+                }
                 Ok(class)
             }
             Value::Builtin(BuiltinFunction::FrozenSet) => {
                 let class = self.alloc_synthetic_class("frozenset");
                 if let Object::Class(class_data) = &mut *class.kind_mut()
-                    && !class_data.attrs.contains_key("__reduce__") {
-                        class_data.attrs.insert(
-                            "__reduce__".to_string(),
-                            Value::Builtin(BuiltinFunction::SetReduce),
-                        );
-                    }
+                    && !class_data.attrs.contains_key("__reduce__")
+                {
+                    class_data.attrs.insert(
+                        "__reduce__".to_string(),
+                        Value::Builtin(BuiltinFunction::SetReduce),
+                    );
+                }
                 Ok(class)
             }
             Value::Builtin(BuiltinFunction::Enumerate) => {

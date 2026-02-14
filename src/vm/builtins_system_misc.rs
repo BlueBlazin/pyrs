@@ -1,4 +1,13 @@
-use super::{Vm, Value, HashMap, RuntimeError, bytes_like_from_value, Object, IteratorObject, IteratorKind, value_to_int, ObjRef, BuiltinFunction, current_utc_iso, SystemTime, UNIX_EPOCH, civil_from_days, value_to_f64, split_unix_timestamp, days_from_civil, day_of_year, TimeParts, format_strftime, InternalCallOutcome, Read, is_truthy, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, InstanceObject, IpAddr, ToSocketAddrs, SocketAddr, parse_uuid_like_string, apply_uuid_variant, format_uuid_hyphenated, format_uuid_hex, uuid_random_bytes, apply_uuid_version, uuid_node_from_hostname, uuid_timestamp_100ns_since_gregorian, uuid_hash_mix_bytes};
+use super::{
+    BuiltinFunction, HashMap, InstanceObject, InternalCallOutcome, IpAddr, IteratorKind,
+    IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
+    SIGNAL_SIGINT, SocketAddr, SystemTime, TimeParts, ToSocketAddrs, UNIX_EPOCH, Value, Vm,
+    apply_uuid_variant, apply_uuid_version, bytes_like_from_value, civil_from_days,
+    current_utc_iso, day_of_year, days_from_civil, format_strftime, format_uuid_hex,
+    format_uuid_hyphenated, is_truthy, parse_uuid_like_string, split_unix_timestamp,
+    uuid_hash_mix_bytes, uuid_node_from_hostname, uuid_random_bytes,
+    uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
+};
 
 impl Vm {
     pub(super) fn builtin_threading_excepthook(
@@ -1489,15 +1498,16 @@ impl Vm {
                     value_to_int(call_args[0].clone()),
                     value_to_int(call_args[1].clone()),
                 )
-                    && let Ok(mut file) = self.cloned_open_file_for_fd(fd) {
-                        let read_size = read_size.max(0) as usize;
-                        std::thread::spawn(move || {
-                            let mut buf = vec![0u8; read_size.max(1)];
-                            let _ = file.read(&mut buf);
-                        });
-                        Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
-                        return Ok(Value::None);
-                    }
+                && let Ok(mut file) = self.cloned_open_file_for_fd(fd)
+            {
+                let read_size = read_size.max(0) as usize;
+                std::thread::spawn(move || {
+                    let mut buf = vec![0u8; read_size.max(1)];
+                    let _ = file.read(&mut buf);
+                });
+                Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
+                return Ok(Value::None);
+            }
             let (_, outcome) =
                 self.call_internal_in_synthetic_thread(target, call_args, call_kwargs)?;
             match outcome {

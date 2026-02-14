@@ -624,13 +624,15 @@ fn collect_locals_namedexpr_params(
         }
     }
     if let Some(param) = vararg
-        && let Some(annotation) = &param.annotation {
-            collect_locals_namedexpr_expr(annotation, locals);
-        }
+        && let Some(annotation) = &param.annotation
+    {
+        collect_locals_namedexpr_expr(annotation, locals);
+    }
     if let Some(param) = kwarg
-        && let Some(annotation) = &param.annotation {
-            collect_locals_namedexpr_expr(annotation, locals);
-        }
+        && let Some(annotation) = &param.annotation
+    {
+        collect_locals_namedexpr_expr(annotation, locals);
+    }
 }
 
 fn collect_locals_namedexpr_target(target: &AssignTarget, locals: &mut HashSet<String>) {
@@ -1540,9 +1542,10 @@ impl Compiler {
                     node: ExprKind::Constant(Constant::Str(_)),
                     ..
                 })
-            ) {
-                idx = 1;
-            }
+            )
+        {
+            idx = 1;
+        }
 
         let mut seen_non_future = false;
         let mut future_annotations = false;
@@ -1781,17 +1784,18 @@ impl Compiler {
             }
             ExprKind::Binary { left, op, right } => {
                 if matches!(op, crate::ast::BinaryOp::Sub | crate::ast::BinaryOp::Lt)
-                    && let ExprKind::Constant(constant) = &right.node {
-                        compiler.compile_expr(left)?;
-                        let idx = compiler.code.add_const(constant_to_value(constant));
-                        let opcode = match op {
-                            crate::ast::BinaryOp::Sub => Opcode::BinarySubConst,
-                            crate::ast::BinaryOp::Lt => Opcode::CompareLtConst,
-                            _ => unreachable!(),
-                        };
-                        compiler.emit(opcode, Some(idx));
-                        return Ok(());
-                    }
+                    && let ExprKind::Constant(constant) = &right.node
+                {
+                    compiler.compile_expr(left)?;
+                    let idx = compiler.code.add_const(constant_to_value(constant));
+                    let opcode = match op {
+                        crate::ast::BinaryOp::Sub => Opcode::BinarySubConst,
+                        crate::ast::BinaryOp::Lt => Opcode::CompareLtConst,
+                        _ => unreachable!(),
+                    };
+                    compiler.emit(opcode, Some(idx));
+                    return Ok(());
+                }
                 compiler.compile_expr(left)?;
                 compiler.compile_expr(right)?;
                 let opcode = match op {
@@ -2762,10 +2766,12 @@ impl Compiler {
     fn validate_match_cases(&self, cases: &[MatchCase]) -> Result<(), CompileError> {
         for (idx, case) in cases.iter().enumerate() {
             Self::validate_pattern_bindings(&case.pattern)?;
-            if idx + 1 < cases.len() && case.guard.is_none()
-                && let Some(kind) = Self::irrefutable_pattern_kind(&case.pattern) {
-                    return Err(CompileError::new(kind.unreachable_message()));
-                }
+            if idx + 1 < cases.len()
+                && case.guard.is_none()
+                && let Some(kind) = Self::irrefutable_pattern_kind(&case.pattern)
+            {
+                return Err(CompileError::new(kind.unreachable_message()));
+            }
         }
         Ok(())
     }
@@ -2825,9 +2831,10 @@ impl Compiler {
                 let mut expected_bindings: Option<HashSet<String>> = None;
                 for (idx, option) in options.iter().enumerate() {
                     if idx + 1 < options.len()
-                        && let Some(kind) = Self::irrefutable_pattern_kind(option) {
-                            return Err(CompileError::new(kind.unreachable_message()));
-                        }
+                        && let Some(kind) = Self::irrefutable_pattern_kind(option)
+                    {
+                        return Err(CompileError::new(kind.unreachable_message()));
+                    }
 
                     let option_bindings = Self::validate_pattern_bindings(option)?;
                     if let Some(expected) = &expected_bindings {
@@ -4447,7 +4454,11 @@ impl Compiler {
         Ok(())
     }
 
-    fn resolve_loop_context(&mut self, ctx: LoopContext, loop_end: usize) -> Result<(), CompileError> {
+    fn resolve_loop_context(
+        &mut self,
+        ctx: LoopContext,
+        loop_end: usize,
+    ) -> Result<(), CompileError> {
         for jump in ctx.breaks {
             self.patch_jump(jump, loop_end)?;
         }

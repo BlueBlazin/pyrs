@@ -1,4 +1,8 @@
-use super::super::{Vm, Value, HashMap, RuntimeError, classify_runtime_error, Object, ObjRef, BuiltinFunction, value_to_int, is_truthy, GeneratorResumeOutcome, runtime_error_matches_exception, ModuleObject, NativeMethodKind, InternalCallOutcome, format_value};
+use super::super::{
+    BuiltinFunction, GeneratorResumeOutcome, HashMap, InternalCallOutcome, ModuleObject,
+    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, classify_runtime_error,
+    format_value, is_truthy, runtime_error_matches_exception, value_to_int,
+};
 
 impl Vm {
     pub(in crate::vm) fn builtin_csv_reader(
@@ -1101,9 +1105,10 @@ impl Vm {
             && let Ok(value) = self.builtin_getattr(
                 vec![dialect, Value::Str("delimiter".to_string())],
                 HashMap::new(),
-            ) {
-                return csv_char_from_value(value, "delimiter");
-            }
+            )
+        {
+            return csv_char_from_value(value, "delimiter");
+        }
         Ok(',')
     }
 
@@ -1120,9 +1125,10 @@ impl Vm {
             && let Ok(value) = self.builtin_getattr(
                 vec![dialect, Value::Str("quotechar".to_string())],
                 HashMap::new(),
-            ) {
-                return csv_optional_char_from_value(value, "quotechar");
-            }
+            )
+        {
+            return csv_optional_char_from_value(value, "quotechar");
+        }
         Ok(Some('"'))
     }
 
@@ -1139,9 +1145,10 @@ impl Vm {
             && let Ok(value) = self.builtin_getattr(
                 vec![dialect, Value::Str("escapechar".to_string())],
                 HashMap::new(),
-            ) {
-                return csv_optional_char_from_value(value, "escapechar");
-            }
+            )
+        {
+            return csv_optional_char_from_value(value, "escapechar");
+        }
         Ok(None)
     }
 
@@ -1158,9 +1165,10 @@ impl Vm {
             && let Ok(value) = self.builtin_getattr(
                 vec![dialect, Value::Str("skipinitialspace".to_string())],
                 HashMap::new(),
-            ) {
-                return value_to_bool_flag(value, "skipinitialspace");
-            }
+            )
+        {
+            return value_to_bool_flag(value, "skipinitialspace");
+        }
         Ok(false)
     }
 
@@ -1177,9 +1185,10 @@ impl Vm {
             && let Ok(value) = self.builtin_getattr(
                 vec![dialect, Value::Str("quoting".to_string())],
                 HashMap::new(),
-            ) {
-                return value_to_int(value);
-            }
+            )
+        {
+            return value_to_int(value);
+        }
         Ok(0)
     }
 
@@ -1196,9 +1205,10 @@ impl Vm {
             && let Ok(value) = self.builtin_getattr(
                 vec![dialect, Value::Str("doublequote".to_string())],
                 HashMap::new(),
-            ) {
-                return value_to_bool_flag(value, "doublequote");
-            }
+            )
+        {
+            return value_to_bool_flag(value, "doublequote");
+        }
         Ok(true)
     }
 
@@ -1221,15 +1231,16 @@ impl Vm {
             && let Ok(value) = self.builtin_getattr(
                 vec![dialect, Value::Str("lineterminator".to_string())],
                 HashMap::new(),
-            ) {
-                return match value {
-                    Value::Str(text) => Ok(text),
-                    other => Err(RuntimeError::new(format!(
-                        "\"lineterminator\" must be a string, not {}",
-                        csv_type_name(&other)
-                    ))),
-                };
-            }
+            )
+        {
+            return match value {
+                Value::Str(text) => Ok(text),
+                other => Err(RuntimeError::new(format!(
+                    "\"lineterminator\" must be a string, not {}",
+                    csv_type_name(&other)
+                ))),
+            };
+        }
         Ok("\r\n".to_string())
     }
 
@@ -1246,9 +1257,10 @@ impl Vm {
             && let Ok(value) = self.builtin_getattr(
                 vec![dialect, Value::Str("strict".to_string())],
                 HashMap::new(),
-            ) {
-                return value_to_bool_flag(value, "strict");
-            }
+            )
+        {
+            return value_to_bool_flag(value, "strict");
+        }
         Ok(false)
     }
 
@@ -1486,9 +1498,10 @@ fn validate_csv_parameter_consistency(
         return Err(RuntimeError::new("bad delimiter or escapechar value"));
     }
     if let (Some(quote), Some(escape)) = (quotechar, escapechar)
-        && quote == escape {
-            return Err(RuntimeError::new("bad escapechar or quotechar value"));
-        }
+        && quote == escape
+    {
+        return Err(RuntimeError::new("bad escapechar or quotechar value"));
+    }
     if lineterminator.contains(delimiter) {
         return Err(RuntimeError::new("bad delimiter or lineterminator value"));
     }
@@ -1575,35 +1588,37 @@ fn csv_record_state(
     while let Some(ch) = chars.next() {
         trailing_escape = false;
         if let Some(escape) = escapechar
-            && ch == escape {
-                if chars.peek().is_some() {
-                    chars.next();
-                    at_field_start = false;
-                    continue;
-                }
-                trailing_escape = true;
-                break;
+            && ch == escape
+        {
+            if chars.peek().is_some() {
+                chars.next();
+                at_field_start = false;
+                continue;
             }
+            trailing_escape = true;
+            break;
+        }
         if skipinitialspace && !in_quotes && at_field_start && ch == ' ' {
             continue;
         }
         if let Some(quote) = active_quotechar
-            && ch == quote {
-                if in_quotes {
-                    if doublequote && chars.peek().is_some_and(|next| *next == quote) {
-                        chars.next();
-                        at_field_start = false;
-                    } else {
-                        in_quotes = false;
-                    }
-                } else if at_field_start {
-                    in_quotes = true;
+            && ch == quote
+        {
+            if in_quotes {
+                if doublequote && chars.peek().is_some_and(|next| *next == quote) {
+                    chars.next();
                     at_field_start = false;
                 } else {
-                    at_field_start = false;
+                    in_quotes = false;
                 }
-                continue;
+            } else if at_field_start {
+                in_quotes = true;
+                at_field_start = false;
+            } else {
+                at_field_start = false;
             }
+            continue;
+        }
         if ch == delimiter && !in_quotes {
             at_field_start = true;
             continue;
@@ -1660,41 +1675,43 @@ fn parse_csv_row_simple(
             just_closed_quote = false;
         }
         if let Some(quote) = active_quotechar
-            && ch == quote {
-                if in_quotes {
-                    if doublequote && chars.peek().is_some_and(|next| *next == quote) {
-                        current.push(quote);
-                        chars.next();
-                    } else {
-                        in_quotes = false;
-                        just_closed_quote = true;
-                    }
-                } else if current.is_empty() {
-                    field_quoted = true;
-                    in_quotes = true;
-                    just_closed_quote = false;
-                } else {
-                    if strict {
-                        return Err(RuntimeError::new("',' expected after '\"'"));
-                    }
+            && ch == quote
+        {
+            if in_quotes {
+                if doublequote && chars.peek().is_some_and(|next| *next == quote) {
                     current.push(quote);
-                    just_closed_quote = false;
-                }
-                continue;
-            }
-        if let Some(escape) = escapechar
-            && ch == escape {
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                } else if strict {
-                    return Err(RuntimeError::new("unexpected end of data"));
-                } else if in_quotes || current.is_empty() {
-                    current.push('\n');
+                    chars.next();
                 } else {
-                    current.push(escape);
+                    in_quotes = false;
+                    just_closed_quote = true;
                 }
-                continue;
+            } else if current.is_empty() {
+                field_quoted = true;
+                in_quotes = true;
+                just_closed_quote = false;
+            } else {
+                if strict {
+                    return Err(RuntimeError::new("',' expected after '\"'"));
+                }
+                current.push(quote);
+                just_closed_quote = false;
             }
+            continue;
+        }
+        if let Some(escape) = escapechar
+            && ch == escape
+        {
+            if let Some(next) = chars.next() {
+                current.push(next);
+            } else if strict {
+                return Err(RuntimeError::new("unexpected end of data"));
+            } else if in_quotes || current.is_empty() {
+                current.push('\n');
+            } else {
+                current.push(escape);
+            }
+            continue;
+        }
         if skipinitialspace && !in_quotes && current.is_empty() && ch == ' ' {
             continue;
         }
@@ -1720,9 +1737,10 @@ fn parse_csv_row_simple(
         current.push(ch);
         just_closed_quote = false;
         if let Some(limit) = field_limit
-            && current.chars().count() > limit {
-                return Err(RuntimeError::new("field larger than field limit"));
-            }
+            && current.chars().count() > limit
+        {
+            return Err(RuntimeError::new("field larger than field limit"));
+        }
     }
     if in_quotes && strict {
         return Err(RuntimeError::new("unexpected end of data"));

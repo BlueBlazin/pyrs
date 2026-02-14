@@ -121,6 +121,10 @@ const SIGNAL_SIGINT: i64 = 2;
 const SIGNAL_SIGTERM: i64 = 15;
 const SYNTHETIC_THREAD_IDENT_START: i64 = 1_i64 << 60;
 const PY_TPFLAGS_HEAPTYPE: i64 = 1 << 9;
+const GC_DEFAULT_THRESHOLD0: usize = 700;
+const GC_DEFAULT_THRESHOLD1: usize = 10;
+const GC_DEFAULT_THRESHOLD2: usize = 10;
+const GC_AUTO_CHECK_INTERVAL: usize = 64;
 const LIST_BACKING_STORAGE_ATTR: &str = "__pyrs_list_storage__";
 const DEQUE_BACKING_STORAGE_ATTR: &str = "__pyrs_deque_storage__";
 const TUPLE_BACKING_STORAGE_ATTR: &str = "__pyrs_tuple_storage__";
@@ -326,6 +330,7 @@ struct LoadFastSiteCacheEntry {
 
 #[derive(Clone)]
 enum LoadAttrSiteCacheKind {
+    InstanceValue { value: Value },
     InstanceFunction { function: ObjRef },
     InstanceBuiltin { builtin: BuiltinFunction },
     InstanceClassMethod { descriptor: ObjRef },
@@ -350,7 +355,9 @@ enum QuickenedSiteKind {
     LoadFastPlain,
     LoadFastCompareLtConstJump,
     CompareLtInt,
+    CallFunctionZeroArg,
     CallFunctionOneArg,
+    CallFunctionTwoArg,
 }
 
 const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
@@ -677,6 +684,12 @@ pub struct Vm {
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
     recursion_limit: i64,
+    gc_enabled: bool,
+    gc_thresholds: [usize; 3],
+    gc_counts: [usize; 3],
+    gc_last_allocation_count: usize,
+    gc_auto_check_budget: usize,
+    gc_auto_collect_enabled: bool,
     next_synthetic_thread_ident: i64,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
@@ -767,6 +780,16 @@ impl Vm {
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             recursion_limit: 1000,
+            gc_enabled: true,
+            gc_thresholds: [
+                GC_DEFAULT_THRESHOLD0,
+                GC_DEFAULT_THRESHOLD1,
+                GC_DEFAULT_THRESHOLD2,
+            ],
+            gc_counts: [0, 0, 0],
+            gc_last_allocation_count: 0,
+            gc_auto_check_budget: GC_AUTO_CHECK_INTERVAL,
+            gc_auto_collect_enabled: false,
             next_synthetic_thread_ident: SYNTHETIC_THREAD_IDENT_START,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
@@ -779,6 +802,7 @@ impl Vm {
         vm.install_stdlib_modules();
         vm.install_builtins();
         vm.install_builtins_module();
+        vm.gc_last_allocation_count = vm.heap.total_allocations();
         vm
     }
 
@@ -1372,9 +1396,10 @@ impl Vm {
         let mut fallback = frame.locals.clone();
         for (idx, slot) in frame.fast_locals.iter().enumerate() {
             if let Some(value) = slot
-                && let Some(name) = frame.code.names.get(idx) {
-                    fallback.insert(name.clone(), value.clone());
-                }
+                && let Some(name) = frame.code.names.get(idx)
+            {
+                fallback.insert(name.clone(), value.clone());
+            }
         }
         for name in &frame.code.cellvars {
             if let Some(value) = frame_cell_value(frame, name) {
@@ -1711,8 +1736,7 @@ impl Vm {
         }
     }
 
-    pub fn gc_collect(&mut self) {
-        self.run_pending_del_finalizers();
+    fn collect_gc_roots(&self) -> Vec<Value> {
         let mut roots = Vec::new();
         for value in self.builtins.values() {
             roots.push(value.clone());
@@ -1725,6 +1749,8 @@ impl Vm {
             roots.extend(frame.stack.iter().cloned());
             roots.extend(frame.locals.values().cloned());
             roots.extend(frame.fast_locals.iter().flatten().cloned());
+            roots.extend(frame.code.constants.iter().cloned());
+            self.collect_frame_cache_roots(frame, &mut roots);
             for cell in &frame.cells {
                 roots.push(Value::Cell(cell.clone()));
             }
@@ -1735,6 +1761,9 @@ impl Vm {
             }
             if let Some(fallback) = &frame.locals_fallback {
                 roots.extend(fallback.values().cloned());
+            }
+            if let Some(module_locals) = &frame.module_locals_dict {
+                roots.push(Value::Dict(module_locals.clone()));
             }
             if let Some(instance) = &frame.return_instance {
                 roots.push(Value::Instance(instance.clone()));
@@ -1760,6 +1789,8 @@ impl Vm {
             roots.extend(frame.stack.iter().cloned());
             roots.extend(frame.locals.values().cloned());
             roots.extend(frame.fast_locals.iter().flatten().cloned());
+            roots.extend(frame.code.constants.iter().cloned());
+            self.collect_frame_cache_roots(frame, &mut roots);
             for cell in &frame.cells {
                 roots.push(Value::Cell(cell.clone()));
             }
@@ -1770,6 +1801,9 @@ impl Vm {
             }
             if let Some(fallback) = &frame.locals_fallback {
                 roots.extend(fallback.values().cloned());
+            }
+            if let Some(module_locals) = &frame.module_locals_dict {
+                roots.push(Value::Dict(module_locals.clone()));
             }
             if let Some(instance) = &frame.return_instance {
                 roots.push(Value::Instance(instance.clone()));
@@ -1798,7 +1832,52 @@ impl Vm {
             }
         }
         roots.extend(self.generator_returns.values().cloned());
+        roots
+    }
+
+    fn collect_frame_cache_roots(&self, frame: &Frame, roots: &mut Vec<Value>) {
+        for slot in frame.load_global_inline_cache.iter().flatten() {
+            roots.push(slot.value.clone());
+            if let Some(func) = &slot.fused_direct_func {
+                roots.push(Value::Function(func.clone()));
+            }
+        }
+        for ways in &frame.load_attr_inline_cache {
+            for entry in ways.iter().flatten() {
+                roots.push(Value::Class(entry.owner_class.clone()));
+                match &entry.kind {
+                    LoadAttrSiteCacheKind::InstanceValue { value } => roots.push(value.clone()),
+                    LoadAttrSiteCacheKind::InstanceFunction { function } => {
+                        roots.push(Value::Function(function.clone()));
+                    }
+                    LoadAttrSiteCacheKind::InstanceBuiltin { .. } => {}
+                    LoadAttrSiteCacheKind::InstanceClassMethod { descriptor }
+                    | LoadAttrSiteCacheKind::InstanceStaticMethod { descriptor } => {
+                        roots.push(Value::Module(descriptor.clone()));
+                    }
+                }
+            }
+        }
+        for slot in frame.one_arg_inline_cache.iter().flatten() {
+            if let Some(module) = &slot.cached_module {
+                roots.push(Value::Module(module.clone()));
+            }
+            if let Some(owner_class) = &slot.cached_owner_class {
+                roots.push(Value::Class(owner_class.clone()));
+            }
+            if let Some(closure) = &slot.cached_closure {
+                for cell in closure {
+                    roots.push(Value::Cell(cell.clone()));
+                }
+            }
+        }
+    }
+
+    pub fn gc_collect(&mut self) -> usize {
+        self.run_pending_del_finalizers();
+        let roots = self.collect_gc_roots();
         let unreachable = self.heap.unreachable_objects(&roots);
+        let unreachable_count = unreachable.len();
         for obj in unreachable {
             let obj_id = obj.id();
             self.pending_del_instances.remove(&obj_id);
@@ -1837,6 +1916,67 @@ impl Vm {
             }
         }
         self.heap.collect_cycles(&roots);
+        self.gc_last_allocation_count = self.heap.total_allocations();
+        self.gc_counts[0] = 0;
+        self.gc_auto_check_budget = GC_AUTO_CHECK_INTERVAL;
+        unreachable_count
+    }
+
+    #[inline]
+    fn gc_count0(&self) -> usize {
+        self.heap
+            .total_allocations()
+            .saturating_sub(self.gc_last_allocation_count)
+    }
+
+    #[inline]
+    fn maybe_gc_collect_automatic(&mut self) {
+        if self.gc_auto_check_budget > 0 {
+            self.gc_auto_check_budget -= 1;
+            return;
+        }
+        self.gc_auto_check_budget = GC_AUTO_CHECK_INTERVAL;
+
+        if !self.gc_enabled {
+            return;
+        }
+        if !self.gc_auto_collect_enabled {
+            self.gc_counts[0] = self.gc_count0();
+            return;
+        }
+        // Running cycle collection in deeply nested execution can overlap with
+        // active RefCell borrows in descriptor/import/class-build paths.
+        // Keep automatic collection at top-level execution boundaries.
+        if self.frames.len() > 1 {
+            self.gc_counts[0] = self.gc_count0();
+            return;
+        }
+        let threshold = self.gc_thresholds[0];
+        if threshold == 0 {
+            self.gc_counts[0] = self.gc_count0();
+            return;
+        }
+        let count0 = self.gc_count0();
+        self.gc_counts[0] = count0;
+        if count0 < threshold {
+            return;
+        }
+
+        let roots = self.collect_gc_roots();
+        self.heap.collect_cycles(&roots);
+        self.gc_last_allocation_count = self.heap.total_allocations();
+        self.gc_counts[0] = 0;
+        self.gc_auto_check_budget = GC_AUTO_CHECK_INTERVAL;
+        self.gc_counts[1] = self.gc_counts[1].saturating_add(1);
+        let threshold1 = self.gc_thresholds[1].max(1);
+        if self.gc_counts[1] >= threshold1 {
+            self.gc_counts[1] = 0;
+            self.gc_counts[2] = self.gc_counts[2].saturating_add(1);
+            let threshold2 = self.gc_thresholds[2].max(1);
+            if self.gc_counts[2] >= threshold2 {
+                self.gc_counts[2] = 0;
+            }
+        }
     }
 
     fn builtin_gc_collect(
@@ -1849,8 +1989,98 @@ impl Vm {
                 "gc.collect() expects at most one argument",
             ));
         }
-        self.gc_collect();
-        Ok(Value::Int(0))
+        let unreachable = self.gc_collect();
+        Ok(Value::Int(unreachable as i64))
+    }
+
+    fn builtin_gc_enable(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("gc.enable() expects no arguments"));
+        }
+        self.gc_enabled = true;
+        Ok(Value::None)
+    }
+
+    fn builtin_gc_disable(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("gc.disable() expects no arguments"));
+        }
+        self.gc_enabled = false;
+        Ok(Value::None)
+    }
+
+    fn builtin_gc_is_enabled(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("gc.isenabled() expects no arguments"));
+        }
+        Ok(Value::Bool(self.gc_enabled))
+    }
+
+    fn builtin_gc_get_threshold(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("gc.get_threshold() expects no arguments"));
+        }
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Int(self.gc_thresholds[0] as i64),
+            Value::Int(self.gc_thresholds[1] as i64),
+            Value::Int(self.gc_thresholds[2] as i64),
+        ]))
+    }
+
+    fn builtin_gc_set_threshold(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "gc.set_threshold() expects 1-3 integer arguments",
+            ));
+        }
+        let mut new_thresholds = self.gc_thresholds;
+        for (idx, arg) in args.into_iter().enumerate() {
+            let value = value_to_int(arg)?;
+            if value < 0 {
+                return Err(RuntimeError::new("gc thresholds must be non-negative"));
+            }
+            new_thresholds[idx] = value as usize;
+        }
+        self.gc_thresholds = new_thresholds;
+        self.gc_auto_collect_enabled = true;
+        self.gc_counts[0] = self.gc_count0();
+        Ok(Value::None)
+    }
+
+    fn builtin_gc_get_count(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("gc.get_count() expects no arguments"));
+        }
+        self.gc_counts[0] = self.gc_count0();
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Int(self.gc_counts[0] as i64),
+            Value::Int(self.gc_counts[1] as i64),
+            Value::Int(self.gc_counts[2] as i64),
+        ]))
     }
 
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {
@@ -2875,18 +3105,20 @@ fn frame_cell_value(frame: &Frame, name: &str) -> Option<Value> {
     for (index, cell_name) in frame.code.cellvars.iter().enumerate() {
         if cell_name == name {
             if let Some(cell) = frame.cells.get(index)
-                && let Object::Cell(cell_data) = &*cell.kind() {
-                    return cell_data.value.clone();
-                }
+                && let Object::Cell(cell_data) = &*cell.kind()
+            {
+                return cell_data.value.clone();
+            }
             return None;
         }
     }
     for (offset, free_name) in frame.code.freevars.iter().enumerate() {
         if free_name == name {
             if let Some(cell) = frame.cells.get(cellvar_len + offset)
-                && let Object::Cell(cell_data) = &*cell.kind() {
-                    return cell_data.value.clone();
-                }
+                && let Object::Cell(cell_data) = &*cell.kind()
+            {
+                return cell_data.value.clone();
+            }
             return None;
         }
     }
@@ -3657,12 +3889,13 @@ fn source_path_from_cache_path(path: &str) -> String {
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str())
         == Some("__pycache__")
-        && let Some(parent) = cache_path.parent().and_then(|parent| parent.parent()) {
-            return parent
-                .join(format!("{module_stem}.py"))
-                .to_string_lossy()
-                .to_string();
-        }
+        && let Some(parent) = cache_path.parent().and_then(|parent| parent.parent())
+    {
+        return parent
+            .join(format!("{module_stem}.py"))
+            .to_string_lossy()
+            .to_string();
+    }
     path.trim_end_matches('c').to_string()
 }
 
@@ -3952,10 +4185,12 @@ fn split_formatter_field_name(
 }
 
 fn parse_formatter_key(text: &str) -> FormatterFieldKey {
-    if !text.is_empty() && text.chars().all(|ch| ch.is_ascii_digit())
-        && let Ok(value) = text.parse::<i64>() {
-            return FormatterFieldKey::Int(value);
-        }
+    if !text.is_empty()
+        && text.chars().all(|ch| ch.is_ascii_digit())
+        && let Ok(value) = text.parse::<i64>()
+    {
+        return FormatterFieldKey::Int(value);
+    }
     FormatterFieldKey::Str(text.to_string())
 }
 
@@ -4832,9 +5067,10 @@ fn match_simple_regex_tokens(
                 let (end, mut next_state) =
                     match_simple_regex_tokens(tokens, chars, 0, char_idx, false, state.clone())?;
                 if let Some(index) = capture
-                    && let Some(slot) = next_state.captures.get_mut(index - 1) {
-                        *slot = Some((char_idx, end));
-                    }
+                    && let Some(slot) = next_state.captures.get_mut(index - 1)
+                {
+                    *slot = Some((char_idx, end));
+                }
                 Some((end, next_state))
             }
         }
@@ -4863,9 +5099,10 @@ fn match_simple_regex_tokens(
                     next_idx,
                     require_end,
                     next_state,
-                ) {
-                    return Some(result);
-                }
+                )
+            {
+                return Some(result);
+            }
             match_simple_regex_tokens(tokens, chars, token_idx + 1, char_idx, require_end, state)
         }
         ReQuantifier::ZeroOrMore | ReQuantifier::OneOrMore | ReQuantifier::Exactly(_) => {
@@ -6615,10 +6852,11 @@ fn bind_arguments(
 fn assign_binding(frame: &mut Frame, code: &CodeObject, name: &str, value: Value) {
     if let Some(idx) = code.cellvar_to_index.get(name).copied()
         && let Some(cell) = frame.cells.get(idx)
-            && let Object::Cell(cell_data) = &mut *cell.kind_mut() {
-                cell_data.value = Some(value);
-                return;
-            }
+        && let Object::Cell(cell_data) = &mut *cell.kind_mut()
+    {
+        cell_data.value = Some(value);
+        return;
+    }
     if let Some(slot_idx) = code.name_to_index.get(name).copied() {
         if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
             *slot = Some(value.clone());
@@ -7175,13 +7413,14 @@ fn collect_slot_names(class: &ObjRef) -> Option<Vec<String>> {
     let mut names = Vec::new();
     for candidate in class_attr_walk(class) {
         if let Object::Class(class_data) = &*candidate.kind()
-            && let Some(slots) = &class_data.slots {
-                for slot in slots {
-                    if !names.iter().any(|existing| existing == slot) {
-                        names.push(slot.clone());
-                    }
+            && let Some(slots) = &class_data.slots
+        {
+            for slot in slots {
+                if !names.iter().any(|existing| existing == slot) {
+                    names.push(slot.clone());
                 }
             }
+        }
     }
     Some(names)
 }
@@ -7341,10 +7580,11 @@ fn py_splitlines(text: &str, keepends: bool) -> Vec<String> {
         if ch == '\r' {
             let mut end = idx + ch.len_utf8();
             if let Some((next_idx, next_ch)) = chars.peek().copied()
-                && next_ch == '\n' {
-                    let _ = chars.next();
-                    end = next_idx + next_ch.len_utf8();
-                }
+                && next_ch == '\n'
+            {
+                let _ = chars.next();
+                end = next_idx + next_ch.len_utf8();
+            }
             linebreak_end = Some(end);
         } else if is_py_splitline_break(ch) {
             linebreak_end = Some(idx + ch.len_utf8());
@@ -7587,13 +7827,15 @@ fn extract_os_error_strerror(message: &str) -> Option<String> {
         line = tail.to_string();
     }
     if let Some(rest) = line.strip_prefix("[Errno ")
-        && let Some((_, tail)) = rest.split_once("] ") {
-            line = tail.to_string();
-        }
+        && let Some((_, tail)) = rest.split_once("] ")
+    {
+        line = tail.to_string();
+    }
     if let Some(idx) = line.rfind(" (os error ")
-        && line[idx..].ends_with(')') {
-            line = line[..idx].to_string();
-        }
+        && line[idx..].ends_with(')')
+    {
+        line = line[..idx].to_string();
+    }
     let line = line.trim();
     if line.is_empty() {
         return None;
@@ -7673,16 +7915,16 @@ fn classify_runtime_error(message: &str) -> &'static str {
             .rev()
             .find(|line| !line.trim().is_empty())
             .map(str::trim)
-        {
-            for exception in DIRECT_PREFIX_EXCEPTIONS {
-                if runtime_error_line_matches_exception(last_non_empty_line, exception) {
-                    if exception == "OSError" && should_refine_os_error(last_non_empty_line) {
-                        continue;
-                    }
-                    return exception;
+    {
+        for exception in DIRECT_PREFIX_EXCEPTIONS {
+            if runtime_error_line_matches_exception(last_non_empty_line, exception) {
+                if exception == "OSError" && should_refine_os_error(last_non_empty_line) {
+                    continue;
                 }
+                return exception;
             }
         }
+    }
     for exception in DIRECT_PREFIX_EXCEPTIONS {
         if runtime_error_line_matches_exception(message, exception) {
             if exception == "OSError" && should_refine_os_error(message) {
@@ -8012,9 +8254,10 @@ fn runtime_error_matches_exception(message: &str, expected: &str) -> bool {
         return true;
     }
     if let Some(exception_name) = extract_runtime_error_exception_name(message)
-        && (exception_name == expected || exception_type_is_subclass(&exception_name, expected)) {
-            return true;
-        }
+        && (exception_name == expected || exception_type_is_subclass(&exception_name, expected))
+    {
+        return true;
+    }
     let Some(last_non_empty_line) = message
         .lines()
         .rev()

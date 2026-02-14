@@ -1,4 +1,8 @@
-use super::super::{Vm, Value, RuntimeError, HashMap, value_to_int, Object, ReMatchDetail, bytes_like_from_value, ModuleObject, ObjRef, dict_get_value, ReMode, re_pattern_from_compiled_module, format_value, RePatternValue, re_match_bounds, re_match_details, re_pattern_from_argument};
+use super::super::{
+    HashMap, ModuleObject, ObjRef, Object, ReMatchDetail, ReMode, RePatternValue, RuntimeError,
+    Value, Vm, bytes_like_from_value, dict_get_value, format_value, re_match_bounds,
+    re_match_details, re_pattern_from_argument, re_pattern_from_compiled_module, value_to_int,
+};
 
 const CSV_SNIFFER_PATTERN_1: &str =
     r#"(?P<delim>[^\w\n"\'])(?P<space> ?)(?P<quote>["\']).*?(?P=quote)(?P=delim)"#;
@@ -552,17 +556,18 @@ impl Vm {
 
         let compiled = self.builtin_re_compile(vec![pattern, Value::Int(flags)], HashMap::new())?;
         if let Value::Module(compiled_obj) = &compiled
-            && let Object::Module(module_data) = &mut *compiled_obj.kind_mut() {
-                module_data
-                    .globals
-                    .insert("flags".to_string(), Value::Int(flags));
-                module_data
-                    .globals
-                    .insert("groups".to_string(), Value::Int(groups.max(0)));
-                module_data
-                    .globals
-                    .insert("groupindex".to_string(), groupindex);
-            }
+            && let Object::Module(module_data) = &mut *compiled_obj.kind_mut()
+        {
+            module_data
+                .globals
+                .insert("flags".to_string(), Value::Int(flags));
+            module_data
+                .globals
+                .insert("groups".to_string(), Value::Int(groups.max(0)));
+            module_data
+                .globals
+                .insert("groupindex".to_string(), groupindex);
+        }
         Ok(compiled)
     }
 
@@ -726,23 +731,23 @@ impl Vm {
                 if let RePatternValue::Str(pattern_text) = &pattern
                     && let Some((group_count, matches)) =
                         csv_sniffer_pattern_findall(pattern_text, &text)
-                    {
-                        if group_count == 1 {
-                            let out = matches
-                                .into_iter()
-                                .map(|row| Value::Str(row[0].clone()))
-                                .collect::<Vec<_>>();
-                            return Ok(self.heap.alloc_list(out));
-                        }
+                {
+                    if group_count == 1 {
                         let out = matches
                             .into_iter()
-                            .map(|row| {
-                                self.heap
-                                    .alloc_tuple(row.into_iter().map(Value::Str).collect())
-                            })
+                            .map(|row| Value::Str(row[0].clone()))
                             .collect::<Vec<_>>();
                         return Ok(self.heap.alloc_list(out));
                     }
+                    let out = matches
+                        .into_iter()
+                        .map(|row| {
+                            self.heap
+                                .alloc_tuple(row.into_iter().map(Value::Str).collect())
+                        })
+                        .collect::<Vec<_>>();
+                    return Ok(self.heap.alloc_list(out));
+                }
                 let raw_pos = if let Some(value) = args.first() {
                     value_to_int(value.clone())?
                 } else {

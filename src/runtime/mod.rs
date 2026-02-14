@@ -556,9 +556,10 @@ impl IndexBucket {
 
     fn normalize(&mut self) {
         if let Self::Many(indices) = self
-            && indices.len() == 1 {
-                *self = Self::One(indices[0]);
-            }
+            && indices.len() == 1
+        {
+            *self = Self::One(indices[0]);
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -752,9 +753,10 @@ impl SetObject {
         if index < self.values.len() {
             let moved = &self.values[index];
             if let Some(moved_hash) = value_lookup_hash(moved)
-                && let Some(bucket) = self.index.get_mut(&moved_hash) {
-                    bucket.replace_index(last_index, index);
-                }
+                && let Some(bucket) = self.index.get_mut(&moved_hash)
+            {
+                bucket.replace_index(last_index, index);
+            }
         }
         removed
     }
@@ -804,14 +806,15 @@ impl SetObject {
 
     fn find_index(&self, value: &Value) -> Option<usize> {
         if let Some(hash) = value_lookup_hash(value)
-            && let Some(bucket) = self.index.get(&hash) {
-                if let Some(index) =
-                    bucket.find_index_with(|index| value_key_equal(&self.values[index], value))
-                {
-                    return Some(index);
-                }
-                return None;
+            && let Some(bucket) = self.index.get(&hash)
+        {
+            if let Some(index) =
+                bucket.find_index_with(|index| value_key_equal(&self.values[index], value))
+            {
+                return Some(index);
             }
+            return None;
+        }
         self.values
             .iter()
             .position(|item| value_key_equal(item, value))
@@ -1135,6 +1138,7 @@ pub struct Heap {
     memoryview_registry: RefCell<Vec<Weak<Obj>>>,
     small_int_ids: RefCell<Vec<u64>>,
     immediate_ids: RefCell<HashMap<ImmediateKey, u64>>,
+    allocation_count: Cell<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1177,6 +1181,7 @@ impl Heap {
             memoryview_registry: RefCell::new(Vec::new()),
             small_int_ids: RefCell::new(vec![0; SMALL_INT_COUNT]),
             immediate_ids: RefCell::new(HashMap::new()),
+            allocation_count: Cell::new(0),
         }
     }
 
@@ -1193,7 +1198,13 @@ impl Heap {
             kind: RefCell::new(kind),
         });
         self.registry.borrow_mut().push(Rc::downgrade(&obj));
+        self.allocation_count
+            .set(self.allocation_count.get().saturating_add(1));
         ObjRef(obj)
+    }
+
+    pub fn total_allocations(&self) -> usize {
+        self.allocation_count.get()
     }
 
     pub fn alloc_list(&self, values: Vec<Value>) -> Value {
@@ -1284,9 +1295,10 @@ impl Heap {
             };
             if !view.released
                 && let Some(export_owner) = &view.export_owner
-                    && export_owner.id() == owner.id() {
-                        count += 1;
-                    }
+                && export_owner.id() == owner.id()
+            {
+                count += 1;
+            }
             true
         });
         count
@@ -2311,6 +2323,9 @@ pub enum BuiltinFunction {
     GcEnable,
     GcDisable,
     GcIsEnabled,
+    GcGetThreshold,
+    GcSetThreshold,
+    GcGetCount,
     MathSqrt,
     MathCopySign,
     MathFloor,
@@ -3454,10 +3469,10 @@ impl BuiltinFunction {
                         && let Some(rest) = digits
                             .strip_prefix("0b")
                             .or_else(|| digits.strip_prefix("0B"))
-                        {
-                            digits = rest;
-                            saw_prefix = true;
-                        }
+                    {
+                        digits = rest;
+                        saw_prefix = true;
+                    }
 
                     let normalized = normalize_int_digits_for_base(digits, base as u32, saw_prefix)
                         .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
@@ -4774,11 +4789,12 @@ impl BuiltinFunction {
                     );
                 }
                 if let Value::Class(class_ref) = &class_value
-                    && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                        class_data
-                            .attrs
-                            .insert("_make".to_string(), Value::Module(make_wrapper));
-                    }
+                    && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                {
+                    class_data
+                        .attrs
+                        .insert("_make".to_string(), Value::Module(make_wrapper));
+                }
                 Ok(class_value)
             }
             BuiltinFunction::CollectionsNamedTupleMake => {
@@ -5044,9 +5060,10 @@ impl BuiltinFunction {
                 }
                 if let Value::Dict(obj) = &args[0]
                     && let Object::Dict(entries) = &mut *obj.kind_mut()
-                        && let Some(index) = entries.iter().position(|(key, _)| *key == args[1]) {
-                            entries.remove(index);
-                        }
+                    && let Some(index) = entries.iter().position(|(key, _)| *key == args[1])
+                {
+                    entries.remove(index);
+                }
                 Ok(Value::None)
             }
             BuiltinFunction::ArrayArray => {
@@ -5149,6 +5166,20 @@ impl BuiltinFunction {
                     return Err(RuntimeError::new("gc.isenabled() expects no arguments"));
                 }
                 Ok(Value::Bool(true))
+            }
+            BuiltinFunction::GcGetThreshold | BuiltinFunction::GcGetCount => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("gc helper expects no arguments"));
+                }
+                Ok(heap.alloc_tuple(vec![Value::Int(0), Value::Int(0), Value::Int(0)]))
+            }
+            BuiltinFunction::GcSetThreshold => {
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "gc.set_threshold() expects 1-3 integer arguments",
+                    ));
+                }
+                Ok(Value::None)
             }
             BuiltinFunction::GetAttr
             | BuiltinFunction::SetAttr
@@ -7249,9 +7280,10 @@ pub fn format_repr(value: &Value) -> String {
             Object::Instance(instance_data) => {
                 if let Object::Class(class_data) = &*instance_data.class.kind()
                     && class_data.name == "StackObject"
-                        && let Some(Value::Str(name)) = instance_data.attrs.get("name") {
-                            return name.clone();
-                        }
+                    && let Some(Value::Str(name)) = instance_data.attrs.get("name")
+                {
+                    return name.clone();
+                }
                 format_value(value)
             }
             _ => format_value(value),

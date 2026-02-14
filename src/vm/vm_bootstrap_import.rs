@@ -1,4 +1,13 @@
-use super::{Vm, RuntimeError, Object, Value, BuiltinFunction, ClassObject, InstanceObject, ModuleObject, BUILTIN_MODULE_LOADER, parse_uuid_like_string, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, PathBuf, HashMap, LOCAL_SHIM_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_PATHLIB_MODULES, ObjRef, NAMESPACE_LOADER, SOURCELESS_FILE_LOADER, SOURCE_FILE_LOADER, ModuleSourceInfo, parser, compiler, Rc, Frame, cpython, matches_finder_kind, DEFAULT_META_PATH_FINDER, dict_get_value, dict_set_value, DEFAULT_PATH_HOOK, cached_module_path, SUBMODULE_TRACE_COUNT, AtomicOrdering, HashSet, dict_remove_value};
+use super::{
+    AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
+    DEFAULT_PATH_HOOK, Frame, HashMap, HashSet, InstanceObject, LOCAL_SHIM_MODULES, ModuleObject,
+    ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object, PURE_STDLIB_JSON_MODULES,
+    PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES, PathBuf, Rc,
+    RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER,
+    SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler,
+    cpython, dict_get_value, dict_remove_value, dict_set_value, matches_finder_kind,
+    parse_uuid_like_string, parser,
+};
 
 impl Vm {
     pub(super) fn set_module_class_bases(
@@ -487,12 +496,12 @@ impl Vm {
         if let (Some(os_module), Some(os_path_module)) = (
             self.modules.get("os").cloned(),
             self.modules.get("os.path").cloned(),
-        )
-            && let Object::Module(module_data) = &mut *os_module.kind_mut() {
-                module_data
-                    .globals
-                    .insert("path".to_string(), Value::Module(os_path_module));
-            }
+        ) && let Object::Module(module_data) = &mut *os_module.kind_mut()
+        {
+            module_data
+                .globals
+                .insert("path".to_string(), Value::Module(os_path_module));
+        }
         self.install_builtin_module(
             "json",
             &[
@@ -567,7 +576,10 @@ impl Vm {
                 ("error", Value::ExceptionType("Exception".to_string())),
                 (
                     "ZLIB_VERSION",
-                    Value::Str(self.zlib_version_string().unwrap_or_else(|| "unknown".to_string())),
+                    Value::Str(
+                        self.zlib_version_string()
+                            .unwrap_or_else(|| "unknown".to_string()),
+                    ),
                 ),
                 ("MAX_WBITS", Value::Int(15)),
                 ("DEFLATED", Value::Int(8)),
@@ -709,9 +721,10 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__module__".to_string(), Value::Str("_ssl".to_string()));
-            class_data
-                .attrs
-                .insert("__new__".to_string(), Value::Builtin(BuiltinFunction::SslContextNew));
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::SslContextNew),
+            );
         }
         let ssl_memory_bio_type = match self
             .heap
@@ -758,7 +771,10 @@ impl Vm {
                 "SSLSyscallError",
                 Value::ExceptionType("SSLSyscallError".to_string()),
             ),
-            ("SSLEOFError", Value::ExceptionType("SSLEOFError".to_string())),
+            (
+                "SSLEOFError",
+                Value::ExceptionType("SSLEOFError".to_string()),
+            ),
             (
                 "SSLCertVerificationError",
                 Value::ExceptionType("SSLCertVerificationError".to_string()),
@@ -788,12 +804,14 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__module__".to_string(), Value::Str("ssl".to_string()));
-            class_data
-                .attrs
-                .insert("__new__".to_string(), Value::Builtin(BuiltinFunction::SslContextNew));
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::SslContextInit));
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::SslContextNew),
+            );
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::SslContextInit),
+            );
         }
         let ssl_socket_type = match self
             .heap
@@ -848,7 +866,10 @@ impl Vm {
                     "SSLSyscallError",
                     Value::ExceptionType("SSLSyscallError".to_string()),
                 ),
-                ("SSLEOFError", Value::ExceptionType("SSLEOFError".to_string())),
+                (
+                    "SSLEOFError",
+                    Value::ExceptionType("SSLEOFError".to_string()),
+                ),
                 (
                     "SSLCertVerificationError",
                     Value::ExceptionType("SSLCertVerificationError".to_string()),
@@ -919,7 +940,11 @@ impl Vm {
                 ("error", Value::ExceptionType("ExpatError".to_string())),
                 ("model", Value::Module(pyexpat_model_module)),
                 ("errors", Value::Module(pyexpat_errors_module)),
-                ("version_info", self.heap.alloc_tuple(vec![Value::Int(2), Value::Int(6), Value::Int(0)])),
+                (
+                    "version_info",
+                    self.heap
+                        .alloc_tuple(vec![Value::Int(2), Value::Int(6), Value::Int(0)]),
+                ),
             ],
         );
         self.install_builtin_module(
@@ -1228,57 +1253,59 @@ impl Vm {
             Vec::new(),
         ));
         if let Value::Class(class_obj) = &incremental_decoder_class
-            && let Object::Class(class_data) = &mut *class_obj.kind_mut() {
-                class_data
-                    .attrs
-                    .insert("__module__".to_string(), Value::Str("codecs".to_string()));
-                class_data.attrs.insert(
-                    "__init__".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderInit),
-                );
-                class_data.attrs.insert(
-                    "decode".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderDecode),
-                );
-                class_data.attrs.insert(
-                    "reset".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderReset),
-                );
-                class_data.attrs.insert(
-                    "getstate".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderGetState),
-                );
-                class_data.attrs.insert(
-                    "setstate".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderSetState),
-                );
-            }
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("codecs".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderInit),
+            );
+            class_data.attrs.insert(
+                "decode".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderDecode),
+            );
+            class_data.attrs.insert(
+                "reset".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderReset),
+            );
+            class_data.attrs.insert(
+                "getstate".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderGetState),
+            );
+            class_data.attrs.insert(
+                "setstate".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderSetState),
+            );
+        }
         if let Value::Class(class_obj) = &incremental_encoder_class
-            && let Object::Class(class_data) = &mut *class_obj.kind_mut() {
-                class_data
-                    .attrs
-                    .insert("__module__".to_string(), Value::Str("codecs".to_string()));
-                class_data.attrs.insert(
-                    "__init__".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderInit),
-                );
-                class_data.attrs.insert(
-                    "encode".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderEncode),
-                );
-                class_data.attrs.insert(
-                    "reset".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderReset),
-                );
-                class_data.attrs.insert(
-                    "getstate".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderGetState),
-                );
-                class_data.attrs.insert(
-                    "setstate".to_string(),
-                    Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderSetState),
-                );
-            }
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("codecs".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderInit),
+            );
+            class_data.attrs.insert(
+                "encode".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderEncode),
+            );
+            class_data.attrs.insert(
+                "reset".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderReset),
+            );
+            class_data.attrs.insert(
+                "getstate".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderGetState),
+            );
+            class_data.attrs.insert(
+                "setstate".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderSetState),
+            );
+        }
         let stream_reader_class = self
             .heap
             .alloc_class(ClassObject::new("StreamReader".to_string(), Vec::new()));
@@ -1692,48 +1719,50 @@ impl Vm {
             .heap
             .alloc_class(ClassObject::new("Row".to_string(), Vec::new()));
         if let Value::Class(class) = &sqlite_row_class
-            && let Object::Class(class_data) = &mut *class.kind_mut() {
-                class_data
-                    .attrs
-                    .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
-                class_data.attrs.insert(
-                    "__init__".to_string(),
-                    Value::Builtin(BuiltinFunction::SqliteRowInit),
-                );
-                class_data.attrs.insert(
-                    "keys".to_string(),
-                    Value::Builtin(BuiltinFunction::SqliteRowKeys),
-                );
-                class_data.attrs.insert(
-                    "__len__".to_string(),
-                    Value::Builtin(BuiltinFunction::SqliteRowLen),
-                );
-                class_data.attrs.insert(
-                    "__getitem__".to_string(),
-                    Value::Builtin(BuiltinFunction::SqliteRowGetItem),
-                );
-                class_data.attrs.insert(
-                    "__iter__".to_string(),
-                    Value::Builtin(BuiltinFunction::SqliteRowIter),
-                );
-                class_data.attrs.insert(
-                    "__eq__".to_string(),
-                    Value::Builtin(BuiltinFunction::SqliteRowEq),
-                );
-                class_data.attrs.insert(
-                    "__hash__".to_string(),
-                    Value::Builtin(BuiltinFunction::SqliteRowHash),
-                );
-            }
+            && let Object::Class(class_data) = &mut *class.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteRowInit),
+            );
+            class_data.attrs.insert(
+                "keys".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteRowKeys),
+            );
+            class_data.attrs.insert(
+                "__len__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteRowLen),
+            );
+            class_data.attrs.insert(
+                "__getitem__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteRowGetItem),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteRowIter),
+            );
+            class_data.attrs.insert(
+                "__eq__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteRowEq),
+            );
+            class_data.attrs.insert(
+                "__hash__".to_string(),
+                Value::Builtin(BuiltinFunction::SqliteRowHash),
+            );
+        }
         let sqlite_prepare_protocol_class = self
             .heap
             .alloc_class(ClassObject::new("PrepareProtocol".to_string(), Vec::new()));
         if let Value::Class(class) = &sqlite_prepare_protocol_class
-            && let Object::Class(class_data) = &mut *class.kind_mut() {
-                class_data
-                    .attrs
-                    .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
-            }
+            && let Object::Class(class_data) = &mut *class.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
+        }
         self.install_builtin_module(
             "_sqlite3",
             &[
@@ -2717,16 +2746,17 @@ impl Vm {
             .heap
             .alloc_class(ClassObject::new("SimpleNamespace".to_string(), Vec::new()));
         if let Value::Class(class_obj) = &simple_namespace_class
-            && let Object::Class(class_data) = &mut *class_obj.kind_mut() {
-                class_data.attrs.insert(
-                    "__repr__".to_string(),
-                    Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
-                );
-                class_data.attrs.insert(
-                    "__str__".to_string(),
-                    Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
-                );
-            }
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
+            );
+        }
         self.install_builtin_module(
             "types",
             &[
@@ -3284,6 +3314,9 @@ impl Vm {
                 ("enable", BuiltinFunction::GcEnable),
                 ("disable", BuiltinFunction::GcDisable),
                 ("isenabled", BuiltinFunction::GcIsEnabled),
+                ("get_threshold", BuiltinFunction::GcGetThreshold),
+                ("set_threshold", BuiltinFunction::GcSetThreshold),
+                ("get_count", BuiltinFunction::GcGetCount),
             ],
             Vec::new(),
         );
@@ -3473,88 +3506,89 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("TextIOWrapper".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &textio
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoTextIOWrapperInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileRead),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "readlines".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadLines),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileWrite),
-                            );
-                            class_data.attrs.insert(
-                                "writelines".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileWriteLines),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileTell),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileClose),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileFlush),
-                            );
-                            class_data.attrs.insert(
-                                "__iter__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileIter),
-                            );
-                            class_data.attrs.insert(
-                                "__next__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileNext),
-                            );
-                            class_data.attrs.insert(
-                                "__enter__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileEnter),
-                            );
-                            class_data.attrs.insert(
-                                "__exit__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileExit),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileFileno),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileDetach),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoTextIOWrapperInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileRead),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "readlines".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileReadLines),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileWrite),
+                        );
+                        class_data.attrs.insert(
+                            "writelines".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileWriteLines),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileTell),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileClose),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileFlush),
+                        );
+                        class_data.attrs.insert(
+                            "__iter__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileIter),
+                        );
+                        class_data.attrs.insert(
+                            "__next__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileNext),
+                        );
+                        class_data.attrs.insert(
+                            "__enter__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileEnter),
+                        );
+                        class_data.attrs.insert(
+                            "__exit__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileExit),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileFileno),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileDetach),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileSeekable),
+                        );
+                    }
                     ("TextIOWrapper", textio)
                 },
                 {
@@ -3562,13 +3596,14 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("FileIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &fileio
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_io_file_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileInit),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_io_file_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileInit),
+                        );
+                    }
                     ("FileIO", fileio)
                 },
                 {
@@ -3576,9 +3611,10 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("StringIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &stringio
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_stringio_methods(class_data);
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_stringio_methods(class_data);
+                    }
                     ("StringIO", stringio)
                 },
                 {
@@ -3586,9 +3622,10 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &bytesio
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_bytesio_methods(class_data);
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_bytesio_methods(class_data);
+                    }
                     ("BytesIO", bytesio)
                 },
                 {
@@ -3596,89 +3633,90 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "read1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFlush),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedClose),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFileno),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTell),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "peek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "read1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFlush),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedClose),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedDetach),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFileno),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTell),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "peek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedPeek),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeekable),
+                        );
+                    }
                     ("BufferedReader", class)
                 },
                 {
@@ -3686,89 +3724,90 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "read1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFlush),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedClose),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFileno),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTell),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "peek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "read1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFlush),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedClose),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedDetach),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFileno),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTell),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "peek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedPeek),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeekable),
+                        );
+                    }
                     ("BufferedWriter", class)
                 },
                 {
@@ -3776,89 +3815,90 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "read1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFlush),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedClose),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFileno),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTell),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "peek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "read1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFlush),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedClose),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedDetach),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFileno),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTell),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "peek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedPeek),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeekable),
+                        );
+                    }
                     ("BufferedRandom", class)
                 },
                 {
@@ -3866,81 +3906,82 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedRWPair".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairRead),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "read1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairRead1),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairWrite),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairFlush),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairClose),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFileno),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTell),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairSeekable),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairDetach),
-                            );
-                            class_data.attrs.insert(
-                                "peek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairPeek),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairRead),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "read1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairRead1),
+                        );
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairWrite),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairFlush),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairClose),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFileno),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTell),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairSeekable),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairDetach),
+                        );
+                        class_data.attrs.insert(
+                            "peek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairPeek),
+                        );
+                    }
                     ("BufferedRWPair", class)
                 },
                 {
@@ -3948,9 +3989,10 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                    }
                     ("IOBase", class)
                 },
                 {
@@ -3958,17 +4000,18 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("RawIOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoRawRead),
-                            );
-                            class_data.attrs.insert(
-                                "readall".to_string(),
-                                Value::Builtin(BuiltinFunction::IoRawReadAll),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoRawRead),
+                        );
+                        class_data.attrs.insert(
+                            "readall".to_string(),
+                            Value::Builtin(BuiltinFunction::IoRawReadAll),
+                        );
+                    }
                     ("RawIOBase", class)
                 },
                 {
@@ -3976,41 +4019,42 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedIOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "peek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "peek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedPeek),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeekable),
+                        );
+                    }
                     ("BufferedIOBase", class)
                 },
                 {
@@ -4018,9 +4062,10 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("TextIOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                    }
                     ("TextIOBase", class)
                 },
                 (
@@ -4090,88 +4135,89 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("TextIOWrapper".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &textio
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoTextIOWrapperInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileRead),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "readlines".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadLines),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileWrite),
-                            );
-                            class_data.attrs.insert(
-                                "writelines".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileWriteLines),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileTell),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileClose),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileFlush),
-                            );
-                            class_data.attrs.insert(
-                                "__iter__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileIter),
-                            );
-                            class_data.attrs.insert(
-                                "__next__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileNext),
-                            );
-                            class_data.attrs.insert(
-                                "__enter__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileEnter),
-                            );
-                            class_data.attrs.insert(
-                                "__exit__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileExit),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileFileno),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileDetach),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoTextIOWrapperInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileRead),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "readlines".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileReadLines),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileWrite),
+                        );
+                        class_data.attrs.insert(
+                            "writelines".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileWriteLines),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileTell),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileClose),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileFlush),
+                        );
+                        class_data.attrs.insert(
+                            "__iter__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileIter),
+                        );
+                        class_data.attrs.insert(
+                            "__next__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileNext),
+                        );
+                        class_data.attrs.insert(
+                            "__enter__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileEnter),
+                        );
+                        class_data.attrs.insert(
+                            "__exit__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileExit),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileFileno),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileDetach),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileSeekable),
+                        );
+                    }
                     ("TextIOWrapper", textio)
                 },
                 {
@@ -4179,13 +4225,14 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("FileIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &fileio
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_io_file_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoFileInit),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_io_file_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileInit),
+                        );
+                    }
                     ("FileIO", fileio)
                 },
                 {
@@ -4193,9 +4240,10 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &bytesio
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_bytesio_methods(class_data);
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_bytesio_methods(class_data);
+                    }
                     ("BytesIO", bytesio)
                 },
                 {
@@ -4203,81 +4251,82 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "read1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFlush),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedClose),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFileno),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTell),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "peek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "read1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFlush),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedClose),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedDetach),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFileno),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTell),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "peek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedPeek),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeekable),
+                        );
+                    }
                     ("BufferedReader", class)
                 },
                 {
@@ -4285,81 +4334,82 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "read1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFlush),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedClose),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFileno),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTell),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "peek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedPeek),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "read1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFlush),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedClose),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedDetach),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFileno),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTell),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "peek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedPeek),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeekable),
+                        );
+                    }
                     ("BufferedWriter", class)
                 },
                 {
@@ -4367,77 +4417,78 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead),
-                            );
-                            class_data.attrs.insert(
-                                "read1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRead1),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWrite),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFlush),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedClose),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedDetach),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFileno),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTell),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead),
+                        );
+                        class_data.attrs.insert(
+                            "read1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRead1),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWrite),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFlush),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedClose),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedDetach),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFileno),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTell),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeekable),
+                        );
+                    }
                     ("BufferedRandom", class)
                 },
                 {
@@ -4445,81 +4496,82 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedRWPair".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "__init__".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairInit),
-                            );
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairRead),
-                            );
-                            class_data.attrs.insert(
-                                "readline".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairReadLine),
-                            );
-                            class_data.attrs.insert(
-                                "read1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairRead1),
-                            );
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "write".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairWrite),
-                            );
-                            class_data.attrs.insert(
-                                "flush".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairFlush),
-                            );
-                            class_data.attrs.insert(
-                                "close".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairClose),
-                            );
-                            class_data.attrs.insert(
-                                "fileno".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedFileno),
-                            );
-                            class_data.attrs.insert(
-                                "seek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeek),
-                            );
-                            class_data.attrs.insert(
-                                "tell".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTell),
-                            );
-                            class_data.attrs.insert(
-                                "truncate".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedTruncate),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairSeekable),
-                            );
-                            class_data.attrs.insert(
-                                "detach".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairDetach),
-                            );
-                            class_data.attrs.insert(
-                                "peek".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedRWPairPeek),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairInit),
+                        );
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairRead),
+                        );
+                        class_data.attrs.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairReadLine),
+                        );
+                        class_data.attrs.insert(
+                            "read1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairRead1),
+                        );
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairWrite),
+                        );
+                        class_data.attrs.insert(
+                            "flush".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairFlush),
+                        );
+                        class_data.attrs.insert(
+                            "close".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairClose),
+                        );
+                        class_data.attrs.insert(
+                            "fileno".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedFileno),
+                        );
+                        class_data.attrs.insert(
+                            "seek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeek),
+                        );
+                        class_data.attrs.insert(
+                            "tell".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTell),
+                        );
+                        class_data.attrs.insert(
+                            "truncate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedTruncate),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairSeekable),
+                        );
+                        class_data.attrs.insert(
+                            "detach".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairDetach),
+                        );
+                        class_data.attrs.insert(
+                            "peek".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairPeek),
+                        );
+                    }
                     ("BufferedRWPair", class)
                 },
                 ("StringIO", {
@@ -4527,9 +4579,10 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("StringIO".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &stringio
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_stringio_methods(class_data);
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_stringio_methods(class_data);
+                    }
                     stringio
                 }),
                 {
@@ -4537,9 +4590,10 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                    }
                     ("IOBase", class)
                 },
                 {
@@ -4547,17 +4601,18 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("RawIOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "read".to_string(),
-                                Value::Builtin(BuiltinFunction::IoRawRead),
-                            );
-                            class_data.attrs.insert(
-                                "readall".to_string(),
-                                Value::Builtin(BuiltinFunction::IoRawReadAll),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoRawRead),
+                        );
+                        class_data.attrs.insert(
+                            "readall".to_string(),
+                            Value::Builtin(BuiltinFunction::IoRawReadAll),
+                        );
+                    }
                     ("RawIOBase", class)
                 },
                 {
@@ -4565,29 +4620,30 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("BufferedIOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                            class_data.attrs.insert(
-                                "readinto".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto),
-                            );
-                            class_data.attrs.insert(
-                                "readinto1".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
-                            );
-                            class_data.attrs.insert(
-                                "readable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedReadable),
-                            );
-                            class_data.attrs.insert(
-                                "writable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedWritable),
-                            );
-                            class_data.attrs.insert(
-                                "seekable".to_string(),
-                                Value::Builtin(BuiltinFunction::IoBufferedSeekable),
-                            );
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "readinto".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto),
+                        );
+                        class_data.attrs.insert(
+                            "readinto1".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadInto1),
+                        );
+                        class_data.attrs.insert(
+                            "readable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedReadable),
+                        );
+                        class_data.attrs.insert(
+                            "writable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedWritable),
+                        );
+                        class_data.attrs.insert(
+                            "seekable".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedSeekable),
+                        );
+                    }
                     ("BufferedIOBase", class)
                 },
                 {
@@ -4595,9 +4651,10 @@ impl Vm {
                         .heap
                         .alloc_class(ClassObject::new("TextIOBase".to_string(), Vec::new()));
                     if let Value::Class(class_ref) = &class
-                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
-                            Self::install_iobase_methods(class_data);
-                        }
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        Self::install_iobase_methods(class_data);
+                    }
                     ("TextIOBase", class)
                 },
                 (
@@ -5336,24 +5393,25 @@ impl Vm {
         };
         let mut preserved_entries: HashMap<String, Value> = HashMap::new();
         if let Some(Value::Dict(existing)) = existing_modules
-            && let Object::Dict(existing_entries) = &*existing.kind() {
-                for (key, value) in existing_entries.iter() {
-                    let Value::Str(name) = key else {
-                        continue;
-                    };
-                    let preserve = match value {
-                        // Preserve explicit import blockers and user overrides.
-                        Value::None => true,
-                        // Preserve sys.modules module entries unknown to `self.modules`.
-                        Value::Module(_) => !self.modules.contains_key(name),
-                        // Preserve non-module sentinels/extensions installed by user code.
-                        _ => true,
-                    };
-                    if preserve {
-                        preserved_entries.insert(name.clone(), value.clone());
-                    }
+            && let Object::Dict(existing_entries) = &*existing.kind()
+        {
+            for (key, value) in existing_entries.iter() {
+                let Value::Str(name) = key else {
+                    continue;
+                };
+                let preserve = match value {
+                    // Preserve explicit import blockers and user overrides.
+                    Value::None => true,
+                    // Preserve sys.modules module entries unknown to `self.modules`.
+                    Value::Module(_) => !self.modules.contains_key(name),
+                    // Preserve non-module sentinels/extensions installed by user code.
+                    _ => true,
+                };
+                if preserve {
+                    preserved_entries.insert(name.clone(), value.clone());
                 }
             }
+        }
         let mut entries = Vec::with_capacity(self.modules.len() + preserved_entries.len());
         for (name, module) in self.modules.iter() {
             if preserved_entries.contains_key(name) {
@@ -5516,11 +5574,12 @@ impl Vm {
         }
 
         if let Some((parent, _)) = name.rsplit_once('.')
-            && !self.modules.contains_key(parent) {
-                let parent_caller_depth = self.frames.len();
-                let _ = self.load_module(parent)?;
-                self.run_pending_import_frames(parent_caller_depth)?;
-            }
+            && !self.modules.contains_key(parent)
+        {
+            let parent_caller_depth = self.frames.len();
+            let _ = self.load_module(parent)?;
+            self.run_pending_import_frames(parent_caller_depth)?;
+        }
 
         let source_info = self
             .find_module_source(name)
@@ -5654,9 +5713,10 @@ impl Vm {
     pub(super) fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
         if let Some((parent_name, child_name)) = name.rsplit_once('.')
             && let Some(parent_paths) = self.package_search_paths(parent_name)
-                && let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths) {
-                    return Some(source);
-                }
+            && let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths)
+        {
+            return Some(source);
+        }
         let roots = self.module_paths.clone();
         if let Some(source) = self.find_module_source_in_roots(name, &roots) {
             return Some(source);
@@ -5969,10 +6029,11 @@ impl Vm {
             return Some(module);
         }
         if self.find_module_file(&full_name).is_some()
-            && let Ok(module) = self.import_module_object(&full_name) {
-                self.upsert_module_global(parent, attr_name, Value::Module(module.clone()));
-                return Some(module);
-            }
+            && let Ok(module) = self.import_module_object(&full_name)
+        {
+            self.upsert_module_global(parent, attr_name, Value::Module(module.clone()));
+            return Some(module);
+        }
         None
     }
 
@@ -6233,14 +6294,14 @@ impl Vm {
                     let _ = dict_remove_value(&modules_dict, &key);
                 }
             } else {
-                if !present_in_sys_modules
-                    && let Some(modules_dict) = self.sys_dict_obj("modules") {
-                        dict_set_value(
-                            &modules_dict,
-                            Value::Str(name.to_string()),
-                            Value::Module(module.clone()),
-                        );
-                    }
+                if !present_in_sys_modules && let Some(modules_dict) = self.sys_dict_obj("modules")
+                {
+                    dict_set_value(
+                        &modules_dict,
+                        Value::Str(name.to_string()),
+                        Value::Module(module.clone()),
+                    );
+                }
                 return self.return_imported_module(module, caller_depth);
             }
         }
@@ -6341,9 +6402,10 @@ impl Vm {
             }
             if let Some((parent, child)) = name.rsplit_once('.')
                 && let Some(parent_module) = self.modules.get(parent)
-                    && let Object::Module(parent_data) = &mut *parent_module.kind_mut() {
-                        parent_data.globals.remove(child);
-                    }
+                && let Object::Module(parent_data) = &mut *parent_module.kind_mut()
+            {
+                parent_data.globals.remove(child);
+            }
         }
     }
 

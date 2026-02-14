@@ -1,4 +1,12 @@
-use super::{Vm, Value, HashMap, RuntimeError, binary_operator, add_values, sub_values, mul_values, mod_values, div_values, floor_div_values, compare_lt, compare_le, compare_gt, compare_ge, Object, ModuleObject, NativeMethodKind, InternalCallOutcome, value_to_int, is_truthy, GeneratorResumeOutcome, IteratorObject, IteratorKind, Heap, BuiltinFunction, dict_set_value_checked, is_missing_attribute_error, ClassObject, InstanceObject, ensure_hashable, ObjRef, DEQUE_BACKING_STORAGE_ATTR, class_name_for_instance, format_repr, dict_remove_value, dict_get_value, format_value, unary_predicate, BoundMethod};
+use super::{
+    BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, GeneratorResumeOutcome,
+    HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject,
+    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, binary_operator,
+    class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt, dict_get_value,
+    dict_remove_value, dict_set_value_checked, div_values, ensure_hashable, floor_div_values,
+    format_repr, format_value, is_missing_attribute_error, is_truthy, mod_values, mul_values,
+    sub_values, unary_predicate, value_to_int,
+};
 
 impl Vm {
     pub(super) fn builtin_operator_add(
@@ -661,9 +669,10 @@ impl Vm {
             return Err(RuntimeError::new("islice() start must be non-negative"));
         }
         if let Some(stop) = stop
-            && stop < 0 {
-                return Err(RuntimeError::new("islice() stop must be non-negative"));
-            }
+            && stop < 0
+        {
+            return Err(RuntimeError::new("islice() stop must be non-negative"));
+        }
         if step <= 0 {
             return Err(RuntimeError::new("islice() step must be positive"));
         }
@@ -673,9 +682,10 @@ impl Vm {
         let mut index = 0_i64;
         loop {
             if let Some(stop_value) = stop
-                && index >= stop_value {
-                    break;
-                }
+                && index >= stop_value
+            {
+                break;
+            }
             let next = self.next_from_iterator_value(&iterator)?;
             let value = match next {
                 GeneratorResumeOutcome::Yield(value) => value,
@@ -2300,14 +2310,11 @@ impl Vm {
                         for item in items {
                             if let Value::Tuple(tuple_obj) = item
                                 && let Object::Tuple(parts) = &*tuple_obj.kind()
-                                    && parts.len() == 2 {
-                                        dict_set_value_checked(
-                                            &dict,
-                                            parts[0].clone(),
-                                            parts[1].clone(),
-                                        )?;
-                                        continue;
-                                    }
+                                && parts.len() == 2
+                            {
+                                dict_set_value_checked(&dict, parts[0].clone(), parts[1].clone())?;
+                                continue;
+                            }
                             return Err(RuntimeError::new(
                                 "defaultdict() iterable items must be key/value pairs",
                             ));
@@ -2641,12 +2648,12 @@ impl Vm {
 
                 if let Some(annotations) = &annotations
                     && let Object::Dict(entries) = &*annotations.kind()
-                        && let Some((_, value)) = entries
-                            .iter()
-                            .find(|(key, _)| matches!(key, Value::Str(name) if name == "return"))
-                        {
-                            return_annotation = value.clone();
-                        }
+                    && let Some((_, value)) = entries
+                        .iter()
+                        .find(|(key, _)| matches!(key, Value::Str(name) if name == "return"))
+                {
+                    return_annotation = value.clone();
+                }
             }
             _ => {
                 if text_signature_override.is_none() {
@@ -2842,9 +2849,10 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         unary_predicate(args, kwargs, |value| {
             if let Value::Generator(generator) = value
-                && let Object::Generator(state) = &*generator.kind() {
-                    return !state.is_coroutine && !state.is_async_generator;
-                }
+                && let Object::Generator(state) = &*generator.kind()
+            {
+                return !state.is_coroutine && !state.is_async_generator;
+            }
             false
         })
     }
@@ -2856,9 +2864,10 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         unary_predicate(args, kwargs, |value| {
             if let Value::Generator(generator) = value
-                && let Object::Generator(state) = &*generator.kind() {
-                    return state.is_coroutine;
-                }
+                && let Object::Generator(state) = &*generator.kind()
+            {
+                return state.is_coroutine;
+            }
             false
         })
     }
@@ -2881,9 +2890,10 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         unary_predicate(args, kwargs, |value| {
             if let Value::Generator(generator) = value
-                && let Object::Generator(state) = &*generator.kind() {
-                    return state.is_async_generator;
-                }
+                && let Object::Generator(state) = &*generator.kind()
+            {
+                return state.is_async_generator;
+            }
             false
         })
     }

@@ -1,4 +1,4 @@
-use super::super::{Vm, RuntimeError, Value, ObjRef, Object, HashMap, bytes_like_from_value};
+use super::super::{HashMap, ObjRef, Object, RuntimeError, Value, Vm, bytes_like_from_value};
 use std::os::raw::{c_int, c_uint, c_void};
 
 const LZMA_OK: c_uint = 0;
@@ -84,8 +84,17 @@ impl Vm {
         }
     }
 
-    fn lzma_encode_xz(&self, payload: &[u8], check: i64, preset: c_uint) -> Result<Vec<u8>, RuntimeError> {
-        let mut out_cap = payload.len().saturating_add(payload.len() / 3).saturating_add(256).max(64);
+    fn lzma_encode_xz(
+        &self,
+        payload: &[u8],
+        check: i64,
+        preset: c_uint,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let mut out_cap = payload
+            .len()
+            .saturating_add(payload.len() / 3)
+            .saturating_add(256)
+            .max(64);
         loop {
             let mut out = vec![0u8; out_cap];
             let mut out_pos = 0usize;
@@ -117,10 +126,7 @@ impl Vm {
         }
     }
 
-    fn lzma_decode_auto(
-        &self,
-        payload: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>), RuntimeError> {
+    fn lzma_decode_auto(&self, payload: &[u8]) -> Result<(Vec<u8>, Vec<u8>), RuntimeError> {
         let mut out_cap = payload.len().saturating_mul(6).saturating_add(1024).max(64);
         loop {
             let mut out = vec![0u8; out_cap];
@@ -175,9 +181,10 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("check".to_string(), Value::Int(state.check));
-            instance_data
-                .attrs
-                .insert("unused_data".to_string(), self.heap.alloc_bytes(state.unused_data));
+            instance_data.attrs.insert(
+                "unused_data".to_string(),
+                self.heap.alloc_bytes(state.unused_data),
+            );
         }
     }
 
@@ -193,7 +200,11 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid LZMACompressor object")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: invalid LZMACompressor object",
+                ));
+            }
         };
         if args.len() > 4 {
             return Err(RuntimeError::new(format!(
@@ -235,11 +246,12 @@ impl Vm {
             ));
         }
         if let Some(filters) = filters_arg
-            && !matches!(filters, Value::None) {
-                return Err(RuntimeError::new(
-                    "NotImplementedError: LZMACompressor(filters=...) is not implemented",
-                ));
-            }
+            && !matches!(filters, Value::None)
+        {
+            return Err(RuntimeError::new(
+                "NotImplementedError: LZMACompressor(filters=...) is not implemented",
+            ));
+        }
 
         let mut check = Self::lzma_parse_optional_int(check_arg, -1, "check")?;
         if check == -1 {
@@ -282,15 +294,23 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid LZMACompressor object")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: invalid LZMACompressor object",
+                ));
+            }
         };
         let payload = bytes_like_from_value(args.remove(0))
             .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
         let Some(state) = self.lzma_compressors.get_mut(&receiver.id()) else {
-            return Err(RuntimeError::new("TypeError: invalid LZMACompressor object"));
+            return Err(RuntimeError::new(
+                "TypeError: invalid LZMACompressor object",
+            ));
         };
         if state.finished {
-            return Err(RuntimeError::new("ValueError: compressor object already flushed"));
+            return Err(RuntimeError::new(
+                "ValueError: compressor object already flushed",
+            ));
         }
         state.buffer.extend_from_slice(&payload);
         Ok(self.heap.alloc_bytes(Vec::new()))
@@ -313,12 +333,18 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid LZMACompressor object")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: invalid LZMACompressor object",
+                ));
+            }
         };
 
         let (already_finished, format, check, preset, payload) = {
             let Some(state) = self.lzma_compressors.get(&receiver.id()) else {
-                return Err(RuntimeError::new("TypeError: invalid LZMACompressor object"));
+                return Err(RuntimeError::new(
+                    "TypeError: invalid LZMACompressor object",
+                ));
             };
             (
                 state.finished,
@@ -356,7 +382,11 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid LZMADecompressor object")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: invalid LZMADecompressor object",
+                ));
+            }
         };
         if args.len() > 3 {
             return Err(RuntimeError::new(format!(
@@ -393,11 +423,12 @@ impl Vm {
             ));
         }
         if let Some(filters) = filters_arg
-            && !matches!(filters, Value::None) {
-                return Err(RuntimeError::new(
-                    "NotImplementedError: LZMADecompressor(filters=...) is not implemented",
-                ));
-            }
+            && !matches!(filters, Value::None)
+        {
+            return Err(RuntimeError::new(
+                "NotImplementedError: LZMADecompressor(filters=...) is not implemented",
+            ));
+        }
 
         self.lzma_decompressors.insert(
             receiver.id(),
@@ -425,7 +456,11 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid LZMADecompressor object")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: invalid LZMADecompressor object",
+                ));
+            }
         };
         let payload = bytes_like_from_value(args.remove(0))
             .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;

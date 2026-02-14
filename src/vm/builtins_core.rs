@@ -1,4 +1,22 @@
-use super::{Vm, Value, Object, RuntimeError, with_bytes_like_source, HashMap, InternalCallOutcome, Write, NativeMethodKind, BuiltinFunction, is_missing_attribute_error, format_repr, ObjRef, class_attr_walk, value_to_int, ModuleObject, Rc, CodeObject, parser, compiler, Frame, bytes_like_from_value, value_from_bigint, HashSet, format_value, BYTES_BACKING_STORAGE_ATTR, parse_hex_float_literal, value_to_f64, format_float_hex, call_builtin_with_kwargs, INT_BACKING_STORAGE_ATTR, FLOAT_BACKING_STORAGE_ATTR, COMPLEX_BACKING_STORAGE_ATTR, runtime_error_matches_exception, normalize_codec_encoding, normalize_codec_errors, decode_text_bytes, encode_text_bytes, bigint_from_bytes, ClassBuildOutcome, InstanceObject, ClassObject, LIST_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, DICT_BACKING_STORAGE_ATTR, SET_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, class_attr_lookup, AttrAccessOutcome, AttrMutationOutcome, dict_set_value_checked, dedup_hashable_values, Ordering, value_to_bigint, round_float_with_ndigits, BigInt, compare_order, compare_lt, GeneratorResumeOutcome, compare_in, div_values, add_values, compare_le, compare_gt, compare_ge, ordering_from_cmp_value, class_of_class, exception_type_is_subclass, is_runtime_type_name_marker, IteratorObject, IteratorKind, value_from_object_ref, weakref_target_id, weakref_target_object, GeneratorResumeKind, NativeMethodObject, BoundMethod, dict_set_value, dict_remove_value, frame_cell_value, SuperObject};
+use super::{
+    AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BigInt, BoundMethod,
+    BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome, ClassObject, CodeObject,
+    DICT_BACKING_STORAGE_ATTR, FLOAT_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, Frame,
+    GeneratorResumeKind, GeneratorResumeOutcome, HashMap, HashSet, INT_BACKING_STORAGE_ATTR,
+    InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR,
+    ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object, Ordering, Rc, RuntimeError,
+    SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, SuperObject, TUPLE_BACKING_STORAGE_ATTR,
+    Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
+    call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, class_of_class, compare_ge,
+    compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
+    dedup_hashable_values, dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
+    encode_text_bytes, exception_type_is_subclass, format_float_hex, format_repr, format_value,
+    frame_cell_value, is_missing_attribute_error, is_runtime_type_name_marker,
+    normalize_codec_encoding, normalize_codec_errors, ordering_from_cmp_value,
+    parse_hex_float_literal, parser, round_float_with_ndigits, runtime_error_matches_exception,
+    value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
+    weakref_target_id, weakref_target_object, with_bytes_like_source,
+};
 use crate::runtime::value_lookup_hash;
 
 impl Vm {
@@ -236,16 +254,14 @@ impl Vm {
         if flush_requested
             && let Ok(flush) =
                 self.builtin_getattr(vec![file, Value::Str("flush".to_string())], HashMap::new())
-            {
-                match self.call_internal(flush, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(_) => {}
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(
-                            self.runtime_error_from_active_exception("print() flush failed")
-                        );
-                    }
+        {
+            match self.call_internal(flush, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("print() flush failed"));
                 }
             }
+        }
         Ok(Value::None)
     }
 
@@ -471,15 +487,16 @@ impl Vm {
             let mut parts = Vec::new();
             if let Some(raw) = try_getattr(self, Value::Instance(instance.clone()), "raw")?
                 && !matches!(raw, Value::None)
-                    && let Some(name_value) = try_getattr(self, raw, "name")? {
-                        if matches!(&name_value, Value::Instance(name_obj) if name_obj.id() == instance.id())
-                        {
-                            return Err(RuntimeError::new(
-                                "maximum recursion depth exceeded while getting the repr of an object",
-                            ));
-                        }
-                        parts.push(format!("name={}", repr_text(self, name_value)?));
-                    }
+                && let Some(name_value) = try_getattr(self, raw, "name")?
+            {
+                if matches!(&name_value, Value::Instance(name_obj) if name_obj.id() == instance.id())
+                {
+                    return Err(RuntimeError::new(
+                        "maximum recursion depth exceeded while getting the repr of an object",
+                    ));
+                }
+                parts.push(format!("name={}", repr_text(self, name_value)?));
+            }
             let suffix = if parts.is_empty() {
                 String::new()
             } else {
@@ -492,15 +509,16 @@ impl Vm {
             let mut parts = Vec::new();
             if let Some(raw) = try_getattr(self, Value::Instance(instance.clone()), "raw")?
                 && !matches!(raw, Value::None)
-                    && let Some(name_value) = try_getattr(self, raw, "name")? {
-                        if matches!(&name_value, Value::Instance(name_obj) if name_obj.id() == instance.id())
-                        {
-                            return Err(RuntimeError::new(
-                                "maximum recursion depth exceeded while getting the repr of an object",
-                            ));
-                        }
-                        parts.push(format!("name={}", repr_text(self, name_value)?));
-                    }
+                && let Some(name_value) = try_getattr(self, raw, "name")?
+            {
+                if matches!(&name_value, Value::Instance(name_obj) if name_obj.id() == instance.id())
+                {
+                    return Err(RuntimeError::new(
+                        "maximum recursion depth exceeded while getting the repr of an object",
+                    ));
+                }
+                parts.push(format!("name={}", repr_text(self, name_value)?));
+            }
             if let Some(mode_value) = try_getattr(self, Value::Instance(instance.clone()), "mode")?
             {
                 parts.push(format!("mode={}", repr_text(self, mode_value)?));
@@ -569,24 +587,27 @@ impl Vm {
         let mut map = frame.locals.clone();
         for (idx, slot) in frame.fast_locals.iter().enumerate() {
             if let Some(value) = slot
-                && let Some(name) = frame.code.names.get(idx) {
-                    map.insert(name.clone(), value.clone());
-                }
+                && let Some(name) = frame.code.names.get(idx)
+            {
+                map.insert(name.clone(), value.clone());
+            }
         }
         for (idx, name) in frame.code.cellvars.iter().enumerate() {
             if !map.contains_key(name)
                 && let Some(cell) = frame.cells.get(idx)
-                    && let Object::Cell(cell_data) = &*cell.kind() {
-                        map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
-                    }
+                && let Object::Cell(cell_data) = &*cell.kind()
+            {
+                map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
+            }
         }
         let cell_offset = frame.code.cellvars.len();
         for (idx, name) in frame.code.freevars.iter().enumerate() {
             if !map.contains_key(name)
                 && let Some(cell) = frame.cells.get(cell_offset + idx)
-                    && let Object::Cell(cell_data) = &*cell.kind() {
-                        map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
-                    }
+                && let Object::Cell(cell_data) = &*cell.kind()
+            {
+                map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
+            }
         }
         let mut entries = Vec::with_capacity(map.len());
         for (name, value) in map {
@@ -916,25 +937,26 @@ impl Vm {
         let mut globals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
         let mut globals_explicit = false;
         if let Some(value) = globals_arg
-            && value != Value::None {
-                globals_explicit = true;
-                match value {
-                    Value::Module(module) => {
-                        globals_module = module;
-                    }
-                    Value::Dict(dict) => {
-                        let module = self.alloc_exec_namespace_module(
-                            "<exec_globals>",
-                            self.exec_namespace_map_from_dict(&dict, "globals")?,
-                        );
-                        globals_dict_writeback = Some((dict, module.clone()));
-                        globals_module = module;
-                    }
-                    _ => {
-                        return Err(RuntimeError::new("exec() globals must be a dict or module"));
-                    }
+            && value != Value::None
+        {
+            globals_explicit = true;
+            match value {
+                Value::Module(module) => {
+                    globals_module = module;
+                }
+                Value::Dict(dict) => {
+                    let module = self.alloc_exec_namespace_module(
+                        "<exec_globals>",
+                        self.exec_namespace_map_from_dict(&dict, "globals")?,
+                    );
+                    globals_dict_writeback = Some((dict, module.clone()));
+                    globals_module = module;
+                }
+                _ => {
+                    return Err(RuntimeError::new("exec() globals must be a dict or module"));
                 }
             }
+        }
 
         let mut locals_module = globals_module.clone();
         let mut locals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
@@ -1107,25 +1129,26 @@ impl Vm {
         let mut globals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
         let mut globals_explicit = false;
         if let Some(value) = globals_arg
-            && value != Value::None {
-                globals_explicit = true;
-                match value {
-                    Value::Module(module) => {
-                        globals_module = module;
-                    }
-                    Value::Dict(dict) => {
-                        let module = self.alloc_exec_namespace_module(
-                            "<eval_globals>",
-                            self.exec_namespace_map_from_dict(&dict, "globals")?,
-                        );
-                        globals_dict_writeback = Some((dict, module.clone()));
-                        globals_module = module;
-                    }
-                    _ => {
-                        return Err(RuntimeError::new("eval() globals must be a dict or module"));
-                    }
+            && value != Value::None
+        {
+            globals_explicit = true;
+            match value {
+                Value::Module(module) => {
+                    globals_module = module;
+                }
+                Value::Dict(dict) => {
+                    let module = self.alloc_exec_namespace_module(
+                        "<eval_globals>",
+                        self.exec_namespace_map_from_dict(&dict, "globals")?,
+                    );
+                    globals_dict_writeback = Some((dict, module.clone()));
+                    globals_module = module;
+                }
+                _ => {
+                    return Err(RuntimeError::new("eval() globals must be a dict or module"));
                 }
             }
+        }
 
         let mut locals_module = globals_module.clone();
         let mut locals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
@@ -1238,40 +1261,47 @@ impl Vm {
                 return Ok(Value::Int(values.len() as i64));
             }
             if let Some(backing_list) = self.instance_backing_list(instance)
-                && let Object::List(values) = &*backing_list.kind() {
-                    return Ok(Value::Int(values.len() as i64));
-                }
+                && let Object::List(values) = &*backing_list.kind()
+            {
+                return Ok(Value::Int(values.len() as i64));
+            }
             if let Some(backing_tuple) = self.instance_backing_tuple(instance)
-                && let Object::Tuple(values) = &*backing_tuple.kind() {
-                    return Ok(Value::Int(values.len() as i64));
-                }
+                && let Object::Tuple(values) = &*backing_tuple.kind()
+            {
+                return Ok(Value::Int(values.len() as i64));
+            }
             if let Some(backing_str) = self.instance_backing_str(instance) {
                 return Ok(Value::Int(backing_str.chars().count() as i64));
             }
             if let Some(backing_dict) = self.instance_backing_dict(instance)
-                && let Object::Dict(values) = &*backing_dict.kind() {
-                    return Ok(Value::Int(values.len() as i64));
-                }
+                && let Object::Dict(values) = &*backing_dict.kind()
+            {
+                return Ok(Value::Int(values.len() as i64));
+            }
             if let Some(backing_set) = self.instance_backing_set(instance)
-                && let Object::Set(values) = &*backing_set.kind() {
-                    return Ok(Value::Int(values.len() as i64));
-                }
+                && let Object::Set(values) = &*backing_set.kind()
+            {
+                return Ok(Value::Int(values.len() as i64));
+            }
             if let Some(backing_frozenset) = self.instance_backing_frozenset(instance)
-                && let Object::FrozenSet(values) = &*backing_frozenset.kind() {
-                    return Ok(Value::Int(values.len() as i64));
-                }
+                && let Object::FrozenSet(values) = &*backing_frozenset.kind()
+            {
+                return Ok(Value::Int(values.len() as i64));
+            }
         }
         if let Value::DictKeys(keys_view) = &args[0]
             && let Object::DictKeysView(view) = &*keys_view.kind()
-                && let Object::Dict(values) = &*view.dict.kind() {
-                    return Ok(Value::Int(values.len() as i64));
-                }
+            && let Object::Dict(values) = &*view.dict.kind()
+        {
+            return Ok(Value::Int(values.len() as i64));
+        }
         if let Value::Iterator(iterator) = &args[0]
-            && let Some((start, stop, step)) = self.range_object_parts(iterator) {
-                return Ok(value_from_bigint(
-                    self.range_object_len_bigint(&start, &stop, &step),
-                ));
-            }
+            && let Some((start, stop, step)) = self.range_object_parts(iterator)
+        {
+            return Ok(value_from_bigint(
+                self.range_object_len_bigint(&start, &stop, &step),
+            ));
+        }
         let receiver = args
             .into_iter()
             .next()
@@ -1430,9 +1460,10 @@ impl Vm {
                 names.extend(frame.locals.keys().cloned());
                 for (idx, slot) in frame.fast_locals.iter().enumerate() {
                     if slot.is_some()
-                        && let Some(name) = frame.code.names.get(idx) {
-                            names.push(name.clone());
-                        }
+                        && let Some(name) = frame.code.names.get(idx)
+                    {
+                        names.push(name.clone());
+                    }
                 }
             }
         }
@@ -1489,9 +1520,10 @@ impl Vm {
             names.extend(frame.locals.keys().cloned());
             for (idx, slot) in frame.fast_locals.iter().enumerate() {
                 if slot.is_some()
-                    && let Some(name) = frame.code.names.get(idx) {
-                        names.insert(name.clone());
-                    }
+                    && let Some(name) = frame.code.names.get(idx)
+                {
+                    names.insert(name.clone());
+                }
             }
             names.extend(frame.code.cellvars.iter().cloned());
             names.extend(frame.code.freevars.iter().cloned());
@@ -2014,41 +2046,44 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if let Some(Value::Class(class)) = args.first()
-            && self.class_has_builtin_int_base(class) {
-                let mut class = class.clone();
+            && self.class_has_builtin_int_base(class)
+        {
+            let mut class = class.clone();
+            args.remove(0);
+            if let Some(Value::Class(explicit_class)) = args.first()
+                && self.class_has_builtin_int_base(explicit_class)
+            {
+                class = explicit_class.clone();
                 args.remove(0);
-                if let Some(Value::Class(explicit_class)) = args.first()
-                    && self.class_has_builtin_int_base(explicit_class) {
-                        class = explicit_class.clone();
-                        args.remove(0);
-                    }
-                let int_value = if matches!(
-                    args.first(),
-                    Some(Value::Class(candidate)) if self.class_has_builtin_int_base(candidate)
-                ) {
-                    if kwargs.is_empty() {
-                        BuiltinFunction::Int.call(&self.heap, args)?
-                    } else {
-                        call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)?
-                    }
-                } else {
-                    self.builtin_int(args, kwargs)?
-                };
-                let instance = self.alloc_instance_for_class(&class);
-                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                    instance_data
-                        .attrs
-                        .insert(INT_BACKING_STORAGE_ATTR.to_string(), int_value);
-                }
-                return Ok(Value::Instance(instance));
             }
+            let int_value = if matches!(
+                args.first(),
+                Some(Value::Class(candidate)) if self.class_has_builtin_int_base(candidate)
+            ) {
+                if kwargs.is_empty() {
+                    BuiltinFunction::Int.call(&self.heap, args)?
+                } else {
+                    call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)?
+                }
+            } else {
+                self.builtin_int(args, kwargs)?
+            };
+            let instance = self.alloc_instance_for_class(&class);
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(INT_BACKING_STORAGE_ATTR.to_string(), int_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
         if kwargs.is_empty() {
             if args.len() == 1 {
                 let arg = args[0].clone();
                 if let Value::Instance(instance) = &arg
-                    && let Some(backing) = self.instance_backing_int(instance) {
-                        return BuiltinFunction::Int.call(&self.heap, vec![backing]);
-                    }
+                    && let Some(backing) = self.instance_backing_int(instance)
+                {
+                    return BuiltinFunction::Int.call(&self.heap, vec![backing]);
+                }
                 match BuiltinFunction::Int.call(&self.heap, args) {
                     Ok(value) => return Ok(value),
                     Err(err) if err.message == "int() unsupported type" => {
@@ -2082,39 +2117,42 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if let Some(Value::Class(class)) = args.first()
-            && self.class_has_builtin_float_base(class) {
-                let mut class = class.clone();
+            && self.class_has_builtin_float_base(class)
+        {
+            let mut class = class.clone();
+            args.remove(0);
+            if let Some(Value::Class(explicit_class)) = args.first()
+                && self.class_has_builtin_float_base(explicit_class)
+            {
+                class = explicit_class.clone();
                 args.remove(0);
-                if let Some(Value::Class(explicit_class)) = args.first()
-                    && self.class_has_builtin_float_base(explicit_class) {
-                        class = explicit_class.clone();
-                        args.remove(0);
-                    }
-                let float_value = if matches!(
-                    args.first(),
-                    Some(Value::Class(candidate)) if self.class_has_builtin_float_base(candidate)
-                ) {
-                    if kwargs.is_empty() {
-                        BuiltinFunction::Float.call(&self.heap, args)?
-                    } else {
-                        call_builtin_with_kwargs(&self.heap, BuiltinFunction::Float, args, kwargs)?
-                    }
-                } else {
-                    self.builtin_float(args, kwargs)?
-                };
-                let instance = self.alloc_instance_for_class(&class);
-                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                    instance_data
-                        .attrs
-                        .insert(FLOAT_BACKING_STORAGE_ATTR.to_string(), float_value);
-                }
-                return Ok(Value::Instance(instance));
             }
+            let float_value = if matches!(
+                args.first(),
+                Some(Value::Class(candidate)) if self.class_has_builtin_float_base(candidate)
+            ) {
+                if kwargs.is_empty() {
+                    BuiltinFunction::Float.call(&self.heap, args)?
+                } else {
+                    call_builtin_with_kwargs(&self.heap, BuiltinFunction::Float, args, kwargs)?
+                }
+            } else {
+                self.builtin_float(args, kwargs)?
+            };
+            let instance = self.alloc_instance_for_class(&class);
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(FLOAT_BACKING_STORAGE_ATTR.to_string(), float_value);
+            }
+            return Ok(Value::Instance(instance));
+        }
         if kwargs.is_empty() && args.len() == 1 {
             if let Value::Instance(instance) = &args[0]
-                && let Some(backing) = self.instance_backing_float(instance) {
-                    return Ok(Value::Float(backing));
-                }
+                && let Some(backing) = self.instance_backing_float(instance)
+            {
+                return Ok(Value::Float(backing));
+            }
             if let Some(float_method) = self.lookup_bound_special_method(&args[0], "__float__")? {
                 return match self.call_internal(float_method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(Value::Float(value)) => Ok(Value::Float(value)),
@@ -2140,27 +2178,29 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if let Some(Value::Class(class)) = args.first()
-            && self.class_has_builtin_complex_base(class) {
-                let class = class.clone();
-                args.remove(0);
-                let complex_value = if kwargs.is_empty() {
-                    BuiltinFunction::Complex.call(&self.heap, args)?
-                } else {
-                    call_builtin_with_kwargs(&self.heap, BuiltinFunction::Complex, args, kwargs)?
-                };
-                let instance = self.alloc_instance_for_class(&class);
-                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                    instance_data
-                        .attrs
-                        .insert(COMPLEX_BACKING_STORAGE_ATTR.to_string(), complex_value);
-                }
-                return Ok(Value::Instance(instance));
+            && self.class_has_builtin_complex_base(class)
+        {
+            let class = class.clone();
+            args.remove(0);
+            let complex_value = if kwargs.is_empty() {
+                BuiltinFunction::Complex.call(&self.heap, args)?
+            } else {
+                call_builtin_with_kwargs(&self.heap, BuiltinFunction::Complex, args, kwargs)?
+            };
+            let instance = self.alloc_instance_for_class(&class);
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(COMPLEX_BACKING_STORAGE_ATTR.to_string(), complex_value);
             }
+            return Ok(Value::Instance(instance));
+        }
         if kwargs.is_empty() && args.len() == 1 {
             if let Value::Instance(instance) = &args[0]
-                && let Some((real, imag)) = self.instance_backing_complex(instance) {
-                    return Ok(Value::Complex { real, imag });
-                }
+                && let Some((real, imag)) = self.instance_backing_complex(instance)
+            {
+                return Ok(Value::Complex { real, imag });
+            }
             return BuiltinFunction::Complex.call(&self.heap, args);
         }
         if kwargs.is_empty() {
@@ -2226,9 +2266,10 @@ impl Vm {
         let object = object.unwrap_or_else(|| Value::Str(String::new()));
         if encoding.is_none() && errors.is_none() {
             if let Value::Instance(instance) = &object
-                && let Some(backing) = self.instance_backing_str(instance) {
-                    return Ok(Value::Str(backing));
-                }
+                && let Some(backing) = self.instance_backing_str(instance)
+            {
+                return Ok(Value::Str(backing));
+            }
             if !matches!(object, Value::Str(_)) {
                 let str_method = self.builtin_getattr(
                     vec![object.clone(), Value::Str("__str__".to_string())],
@@ -2907,9 +2948,10 @@ impl Vm {
                 Some(metaclass),
             )?;
             if let Value::Class(class_ref) = &class_value
-                && self.call_init_subclass_hook(class_ref, &kwargs)? {
-                    return Err(self.runtime_error_from_active_exception("type.__new__ failed"));
-                }
+                && self.call_init_subclass_hook(class_ref, &kwargs)?
+            {
+                return Err(self.runtime_error_from_active_exception("type.__new__ failed"));
+            }
             return Ok(class_value);
         }
         if args.len() == 3 {
@@ -3333,13 +3375,14 @@ impl Vm {
         );
         if let Some(namespace) = kwargs.remove("namespace")
             && let Value::Dict(dict) = namespace
-                && let Object::Dict(entries) = &*dict.kind() {
-                    for (key, value) in entries {
-                        if let Value::Str(name) = key {
-                            class.attrs.insert(name.clone(), value.clone());
-                        }
-                    }
+            && let Object::Dict(entries) = &*dict.kind()
+        {
+            for (key, value) in entries {
+                if let Value::Str(name) = key {
+                    class.attrs.insert(name.clone(), value.clone());
                 }
+            }
+        }
         if let Some(module_name) = kwargs.remove("module") {
             match module_name {
                 Value::Str(name) => {
@@ -4086,10 +4129,7 @@ impl Vm {
                         &dict_obj,
                         &Value::Instance(instance.clone()),
                     )? {
-                        self.dict_extend_from_iterable_pairs(
-                            &dict_obj,
-                            Value::Instance(instance),
-                        )?;
+                        self.dict_extend_from_iterable_pairs(&dict_obj, Value::Instance(instance))?;
                     }
                 }
                 other => {
@@ -4127,17 +4167,15 @@ impl Vm {
         let keys_value = match self.call_internal(keys_callable, Vec::new(), HashMap::new())? {
             InternalCallOutcome::Value(value) => value,
             InternalCallOutcome::CallerExceptionHandled => {
-                return Err(self.runtime_error_from_active_exception(
-                    "dict() mapping keys() call failed",
-                ));
+                return Err(
+                    self.runtime_error_from_active_exception("dict() mapping keys() call failed")
+                );
             }
         };
         let keys = self.collect_iterable_values(keys_value)?;
         for key in keys {
-            let value = self.builtin_operator_getitem(
-                vec![source.clone(), key.clone()],
-                HashMap::new(),
-            )?;
+            let value =
+                self.builtin_operator_getitem(vec![source.clone(), key.clone()], HashMap::new())?;
             dict_set_value_checked(dict_obj, key, value)?;
         }
         Ok(true)
@@ -5025,24 +5063,28 @@ impl Vm {
     ) -> Result<Option<Ordering>, RuntimeError> {
         if let Some(result) =
             self.call_compare_method_bool(left.clone(), "__lt__", right.clone())?
-            && result {
-                return Ok(Some(Ordering::Less));
-            }
+            && result
+        {
+            return Ok(Some(Ordering::Less));
+        }
         if let Some(result) =
             self.call_compare_method_bool(left.clone(), "__gt__", right.clone())?
-            && result {
-                return Ok(Some(Ordering::Greater));
-            }
+            && result
+        {
+            return Ok(Some(Ordering::Greater));
+        }
         if let Some(result) =
             self.call_compare_method_bool(right.clone(), "__gt__", left.clone())?
-            && result {
-                return Ok(Some(Ordering::Less));
-            }
+            && result
+        {
+            return Ok(Some(Ordering::Less));
+        }
         if let Some(result) =
             self.call_compare_method_bool(right.clone(), "__lt__", left.clone())?
-            && result {
-                return Ok(Some(Ordering::Greater));
-            }
+            && result
+        {
+            return Ok(Some(Ordering::Greater));
+        }
         Ok(None)
     }
 
@@ -5213,13 +5255,15 @@ impl Vm {
             {
                 if let Some(value) =
                     self.call_binary_special_method(&left, "__add__", right.clone())?
-                    && !self.is_not_implemented_singleton(&value) {
-                        return Ok(value);
-                    }
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
                 if let Some(value) = self.call_binary_special_method(&right, "__radd__", left)?
-                    && !self.is_not_implemented_singleton(&value) {
-                        return Ok(value);
-                    }
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
                 Err(err)
             }
             Err(err) => Err(err),
@@ -5261,15 +5305,15 @@ impl Vm {
         if matches!(left, Value::Instance(_) | Value::Class(_))
             && let Some(result) =
                 self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
-            {
-                return Ok(Value::Bool(result));
-            }
+        {
+            return Ok(Value::Bool(result));
+        }
         if matches!(right, Value::Instance(_) | Value::Class(_))
             && let Some(result) =
                 self.call_compare_method_bool(right.clone(), "__eq__", left.clone())?
-            {
-                return Ok(Value::Bool(result));
-            }
+        {
+            return Ok(Value::Bool(result));
+        }
         Ok(Value::Bool(left == right))
     }
 
@@ -5305,15 +5349,15 @@ impl Vm {
         if matches!(left, Value::Instance(_) | Value::Class(_))
             && let Some(result) =
                 self.call_compare_method_bool(left.clone(), "__ne__", right.clone())?
-            {
-                return Ok(Value::Bool(result));
-            }
+        {
+            return Ok(Value::Bool(result));
+        }
         if matches!(right, Value::Instance(_) | Value::Class(_))
             && let Some(result) =
                 self.call_compare_method_bool(right.clone(), "__ne__", left.clone())?
-            {
-                return Ok(Value::Bool(result));
-            }
+        {
+            return Ok(Value::Bool(result));
+        }
         let eq = match self.compare_eq_runtime(left, right)? {
             Value::Bool(value) => value,
             _ => false,
@@ -5830,11 +5874,8 @@ impl Vm {
                             Value::Instance(instance) => match &*instance.kind() {
                                 Object::Instance(instance_data) => {
                                     class_attr_lookup(&instance_data.class, "__len__").is_some()
-                                        && class_attr_lookup(
-                                            &instance_data.class,
-                                            "__getitem__",
-                                        )
-                                        .is_some()
+                                        && class_attr_lookup(&instance_data.class, "__getitem__")
+                                            .is_some()
                                 }
                                 _ => false,
                             },
@@ -5865,7 +5906,7 @@ impl Vm {
                     }
                     _ => Ok(false),
                 }
-            },
+            }
             Value::Builtin(builtin) => Ok(self.matches_builtin_type_marker(value, *builtin)),
             Value::ExceptionType(name) => match value {
                 Value::Exception(exception) => {
@@ -6220,26 +6261,27 @@ impl Vm {
 
         if args.len() == 1
             && let Value::Module(wrapper) = &args[0]
-                && let Object::Module(module_data) = &*wrapper.kind()
-                    && matches!(
-                        module_data.globals.get("__pyrs_weakref_ref__"),
-                        Some(Value::Bool(true))
-                    ) {
-                        let target_id = match module_data.globals.get("target_id") {
-                            Some(Value::Int(value)) if *value >= 0 => *value as u64,
-                            _ => return Ok(Value::None),
-                        };
-                        // CPython clears weakrefs when object finalization begins.
-                        // Keep weakrefs dead even if the object is still temporarily reachable
-                        // during __del__ side-effects (e.g. warnings source payloads).
-                        if self.finalized_del_objects.contains(&target_id) {
-                            return Ok(Value::None);
-                        }
-                        let Some(obj) = self.heap.find_object_by_id(target_id) else {
-                            return Ok(Value::None);
-                        };
-                        return Ok(value_from_object_ref(obj).unwrap_or(Value::None));
-                    }
+            && let Object::Module(module_data) = &*wrapper.kind()
+            && matches!(
+                module_data.globals.get("__pyrs_weakref_ref__"),
+                Some(Value::Bool(true))
+            )
+        {
+            let target_id = match module_data.globals.get("target_id") {
+                Some(Value::Int(value)) if *value >= 0 => *value as u64,
+                _ => return Ok(Value::None),
+            };
+            // CPython clears weakrefs when object finalization begins.
+            // Keep weakrefs dead even if the object is still temporarily reachable
+            // during __del__ side-effects (e.g. warnings source payloads).
+            if self.finalized_del_objects.contains(&target_id) {
+                return Ok(Value::None);
+            }
+            let Some(obj) = self.heap.find_object_by_id(target_id) else {
+                return Ok(Value::None);
+            };
+            return Ok(value_from_object_ref(obj).unwrap_or(Value::None));
+        }
 
         let target = args.remove(0);
         let Some(target_id) = weakref_target_id(&target) else {
@@ -6893,12 +6935,13 @@ impl Vm {
                     .iter()
                     .rposition(|frame| frame.is_module && frame.module.id() == module_id);
                 if let Object::Module(module_data) = &mut *module.kind_mut()
-                    && module_data.globals.remove(&name).is_none() {
-                        return Err(RuntimeError::new(format!(
-                            "module attribute '{}' does not exist",
-                            name
-                        )));
-                    }
+                    && module_data.globals.remove(&name).is_none()
+                {
+                    return Err(RuntimeError::new(format!(
+                        "module attribute '{}' does not exist",
+                        name
+                    )));
+                }
                 if let Some(frame_index) = active_frame_index {
                     let dict = self.ensure_frame_module_locals_dict(frame_index);
                     let _ = dict_remove_value(&dict, &Value::Str(name.clone()));
@@ -6906,12 +6949,13 @@ impl Vm {
             }
             Value::Class(class) => {
                 if let Object::Class(class_data) = &mut *class.kind_mut()
-                    && class_data.attrs.remove(&name).is_none() {
-                        return Err(RuntimeError::new(format!(
-                            "class attribute '{}' does not exist",
-                            name
-                        )));
-                    }
+                    && class_data.attrs.remove(&name).is_none()
+                {
+                    return Err(RuntimeError::new(format!(
+                        "class attribute '{}' does not exist",
+                        name
+                    )));
+                }
             }
             Value::Instance(instance) => match self.delete_attr_instance(&instance, &name)? {
                 AttrMutationOutcome::Done => {}

@@ -49,6 +49,7 @@ Do not treat point-in-time numbers in docs as authoritative.
 4. String interning + allocation strategy closure (`OPT-022`, `OPT-026`)
 5. Startup and end-to-end import overhead closure (`OPT-016`)
 6. Builtin hot-path optimization under parity gate (`OPT-029`, policy in `docs/BUILTIN_OPTIMIZATION_POLICY.md`)
+7. Automatic GC trigger strategy closure (`OPT-030`) with parity-safe defaults
 
 ## Exit Criteria (Optimization Milestone)
 1. P0 optimization items in `docs/OPTIMIZATION_BACKLOG.md` are closed or explicitly downgraded with rationale.

@@ -5,7 +5,7 @@
 This is the permanent, canonical optimization checklist for `pyrs`.
 Every optimization item must be tracked here with explicit status.
 
-Last updated: 2026-02-13
+Last updated: 2026-02-14
 
 ## Status Legend
 
@@ -76,6 +76,7 @@ Do not rely on stale point-in-time numbers in this document.
 | `OPT-027` | P0 | value model | Shrink `Value` payload by boxing heavyweight inline variants used in hot VM transport paths | `ceval.c` value-pointer transport model | `[~]` |
 | `OPT-028` | P0 | dispatch correctness | Restore release-path list comprehension/iterator correctness (`FOR_ITER` and list-comp call lanes) so `fib(29)x5` gate is runnable and trustworthy | `ceval.c`, `generated_cases.c.h` | `[x]` |
 | `OPT-029` | P0 | builtins/calls | Heat-classed builtin call optimization closure (HOT/WARM/COLD policy) with parity-gated fast paths for HOT builtins | `bltinmodule.c`, `call.c`, `ceval.c` | `[~]` |
+| `OPT-030` | P1 | gc | Threshold-based automatic cycle collection policy with explicit controls (`gc.set_threshold/get_threshold/get_count`) and parity-safe trigger strategy | `gcmodule.c` | `[~]` |
 
 ## Rules For This Backlog
 
@@ -91,3 +92,8 @@ Do not rely on stale point-in-time numbers in this document.
 - String interning and allocation strategy closure remain active (`OPT-022`, `OPT-026`).
 - Benchmarks run in CI as telemetry; regressions must be investigated before item closure.
 - Builtin parity gate is a mandatory safety rail for builtin call-path optimization work.
+- 2026-02-14 wave:
+  - landed `LOAD_ATTR` cache coverage for plain instance/class values (in addition to function/descriptor variants).
+  - landed `CALL_FUNCTION` site quickening metadata for zero-arg and two-arg direct function lanes.
+  - landed `gc` control surface (`enable/disable/isenabled/get_threshold/set_threshold/get_count`); automatic cycle GC is enabled after explicit threshold configuration and guarded to avoid semantic regressions.
+  - reduced clone churn in iterator conversion and dict update native paths (`vm_native_dispatch`), including alias-safe `dict.update(self)` handling.

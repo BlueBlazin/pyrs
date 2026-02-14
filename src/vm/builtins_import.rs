@@ -1,4 +1,10 @@
-use super::{Vm, Value, HashMap, RuntimeError, value_to_int, split_relative_import_name, ObjRef, Object, PathBuf, value_to_path, fs, class_attr_lookup, NAMESPACE_LOADER, SOURCELESS_FILE_LOADER, SOURCE_FILE_LOADER, cache_path_from_source_path, is_truthy, BUILTIN_MODULE_LOADER, bytes_like_from_value, opcode_flags_contains, OpcodeMetadata, OPCODE_METADATA, source_path_from_cache_path};
+use super::{
+    BUILTIN_MODULE_LOADER, HashMap, NAMESPACE_LOADER, OPCODE_METADATA, ObjRef, Object,
+    OpcodeMetadata, PathBuf, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, Value, Vm,
+    bytes_like_from_value, cache_path_from_source_path, class_attr_lookup, fs, is_truthy,
+    opcode_flags_contains, source_path_from_cache_path, split_relative_import_name, value_to_int,
+    value_to_path,
+};
 
 impl Vm {
     pub(super) fn builtin_import(
@@ -412,10 +418,8 @@ impl Vm {
         }
         let mut value = Value::Module(module);
         for part in qualname.split('.') {
-            value = self.builtin_getattr(
-                vec![value, Value::Str(part.to_string())],
-                HashMap::new(),
-            )?;
+            value =
+                self.builtin_getattr(vec![value, Value::Str(part.to_string())], HashMap::new())?;
         }
         Ok(value)
     }
@@ -551,9 +555,10 @@ impl Vm {
 
         if let Some(existing) = self.modules.get(&resolved_name).cloned()
             && let Object::Module(module_data) = &*existing.kind()
-                && let Some(spec) = module_data.globals.get("__spec__").cloned() {
-                    return Ok(spec);
-                }
+            && let Some(spec) = module_data.globals.get("__spec__").cloned()
+        {
+            return Ok(spec);
+        }
 
         let Some(source_info) = self.find_module_source(&resolved_name) else {
             return Ok(Value::None);
@@ -597,9 +602,10 @@ impl Vm {
             return Ok(Value::None);
         };
         if let Some(Value::Dict(cache)) = module_data.globals.get("path_importer_cache").cloned()
-            && let Object::Dict(entries) = &mut *cache.kind_mut() {
-                entries.clear();
-            }
+            && let Object::Dict(entries) = &mut *cache.kind_mut()
+        {
+            entries.clear();
+        }
         Ok(Value::None)
     }
 

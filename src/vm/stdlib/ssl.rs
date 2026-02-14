@@ -1,4 +1,6 @@
-use super::super::{Vm, ObjRef, Object, Value, HashMap, RuntimeError, is_truthy, bytes_like_from_value};
+use super::super::{
+    HashMap, ObjRef, Object, RuntimeError, Value, Vm, bytes_like_from_value, is_truthy,
+};
 
 const SSL_NID_SERVER_AUTH: i64 = 129;
 const SSL_NID_CLIENT_AUTH: i64 = 130;
@@ -301,9 +303,7 @@ impl Vm {
                 }
             }
             Some(_) => {
-                return Err(RuntimeError::new(
-                    "TypeError: protocol must be int",
-                ));
+                return Err(RuntimeError::new("TypeError: protocol must be int"));
             }
             None => 2,
         };
@@ -365,13 +365,7 @@ impl Vm {
             _ => return Err(RuntimeError::new("ssl.SSLContext is not available")),
         };
         let instance = self.alloc_instance_for_class(&class);
-        self.ssl_init_context_attrs(
-            &instance,
-            16,
-            2,
-            true,
-            0x80000 | 32,
-        );
+        self.ssl_init_context_attrs(&instance, 16, 2, true, 0x80000 | 32);
         Ok(Value::Instance(instance))
     }
 
@@ -380,8 +374,13 @@ impl Vm {
             ("OPENSSL_VERSION_NUMBER", Value::Int(0x3000_0000)),
             (
                 "OPENSSL_VERSION_INFO",
-                self.heap
-                    .alloc_tuple(vec![Value::Int(3), Value::Int(0), Value::Int(0), Value::Int(0), Value::Int(0)]),
+                self.heap.alloc_tuple(vec![
+                    Value::Int(3),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                ]),
             ),
             (
                 "OPENSSL_VERSION",
@@ -389,10 +388,18 @@ impl Vm {
             ),
             (
                 "_OPENSSL_API_VERSION",
-                self.heap
-                    .alloc_tuple(vec![Value::Int(3), Value::Int(0), Value::Int(0), Value::Int(0), Value::Int(0)]),
+                self.heap.alloc_tuple(vec![
+                    Value::Int(3),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                ]),
             ),
-            ("_DEFAULT_CIPHERS", Value::Str("DEFAULT:@SECLEVEL=2".to_string())),
+            (
+                "_DEFAULT_CIPHERS",
+                Value::Str("DEFAULT:@SECLEVEL=2".to_string()),
+            ),
             ("HAS_SNI", Value::Bool(false)),
             ("HAS_ECDH", Value::Bool(false)),
             ("HAS_NPN", Value::Bool(false)),

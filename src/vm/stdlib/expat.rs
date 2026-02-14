@@ -1,4 +1,7 @@
-use super::super::{RuntimeError, Vm, ObjRef, Object, Value, ExceptionObject, HashMap, InternalCallOutcome, is_truthy, InstanceObject};
+use super::super::{
+    ExceptionObject, HashMap, InstanceObject, InternalCallOutcome, ObjRef, Object, RuntimeError,
+    Value, Vm, is_truthy,
+};
 
 #[derive(Clone)]
 pub(in crate::vm) struct ExpatParserState {
@@ -161,11 +164,7 @@ impl Vm {
         self.pyexpat_call_handler(parser, "EndElementHandler", vec![Value::Str(tag)])
     }
 
-    fn pyexpat_emit_comment(
-        &mut self,
-        parser: &ObjRef,
-        text: String,
-    ) -> Result<(), RuntimeError> {
+    fn pyexpat_emit_comment(&mut self, parser: &ObjRef, text: String) -> Result<(), RuntimeError> {
         self.pyexpat_call_handler(parser, "CommentHandler", vec![Value::Str(text)])
     }
 
@@ -182,11 +181,7 @@ impl Vm {
         )
     }
 
-    fn pyexpat_emit_default(
-        &mut self,
-        parser: &ObjRef,
-        text: String,
-    ) -> Result<(), RuntimeError> {
+    fn pyexpat_emit_default(&mut self, parser: &ObjRef, text: String) -> Result<(), RuntimeError> {
         self.pyexpat_call_handler(parser, "DefaultHandlerExpand", vec![Value::Str(text)])
     }
 
@@ -318,7 +313,9 @@ impl Vm {
                     )));
                 };
                 let end = index + 4 + end_rel;
-                if let Err(err) = self.pyexpat_emit_comment(parser, text[index + 4..end].to_string()) {
+                if let Err(err) =
+                    self.pyexpat_emit_comment(parser, text[index + 4..end].to_string())
+                {
                     return Err(ExpatParseFailure::Callback(err));
                 }
                 index = end + 3;
@@ -608,7 +605,11 @@ impl Vm {
                     .map_err(|_| RuntimeError::new("UnicodeDecodeError: invalid UTF-8"))?,
                 _ => return Err(RuntimeError::new("TypeError: invalid bytearray value")),
             },
-            _ => return Err(RuntimeError::new("TypeError: Parse() data must be str or bytes")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: Parse() data must be str or bytes",
+                ));
+            }
         };
 
         {
@@ -647,7 +648,8 @@ impl Vm {
                 "TypeError: GetReparseDeferralEnabled() expects no arguments",
             ));
         }
-        let parser = self.take_bound_instance_arg(&mut args, "pyexpat.GetReparseDeferralEnabled")?;
+        let parser =
+            self.take_bound_instance_arg(&mut args, "pyexpat.GetReparseDeferralEnabled")?;
         let state = self.pyexpat_parser_state_mut(&parser)?;
         Ok(Value::Bool(state.reparse_deferral_enabled))
     }
@@ -662,7 +664,8 @@ impl Vm {
                 "TypeError: SetReparseDeferralEnabled() expects one argument",
             ));
         }
-        let parser = self.take_bound_instance_arg(&mut args, "pyexpat.SetReparseDeferralEnabled")?;
+        let parser =
+            self.take_bound_instance_arg(&mut args, "pyexpat.SetReparseDeferralEnabled")?;
         let enabled = is_truthy(&args.remove(0));
         let state = self.pyexpat_parser_state_mut(&parser)?;
         state.reparse_deferral_enabled = enabled;

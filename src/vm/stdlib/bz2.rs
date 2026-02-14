@@ -1,4 +1,4 @@
-use super::super::{Vm, RuntimeError, Value, ObjRef, Object, HashMap, bytes_like_from_value};
+use super::super::{HashMap, ObjRef, Object, RuntimeError, Value, Vm, bytes_like_from_value};
 use std::os::raw::{c_char, c_int, c_uint};
 
 const BZ_OK: c_int = 0;
@@ -149,9 +149,10 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("needs_input".to_string(), Value::Bool(state.needs_input));
-            instance_data
-                .attrs
-                .insert("unused_data".to_string(), self.heap.alloc_bytes(state.unused_data));
+            instance_data.attrs.insert(
+                "unused_data".to_string(),
+                self.heap.alloc_bytes(state.unused_data),
+            );
         }
     }
 
@@ -228,7 +229,9 @@ impl Vm {
             return Err(RuntimeError::new("TypeError: invalid BZ2Compressor object"));
         };
         if state.finished {
-            return Err(RuntimeError::new("ValueError: compressor object already flushed"));
+            return Err(RuntimeError::new(
+                "ValueError: compressor object already flushed",
+            ));
         }
         state.buffer.extend_from_slice(&payload);
         Ok(self.heap.alloc_bytes(Vec::new()))
@@ -288,7 +291,11 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid BZ2Decompressor object")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: invalid BZ2Decompressor object",
+                ));
+            }
         };
         self.bz2_decompressors.insert(
             receiver.id(),
@@ -314,7 +321,11 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid BZ2Decompressor object")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "TypeError: invalid BZ2Decompressor object",
+                ));
+            }
         };
         let payload = bytes_like_from_value(args.remove(0))
             .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;

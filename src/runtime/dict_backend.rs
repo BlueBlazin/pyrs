@@ -294,9 +294,10 @@ impl DictBackend {
     fn remove_slot_for_entry(&mut self, expected_entry: usize, slot_index: usize) {
         if let Some(slot) = self.slots.get_mut(slot_index)
             && let DictSlot::Occupied { entry, .. } = slot
-                && *entry == expected_entry {
-                    *slot = DictSlot::Dummy;
-                }
+            && *entry == expected_entry
+        {
+            *slot = DictSlot::Dummy;
+        }
     }
 
     fn adjust_slot_indices_after_remove(&mut self, removed_index: usize) {
@@ -305,9 +306,10 @@ impl DictBackend {
                 continue;
             }
             if let Some(DictSlot::Occupied { entry, .. }) = self.slots.get_mut(*slot_index)
-                && *entry > removed_index {
-                    *entry -= 1;
-                }
+                && *entry > removed_index
+            {
+                *entry -= 1;
+            }
         }
     }
 }

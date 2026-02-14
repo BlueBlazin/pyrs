@@ -199,14 +199,16 @@ impl<'a> Translator<'a> {
 
         let flags = self.code.flags as u32;
         if flags & 0x0004 != 0
-            && let Some(name) = self.code.localsplusnames.get(idx) {
-                result.vararg = Some(name.clone());
-                idx += 1;
-            }
+            && let Some(name) = self.code.localsplusnames.get(idx)
+        {
+            result.vararg = Some(name.clone());
+            idx += 1;
+        }
         if flags & 0x0008 != 0
-            && let Some(name) = self.code.localsplusnames.get(idx) {
-                result.kwarg = Some(name.clone());
-            }
+            && let Some(name) = self.code.localsplusnames.get(idx)
+        {
+            result.kwarg = Some(name.clone());
+        }
         Ok(())
     }
 
@@ -284,8 +286,8 @@ impl<'a> Translator<'a> {
                 | "LOAD_GLOBAL_ADAPTIVE"
                 | "LOAD_GLOBAL_BUILTIN"
                 | "LOAD_GLOBAL_MODULE" => {
-                    let name_idx = arg >> 1 ;
-                    let push_null = arg & 1 ;
+                    let name_idx = arg >> 1;
+                    let push_null = arg & 1;
                     let mapped = self.map_name(name_idx)?;
                     let encoded = (mapped << 1) | push_null;
                     Instruction::new(Opcode::LoadGlobal, Some(encoded))
@@ -325,8 +327,8 @@ impl<'a> Translator<'a> {
                 },
                 "STORE_GLOBAL" => Instruction::new(Opcode::StoreGlobal, Some(self.map_name(arg)?)),
                 name if name.starts_with("LOAD_ATTR") => {
-                    let name_idx = arg >> 1 ;
-                    let push_null = arg & 1 ;
+                    let name_idx = arg >> 1;
+                    let push_null = arg & 1;
                     let mapped = self.map_name(name_idx)?;
                     let encoded = (mapped << 1) | push_null;
                     Instruction::new(Opcode::LoadAttr, Some(encoded))
@@ -813,12 +815,13 @@ fn validate_cpython_control_flow(instructions: &[CpInstr]) -> Result<(), Cpython
             _ => None,
         };
         if let Some(target) = target
-            && target > len {
-                return Err(CpythonError::new(format!(
-                    "jump target {} out of range at instruction {}",
-                    target, idx
-                )));
-            }
+            && target > len
+        {
+            return Err(CpythonError::new(format!(
+                "jump target {} out of range at instruction {}",
+                target, idx
+            )));
+        }
     }
     Ok(())
 }
@@ -1245,7 +1248,7 @@ impl<'a> MarshalReader<'a> {
     fn read_object(&mut self, allow_code: bool) -> Result<PyObject, CpythonError> {
         let code = self.read_u8()?;
         let flag = (code & 0x80) != 0;
-        let obj_type = code & 0x7f ;
+        let obj_type = code & 0x7f;
         let ref_index = if flag { Some(self.reserve_ref()) } else { None };
 
         let value = match obj_type as char {

@@ -90,10 +90,11 @@ fn fuzz_parser_compiler_vm_no_panics() {
         }
         let result = std::panic::catch_unwind(|| {
             if let Ok(module) = parser::parse_module(&source)
-                && let Ok(code) = compiler::compile_module(&module) {
-                    let mut vm = Vm::new();
-                    let _ = vm.execute(&code);
-                }
+                && let Ok(code) = compiler::compile_module(&module)
+            {
+                let mut vm = Vm::new();
+                let _ = vm.execute(&code);
+            }
         });
         assert!(
             result.is_ok(),

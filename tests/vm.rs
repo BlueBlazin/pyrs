@@ -2431,7 +2431,10 @@ ba_range = bytearray(range(5))
     assert_eq!(bytes_values(vm.get_global("b")), Some(vec![65, 66, 67]));
     assert_eq!(bytes_values(vm.get_global("ba")), Some(vec![68, 69, 70]));
     assert_eq!(bytes_values(vm.get_global("named")), Some(vec![97, 98]));
-    assert_eq!(bytes_values(vm.get_global("b_range")), Some(vec![0, 1, 2, 3, 4]));
+    assert_eq!(
+        bytes_values(vm.get_global("b_range")),
+        Some(vec![0, 1, 2, 3, 4])
+    );
     assert_eq!(
         bytes_values(vm.get_global("ba_range")),
         Some(vec![0, 1, 2, 3, 4])
@@ -5834,9 +5837,10 @@ fn executes_module_attribute_access() {
     let mut vm = Vm::new();
     let module_value = vm.alloc_module("mod");
     if let Value::Module(obj) = &module_value
-        && let pyrs::runtime::Object::Module(module_data) = &mut *obj.kind_mut() {
-            module_data.globals.insert("x".to_string(), Value::Int(42));
-        }
+        && let pyrs::runtime::Object::Module(module_data) = &mut *obj.kind_mut()
+    {
+        module_data.globals.insert("x".to_string(), Value::Int(42));
+    }
     vm.set_global("mod", module_value);
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
@@ -8263,6 +8267,26 @@ fn executes_custom_metaclass_fallback() {
 #[test]
 fn imports_gc_errno_weakref_and_array_modules() {
     let source = "import gc\nimport errno\nimport weakref\nimport _weakref\nimport array\nvals = array.array('B', b'AB')\nref_value = weakref.ref(1)\nout = []\nfor x in vals:\n    out.append(x)\nok = gc.isenabled() and errno.ENOENT == 2 and len(vals) == 2 and vals.itemsize == 1 and out == [65, 66] and ref_value == 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn gc_module_exposes_threshold_and_state_controls() {
+    let source = "import gc\nbefore = gc.get_threshold()\ngc.set_threshold(17, 3, 2)\nafter = gc.get_threshold()\ngc.disable()\ndisabled = gc.isenabled() is False\ngc.enable()\nenabled = gc.isenabled() is True\ncounts = gc.get_count()\ncollected = gc.collect()\nok = before == (700, 10, 10) and after == (17, 3, 2) and disabled and enabled and len(counts) == 3 and isinstance(collected, int)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn gc_automatic_threshold_collect_resets_count0() {
+    let source = "import gc\ngc.set_threshold(1, 1, 1)\nfor i in range(64):\n    x = [i]\ncount0 = gc.get_count()[0]\nok = count0 <= 1\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

@@ -1,4 +1,8 @@
-use super::super::{Vm, Value, RuntimeError, Object, HashMap, InternalCallOutcome, format_repr, value_to_int, is_truthy, BigInt, classify_runtime_error, vm_current_thread_ident, ObjRef, bytes_like_from_value, BuiltinFunction, dict_get_value, dict_set_value_checked, value_to_f64, slice_indices};
+use super::super::{
+    BigInt, BuiltinFunction, HashMap, InternalCallOutcome, ObjRef, Object, RuntimeError, Value, Vm,
+    bytes_like_from_value, classify_runtime_error, dict_get_value, dict_set_value_checked,
+    format_repr, is_truthy, slice_indices, value_to_f64, value_to_int, vm_current_thread_ident,
+};
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uchar, c_uint, c_void};
@@ -1949,9 +1953,10 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                     ))
                 } else {
                     if let Value::Instance(instance) = &candidate
-                        && self.instance_backing_dict(instance).is_some() {
-                            return Ok(SqliteParams::Named(candidate));
-                        }
+                        && self.instance_backing_dict(instance).is_some()
+                    {
+                        return Ok(SqliteParams::Named(candidate));
+                    }
                     let has_keys = matches!(
                         self.builtin_hasattr(
                             vec![candidate.clone(), Value::Str("keys".to_string())],
@@ -2373,9 +2378,7 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                                     ));
                                 }
                             }
-                            Err(err) if classify_runtime_error(&err.message) == "KeyError" => {
-                                None
-                            }
+                            Err(err) if classify_runtime_error(&err.message) == "KeyError" => None,
                             Err(err) => return Err(err),
                         }
                     } else if let Value::Instance(instance) = &mapping {
@@ -2398,15 +2401,13 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                                             self.clear_active_exception();
                                             None
                                         } else {
-                                            return Err(self
-                                                .runtime_error_from_active_exception(
-                                                    "__missing__() failed",
-                                                ));
+                                            return Err(self.runtime_error_from_active_exception(
+                                                "__missing__() failed",
+                                            ));
                                         }
                                     }
                                     Err(err)
-                                        if classify_runtime_error(&err.message)
-                                            == "KeyError" =>
+                                        if classify_runtime_error(&err.message) == "KeyError" =>
                                     {
                                         None
                                     }
@@ -4920,11 +4921,12 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                 let payload = match replacement {
                     Value::MemoryView(obj) => {
                         if let Object::MemoryView(view) = &*obj.kind()
-                            && !view.contiguous {
-                                return Err(RuntimeError::new(
-                                    "BufferError: underlying buffer is not C-contiguous",
-                                ));
-                            }
+                            && !view.contiguous
+                        {
+                            return Err(RuntimeError::new(
+                                "BufferError: underlying buffer is not C-contiguous",
+                            ));
+                        }
                         bytes_like_from_value(Value::MemoryView(obj)).map_err(|_| {
                             sqlite_error("TypeError", "a bytes-like object is required")
                         })?
@@ -5352,9 +5354,10 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "setinputsizes")?;
         let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
         if let Some(state) = self.sqlite_cursors.get(&cursor_id)
-            && state.closed {
-                return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
-            }
+            && state.closed
+        {
+            return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
+        }
         Ok(Value::None)
     }
 
@@ -5372,9 +5375,10 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "setoutputsize")?;
         let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
         if let Some(state) = self.sqlite_cursors.get(&cursor_id)
-            && state.closed {
-                return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
-            }
+            && state.closed
+        {
+            return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
+        }
         Ok(Value::None)
     }
 

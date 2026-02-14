@@ -1,4 +1,4 @@
-use super::super::{Vm, RuntimeError, Value, HashMap, bytes_like_from_value, ObjRef, Object};
+use super::super::{HashMap, ObjRef, Object, RuntimeError, Value, Vm, bytes_like_from_value};
 use std::ffi::CStr;
 use std::mem;
 use std::os::raw::{c_char, c_int, c_uint, c_ulong, c_void};
@@ -88,7 +88,11 @@ impl Vm {
         RuntimeError::new(format!("zlib.error: {action} failed with code {code}"))
     }
 
-    fn zlib_parse_optional_int(value: Option<Value>, default: i64, name: &str) -> Result<i64, RuntimeError> {
+    fn zlib_parse_optional_int(
+        value: Option<Value>,
+        default: i64,
+        name: &str,
+    ) -> Result<i64, RuntimeError> {
         match value {
             None => Ok(default),
             Some(Value::Int(v)) => Ok(v),
@@ -105,7 +109,9 @@ impl Vm {
         kwargs: &mut HashMap<String, Value>,
     ) -> Result<(Vec<u8>, c_int, c_int), RuntimeError> {
         if args.is_empty() {
-            return Err(RuntimeError::new("TypeError: compress() missing required argument 'data'"));
+            return Err(RuntimeError::new(
+                "TypeError: compress() missing required argument 'data'",
+            ));
         }
         if args.len() > 3 {
             return Err(RuntimeError::new(format!(
@@ -131,8 +137,10 @@ impl Vm {
             )));
         }
 
-        let level = Self::zlib_parse_optional_int(level_arg, Z_DEFAULT_COMPRESSION as i64, "level")?;
-        let wbits = Self::zlib_parse_optional_int(wbits_arg, Z_DEFAULT_WINDOW_BITS as i64, "wbits")?;
+        let level =
+            Self::zlib_parse_optional_int(level_arg, Z_DEFAULT_COMPRESSION as i64, "level")?;
+        let wbits =
+            Self::zlib_parse_optional_int(wbits_arg, Z_DEFAULT_WINDOW_BITS as i64, "wbits")?;
         let payload = bytes_like_from_value(data_arg)
             .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
         Ok((payload, level as c_int, wbits as c_int))
@@ -343,9 +351,10 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("eof".to_string(), Value::Bool(state.eof));
-            instance_data
-                .attrs
-                .insert("unused_data".to_string(), self.heap.alloc_bytes(state.unused_data));
+            instance_data.attrs.insert(
+                "unused_data".to_string(),
+                self.heap.alloc_bytes(state.unused_data),
+            );
             instance_data.attrs.insert(
                 "unconsumed_tail".to_string(),
                 self.heap.alloc_bytes(state.unconsumed_tail),
@@ -507,14 +516,16 @@ impl Vm {
             )));
         }
 
-        let level = Self::zlib_parse_optional_int(level, Z_DEFAULT_COMPRESSION as i64, "level")?
-            as c_int;
+        let level =
+            Self::zlib_parse_optional_int(level, Z_DEFAULT_COMPRESSION as i64, "level")? as c_int;
         let method = Self::zlib_parse_optional_int(method, Z_DEFLATED as i64, "method")? as c_int;
         if method != Z_DEFLATED {
-            return Err(RuntimeError::new("zlib.error: only DEFLATED method is supported"));
+            return Err(RuntimeError::new(
+                "zlib.error: only DEFLATED method is supported",
+            ));
         }
-        let wbits = Self::zlib_parse_optional_int(wbits, Z_DEFAULT_WINDOW_BITS as i64, "wbits")?
-            as c_int;
+        let wbits =
+            Self::zlib_parse_optional_int(wbits, Z_DEFAULT_WINDOW_BITS as i64, "wbits")? as c_int;
         let mem_level =
             Self::zlib_parse_optional_int(mem_level, Z_DEFAULT_MEM_LEVEL as i64, "memLevel")?
                 as c_int;
@@ -523,11 +534,12 @@ impl Vm {
                 as c_int;
 
         if let Some(zdict_value) = zdict
-            && !matches!(zdict_value, Value::None) {
-                return Err(RuntimeError::new(
-                    "NotImplementedError: compressobj(zdict=...) is not implemented",
-                ));
-            }
+            && !matches!(zdict_value, Value::None)
+        {
+            return Err(RuntimeError::new(
+                "NotImplementedError: compressobj(zdict=...) is not implemented",
+            ));
+        }
 
         let class = self.zlib_compress_class()?;
         let instance = self.alloc_instance_for_class(&class);
@@ -574,14 +586,15 @@ impl Vm {
             )));
         }
         if let Some(zdict_value) = zdict
-            && !matches!(zdict_value, Value::None) {
-                return Err(RuntimeError::new(
-                    "NotImplementedError: decompressobj(zdict=...) is not implemented",
-                ));
-            }
+            && !matches!(zdict_value, Value::None)
+        {
+            return Err(RuntimeError::new(
+                "NotImplementedError: decompressobj(zdict=...) is not implemented",
+            ));
+        }
 
-        let wbits = Self::zlib_parse_optional_int(wbits, Z_DEFAULT_WINDOW_BITS as i64, "wbits")?
-            as c_int;
+        let wbits =
+            Self::zlib_parse_optional_int(wbits, Z_DEFAULT_WINDOW_BITS as i64, "wbits")? as c_int;
         let class = self.zlib_decompress_class()?;
         let instance = self.alloc_instance_for_class(&class);
         self.zlib_decompress_objects.insert(
@@ -775,6 +788,10 @@ impl Vm {
         if ptr.is_null() {
             return None;
         }
-        Some(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+        Some(
+            unsafe { CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 }
