@@ -47,7 +47,7 @@ Status values:
 | `dataclasses`/`typing`/`enum`/`contextvars` | Common paths are green; CPython `Lib/enum.py` path is baseline-green/default and local `enum` shim is retired. Remaining work is long-tail enum semantics only. | Full in-scope semantics for modern pure-Python apps. | IN_PROGRESS | 13 |
 | `hashlib` extended algorithms (`_sha1`/`_blake2`/`_sha3`/`_hashlib`) | md5/sha2 baseline closed; broader algorithm surface open. | Full in-scope algorithm surface (or explicit exclusions) with tests and consumers green. | IN_PROGRESS | 13/14 |
 | Compression extensions (`zlib`/`_bz2`/`_lzma`) | Native baselines now close common import/one-shot flows for `gzip`/`bz2`/`lzma`; streaming/filter-property long-tail semantics remain partial. | Strict/curated suites and extended probe remain green while placeholder filter APIs are retired. | IN_PROGRESS | 13 |
-| Object-model protocol dispatch | Truthiness/membership baseline landed; long-tail slot/error semantics remain. `bytes.lstrip`/`bytes.strip` parity now covers `gzip.decompress` common path. | Align remaining protocol edge semantics with CPython data model/tests. | IN_PROGRESS | 13 |
+| Object-model protocol dispatch | Truthiness/membership baseline landed; long-tail slot/error semantics remain. `bytes.lstrip`/`bytes.strip` parity now covers `gzip.decompress` common path, and memoryview typed scalar index/store format semantics are landed; remaining memoryview multi-dimensional/slice long-tail behavior is still open. | Align remaining protocol edge semantics with CPython data model/tests. | IN_PROGRESS | 13 |
 | VM/module decomposition | VM still has large modules. | Continue concern-based extraction with behavior-preserving tests. | IN_PROGRESS | 14 |
 
 ## Strict Harness Lane Accounting
