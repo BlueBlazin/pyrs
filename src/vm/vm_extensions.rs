@@ -87,6 +87,18 @@ impl ModuleCapiContext {
         Ok(self.alloc_object(value))
     }
 
+    fn module_import(&mut self, module_name: &str) -> Result<PyrsObjectHandle, String> {
+        if self.vm.is_null() {
+            return Err("module_import missing VM context".to_string());
+        }
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let value = vm
+            .builtin_import_module(vec![Value::Str(module_name.to_string())], HashMap::new())
+            .map_err(|err| err.message)?;
+        Ok(self.alloc_object(value))
+    }
+
     fn incref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
         let Some(slot) = self.objects.get_mut(&handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -581,6 +593,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
         "module_add_function"
             | "module_add_function_kw"
             | "module_get_object"
+            | "module_import"
             | "object_new_none"
             | "object_new_float"
             | "object_new_bytes"
@@ -952,6 +965,40 @@ unsafe extern "C" fn capi_module_get_object(
         }
     };
     match context.module_get_object(&name) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_module_import(
+    module_ctx: *mut c_void,
+    module_name: *const c_char,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("module_import received null output pointer");
+        return -1;
+    }
+    let module_name = match unsafe { c_name_to_string(module_name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    match context.module_import(&module_name) {
         Ok(handle) => {
             // SAFETY: caller provided non-null output pointer.
             unsafe {
@@ -1548,6 +1595,7 @@ impl Vm {
             object_decref: capi_object_decref,
             module_set_object: capi_module_set_object,
             module_get_object: capi_module_get_object,
+            module_import: capi_module_import,
             object_type: capi_object_type,
             object_get_int: capi_object_get_int,
             object_get_float: capi_object_get_float,
