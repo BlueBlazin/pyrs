@@ -28,6 +28,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_new_float(void* module_ctx, double value)`
 - `object_new_bytes(void* module_ctx, const uint8_t* data, uintptr_t len)`
 - `object_new_bytearray(void* module_ctx, const uint8_t* data, uintptr_t len)`
+- `object_new_memoryview(void* module_ctx, PyrsObjectHandle source_handle)`
 - `object_new_tuple(void* module_ctx, uintptr_t len, const PyrsObjectHandle* items)`
 - `object_new_list(void* module_ctx, uintptr_t len, const PyrsObjectHandle* items)`
 - `object_new_dict(void* module_ctx)`
@@ -125,6 +126,7 @@ Return semantics:
 - dict-view helpers are available through `object_dict_keys(...)` and `object_dict_items(...)`.
 - buffer access helpers are available through `object_get_buffer(...)` and `object_release_buffer(...)`.
 - current buffer helper coverage is `bytes`/`bytearray`/`memoryview` handles with pointer+length+readonly metadata.
+- memoryview constructor helper is available through `object_new_memoryview(...)` for `bytes`/`bytearray`/`memoryview` source handles.
 - capsule helpers are available through `capsule_new(...)`, `capsule_get_pointer(...)`, and `capsule_get_name(...)`.
 - capsule context helpers are available through `capsule_set_context(...)` and `capsule_get_context(...)`.
 - capsule destructor helpers are available through `capsule_set_destructor(...)`; destructor callbacks are invoked when the capsule handle refcount reaches zero or the module C-API context is dropped, and receive `(pointer, context)`.

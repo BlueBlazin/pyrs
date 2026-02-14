@@ -45,7 +45,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 now includes `module_get_attr(...)` for module-handle attribute extraction with explicit module-type checks.
   - C-API v1 now includes module-state lifecycle hooks (`module_set_state`, `module_get_state`, `module_set_finalize`) with replacement/clear/stale-prune/VM-drop finalize+free semantics.
   - C-API v1 now includes module-handle attribute mutation helpers (`module_set_attr`, `module_del_attr`, `module_has_attr`) for native-side module mutation/probe flows without Python-level glue.
-  - C-API handle constructors/getters now include `None`/`float`/`bytes`/`bytearray`/`tuple`/`list`/`dict` in addition to `bool`/`int`/`str`, with smoke coverage through native handle and sequence+mapping round-trip.
+  - C-API handle constructors/getters now include `None`/`float`/`bytes`/`bytearray`/`memoryview-from-handle`/`tuple`/`list`/`dict` in addition to `bool`/`int`/`str`, with smoke coverage through native handle and sequence+mapping round-trip.
   - C-API v1 now includes native iterator helpers (`object_get_iter`, `object_iter_next`) for extension-side iteration without Python-level dispatch glue.
   - C-API v1 now includes generic object helpers (`object_len`, `object_get_item`) for native-side length/subscript paths.
   - C-API v1 generic item helpers now include mutation (`object_set_item`, `object_del_item`) with dict/list/bytearray direct semantics and special-method fallback for custom containers.
