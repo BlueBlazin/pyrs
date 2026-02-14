@@ -3260,6 +3260,16 @@ impl Vm {
             Vec::new(),
         );
         self.install_builtin_module(
+            "pkgutil",
+            &[
+                ("get_data", BuiltinFunction::PkgutilGetData),
+                ("iter_modules", BuiltinFunction::PkgutilIterModules),
+                ("walk_packages", BuiltinFunction::PkgutilWalkPackages),
+                ("resolve_name", BuiltinFunction::PkgutilResolveName),
+            ],
+            Vec::new(),
+        );
+        self.install_builtin_module(
             "_abc",
             &[
                 ("get_cache_token", BuiltinFunction::AbcGetCacheToken),

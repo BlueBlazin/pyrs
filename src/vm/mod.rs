@@ -357,7 +357,7 @@ const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
-const LOCAL_SHIM_MODULES: &[&str] = &["pkgutil", "importlib.resources"];
+const LOCAL_SHIM_MODULES: &[&str] = &["importlib.resources"];
 
 thread_local! {
     static VM_THREAD_IDENT_OVERRIDE: Cell<Option<i64>> = const { Cell::new(None) };

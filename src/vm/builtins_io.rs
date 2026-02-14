@@ -2333,7 +2333,7 @@ impl Vm {
             HashMap::new(),
         )?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("OSError: not seekable"));
+            return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
         }
         if args.is_empty() {
             return Err(RuntimeError::new(
@@ -2386,7 +2386,7 @@ impl Vm {
             HashMap::new(),
         )?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("OSError: not seekable"));
+            return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
         }
         let raw_position = self.io_buffered_delegate_method(
             &instance,
@@ -2430,7 +2430,7 @@ impl Vm {
             HashMap::new(),
         )?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("OSError: not seekable"));
+            return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
         }
         self.io_buffered_delegate_method(
             &instance,

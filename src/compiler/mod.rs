@@ -2425,13 +2425,17 @@ impl Compiler {
         self.emit(Opcode::Jump, Some(loop_start as u32));
         let else_start = self.current_ip();
         self.patch_jump(jump_if_false, else_start)?;
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .ok_or_else(|| CompileError::new("loop stack underflow"))?;
 
         for stmt in orelse {
             self.compile_stmt(stmt)?;
         }
 
         let loop_end = self.current_ip();
-        self.resolve_loop(loop_end)?;
+        self.resolve_loop_context(loop_ctx, loop_end)?;
         Ok(())
     }
 
@@ -3675,13 +3679,17 @@ impl Compiler {
         self.emit(Opcode::Jump, Some(loop_start as u32));
         let else_start = self.current_ip();
         self.patch_jump(jump_if_exhausted, else_start)?;
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .ok_or_else(|| CompileError::new("loop stack underflow"))?;
 
         for stmt in orelse {
             self.compile_stmt(stmt)?;
         }
 
         let loop_end = self.current_ip();
-        self.resolve_loop(loop_end)?;
+        self.resolve_loop_context(loop_ctx, loop_end)?;
 
         Ok(())
     }
@@ -4445,11 +4453,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn resolve_loop(&mut self, loop_end: usize) -> Result<(), CompileError> {
-        let ctx = self
-            .loop_stack
-            .pop()
-            .ok_or_else(|| CompileError::new("loop stack underflow"))?;
+    fn resolve_loop_context(&mut self, ctx: LoopContext, loop_end: usize) -> Result<(), CompileError> {
         for jump in ctx.breaks {
             self.patch_jump(jump, loop_end)?;
         }

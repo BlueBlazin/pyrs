@@ -201,6 +201,225 @@ impl Vm {
         Ok(canonical)
     }
 
+    pub(super) fn builtin_pkgutil_get_data(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("get_data() expects package and resource"));
+        }
+        let package = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("package must be string")),
+        };
+        let resource = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("resource must be string")),
+        };
+
+        let caller_depth = self.frames.len();
+        let module = match self.import_module_object(&package) {
+            Ok(module) => module,
+            Err(_) => return Ok(Value::None),
+        };
+        let module = match self.return_imported_module(module, caller_depth) {
+            Ok(module) => module,
+            Err(_) => return Ok(Value::None),
+        };
+        let Object::Module(module_data) = &*module.kind() else {
+            return Ok(Value::None);
+        };
+
+        let mut base_dir = None;
+        if let Some(path_value) = module_data.globals.get("__path__") {
+            let first = match path_value {
+                Value::List(path_list) => match &*path_list.kind() {
+                    Object::List(entries) => entries.first().cloned(),
+                    _ => None,
+                },
+                Value::Tuple(path_tuple) => match &*path_tuple.kind() {
+                    Object::Tuple(entries) => entries.first().cloned(),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(entry) = first {
+                base_dir = Some(PathBuf::from(value_to_path(&entry)?));
+            }
+        }
+
+        if base_dir.is_none()
+            && let Some(Value::Str(origin)) = module_data.globals.get("__file__")
+        {
+            let path = PathBuf::from(origin);
+            if let Some(parent) = path.parent() {
+                base_dir = Some(parent.to_path_buf());
+            }
+        }
+
+        let Some(base_dir) = base_dir else {
+            return Ok(Value::None);
+        };
+        let path = base_dir.join(resource);
+        let Ok(bytes) = fs::read(path) else {
+            return Ok(Value::None);
+        };
+        Ok(self.heap.alloc_bytes(bytes))
+    }
+
+    pub(super) fn builtin_pkgutil_iter_modules(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::new(
+                "iter_modules() expects optional path and prefix",
+            ));
+        }
+        let mut prefix = if args.len() > 1 {
+            args[1].clone()
+        } else {
+            Value::Str(String::new())
+        };
+        if let Some(value) = kwargs.remove("prefix") {
+            if args.len() > 1 {
+                return Err(RuntimeError::new(
+                    "iter_modules() got multiple values for argument 'prefix'",
+                ));
+            }
+            prefix = value;
+        }
+        if kwargs.remove("path").is_some() && !args.is_empty() {
+            return Err(RuntimeError::new(
+                "iter_modules() got multiple values for argument 'path'",
+            ));
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "iter_modules() got an unexpected keyword argument",
+            ));
+        }
+        if !matches!(prefix, Value::Str(_)) {
+            return Err(RuntimeError::new("prefix must be string"));
+        }
+        Ok(self.heap.alloc_list(Vec::new()))
+    }
+
+    pub(super) fn builtin_pkgutil_walk_packages(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 3 {
+            return Err(RuntimeError::new(
+                "walk_packages() expects optional path, prefix, onerror",
+            ));
+        }
+        let mut prefix = if args.len() > 1 {
+            args[1].clone()
+        } else {
+            Value::Str(String::new())
+        };
+        if let Some(value) = kwargs.remove("prefix") {
+            if args.len() > 1 {
+                return Err(RuntimeError::new(
+                    "walk_packages() got multiple values for argument 'prefix'",
+                ));
+            }
+            prefix = value;
+        }
+        if kwargs.remove("path").is_some() && !args.is_empty() {
+            return Err(RuntimeError::new(
+                "walk_packages() got multiple values for argument 'path'",
+            ));
+        }
+        if kwargs.remove("onerror").is_some() && args.len() > 2 {
+            return Err(RuntimeError::new(
+                "walk_packages() got multiple values for argument 'onerror'",
+            ));
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "walk_packages() got an unexpected keyword argument",
+            ));
+        }
+        if !matches!(prefix, Value::Str(_)) {
+            return Err(RuntimeError::new("prefix must be string"));
+        }
+        Ok(self.heap.alloc_list(Vec::new()))
+    }
+
+    pub(super) fn builtin_pkgutil_resolve_name(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "resolve_name() expects name and optional package",
+            ));
+        }
+        let name = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("name must be a string")),
+        };
+        let package = if let Some(value) = kwargs.remove("package") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "resolve_name() got multiple values for argument 'package'",
+                ));
+            }
+            match value {
+                Value::None => None,
+                Value::Str(package) => Some(package),
+                _ => return Err(RuntimeError::new("package must be string or None")),
+            }
+        } else if !args.is_empty() {
+            match args.remove(0) {
+                Value::None => None,
+                Value::Str(package) => Some(package),
+                _ => return Err(RuntimeError::new("package must be string or None")),
+            }
+        } else {
+            None
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "resolve_name() got an unexpected keyword argument",
+            ));
+        }
+
+        let (level, requested) = split_relative_import_name(&name);
+        let target = if level == 0 {
+            name
+        } else {
+            let package = package
+                .ok_or_else(|| RuntimeError::new("relative resolve_name() requires package"))?;
+            self.resolve_import_name_from_package(&package, &requested, level)?
+        };
+
+        let mut parts = target.splitn(2, ':');
+        let module_name = parts.next().unwrap_or_default();
+        let qualname = parts.next().unwrap_or_default();
+        let caller_depth = self.frames.len();
+        let module = self.import_module_object(module_name)?;
+        self.run_pending_import_frames(caller_depth)?;
+        let module = self.canonical_imported_module_for_name(module_name, module);
+        if qualname.is_empty() {
+            return Ok(Value::Module(module));
+        }
+        let mut value = Value::Module(module);
+        for part in qualname.split('.') {
+            value = self.builtin_getattr(
+                vec![value, Value::Str(part.to_string())],
+                HashMap::new(),
+            )?;
+        }
+        Ok(value)
+    }
+
     pub(super) fn sync_re_module_flag_aliases(&mut self, module: &ObjRef) {
         let regex_flag_class = {
             let module_kind = module.kind();

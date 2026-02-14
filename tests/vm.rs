@@ -2420,6 +2420,8 @@ fn bytes_and_bytearray_accept_generators_in_constructor() {
     let source = r#"b = bytes((x for x in [65, 66, 67]))
 ba = bytearray((x for x in [68, 69, 70]))
 named = bytes("ab", encoding="utf-8", errors="strict")
+b_range = bytes(range(5))
+ba_range = bytearray(range(5))
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -2429,6 +2431,11 @@ named = bytes("ab", encoding="utf-8", errors="strict")
     assert_eq!(bytes_values(vm.get_global("b")), Some(vec![65, 66, 67]));
     assert_eq!(bytes_values(vm.get_global("ba")), Some(vec![68, 69, 70]));
     assert_eq!(bytes_values(vm.get_global("named")), Some(vec![97, 98]));
+    assert_eq!(bytes_values(vm.get_global("b_range")), Some(vec![0, 1, 2, 3, 4]));
+    assert_eq!(
+        bytes_values(vm.get_global("ba_range")),
+        Some(vec![0, 1, 2, 3, 4])
+    );
 }
 
 #[test]
@@ -6803,7 +6810,7 @@ fn imports_package_from_cached_pyc_without_source_file() {
 }
 
 #[test]
-fn pkgutil_and_importlib_resources_shims_support_basic_resource_reads() {
+fn pkgutil_native_and_importlib_resources_shim_support_basic_resource_reads() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time works")
@@ -6815,7 +6822,7 @@ fn pkgutil_and_importlib_resources_shims_support_basic_resource_reads() {
     std::fs::write(pkg_dir.join("data.txt"), "hello").expect("write package data");
     let path_literal = root_dir.to_string_lossy().replace('\\', "\\\\");
     let source = format!(
-        "import sys\nsys.path = ['{path_literal}']\nimport pkgutil\nimport importlib.resources as resources\nraw = pkgutil.get_data('pkg', 'data.txt')\ntext = resources.files('pkg').joinpath('data.txt').read_text()\nok = raw == b'hello' and text == 'hello'\n"
+        "import sys\nsys.path = ['{path_literal}']\nimport pkgutil\nimport importlib.resources as resources\nraw = pkgutil.get_data('pkg', 'data.txt')\ntext = resources.files('pkg').joinpath('data.txt').read_text()\nok = (raw == b'hello' and text == 'hello' and getattr(pkgutil, '__file__', None) is None)\n"
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -7567,6 +7574,28 @@ fn executes_for_else_clause() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("y"), Some(Value::Int(3)));
+}
+
+#[test]
+fn executes_continue_in_for_else_against_outer_loop() {
+    let source = "def f(items):\n    while True:\n        prefix = None\n        for item in items:\n            if not item:\n                break\n            if prefix is None:\n                prefix = item[0]\n            elif item[0] != prefix:\n                break\n        else:\n            for item in items:\n                del item[0]\n            continue\n        break\n    return items\nout = f([[1], [1]])\nok = out == [[], []]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn rejects_continue_in_for_else_without_outer_loop() {
+    let source = "for i in [1]:\n    pass\nelse:\n    continue\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("continue outside loop"),
+        "unexpected message: {}",
+        err.message
+    );
 }
 
 #[test]
@@ -8903,6 +8932,36 @@ try:
     buf.truncate()
 except _io.UnsupportedOperation:
     ok = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_bufferedreader_seek_and_tell_on_unseekable_raise_unsupported_operation() {
+    let source = r#"import _io
+class Raw(_io.RawIOBase):
+    def readinto(self, b): return 0
+    def readable(self): return True
+    def write(self, b): return len(b)
+    def seek(self, o, w=0): return 0
+    def tell(self): return 0
+    def seekable(self): return False
+buf = _io.BufferedReader(Raw())
+seek_ok = False
+tell_ok = False
+try:
+    buf.seek(0)
+except _io.UnsupportedOperation:
+    seek_ok = True
+try:
+    buf.tell()
+except _io.UnsupportedOperation:
+    tell_ok = True
+ok = seek_ok and tell_ok
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -10823,6 +10882,16 @@ fn re_bytes_character_class_pattern_matches_tempfile_name_shape() {
     let source = "import re\n\
 m = re.match(b'^[a-z0-9_-]{8}$', b'm9bo88vi')\n\
 ok = (m is not None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_search_alternation_works_on_cpython_pure_re_path() {
+    let source = "import re\nm = re.search('Python|Perl', 'Perl')\nok = (m is not None and m.group(0) == 'Perl')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

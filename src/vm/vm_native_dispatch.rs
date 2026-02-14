@@ -5058,7 +5058,23 @@ impl Vm {
                         iterators: iterators.clone(),
                     };
                 }
-                IteratorKind::RangeObject { .. } => return Ok(None),
+                IteratorKind::RangeObject { start, stop, step } => {
+                    if step.is_zero() {
+                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                    }
+                    let offset = step.mul(&BigInt::from_u64(state.index as u64));
+                    let current = start.add(&offset);
+                    let done = if step.is_negative() {
+                        current.cmp_total(stop) != Ordering::Greater
+                    } else {
+                        current.cmp_total(stop) != Ordering::Less
+                    };
+                    if done {
+                        return Ok(None);
+                    }
+                    state.index = state.index.saturating_add(1);
+                    return Ok(Some(value_from_bigint(current)));
+                }
                 IteratorKind::Range {
                     current,
                     stop,
@@ -5491,6 +5507,16 @@ impl Vm {
             BuiltinFunction::Exec => self.builtin_exec(args, kwargs),
             BuiltinFunction::Eval => self.builtin_eval(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
+            BuiltinFunction::PkgutilGetData => self.builtin_pkgutil_get_data(args, kwargs),
+            BuiltinFunction::PkgutilIterModules => {
+                self.builtin_pkgutil_iter_modules(args, kwargs)
+            }
+            BuiltinFunction::PkgutilWalkPackages => {
+                self.builtin_pkgutil_walk_packages(args, kwargs)
+            }
+            BuiltinFunction::PkgutilResolveName => {
+                self.builtin_pkgutil_resolve_name(args, kwargs)
+            }
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
             BuiltinFunction::ImportlibInvalidateCaches => {
                 self.builtin_importlib_invalidate_caches(args, kwargs)

@@ -4103,14 +4103,19 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing jump target"))?
                     as usize;
-                let iterator_value = self.pop_value()?;
+                let iterator_value = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.stack.last())
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("stack underflow (FOR_ITER)"))?;
                 match iterator_value {
                     Value::Generator(obj) => match self.generator_for_iter_next(&obj)? {
                         GeneratorResumeOutcome::Yield(value) => {
-                            self.push_value(Value::Generator(obj));
                             self.push_value(value);
                         }
                         GeneratorResumeOutcome::Complete(_) => {
+                            let _ = self.pop_value()?;
                             let frame = self.frames.last_mut().expect("frame exists");
                             frame.ip = target;
                         }
@@ -4121,9 +4126,9 @@ impl Vm {
                     Value::Iterator(iterator_ref) => {
                         let next_value = self.iterator_next_value(&iterator_ref)?;
                         if let Some(value) = next_value {
-                            self.push_value(Value::Iterator(iterator_ref));
                             self.push_value(value);
                         } else {
+                            let _ = self.pop_value()?;
                             let frame = self.frames.last_mut().expect("frame exists");
                             frame.ip = target;
                         }
@@ -4132,10 +4137,10 @@ impl Vm {
                         let iterator = Value::Instance(instance.clone());
                         match self.next_from_iterator_value(&iterator)? {
                             GeneratorResumeOutcome::Yield(value) => {
-                                self.push_value(Value::Instance(instance));
                                 self.push_value(value);
                             }
                             GeneratorResumeOutcome::Complete(_) => {
+                                let _ = self.pop_value()?;
                                 let frame = self.frames.last_mut().expect("frame exists");
                                 frame.ip = target;
                             }

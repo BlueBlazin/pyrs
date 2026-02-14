@@ -2261,6 +2261,10 @@ pub enum BuiltinFunction {
     Vars,
     Breakpoint,
     ImportModule,
+    PkgutilGetData,
+    PkgutilIterModules,
+    PkgutilWalkPackages,
+    PkgutilResolveName,
     FindSpec,
     ImportlibInvalidateCaches,
     ImportlibSourceFromCache,
@@ -5175,6 +5179,10 @@ impl BuiltinFunction {
             | BuiltinFunction::Hash
             | BuiltinFunction::Vars
             | BuiltinFunction::Breakpoint
+            | BuiltinFunction::PkgutilGetData
+            | BuiltinFunction::PkgutilIterModules
+            | BuiltinFunction::PkgutilWalkPackages
+            | BuiltinFunction::PkgutilResolveName
             | BuiltinFunction::SysGetFrame
             | BuiltinFunction::SysException
             | BuiltinFunction::SysExcInfo
