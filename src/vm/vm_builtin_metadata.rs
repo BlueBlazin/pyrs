@@ -1,4 +1,4 @@
-use super::*;
+use super::{Vm, BuiltinFunction, Object, Value, ModuleObject, RuntimeError, NativeMethodKind, ObjRef, IteratorKind, value_from_bigint, bytes_like_source_is_readonly, with_bytes_like_source, memoryview_bounds, dict_get_value, dict_set_value, dict_remove_value, HashMap, Rc, CodeObject, ExceptionObject, BoundMethod, class_attr_lookup, InternalCallOutcome, NativeCallResult, bind_arguments, Frame, apply_bindings, LIST_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, BYTES_BACKING_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR, FLOAT_BACKING_STORAGE_ATTR, COMPLEX_BACKING_STORAGE_ATTR, DICT_BACKING_STORAGE_ATTR, SET_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, Block, AttrAccessOutcome, PY_TPFLAGS_HEAPTYPE, class_attr_lookup_direct, InstanceObject, INSTANCE_DICT_STORAGE_ATTR, classify_runtime_error, collect_slot_names, class_inherits_dynamic_instance_dict, class_attr_walk, AttrMutationOutcome, class_name_for_instance};
 
 impl Vm {
     fn builtin_module_binding(&self, builtin: BuiltinFunction) -> Option<(String, String)> {
@@ -610,11 +610,10 @@ impl Vm {
                 .builtins
                 .values()
                 .any(|value| matches!(value, Value::Builtin(candidate) if *candidate == builtin));
-            if !in_builtins {
-                if let Some((module_name, _)) = self.builtin_module_binding(builtin) {
+            if !in_builtins
+                && let Some((module_name, _)) = self.builtin_module_binding(builtin) {
                     builtin_module_name = module_name;
                 }
-            }
         }
         match attr_name {
             "__dict__" => {
@@ -1548,11 +1547,10 @@ impl Vm {
             };
             func_data.dict.clone()
         };
-        if let Some(dict) = &function_dict {
-            if let Some(value) = self.dict_lookup_str_key(dict, attr_name)? {
+        if let Some(dict) = &function_dict
+            && let Some(value) = self.dict_lookup_str_key(dict, attr_name)? {
                 return Ok(value);
             }
-        }
 
         match attr_name {
             "__annotations__" => Ok(Value::Dict(self.ensure_function_annotations(func)?)),
@@ -2918,8 +2916,8 @@ impl Vm {
         caller_blocks: &Option<Vec<Block>>,
         active_exception: Option<Value>,
     ) {
-        if self.frames.len() == caller_depth {
-            if let Some(frame) = self.frames.last_mut() {
+        if self.frames.len() == caller_depth
+            && let Some(frame) = self.frames.last_mut() {
                 frame.ip = caller_ip;
                 frame.stack = caller_stack.to_vec();
                 if let Some(blocks) = caller_blocks {
@@ -2929,7 +2927,6 @@ impl Vm {
                 }
                 frame.active_exception = active_exception;
             }
-        }
     }
 
     pub(super) fn load_attr_class(
@@ -3051,14 +3048,13 @@ impl Vm {
             return Ok(AttrAccessOutcome::Value(unwrapped));
         }
 
-        if descriptor_owner.is_some() {
-            if let Value::Function(func) = attr.clone() {
+        if descriptor_owner.is_some()
+            && let Value::Function(func) = attr.clone() {
                 let bound = BoundMethod::new(func, class.clone());
                 return Ok(AttrAccessOutcome::Value(
                     self.heap.alloc_bound_method(bound),
                 ));
             }
-        }
 
         let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
         if let Some(getter) = getter {
@@ -3335,14 +3331,13 @@ impl Vm {
                     self.heap.alloc_tuple(Vec::new()),
                 );
             }
-        } else if self.class_has_builtin_str_base(class) {
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+        } else if self.class_has_builtin_str_base(class)
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data.attrs.insert(
                     STR_BACKING_STORAGE_ATTR.to_string(),
                     Value::Str(String::new()),
                 );
             }
-        }
         if self.class_has_builtin_bytes_base(class) {
             if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data.attrs.insert(
@@ -3350,30 +3345,27 @@ impl Vm {
                     self.heap.alloc_bytes(Vec::new()),
                 );
             }
-        } else if self.class_has_builtin_bytearray_base(class) {
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+        } else if self.class_has_builtin_bytearray_base(class)
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data.attrs.insert(
                     BYTES_BACKING_STORAGE_ATTR.to_string(),
                     self.heap.alloc_bytearray(Vec::new()),
                 );
             }
-        }
-        if self.class_has_builtin_int_base(class) {
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+        if self.class_has_builtin_int_base(class)
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data
                     .attrs
                     .insert(INT_BACKING_STORAGE_ATTR.to_string(), Value::Int(0));
             }
-        }
-        if self.class_has_builtin_float_base(class) {
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+        if self.class_has_builtin_float_base(class)
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data
                     .attrs
                     .insert(FLOAT_BACKING_STORAGE_ATTR.to_string(), Value::Float(0.0));
             }
-        }
-        if self.class_has_builtin_complex_base(class) {
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+        if self.class_has_builtin_complex_base(class)
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data.attrs.insert(
                     COMPLEX_BACKING_STORAGE_ATTR.to_string(),
                     Value::Complex {
@@ -3382,31 +3374,27 @@ impl Vm {
                     },
                 );
             }
-        }
-        if self.class_has_builtin_dict_base(class) {
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+        if self.class_has_builtin_dict_base(class)
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data.attrs.insert(
                     DICT_BACKING_STORAGE_ATTR.to_string(),
                     self.heap.alloc_dict(Vec::new()),
                 );
             }
-        }
-        if self.class_has_builtin_set_base(class) {
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+        if self.class_has_builtin_set_base(class)
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data.attrs.insert(
                     SET_BACKING_STORAGE_ATTR.to_string(),
                     self.heap.alloc_set(Vec::new()),
                 );
             }
-        }
-        if self.class_has_builtin_frozenset_base(class) {
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+        if self.class_has_builtin_frozenset_base(class)
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data.attrs.insert(
                     FROZENSET_BACKING_STORAGE_ATTR.to_string(),
                     self.heap.alloc_frozenset(Vec::new()),
                 );
             }
-        }
         self.track_instance_del_candidate(class, &instance);
         instance
     }
@@ -3665,9 +3653,8 @@ impl Vm {
         let class_attr = class_attr_walk(&class_ref)
             .into_iter()
             .find_map(|candidate| {
-                class_attr_lookup_direct(&candidate, attr_name).map(|value| {
+                class_attr_lookup_direct(&candidate, attr_name).inspect(|_value| {
                     class_attr_owner = Some(candidate);
-                    value
                 })
             });
         if let Some(attr) = class_attr.clone() {
@@ -3699,11 +3686,9 @@ impl Vm {
                 return Ok(AttrAccessOutcome::Value(attr));
             }
             if let Some(Value::Dict(dict_obj)) = instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-            {
-                if let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string())) {
+                && let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string())) {
                     return Ok(AttrAccessOutcome::Value(attr));
                 }
-            }
         }
 
         if attr_name == "__init__" {
@@ -3733,8 +3718,8 @@ impl Vm {
             let is_iobase_instance = class_attr_walk(&class_ref).into_iter().any(|candidate| {
                 matches!(&*candidate.kind(), Object::Class(class_data) if class_data.name == "IOBase")
             });
-            if is_iobase_instance {
-                if let Object::Instance(instance_data) = &*instance.kind() {
+            if is_iobase_instance
+                && let Object::Instance(instance_data) = &*instance.kind() {
                     let closed =
                         matches!(instance_data.attrs.get("closed"), Some(Value::Bool(true)))
                             || matches!(
@@ -3747,33 +3732,26 @@ impl Vm {
                             );
                     return Ok(AttrAccessOutcome::Value(Value::Bool(closed)));
                 }
-            }
         }
 
         let reduce_attr = attr_name == "__reduce_ex__" || attr_name == "__reduce__";
-        if let Some(backing_list) = self.instance_backing_list(instance) {
-            if !reduce_attr {
-                if let Ok(bound_method) = self.load_attr_list_method(backing_list, attr_name) {
+        if let Some(backing_list) = self.instance_backing_list(instance)
+            && !reduce_attr
+                && let Ok(bound_method) = self.load_attr_list_method(backing_list, attr_name) {
                     return Ok(AttrAccessOutcome::Value(bound_method));
                 }
-            }
-        }
-        if let Some(backing_tuple) = self.instance_backing_tuple(instance) {
-            if !reduce_attr {
-                if let Ok(bound_method) = self.load_attr_tuple_method(backing_tuple, attr_name) {
+        if let Some(backing_tuple) = self.instance_backing_tuple(instance)
+            && !reduce_attr
+                && let Ok(bound_method) = self.load_attr_tuple_method(backing_tuple, attr_name) {
                     return Ok(AttrAccessOutcome::Value(bound_method));
                 }
-            }
-        }
-        if let Some(backing_str) = self.instance_backing_str(instance) {
-            if !reduce_attr {
-                if let Ok(bound_method) = self.load_attr_str_method(backing_str, attr_name) {
+        if let Some(backing_str) = self.instance_backing_str(instance)
+            && !reduce_attr
+                && let Ok(bound_method) = self.load_attr_str_method(backing_str, attr_name) {
                     return Ok(AttrAccessOutcome::Value(bound_method));
                 }
-            }
-        }
-        if let Some(backing_dict) = self.instance_backing_dict(instance) {
-            if !reduce_attr {
+        if let Some(backing_dict) = self.instance_backing_dict(instance)
+            && !reduce_attr {
                 let is_exact_dict = matches!(
                     &*class_ref.kind(),
                     Object::Class(class_data) if class_data.name == "dict"
@@ -3789,21 +3767,16 @@ impl Vm {
                     return Ok(AttrAccessOutcome::Value(bound_method));
                 }
             }
-        }
-        if let Some(backing_set) = self.instance_backing_set(instance) {
-            if !reduce_attr {
-                if let Ok(bound_method) = self.load_attr_set_method(backing_set, attr_name) {
+        if let Some(backing_set) = self.instance_backing_set(instance)
+            && !reduce_attr
+                && let Ok(bound_method) = self.load_attr_set_method(backing_set, attr_name) {
                     return Ok(AttrAccessOutcome::Value(bound_method));
                 }
-            }
-        }
-        if let Some(backing_frozenset) = self.instance_backing_frozenset(instance) {
-            if !reduce_attr {
-                if let Ok(bound_method) = self.load_attr_set_method(backing_frozenset, attr_name) {
+        if let Some(backing_frozenset) = self.instance_backing_frozenset(instance)
+            && !reduce_attr
+                && let Ok(bound_method) = self.load_attr_set_method(backing_frozenset, attr_name) {
                     return Ok(AttrAccessOutcome::Value(bound_method));
                 }
-            }
-        }
 
         if let Some(attr) = class_attr {
             if let Some(bound) = self.bind_classmethod_attr(&class_ref, &attr) {
@@ -3852,8 +3825,8 @@ impl Vm {
             return Ok(AttrAccessOutcome::Value(attr));
         }
 
-        if allow_getattr_fallback {
-            if let Some(getattr_method) =
+        if allow_getattr_fallback
+            && let Some(getattr_method) =
                 self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__getattr__")?
             {
                 return Ok(
@@ -3869,7 +3842,6 @@ impl Vm {
                     },
                 );
             }
-        }
 
         if attr_name == "__getstate__" {
             return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
@@ -3968,15 +3940,14 @@ impl Vm {
                     Value::Instance(instance) => self.instance_backing_dict(instance),
                     _ => None,
                 };
-                if let Some(dict_receiver) = dict_receiver {
-                    if let Ok(method) = self.load_attr_dict_method_with_owner(
+                if let Some(dict_receiver) = dict_receiver
+                    && let Ok(method) = self.load_attr_dict_method_with_owner(
                         dict_receiver,
                         Some(owner_value.clone()),
                         attr_name,
                     ) {
                         return Ok(AttrAccessOutcome::Value(method));
                     }
-                }
             }
             if self.class_has_builtin_list_base(&class) {
                 let list_receiver = match &receiver_value {
@@ -3984,11 +3955,10 @@ impl Vm {
                     Value::Instance(instance) => self.instance_backing_list(instance),
                     _ => None,
                 };
-                if let Some(list_receiver) = list_receiver {
-                    if let Ok(method) = self.load_attr_list_method(list_receiver, attr_name) {
+                if let Some(list_receiver) = list_receiver
+                    && let Ok(method) = self.load_attr_list_method(list_receiver, attr_name) {
                         return Ok(AttrAccessOutcome::Value(method));
                     }
-                }
             }
         }
 
@@ -4135,7 +4105,7 @@ impl Vm {
                 return Ok(self.alloc_native_bound_method(kind, module.clone()));
             }
         }
-        if let Some(attr) = module_name.split('.').last().and_then(|suffix| {
+        if let Some(attr) = module_name.split('.').next_back().and_then(|suffix| {
             if suffix == attr_name {
                 Some(Value::Module(module.clone()))
             } else {
@@ -4144,13 +4114,12 @@ impl Vm {
         }) {
             return Ok(attr);
         }
-        if module_is_package {
-            if let Some(submodule) = self.load_submodule(module, attr_name) {
+        if module_is_package
+            && let Some(submodule) = self.load_submodule(module, attr_name) {
                 return Ok(Value::Module(submodule));
             }
-        }
-        if attr_name != "__getattr__" {
-            if let Some(module_getattr) = module_getattr {
+        if attr_name != "__getattr__"
+            && let Some(module_getattr) = module_getattr {
                 return match self.call_internal(
                     module_getattr,
                     vec![Value::Str(attr_name.to_string())],
@@ -4162,7 +4131,6 @@ impl Vm {
                     }
                 };
             }
-        }
         Err(RuntimeError::new(format!(
             "module '{}' has no attribute '{}'",
             module_name, attr_name
@@ -4392,11 +4360,9 @@ impl Vm {
                 return Ok(AttrMutationOutcome::Done);
             }
             if let Some(Value::Dict(dict_obj)) = instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-            {
-                if dict_remove_value(dict_obj, &Value::Str(attr_name.to_string())).is_some() {
+                && dict_remove_value(dict_obj, &Value::Str(attr_name.to_string())).is_some() {
                     return Ok(AttrMutationOutcome::Done);
                 }
-            }
         }
 
         Err(RuntimeError::new(format!(

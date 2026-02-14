@@ -1,4 +1,4 @@
-use super::*;
+use super::{Vm, Value, Object, RuntimeError, with_bytes_like_source, HashMap, InternalCallOutcome, Write, NativeMethodKind, BuiltinFunction, is_missing_attribute_error, format_repr, ObjRef, class_attr_walk, value_to_int, ModuleObject, Rc, CodeObject, parser, compiler, Frame, bytes_like_from_value, value_from_bigint, HashSet, format_value, BYTES_BACKING_STORAGE_ATTR, parse_hex_float_literal, value_to_f64, format_float_hex, call_builtin_with_kwargs, INT_BACKING_STORAGE_ATTR, FLOAT_BACKING_STORAGE_ATTR, COMPLEX_BACKING_STORAGE_ATTR, runtime_error_matches_exception, normalize_codec_encoding, normalize_codec_errors, decode_text_bytes, encode_text_bytes, bigint_from_bytes, ClassBuildOutcome, InstanceObject, ClassObject, LIST_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, DICT_BACKING_STORAGE_ATTR, SET_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, class_attr_lookup, AttrAccessOutcome, AttrMutationOutcome, dict_set_value_checked, dedup_hashable_values, Ordering, value_to_bigint, round_float_with_ndigits, BigInt, compare_order, compare_lt, GeneratorResumeOutcome, compare_in, div_values, add_values, compare_le, compare_gt, compare_ge, ordering_from_cmp_value, class_of_class, exception_type_is_subclass, is_runtime_type_name_marker, IteratorObject, IteratorKind, value_from_object_ref, weakref_target_id, weakref_target_object, GeneratorResumeKind, NativeMethodObject, BoundMethod, dict_set_value, dict_remove_value, frame_cell_value, SuperObject};
 use crate::runtime::value_lookup_hash;
 
 impl Vm {
@@ -233,8 +233,8 @@ impl Vm {
                 return Err(self.runtime_error_from_active_exception("print() write failed"));
             }
         }
-        if flush_requested {
-            if let Ok(flush) =
+        if flush_requested
+            && let Ok(flush) =
                 self.builtin_getattr(vec![file, Value::Str("flush".to_string())], HashMap::new())
             {
                 match self.call_internal(flush, Vec::new(), HashMap::new())? {
@@ -246,7 +246,6 @@ impl Vm {
                     }
                 }
             }
-        }
         Ok(Value::None)
     }
 
@@ -470,9 +469,9 @@ impl Vm {
             || has_mro("BufferedRWPair")
         {
             let mut parts = Vec::new();
-            if let Some(raw) = try_getattr(self, Value::Instance(instance.clone()), "raw")? {
-                if !matches!(raw, Value::None) {
-                    if let Some(name_value) = try_getattr(self, raw, "name")? {
+            if let Some(raw) = try_getattr(self, Value::Instance(instance.clone()), "raw")?
+                && !matches!(raw, Value::None)
+                    && let Some(name_value) = try_getattr(self, raw, "name")? {
                         if matches!(&name_value, Value::Instance(name_obj) if name_obj.id() == instance.id())
                         {
                             return Err(RuntimeError::new(
@@ -481,8 +480,6 @@ impl Vm {
                         }
                         parts.push(format!("name={}", repr_text(self, name_value)?));
                     }
-                }
-            }
             let suffix = if parts.is_empty() {
                 String::new()
             } else {
@@ -493,9 +490,9 @@ impl Vm {
 
         if has_mro("TextIOWrapper") {
             let mut parts = Vec::new();
-            if let Some(raw) = try_getattr(self, Value::Instance(instance.clone()), "raw")? {
-                if !matches!(raw, Value::None) {
-                    if let Some(name_value) = try_getattr(self, raw, "name")? {
+            if let Some(raw) = try_getattr(self, Value::Instance(instance.clone()), "raw")?
+                && !matches!(raw, Value::None)
+                    && let Some(name_value) = try_getattr(self, raw, "name")? {
                         if matches!(&name_value, Value::Instance(name_obj) if name_obj.id() == instance.id())
                         {
                             return Err(RuntimeError::new(
@@ -504,8 +501,6 @@ impl Vm {
                         }
                         parts.push(format!("name={}", repr_text(self, name_value)?));
                     }
-                }
-            }
             if let Some(mode_value) = try_getattr(self, Value::Instance(instance.clone()), "mode")?
             {
                 parts.push(format!("mode={}", repr_text(self, mode_value)?));
@@ -573,30 +568,25 @@ impl Vm {
         let frame = &self.frames[frame_index];
         let mut map = frame.locals.clone();
         for (idx, slot) in frame.fast_locals.iter().enumerate() {
-            if let Some(value) = slot {
-                if let Some(name) = frame.code.names.get(idx) {
+            if let Some(value) = slot
+                && let Some(name) = frame.code.names.get(idx) {
                     map.insert(name.clone(), value.clone());
                 }
-            }
         }
         for (idx, name) in frame.code.cellvars.iter().enumerate() {
-            if !map.contains_key(name) {
-                if let Some(cell) = frame.cells.get(idx) {
-                    if let Object::Cell(cell_data) = &*cell.kind() {
+            if !map.contains_key(name)
+                && let Some(cell) = frame.cells.get(idx)
+                    && let Object::Cell(cell_data) = &*cell.kind() {
                         map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
                     }
-                }
-            }
         }
         let cell_offset = frame.code.cellvars.len();
         for (idx, name) in frame.code.freevars.iter().enumerate() {
-            if !map.contains_key(name) {
-                if let Some(cell) = frame.cells.get(cell_offset + idx) {
-                    if let Object::Cell(cell_data) = &*cell.kind() {
+            if !map.contains_key(name)
+                && let Some(cell) = frame.cells.get(cell_offset + idx)
+                    && let Object::Cell(cell_data) = &*cell.kind() {
                         map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
                     }
-                }
-            }
         }
         let mut entries = Vec::with_capacity(map.len());
         for (name, value) in map {
@@ -925,8 +915,8 @@ impl Vm {
         let mut globals_module = caller_globals.clone();
         let mut globals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
         let mut globals_explicit = false;
-        if let Some(value) = globals_arg {
-            if value != Value::None {
+        if let Some(value) = globals_arg
+            && value != Value::None {
                 globals_explicit = true;
                 match value {
                     Value::Module(module) => {
@@ -945,7 +935,6 @@ impl Vm {
                     }
                 }
             }
-        }
 
         let mut locals_module = globals_module.clone();
         let mut locals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
@@ -1117,8 +1106,8 @@ impl Vm {
         let mut globals_module = caller_globals.clone();
         let mut globals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
         let mut globals_explicit = false;
-        if let Some(value) = globals_arg {
-            if value != Value::None {
+        if let Some(value) = globals_arg
+            && value != Value::None {
                 globals_explicit = true;
                 match value {
                     Value::Module(module) => {
@@ -1137,7 +1126,6 @@ impl Vm {
                     }
                 }
             }
-        }
 
         let mut locals_module = globals_module.clone();
         let mut locals_dict_writeback: Option<(ObjRef, ObjRef)> = None;
@@ -1249,49 +1237,41 @@ impl Vm {
             if let Some(values) = self.namedtuple_instance_values(instance) {
                 return Ok(Value::Int(values.len() as i64));
             }
-            if let Some(backing_list) = self.instance_backing_list(instance) {
-                if let Object::List(values) = &*backing_list.kind() {
+            if let Some(backing_list) = self.instance_backing_list(instance)
+                && let Object::List(values) = &*backing_list.kind() {
                     return Ok(Value::Int(values.len() as i64));
                 }
-            }
-            if let Some(backing_tuple) = self.instance_backing_tuple(instance) {
-                if let Object::Tuple(values) = &*backing_tuple.kind() {
+            if let Some(backing_tuple) = self.instance_backing_tuple(instance)
+                && let Object::Tuple(values) = &*backing_tuple.kind() {
                     return Ok(Value::Int(values.len() as i64));
                 }
-            }
             if let Some(backing_str) = self.instance_backing_str(instance) {
                 return Ok(Value::Int(backing_str.chars().count() as i64));
             }
-            if let Some(backing_dict) = self.instance_backing_dict(instance) {
-                if let Object::Dict(values) = &*backing_dict.kind() {
+            if let Some(backing_dict) = self.instance_backing_dict(instance)
+                && let Object::Dict(values) = &*backing_dict.kind() {
                     return Ok(Value::Int(values.len() as i64));
                 }
-            }
-            if let Some(backing_set) = self.instance_backing_set(instance) {
-                if let Object::Set(values) = &*backing_set.kind() {
+            if let Some(backing_set) = self.instance_backing_set(instance)
+                && let Object::Set(values) = &*backing_set.kind() {
                     return Ok(Value::Int(values.len() as i64));
                 }
-            }
-            if let Some(backing_frozenset) = self.instance_backing_frozenset(instance) {
-                if let Object::FrozenSet(values) = &*backing_frozenset.kind() {
+            if let Some(backing_frozenset) = self.instance_backing_frozenset(instance)
+                && let Object::FrozenSet(values) = &*backing_frozenset.kind() {
                     return Ok(Value::Int(values.len() as i64));
                 }
-            }
         }
-        if let Value::DictKeys(keys_view) = &args[0] {
-            if let Object::DictKeysView(view) = &*keys_view.kind() {
-                if let Object::Dict(values) = &*view.dict.kind() {
+        if let Value::DictKeys(keys_view) = &args[0]
+            && let Object::DictKeysView(view) = &*keys_view.kind()
+                && let Object::Dict(values) = &*view.dict.kind() {
                     return Ok(Value::Int(values.len() as i64));
                 }
-            }
-        }
-        if let Value::Iterator(iterator) = &args[0] {
-            if let Some((start, stop, step)) = self.range_object_parts(iterator) {
+        if let Value::Iterator(iterator) = &args[0]
+            && let Some((start, stop, step)) = self.range_object_parts(iterator) {
                 return Ok(value_from_bigint(
                     self.range_object_len_bigint(&start, &stop, &step),
                 ));
             }
-        }
         let receiver = args
             .into_iter()
             .next()
@@ -1449,11 +1429,10 @@ impl Vm {
             } else {
                 names.extend(frame.locals.keys().cloned());
                 for (idx, slot) in frame.fast_locals.iter().enumerate() {
-                    if slot.is_some() {
-                        if let Some(name) = frame.code.names.get(idx) {
+                    if slot.is_some()
+                        && let Some(name) = frame.code.names.get(idx) {
                             names.push(name.clone());
                         }
-                    }
                 }
             }
         }
@@ -1509,11 +1488,10 @@ impl Vm {
             let mut names = HashSet::new();
             names.extend(frame.locals.keys().cloned());
             for (idx, slot) in frame.fast_locals.iter().enumerate() {
-                if slot.is_some() {
-                    if let Some(name) = frame.code.names.get(idx) {
+                if slot.is_some()
+                    && let Some(name) = frame.code.names.get(idx) {
                         names.insert(name.clone());
                     }
-                }
             }
             names.extend(frame.code.cellvars.iter().cloned());
             names.extend(frame.code.freevars.iter().cloned());
@@ -2035,16 +2013,15 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if let Some(Value::Class(class)) = args.first() {
-            if self.class_has_builtin_int_base(class) {
+        if let Some(Value::Class(class)) = args.first()
+            && self.class_has_builtin_int_base(class) {
                 let mut class = class.clone();
                 args.remove(0);
-                if let Some(Value::Class(explicit_class)) = args.first() {
-                    if self.class_has_builtin_int_base(explicit_class) {
+                if let Some(Value::Class(explicit_class)) = args.first()
+                    && self.class_has_builtin_int_base(explicit_class) {
                         class = explicit_class.clone();
                         args.remove(0);
                     }
-                }
                 let int_value = if matches!(
                     args.first(),
                     Some(Value::Class(candidate)) if self.class_has_builtin_int_base(candidate)
@@ -2065,15 +2042,13 @@ impl Vm {
                 }
                 return Ok(Value::Instance(instance));
             }
-        }
         if kwargs.is_empty() {
             if args.len() == 1 {
                 let arg = args[0].clone();
-                if let Value::Instance(instance) = &arg {
-                    if let Some(backing) = self.instance_backing_int(instance) {
+                if let Value::Instance(instance) = &arg
+                    && let Some(backing) = self.instance_backing_int(instance) {
                         return BuiltinFunction::Int.call(&self.heap, vec![backing]);
                     }
-                }
                 match BuiltinFunction::Int.call(&self.heap, args) {
                     Ok(value) => return Ok(value),
                     Err(err) if err.message == "int() unsupported type" => {
@@ -2106,16 +2081,15 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if let Some(Value::Class(class)) = args.first() {
-            if self.class_has_builtin_float_base(class) {
+        if let Some(Value::Class(class)) = args.first()
+            && self.class_has_builtin_float_base(class) {
                 let mut class = class.clone();
                 args.remove(0);
-                if let Some(Value::Class(explicit_class)) = args.first() {
-                    if self.class_has_builtin_float_base(explicit_class) {
+                if let Some(Value::Class(explicit_class)) = args.first()
+                    && self.class_has_builtin_float_base(explicit_class) {
                         class = explicit_class.clone();
                         args.remove(0);
                     }
-                }
                 let float_value = if matches!(
                     args.first(),
                     Some(Value::Class(candidate)) if self.class_has_builtin_float_base(candidate)
@@ -2136,13 +2110,11 @@ impl Vm {
                 }
                 return Ok(Value::Instance(instance));
             }
-        }
         if kwargs.is_empty() && args.len() == 1 {
-            if let Value::Instance(instance) = &args[0] {
-                if let Some(backing) = self.instance_backing_float(instance) {
+            if let Value::Instance(instance) = &args[0]
+                && let Some(backing) = self.instance_backing_float(instance) {
                     return Ok(Value::Float(backing));
                 }
-            }
             if let Some(float_method) = self.lookup_bound_special_method(&args[0], "__float__")? {
                 return match self.call_internal(float_method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(Value::Float(value)) => Ok(Value::Float(value)),
@@ -2167,8 +2139,8 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if let Some(Value::Class(class)) = args.first() {
-            if self.class_has_builtin_complex_base(class) {
+        if let Some(Value::Class(class)) = args.first()
+            && self.class_has_builtin_complex_base(class) {
                 let class = class.clone();
                 args.remove(0);
                 let complex_value = if kwargs.is_empty() {
@@ -2184,13 +2156,11 @@ impl Vm {
                 }
                 return Ok(Value::Instance(instance));
             }
-        }
         if kwargs.is_empty() && args.len() == 1 {
-            if let Value::Instance(instance) = &args[0] {
-                if let Some((real, imag)) = self.instance_backing_complex(instance) {
+            if let Value::Instance(instance) = &args[0]
+                && let Some((real, imag)) = self.instance_backing_complex(instance) {
                     return Ok(Value::Complex { real, imag });
                 }
-            }
             return BuiltinFunction::Complex.call(&self.heap, args);
         }
         if kwargs.is_empty() {
@@ -2255,11 +2225,10 @@ impl Vm {
 
         let object = object.unwrap_or_else(|| Value::Str(String::new()));
         if encoding.is_none() && errors.is_none() {
-            if let Value::Instance(instance) = &object {
-                if let Some(backing) = self.instance_backing_str(instance) {
+            if let Value::Instance(instance) = &object
+                && let Some(backing) = self.instance_backing_str(instance) {
                     return Ok(Value::Str(backing));
                 }
-            }
             if !matches!(object, Value::Str(_)) {
                 let str_method = self.builtin_getattr(
                     vec![object.clone(), Value::Str("__str__".to_string())],
@@ -2718,7 +2687,7 @@ impl Vm {
             ));
         }
 
-        if args.len() > 0 && executable_kw.is_some() {
+        if !args.is_empty() && executable_kw.is_some() {
             return Err(RuntimeError::new(
                 "platform.libc_ver() got multiple values for executable",
             ));
@@ -2937,11 +2906,10 @@ impl Vm {
                 base_classes,
                 Some(metaclass),
             )?;
-            if let Value::Class(class_ref) = &class_value {
-                if self.call_init_subclass_hook(class_ref, &kwargs)? {
+            if let Value::Class(class_ref) = &class_value
+                && self.call_init_subclass_hook(class_ref, &kwargs)? {
                     return Err(self.runtime_error_from_active_exception("type.__new__ failed"));
                 }
-            }
             return Ok(class_value);
         }
         if args.len() == 3 {
@@ -3363,17 +3331,15 @@ impl Vm {
             "__dataclass_fields__".to_string(),
             self.heap.alloc_dict(entries),
         );
-        if let Some(namespace) = kwargs.remove("namespace") {
-            if let Value::Dict(dict) = namespace {
-                if let Object::Dict(entries) = &*dict.kind() {
+        if let Some(namespace) = kwargs.remove("namespace")
+            && let Value::Dict(dict) = namespace
+                && let Object::Dict(entries) = &*dict.kind() {
                     for (key, value) in entries {
                         if let Value::Str(name) = key {
                             class.attrs.insert(name.clone(), value.clone());
                         }
                     }
                 }
-            }
-        }
         if let Some(module_name) = kwargs.remove("module") {
             match module_name {
                 Value::Str(name) => {
@@ -4791,12 +4757,12 @@ impl Vm {
         let default = kwargs.remove("default");
         let key_func = kwargs.remove("key").unwrap_or(Value::None);
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(&format!(
+            return Err(RuntimeError::new(format!(
                 "{name}() got an unexpected keyword argument"
             )));
         }
         if args.is_empty() {
-            return Err(RuntimeError::new(&format!(
+            return Err(RuntimeError::new(format!(
                 "{name}() expected at least 1 argument, got 0"
             )));
         }
@@ -4805,7 +4771,7 @@ impl Vm {
             self.collect_iterable_values(args.remove(0))?
         } else {
             if default.is_some() {
-                return Err(RuntimeError::new(&format!(
+                return Err(RuntimeError::new(format!(
                     "Cannot specify a default for {name}() with multiple positional arguments"
                 )));
             }
@@ -4816,7 +4782,7 @@ impl Vm {
             if let Some(default_value) = default {
                 return Ok(default_value);
             }
-            return Err(RuntimeError::new(&format!(
+            return Err(RuntimeError::new(format!(
                 "{name}() arg is an empty sequence"
             )));
         }
@@ -4964,7 +4930,7 @@ impl Vm {
         left: &Value,
         right: &Value,
     ) -> Result<Ordering, RuntimeError> {
-        if let Some(ordering) = self.compare_cmp_to_key_wrappers(&left, &right)? {
+        if let Some(ordering) = self.compare_cmp_to_key_wrappers(left, right)? {
             return Ok(ordering);
         }
         self.compare_order_with_fallback_ref(left, right)
@@ -5059,32 +5025,24 @@ impl Vm {
     ) -> Result<Option<Ordering>, RuntimeError> {
         if let Some(result) =
             self.call_compare_method_bool(left.clone(), "__lt__", right.clone())?
-        {
-            if result {
+            && result {
                 return Ok(Some(Ordering::Less));
             }
-        }
         if let Some(result) =
             self.call_compare_method_bool(left.clone(), "__gt__", right.clone())?
-        {
-            if result {
+            && result {
                 return Ok(Some(Ordering::Greater));
             }
-        }
         if let Some(result) =
             self.call_compare_method_bool(right.clone(), "__gt__", left.clone())?
-        {
-            if result {
+            && result {
                 return Ok(Some(Ordering::Less));
             }
-        }
         if let Some(result) =
             self.call_compare_method_bool(right.clone(), "__lt__", left.clone())?
-        {
-            if result {
+            && result {
                 return Ok(Some(Ordering::Greater));
             }
-        }
         Ok(None)
     }
 
@@ -5255,16 +5213,13 @@ impl Vm {
             {
                 if let Some(value) =
                     self.call_binary_special_method(&left, "__add__", right.clone())?
-                {
-                    if !self.is_not_implemented_singleton(&value) {
+                    && !self.is_not_implemented_singleton(&value) {
                         return Ok(value);
                     }
-                }
-                if let Some(value) = self.call_binary_special_method(&right, "__radd__", left)? {
-                    if !self.is_not_implemented_singleton(&value) {
+                if let Some(value) = self.call_binary_special_method(&right, "__radd__", left)?
+                    && !self.is_not_implemented_singleton(&value) {
                         return Ok(value);
                     }
-                }
                 Err(err)
             }
             Err(err) => Err(err),
@@ -5303,20 +5258,18 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_list_backing(&left, &right)? {
             return Ok(Value::Bool(result));
         }
-        if matches!(left, Value::Instance(_) | Value::Class(_)) {
-            if let Some(result) =
+        if matches!(left, Value::Instance(_) | Value::Class(_))
+            && let Some(result) =
                 self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
             {
                 return Ok(Value::Bool(result));
             }
-        }
-        if matches!(right, Value::Instance(_) | Value::Class(_)) {
-            if let Some(result) =
+        if matches!(right, Value::Instance(_) | Value::Class(_))
+            && let Some(result) =
                 self.call_compare_method_bool(right.clone(), "__eq__", left.clone())?
             {
                 return Ok(Value::Bool(result));
             }
-        }
         Ok(Value::Bool(left == right))
     }
 
@@ -5349,20 +5302,18 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_list_backing(&left, &right)? {
             return Ok(Value::Bool(!result));
         }
-        if matches!(left, Value::Instance(_) | Value::Class(_)) {
-            if let Some(result) =
+        if matches!(left, Value::Instance(_) | Value::Class(_))
+            && let Some(result) =
                 self.call_compare_method_bool(left.clone(), "__ne__", right.clone())?
             {
                 return Ok(Value::Bool(result));
             }
-        }
-        if matches!(right, Value::Instance(_) | Value::Class(_)) {
-            if let Some(result) =
+        if matches!(right, Value::Instance(_) | Value::Class(_))
+            && let Some(result) =
                 self.call_compare_method_bool(right.clone(), "__ne__", left.clone())?
             {
                 return Ok(Value::Bool(result));
             }
-        }
         let eq = match self.compare_eq_runtime(left, right)? {
             Value::Bool(value) => value,
             _ => false,
@@ -5847,74 +5798,72 @@ impl Vm {
                     "isinstance() arg 2 must be a type or tuple of types",
                 )),
             },
-            Value::Class(expected) => match value {
-                _ => {
-                    if let Object::Class(class_data) = &*expected.kind() {
-                        if class_data.name == "PathLike" {
-                            return Ok(self.value_has_fspath_protocol(value));
+            Value::Class(expected) => {
+                if let Object::Class(class_data) = &*expected.kind() {
+                    if class_data.name == "PathLike" {
+                        return Ok(self.value_has_fspath_protocol(value));
+                    }
+                    let marker_match = match class_data.name.as_str() {
+                        "NoneType" => matches!(value, Value::None),
+                        "function" => matches!(value, Value::Function(_)),
+                        "method" => matches!(value, Value::BoundMethod(_)),
+                        "builtin_function_or_method" => matches!(value, Value::Builtin(_)),
+                        "code" => matches!(value, Value::Code(_)),
+                        // CPython's numbers ABC tower treats these primitive
+                        // runtime numerics as virtual subclasses.
+                        "Number" | "Complex" => matches!(
+                            value,
+                            Value::Bool(_)
+                                | Value::Int(_)
+                                | Value::BigInt(_)
+                                | Value::Float(_)
+                                | Value::Complex { .. }
+                        ),
+                        "Real" => matches!(
+                            value,
+                            Value::Bool(_) | Value::Int(_) | Value::BigInt(_) | Value::Float(_)
+                        ),
+                        "Rational" | "Integral" => {
+                            matches!(value, Value::Bool(_) | Value::Int(_) | Value::BigInt(_))
                         }
-                        let marker_match = match class_data.name.as_str() {
-                            "NoneType" => matches!(value, Value::None),
-                            "function" => matches!(value, Value::Function(_)),
-                            "method" => matches!(value, Value::BoundMethod(_)),
-                            "builtin_function_or_method" => matches!(value, Value::Builtin(_)),
-                            "code" => matches!(value, Value::Code(_)),
-                            // CPython's numbers ABC tower treats these primitive
-                            // runtime numerics as virtual subclasses.
-                            "Number" | "Complex" => matches!(
-                                value,
-                                Value::Bool(_)
-                                    | Value::Int(_)
-                                    | Value::BigInt(_)
-                                    | Value::Float(_)
-                                    | Value::Complex { .. }
-                            ),
-                            "Real" => matches!(
-                                value,
-                                Value::Bool(_) | Value::Int(_) | Value::BigInt(_) | Value::Float(_)
-                            ),
-                            "Rational" | "Integral" => {
-                                matches!(value, Value::Bool(_) | Value::Int(_) | Value::BigInt(_))
-                            }
-                            "Sequence" => match value {
-                                Value::Instance(instance) => match &*instance.kind() {
-                                    Object::Instance(instance_data) => {
-                                        class_attr_lookup(&instance_data.class, "__len__").is_some()
-                                            && class_attr_lookup(
-                                                &instance_data.class,
-                                                "__getitem__",
-                                            )
-                                            .is_some()
-                                    }
-                                    _ => false,
-                                },
+                        "Sequence" => match value {
+                            Value::Instance(instance) => match &*instance.kind() {
+                                Object::Instance(instance_data) => {
+                                    class_attr_lookup(&instance_data.class, "__len__").is_some()
+                                        && class_attr_lookup(
+                                            &instance_data.class,
+                                            "__getitem__",
+                                        )
+                                        .is_some()
+                                }
                                 _ => false,
                             },
                             _ => false,
-                        };
-                        if marker_match {
-                            return Ok(true);
-                        }
-                    }
-                    match value {
-                        Value::Instance(instance) => match &*instance.kind() {
-                            Object::Instance(instance_data) => Ok(self
-                                .class_mro_entries(&instance_data.class)
-                                .iter()
-                                .any(|entry| entry.id() == expected.id())),
-                            _ => Ok(false),
                         },
-                        Value::Class(class) => {
-                            let Some(meta_class) = class_of_class(class) else {
-                                return Ok(false);
-                            };
-                            Ok(self
-                                .class_mro_entries(&meta_class)
-                                .iter()
-                                .any(|entry| entry.id() == expected.id()))
-                        }
-                        _ => Ok(false),
+                        _ => false,
+                    };
+                    if marker_match {
+                        return Ok(true);
                     }
+                }
+                match value {
+                    Value::Instance(instance) => match &*instance.kind() {
+                        Object::Instance(instance_data) => Ok(self
+                            .class_mro_entries(&instance_data.class)
+                            .iter()
+                            .any(|entry| entry.id() == expected.id())),
+                        _ => Ok(false),
+                    },
+                    Value::Class(class) => {
+                        let Some(meta_class) = class_of_class(class) else {
+                            return Ok(false);
+                        };
+                        Ok(self
+                            .class_mro_entries(&meta_class)
+                            .iter()
+                            .any(|entry| entry.id() == expected.id()))
+                    }
+                    _ => Ok(false),
                 }
             },
             Value::Builtin(builtin) => Ok(self.matches_builtin_type_marker(value, *builtin)),
@@ -6269,10 +6218,10 @@ impl Vm {
             ));
         }
 
-        if args.len() == 1 {
-            if let Value::Module(wrapper) = &args[0] {
-                if let Object::Module(module_data) = &*wrapper.kind() {
-                    if matches!(
+        if args.len() == 1
+            && let Value::Module(wrapper) = &args[0]
+                && let Object::Module(module_data) = &*wrapper.kind()
+                    && matches!(
                         module_data.globals.get("__pyrs_weakref_ref__"),
                         Some(Value::Bool(true))
                     ) {
@@ -6291,9 +6240,6 @@ impl Vm {
                         };
                         return Ok(value_from_object_ref(obj).unwrap_or(Value::None));
                     }
-                }
-            }
-        }
 
         let target = args.remove(0);
         let Some(target_id) = weakref_target_id(&target) else {
@@ -6944,28 +6890,26 @@ impl Vm {
                     .frames
                     .iter()
                     .rposition(|frame| frame.is_module && frame.module.id() == module_id);
-                if let Object::Module(module_data) = &mut *module.kind_mut() {
-                    if module_data.globals.remove(&name).is_none() {
+                if let Object::Module(module_data) = &mut *module.kind_mut()
+                    && module_data.globals.remove(&name).is_none() {
                         return Err(RuntimeError::new(format!(
                             "module attribute '{}' does not exist",
                             name
                         )));
                     }
-                }
                 if let Some(frame_index) = active_frame_index {
                     let dict = self.ensure_frame_module_locals_dict(frame_index);
                     let _ = dict_remove_value(&dict, &Value::Str(name.clone()));
                 }
             }
             Value::Class(class) => {
-                if let Object::Class(class_data) = &mut *class.kind_mut() {
-                    if class_data.attrs.remove(&name).is_none() {
+                if let Object::Class(class_data) = &mut *class.kind_mut()
+                    && class_data.attrs.remove(&name).is_none() {
                         return Err(RuntimeError::new(format!(
                             "class attribute '{}' does not exist",
                             name
                         )));
                     }
-                }
             }
             Value::Instance(instance) => match self.delete_attr_instance(&instance, &name)? {
                 AttrMutationOutcome::Done => {}

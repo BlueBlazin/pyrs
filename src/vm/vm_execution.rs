@@ -1,4 +1,4 @@
-use super::*;
+use super::{Vm, Value, RuntimeError, GeneratorResumeOutcome, ClassBuildOutcome, Instruction, Opcode, LoadGlobalSiteCacheEntry, HashMap, BuiltinFunction, AttrAccessOutcome, ModuleObject, Object, NativeMethodKind, NativeMethodObject, BoundMethod, dict_remove_value, AttrMutationOutcome, sub_values, mul_values, matmul_values, pow_values, floor_div_values, mod_values, lshift_values, rshift_values, and_values, xor_values, or_values, QuickenedSiteKind, neg_value, pos_value, invert_value, ensure_hashable, dict_set_value_checked, value_to_optional_index, slice_bounds_for_step_one, slice_indices, value_to_int, InternalCallOutcome, memoryview_bounds, is_comprehension_code, FunctionObject, class_attr_lookup, decode_call_counts, GeneratorResumeKind, Block, classify_runtime_error, extract_runtime_error_exception_name, runtime_error_line_matches_exception, extract_runtime_error_final_message, extract_prefixed_exception_message, strip_sqlite_exception_metadata, ExceptionObject, is_os_error_family, extract_os_error_errno, infer_os_error_errno, extract_os_error_strerror, extract_import_error_name, HashSet, builtin_exception_parent, ObjRef, format_value, exception_message_from_call_args, Frame, TraceFrame, dict_get_value, class_attr_lookup_direct, ClassObject, slot_names_from_value, PY_TPFLAGS_HEAPTYPE, deref_name, dict_set_value, INSTANCE_DICT_STORAGE_ATTR, LoadAttrSiteCacheKind, LoadAttrSiteCacheEntry, value_from_bigint, Rc, CodeObject, OneArgCallHotPath, OneArgCallSiteCacheEntry, module_globals_version, GeneratorObject, bind_arguments, BoundArguments, apply_bindings, InstanceObject};
 use crate::runtime::SliceValue;
 
 impl Vm {
@@ -43,11 +43,10 @@ impl Vm {
 
     pub(super) fn run(&mut self) -> Result<Value, RuntimeError> {
         loop {
-            if let Some(stop_depth) = self.run_stop_depth {
-                if self.frames.len() <= stop_depth {
+            if let Some(stop_depth) = self.run_stop_depth
+                && self.frames.len() <= stop_depth {
                     return Ok(Value::None);
                 }
-            }
             if self.frames.is_empty() {
                 return Ok(Value::None);
             }
@@ -265,9 +264,9 @@ impl Vm {
                         )
                     }
                 };
-                if cacheable && !cache_hit {
-                    if let Some(frame) = self.frames.last_mut() {
-                        if let Some(slot) = frame.load_global_inline_cache.get_mut(site_index) {
+                if cacheable && !cache_hit
+                    && let Some(frame) = self.frames.last_mut()
+                        && let Some(slot) = frame.load_global_inline_cache.get_mut(site_index) {
                             *slot = Some(LoadGlobalSiteCacheEntry {
                                 globals_module_id,
                                 globals_version,
@@ -281,8 +280,6 @@ impl Vm {
                                 fused_direct_func_epoch: 0,
                             });
                         }
-                    }
-                }
                 self.frames
                     .last_mut()
                     .expect("frame exists")
@@ -583,18 +580,12 @@ impl Vm {
                 let (first_value, second_value) = {
                     let frame = self.frames.last().expect("frame exists");
                     let first_value = if first < frame.fast_locals.len() {
-                        match &frame.fast_locals[first] {
-                            Some(value) => Some(Self::clone_fast_local_stack_value(value)),
-                            None => None,
-                        }
+                        frame.fast_locals[first].as_ref().map(Self::clone_fast_local_stack_value)
                     } else {
                         None
                     };
                     let second_value = if second < frame.fast_locals.len() {
-                        match &frame.fast_locals[second] {
-                            Some(value) => Some(Self::clone_fast_local_stack_value(value)),
-                            None => None,
-                        }
+                        frame.fast_locals[second].as_ref().map(Self::clone_fast_local_stack_value)
                     } else {
                         None
                     };
@@ -651,10 +642,10 @@ impl Vm {
                 let mut cached_direct_small_int: Option<i64> = None;
                 #[cfg(not(debug_assertions))]
                 let mut cached_direct_func: Option<ObjRef> = None;
-                if let Some(frame) = self.frames.last() {
-                    if let Some(entry) = frame.load_global_inline_cache.get(site_index) {
-                        if let Some(cached) = entry {
-                            if cached.globals_module_id == globals_module_id
+                if let Some(frame) = self.frames.last()
+                    && let Some(entry) = frame.load_global_inline_cache.get(site_index)
+                        && let Some(cached) = entry
+                            && cached.globals_module_id == globals_module_id
                                 && cached.globals_version == globals_version
                                 && cached.builtins_version == self.builtins_version
                             {
@@ -708,9 +699,6 @@ impl Vm {
                                     value = Some(cached.value.clone());
                                 }
                             }
-                        }
-                    }
-                }
                 #[cfg(not(debug_assertions))]
                 if let Some(func_obj) = cached_direct_func {
                     let arg = if let Some(right_int) = cached_direct_small_int {
@@ -818,9 +806,9 @@ impl Vm {
                 } else {
                     let (value, cacheable, globals_module_id, globals_version) =
                         self.resolve_load_global_value(idx)?;
-                    if cacheable {
-                        if let Some(frame) = self.frames.last_mut() {
-                            if let Some(slot) = frame.load_global_inline_cache.get_mut(site_index) {
+                    if cacheable
+                        && let Some(frame) = self.frames.last_mut()
+                            && let Some(slot) = frame.load_global_inline_cache.get_mut(site_index) {
                                 *slot = Some(LoadGlobalSiteCacheEntry {
                                     globals_module_id,
                                     globals_version,
@@ -834,8 +822,6 @@ impl Vm {
                                     fused_direct_func_epoch: 0,
                                 });
                             }
-                        }
-                    }
                     value
                 };
                 #[cfg(not(debug_assertions))]
@@ -1283,22 +1269,20 @@ impl Vm {
                 let mut touched_module_version: Option<(u64, u64)> = None;
                 if let Some(frame) = self.frames.last_mut() {
                     if !frame.is_module {
-                        if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
-                            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                        if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied()
+                            && let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                                 removed = slot.take().is_some();
                             }
-                        }
                         if removed {
                             frame.locals.remove(&name);
                         } else {
                             removed = frame.locals.remove(&name).is_some();
                         }
                     }
-                    if !removed {
-                        if let Some(dict) = frame.module_locals_dict.clone() {
+                    if !removed
+                        && let Some(dict) = frame.module_locals_dict.clone() {
                             removed = dict_remove_value(&dict, &Value::Str(name.clone())).is_some();
                         }
-                    }
                     if !removed {
                         let deref_idx = frame
                             .code
@@ -1313,16 +1297,14 @@ impl Vm {
                                     .position(|free| free == &name)
                                     .map(|idx| frame.code.cellvars.len() + idx)
                             });
-                        if let Some(idx) = deref_idx {
-                            if let Some(cell) = frame.cells.get(idx).cloned() {
-                                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                        if let Some(idx) = deref_idx
+                            && let Some(cell) = frame.cells.get(idx).cloned()
+                                && let Object::Cell(cell_data) = &mut *cell.kind_mut() {
                                     removed = cell_data.value.take().is_some();
                                 }
-                            }
-                        }
                     }
-                    if !removed {
-                        if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                    if !removed
+                        && let Object::Module(module_data) = &mut *frame.module.kind_mut() {
                             removed = module_data.globals.remove(&name).is_some();
                             if removed {
                                 module_data.touch_globals_version();
@@ -1330,21 +1312,16 @@ impl Vm {
                                     Some((frame.module.id(), module_data.globals_version));
                             }
                         }
-                    }
-                    if frame.is_module && !removed {
-                        if let Some(slot_idx) = module_slot_idx {
-                            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                    if frame.is_module && !removed
+                        && let Some(slot_idx) = module_slot_idx
+                            && let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                                 removed = slot.take().is_some();
                             }
-                        }
-                    }
-                    if removed {
-                        if let Some(slot_idx) = module_slot_idx {
-                            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                    if removed
+                        && let Some(slot_idx) = module_slot_idx
+                            && let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                                 *slot = None;
                             }
-                        }
-                    }
                 }
                 if !removed {
                     return Err(RuntimeError::new(format!("name '{}' is not defined", name)));
@@ -1514,14 +1491,13 @@ impl Vm {
                         }
                     }
                     Value::Class(class) => {
-                        if let Object::Class(class_data) = &mut *class.kind_mut() {
-                            if class_data.attrs.remove(&attr_name).is_none() {
+                        if let Object::Class(class_data) = &mut *class.kind_mut()
+                            && class_data.attrs.remove(&attr_name).is_none() {
                                 return Err(RuntimeError::new(format!(
                                     "class attribute '{}' does not exist",
                                     attr_name
                                 )));
                             }
-                        }
                         self.touch_class_attr_version(&class);
                     }
                     Value::Instance(instance) => {
@@ -2778,8 +2754,8 @@ impl Vm {
                     .clone()
                     .or_else(|| resolved_metaclass.map(Value::Class));
                 let mut prepared_namespace = self.heap.alloc_dict(Vec::new());
-                if let Some(Value::Class(meta_class)) = effective_metaclass {
-                    if class_attr_lookup(&meta_class, "__prepare__").is_some() {
+                if let Some(Value::Class(meta_class)) = effective_metaclass
+                    && class_attr_lookup(&meta_class, "__prepare__").is_some() {
                         let prepare_callable =
                             match self.load_attr_class(&meta_class, "__prepare__")? {
                                 AttrAccessOutcome::Value(value) => value,
@@ -2809,7 +2785,6 @@ impl Vm {
                             ));
                         }
                     }
-                }
                 let module_name = self
                     .frames
                     .last()
@@ -4646,27 +4621,25 @@ impl Vm {
                 return Ok(());
             }
 
-            if let Some(boundary) = self.active_generator_resume_boundary {
-                if frame_depth <= boundary {
+            if let Some(boundary) = self.active_generator_resume_boundary
+                && frame_depth <= boundary {
                     self.pending_generator_exception = Some(exc);
                     self.generator_resume_outcome =
                         Some(GeneratorResumeOutcome::PropagatedException);
                     return Ok(());
                 }
-            }
 
             // Preserve the internal-call boundary once unwinding has moved past
             // the immediate caller frame. This still allows the caller itself
             // to unwind so outer Python exception handlers can catch the real
             // exception object (instead of collapsing into a RuntimeError
             // traceback string at the boundary).
-            if let Some(stop_depth) = self.run_stop_depth {
-                if frame_depth <= stop_depth {
+            if let Some(stop_depth) = self.run_stop_depth
+                && frame_depth <= stop_depth {
                     frame.active_exception = Some(exc.clone());
                     let message = self.format_traceback(&traceback, &exc);
                     return Err(RuntimeError::new(message));
                 }
-            }
 
             let frame = self.frames.pop().expect("frame exists");
             if let Some(owner) = frame.generator_owner {
@@ -4742,14 +4715,13 @@ impl Vm {
         if matches!(
             exception_type.as_str(),
             "ImportError" | "ModuleNotFoundError"
-        ) {
-            if let Some(name) = extract_import_error_name(&err.message) {
+        )
+            && let Some(name) = extract_import_error_name(&err.message) {
                 exception
                     .attrs
                     .borrow_mut()
                     .insert("name".to_string(), Value::Str(name));
             }
-        }
         if let Some((code, name)) = sqlite_metadata {
             exception
                 .attrs
@@ -4820,14 +4792,13 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::new("can only raise Exception types"))?;
                 let message = self.exception_message_for_instance(&instance);
                 let exception = ExceptionObject::new(class_name, message);
-                if let Object::Instance(instance_data) = &*instance.kind() {
-                    if !instance_data.attrs.is_empty() {
+                if let Object::Instance(instance_data) = &*instance.kind()
+                    && !instance_data.attrs.is_empty() {
                         exception
                             .attrs
                             .borrow_mut()
                             .extend(instance_data.attrs.clone());
                     }
-                }
                 if !exception.attrs.borrow().contains_key("args") {
                     let args = if let Some(message) = &exception.message {
                         self.heap.alloc_tuple(vec![Value::Str(message.clone())])
@@ -5135,14 +5106,13 @@ impl Vm {
                     attrs.insert("filename".to_string(), filename.clone());
                 }
             }
-            if matches!(name, "ImportError" | "ModuleNotFoundError") {
-                if let Some(module_name) = args.iter().find_map(|value| match value {
+            if matches!(name, "ImportError" | "ModuleNotFoundError")
+                && let Some(module_name) = args.iter().find_map(|value| match value {
                     Value::Str(text) => Some(text.clone()),
                     _ => None,
                 }) {
                     attrs.insert("name".to_string(), Value::Str(module_name));
                 }
-            }
         }
         Ok(Value::Exception(Box::new(exception)))
     }
@@ -5227,14 +5197,13 @@ impl Vm {
             output.push_str(
                 "\nThe above exception was the direct cause of the following exception:\n",
             );
-        } else if !exception.suppress_context {
-            if let Some(context) = &exception.context {
+        } else if !exception.suppress_context
+            && let Some(context) = &exception.context {
                 output.push_str(&self.format_exception_chain(context, depth + 1));
                 output.push_str(
                     "\nDuring handling of the above exception, another exception occurred:\n",
                 );
             }
-        }
         output.push_str(&self.format_exception_object(exception));
         output
     }
@@ -5363,11 +5332,10 @@ impl Vm {
             let Some(meta) = effective_metaclass else {
                 let class_value =
                     self.build_default_class_value(name, attrs, default_bases, resolved_metaclass)?;
-                if let Value::Class(class_ref) = &class_value {
-                    if self.call_init_subclass_hook(class_ref, &class_keywords)? {
+                if let Value::Class(class_ref) = &class_value
+                    && self.call_init_subclass_hook(class_ref, &class_keywords)? {
                         return Ok(ClassBuildOutcome::ExceptionHandled);
                     }
-                }
                 return Ok(ClassBuildOutcome::Value(class_value));
             };
             let bases_tuple = self
@@ -5380,11 +5348,10 @@ impl Vm {
             )? {
                 InternalCallOutcome::Value(value) => {
                     if let Value::Class(class) = &value {
-                        if let Some(meta_class) = resolved_metaclass {
-                            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                        if let Some(meta_class) = resolved_metaclass
+                            && let Object::Class(class_data) = &mut *class.kind_mut() {
                                 class_data.metaclass = Some(meta_class);
                             }
-                        }
                         self.record_exception_parent_for_class(class);
                         Ok(ClassBuildOutcome::Value(value))
                     } else {
@@ -5403,11 +5370,10 @@ impl Vm {
             if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                 return Ok(ClassBuildOutcome::ExceptionHandled);
             }
-            if let Some(Value::Class(meta)) = explicit_metaclass {
-                if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+            if let Some(Value::Class(meta)) = explicit_metaclass
+                && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                     class_data.metaclass = Some(meta);
                 }
-            }
             self.record_exception_parent_for_class(class_ref);
         }
         Ok(ClassBuildOutcome::Value(class_value))
@@ -5533,8 +5499,8 @@ impl Vm {
                         .entry("_value_repr_".to_string())
                         .or_insert(Value::Builtin(BuiltinFunction::Repr));
                 }
-                if let Some(slots_value) = class_data.attrs.get("__slots__").cloned() {
-                    if let Some(slot_names) = slot_names_from_value(Some(slots_value.clone())) {
+                if let Some(slots_value) = class_data.attrs.get("__slots__").cloned()
+                    && let Some(slot_names) = slot_names_from_value(Some(slots_value.clone())) {
                         class_data.slots = Some(slot_names);
                         // Preserve the declared __slots__ object shape (str/list/tuple/etc.)
                         // while retaining normalized slot names in ClassObject::slots.
@@ -5542,7 +5508,6 @@ impl Vm {
                             .attrs
                             .insert("__slots__".to_string(), slots_value);
                     }
-                }
                 class_data
                     .attrs
                     .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
@@ -5585,15 +5550,14 @@ impl Vm {
                 );
             }
             self.attach_owner_class_to_attrs(class_ref);
-            if let Ok(mro) = self.build_class_mro(class_ref, &bases) {
-                if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+            if let Ok(mro) = self.build_class_mro(class_ref, &bases)
+                && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                     class_data.mro = mro.clone();
                     let mro_values = mro.into_iter().map(Value::Class).collect::<Vec<_>>();
                     class_data
                         .attrs
                         .insert("__mro__".to_string(), self.heap.alloc_tuple(mro_values));
                 }
-            }
             self.call_class_set_name_hooks(class_ref)?;
             self.record_exception_parent_for_class(class_ref);
         }
@@ -5648,11 +5612,10 @@ impl Vm {
                 let Object::Module(module_data) = &*module.kind() else {
                     return;
                 };
-                if module_data.name == "__classmethod__" || module_data.name == "__staticmethod__" {
-                    if let Some(Value::Function(func)) = module_data.globals.get("__func__") {
+                if (module_data.name == "__classmethod__" || module_data.name == "__staticmethod__")
+                    && let Some(Value::Function(func)) = module_data.globals.get("__func__") {
                         self.set_function_owner_class(func, owner);
                     }
-                }
             }
             _ => {}
         }
@@ -5682,12 +5645,11 @@ impl Vm {
         };
         if let Some(object_idx) = entries.iter().position(|entry| {
             matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "object")
-        }) {
-            if object_idx + 1 != entries.len() {
+        })
+            && object_idx + 1 != entries.len() {
                 let object_entry = entries.remove(object_idx);
                 entries.push(object_entry);
             }
-        }
         entries
     }
 
@@ -5832,10 +5794,7 @@ impl Vm {
         let cached = {
             let frame = self.frames.last().expect("frame exists");
             if idx < frame.fast_locals.len() {
-                match &frame.fast_locals[idx] {
-                    Some(value) => Some(value.clone()),
-                    None => None,
-                }
+                frame.fast_locals[idx].clone()
             } else {
                 None
             }
@@ -5857,11 +5816,10 @@ impl Vm {
         };
 
         let value = value.ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
-        if let Some(frame) = self.frames.last_mut() {
-            if let Some(slot) = frame.fast_locals.get_mut(idx) {
+        if let Some(frame) = self.frames.last_mut()
+            && let Some(slot) = frame.fast_locals.get_mut(idx) {
                 Self::write_fast_local_slot(slot, value.clone());
             }
-        }
         Ok(value)
     }
 
@@ -5949,13 +5907,11 @@ impl Vm {
     }
 
     pub(super) fn module_namespace_lookup(&self, frame: &Frame, name: &str) -> Option<Value> {
-        if frame.return_class {
-            if let Some(namespace) = &frame.class_namespace {
-                if let Some(value) = self.class_namespace_lookup_name(namespace, name) {
+        if frame.return_class
+            && let Some(namespace) = &frame.class_namespace
+                && let Some(value) = self.class_namespace_lookup_name(namespace, name) {
                     return Some(value);
                 }
-            }
-        }
         if let Some(dict) = &frame.module_locals_dict {
             return dict_get_value(dict, &Value::Str(name.to_string()));
         }
@@ -5966,13 +5922,11 @@ impl Vm {
     }
 
     pub(super) fn frame_local_value(frame: &Frame, name: &str) -> Option<Value> {
-        if let Some(idx) = frame.code.name_to_index.get(name).copied() {
-            if idx < frame.fast_locals.len() {
-                if let Some(value) = &frame.fast_locals[idx] {
+        if let Some(idx) = frame.code.name_to_index.get(name).copied()
+            && idx < frame.fast_locals.len()
+                && let Some(value) = &frame.fast_locals[idx] {
                     return Some(value.clone());
                 }
-            }
-        }
         if let Some(value) = frame.locals.get(name) {
             return Some(value.clone());
         }
@@ -5991,21 +5945,18 @@ impl Vm {
             if let Some(value) = frame.locals.get(name) {
                 return Ok(value.clone());
             }
-            if let Some(fallback) = &frame.locals_fallback {
-                if let Some(value) = fallback.get(name) {
+            if let Some(fallback) = &frame.locals_fallback
+                && let Some(value) = fallback.get(name) {
                     return Ok(value.clone());
                 }
-            }
             if let Some(value) = self.module_namespace_lookup(frame, name) {
                 return Ok(value);
             }
-            if let Some(fallback) = &frame.globals_fallback {
-                if let Object::Module(module_data) = &*fallback.kind() {
-                    if let Some(value) = module_data.globals.get(name) {
+            if let Some(fallback) = &frame.globals_fallback
+                && let Object::Module(module_data) = &*fallback.kind()
+                    && let Some(value) = module_data.globals.get(name) {
                         return Ok(value.clone());
                     }
-                }
-            }
         }
         self.builtins
             .get(name)
@@ -6029,11 +5980,10 @@ impl Vm {
             let name = name.clone();
             let has_fast_slot = name_index < frame.fast_locals.len();
             if frame.is_module {
-                if has_fast_slot {
-                    if let Some(slot) = frame.fast_locals.get_mut(name_index) {
+                if has_fast_slot
+                    && let Some(slot) = frame.fast_locals.get_mut(name_index) {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
-                }
                 if frame.return_class {
                     frame.locals.insert(name.clone(), value.clone());
                     if let Some(namespace) = frame.class_namespace.clone() {
@@ -6057,11 +6007,10 @@ impl Vm {
                     }
                 }
             } else {
-                if has_fast_slot {
-                    if let Some(slot) = frame.fast_locals.get_mut(name_index) {
+                if has_fast_slot
+                    && let Some(slot) = frame.fast_locals.get_mut(name_index) {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
-                }
                 if let Some(existing) = frame.locals.get_mut(name.as_str()) {
                     *existing = value;
                 } else {
@@ -6086,11 +6035,10 @@ impl Vm {
         let mut class_namespace_store: Option<(Value, String, Value)> = None;
         if let Some(frame) = self.frames.last_mut() {
             if frame.is_module {
-                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
-                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied()
+                    && let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
-                }
                 if frame.return_class {
                     frame.locals.insert(name.to_string(), value.clone());
                     if let Some(namespace) = frame.class_namespace.clone() {
@@ -6105,11 +6053,10 @@ impl Vm {
                     module_write = Some((frame.module.clone(), value));
                 }
             } else {
-                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
-                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied()
+                    && let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                         Self::write_fast_local_slot(slot, value.clone());
                     }
-                }
                 if let Some(existing) = frame.locals.get_mut(name) {
                     *existing = value;
                 } else {
@@ -6161,11 +6108,10 @@ impl Vm {
                         }
                     }
                 }
-                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied() {
-                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                if let Some(slot_idx) = frame.code.name_to_index.get(name).copied()
+                    && let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                         *slot = value;
                     }
-                }
                 break;
             }
         }
@@ -6179,11 +6125,10 @@ impl Vm {
 
     #[inline]
     fn clear_load_attr_site_cache(&mut self, site_index: usize) {
-        if let Some(frame) = self.frames.last_mut() {
-            if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
+        if let Some(frame) = self.frames.last_mut()
+            && let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
                 *slot = [None, None];
             }
-        }
     }
 
     fn instance_has_attr_shadow(&self, instance: &ObjRef, attr_name: &str) -> bool {
@@ -6229,21 +6174,19 @@ impl Vm {
                 continue;
             }
             if self.class_attr_version(&class_ref) != cached.class_version {
-                if let Some(frame) = self.frames.last_mut() {
-                    if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
+                if let Some(frame) = self.frames.last_mut()
+                    && let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
                         slot[way_idx] = None;
                     }
-                }
                 continue;
             }
             if cached.owner_class.id() != class_ref.id()
                 && self.class_attr_version(&cached.owner_class) != cached.owner_class_version
             {
-                if let Some(frame) = self.frames.last_mut() {
-                    if let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
+                if let Some(frame) = self.frames.last_mut()
+                    && let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index) {
                         slot[way_idx] = None;
                     }
-                }
                 continue;
             }
 
@@ -6405,20 +6348,18 @@ impl Vm {
 
     #[inline]
     fn mark_quickened_site(&mut self, site_index: usize, kind: QuickenedSiteKind) {
-        if let Some(frame) = self.frames.last_mut() {
-            if let Some(slot) = frame.quickened_sites.get_mut(site_index) {
+        if let Some(frame) = self.frames.last_mut()
+            && let Some(slot) = frame.quickened_sites.get_mut(site_index) {
                 *slot = kind;
             }
-        }
     }
 
     #[inline]
     fn clear_quickened_site(&mut self, site_index: usize) {
-        if let Some(frame) = self.frames.last_mut() {
-            if let Some(slot) = frame.quickened_sites.get_mut(site_index) {
+        if let Some(frame) = self.frames.last_mut()
+            && let Some(slot) = frame.quickened_sites.get_mut(site_index) {
                 *slot = QuickenedSiteKind::None;
             }
-        }
     }
 
     #[inline]
@@ -6448,16 +6389,14 @@ impl Vm {
             None
         };
         let value = value.or_else(|| {
-            if let Some(fallback) = &frame.locals_fallback {
-                if let Some(value) = fallback.get(name) {
+            if let Some(fallback) = &frame.locals_fallback
+                && let Some(value) = fallback.get(name) {
                     return Some(value.clone());
                 }
-            }
-            if let Some(fallback) = &frame.globals_fallback {
-                if let Object::Module(module_data) = &*fallback.kind() {
+            if let Some(fallback) = &frame.globals_fallback
+                && let Object::Module(module_data) = &*fallback.kind() {
                     return module_data.globals.get(name).cloned();
                 }
-            }
             None
         });
         let value = value
@@ -6861,22 +6800,20 @@ impl Vm {
                 _ => None,
             },
             Value::DictKeys(keys_view) => {
-                if let Object::DictKeysView(view) = &*keys_view.kind() {
-                    if let Object::Dict(values) = &*view.dict.kind() {
+                if let Object::DictKeysView(view) = &*keys_view.kind()
+                    && let Object::Dict(values) = &*view.dict.kind() {
                         return Ok(Some(Value::Int(values.len() as i64)));
                     }
-                }
                 None
             }
             Value::Instance(instance) => {
                 if let Some(values) = self.namedtuple_instance_values(instance) {
                     return Ok(Some(Value::Int(values.len() as i64)));
                 }
-                if let Some(backing_list) = self.instance_backing_list(instance) {
-                    if let Object::List(values) = &*backing_list.kind() {
+                if let Some(backing_list) = self.instance_backing_list(instance)
+                    && let Object::List(values) = &*backing_list.kind() {
                         return Ok(Some(Value::Int(values.len() as i64)));
                     }
-                }
                 None
             }
             Value::Iterator(iterator) => {
@@ -7078,15 +7015,15 @@ impl Vm {
         let site_index = self.current_site_index();
         let mut clear_cached = false;
         let mut cached_action = None;
-        if let Some(frame) = self.frames.last() {
-            if let Some(slot) = frame.one_arg_inline_cache.get(site_index) {
-                if let Some(entry) = slot.as_ref() {
+        if let Some(frame) = self.frames.last()
+            && let Some(slot) = frame.one_arg_inline_cache.get(site_index)
+                && let Some(entry) = slot.as_ref() {
                     if entry.func_id != func.id() {
                         clear_cached = true;
                     } else {
                         // For stable no-cells hot paths we can trust cached metadata directly.
-                        if entry.hot_path == OneArgCallHotPath::SimplePositionalNoCells {
-                            if let (Some(code), Some(module)) =
+                        if entry.hot_path == OneArgCallHotPath::SimplePositionalNoCells
+                            && let (Some(code), Some(module)) =
                                 (entry.cached_code.as_ref(), entry.cached_module.as_ref())
                             {
                                 cached_action = Some(CachedCallAction::SimpleNoCells {
@@ -7095,7 +7032,6 @@ impl Vm {
                                     owner_class: entry.cached_owner_class.clone(),
                                 });
                             }
-                        }
                         if cached_action.is_none() {
                             let valid = {
                                 let func_kind = func.kind();
@@ -7146,8 +7082,6 @@ impl Vm {
                         }
                     }
                 }
-            }
-        }
         if let Some(action) = cached_action {
             return match action {
                 CachedCallAction::SimpleNoCells {
@@ -7182,13 +7116,11 @@ impl Vm {
                 }
             };
         }
-        if clear_cached {
-            if let Some(frame) = self.frames.last_mut() {
-                if let Some(slot) = frame.one_arg_inline_cache.get_mut(site_index) {
+        if clear_cached
+            && let Some(frame) = self.frames.last_mut()
+                && let Some(slot) = frame.one_arg_inline_cache.get_mut(site_index) {
                     *slot = None;
                 }
-            }
-        }
 
         let (code, module, closure, owner_class, simple_positional_path, no_cells_hot, func_epoch) = {
             let func_kind = func.kind();
@@ -7215,8 +7147,8 @@ impl Vm {
             )
         };
         if simple_positional_path {
-            if let Some(frame) = self.frames.last_mut() {
-                if let Some(slot) = frame.one_arg_inline_cache.get_mut(site_index) {
+            if let Some(frame) = self.frames.last_mut()
+                && let Some(slot) = frame.one_arg_inline_cache.get_mut(site_index) {
                     *slot = Some(OneArgCallSiteCacheEntry {
                         func_id: func.id(),
                         func_epoch,
@@ -7235,7 +7167,6 @@ impl Vm {
                         },
                     });
                 }
-            }
             if no_cells_hot {
                 return self.push_simple_positional_function_frame_one_arg_no_cells(
                     code,
@@ -7252,8 +7183,8 @@ impl Vm {
                 arg0,
             );
         }
-        if let Some(frame) = self.frames.last_mut() {
-            if let Some(slot) = frame.one_arg_inline_cache.get_mut(site_index) {
+        if let Some(frame) = self.frames.last_mut()
+            && let Some(slot) = frame.one_arg_inline_cache.get_mut(site_index) {
                 *slot = Some(OneArgCallSiteCacheEntry {
                     func_id: func.id(),
                     func_epoch,
@@ -7264,7 +7195,6 @@ impl Vm {
                     cached_closure: None,
                 });
             }
-        }
         self.push_function_call_from_obj(func, vec![arg0], HashMap::new())
     }
 
@@ -7330,11 +7260,10 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         let slot_idx = code.plain_positional_arg0_slot;
         let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
-        if let Some(caller) = self.frames.last() {
-            if let Some(active_exception) = caller.active_exception.as_ref() {
+        if let Some(caller) = self.frames.last()
+            && let Some(active_exception) = caller.active_exception.as_ref() {
                 frame.active_exception = Some(active_exception.clone());
             }
-        }
         if slot_idx == Some(0) && frame.fast_locals.len() == 1 {
             frame.fast_locals[0] = Some(arg0);
             self.frames.push(frame);
@@ -7387,11 +7316,10 @@ impl Vm {
             frame.function_globals_version = globals_version;
             frame
         };
-        if let Some(caller) = self.frames.last() {
-            if let Some(active_exception) = caller.active_exception.as_ref() {
+        if let Some(caller) = self.frames.last()
+            && let Some(active_exception) = caller.active_exception.as_ref() {
                 frame.active_exception = Some(active_exception.clone());
             }
-        }
         frame.fast_locals[0] = Some(arg0);
         self.frames.push(frame);
         Ok(())
@@ -7569,20 +7497,17 @@ impl Vm {
                     .and_then(|idx| *idx),
             ),
         };
-        if let Some(cell_idx) = cell_idx {
-            if let Some(cell) = frame.cells.get(cell_idx) {
-                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+        if let Some(cell_idx) = cell_idx
+            && let Some(cell) = frame.cells.get(cell_idx)
+                && let Object::Cell(cell_data) = &mut *cell.kind_mut() {
                     cell_data.value = Some(value);
                     return;
                 }
-            }
-        }
-        if let Some(slot_idx) = slot_idx {
-            if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+        if let Some(slot_idx) = slot_idx
+            && let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                 Self::write_fast_local_slot(slot, value);
                 return;
             }
-        }
         let posonly_len = code.posonly_params.len();
         let fallback_name = if arg_index < posonly_len {
             code.posonly_params.get(arg_index)
@@ -7609,13 +7534,11 @@ impl Vm {
         let module_id = module.id();
         let mut frame = self.acquire_frame(code.clone(), module, false, false, cells, owner_class);
         frame.active_exception = caller_active_exception;
-        if code.is_comprehension {
-            if let Some(caller) = self.frames.last() {
-                if caller.return_class && caller.module.id() == module_id {
+        if code.is_comprehension
+            && let Some(caller) = self.frames.last()
+                && caller.return_class && caller.module.id() == module_id {
                     frame.globals_fallback = Some(caller.function_globals.clone());
                 }
-            }
-        }
         frame
     }
 
@@ -7957,11 +7880,10 @@ impl Vm {
         if let Some(class) = self.class_of_value(value) {
             return Ok(Value::Class(class));
         }
-        if let Value::Function(_) = value {
-            if let Some(class) = self.types_module_class("FunctionType") {
+        if let Value::Function(_) = value
+            && let Some(class) = self.types_module_class("FunctionType") {
                 return Ok(Value::Class(class));
             }
-        }
         if let Value::Builtin(builtin) = value {
             if self.builtin_is_type_object(*builtin) {
                 return Ok(Value::Builtin(BuiltinFunction::Type));
@@ -7973,16 +7895,14 @@ impl Vm {
         if matches!(value, Value::BoundMethod(_)) {
             return Ok(Value::Builtin(BuiltinFunction::TypesMethodType));
         }
-        if let Value::Code(_) = value {
-            if let Some(class) = self.types_module_class("CodeType") {
+        if let Value::Code(_) = value
+            && let Some(class) = self.types_module_class("CodeType") {
                 return Ok(Value::Class(class));
             }
-        }
-        if let Value::None = value {
-            if let Some(class) = self.types_module_class("NoneType") {
+        if let Value::None = value
+            && let Some(class) = self.types_module_class("NoneType") {
                 return Ok(Value::Class(class));
             }
-        }
         BuiltinFunction::Type.call(&self.heap, vec![value.clone()])
     }
 

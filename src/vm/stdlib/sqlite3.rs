@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{Vm, Value, RuntimeError, Object, HashMap, InternalCallOutcome, format_repr, value_to_int, is_truthy, BigInt, classify_runtime_error, vm_current_thread_ident, ObjRef, bytes_like_from_value, BuiltinFunction, dict_get_value, dict_set_value_checked, value_to_f64, slice_indices};
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uchar, c_uint, c_void};
@@ -1952,11 +1952,10 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                         "parameters are of unsupported type",
                     ))
                 } else {
-                    if let Value::Instance(instance) = &candidate {
-                        if self.instance_backing_dict(instance).is_some() {
+                    if let Value::Instance(instance) = &candidate
+                        && self.instance_backing_dict(instance).is_some() {
                             return Ok(SqliteParams::Named(candidate));
                         }
-                    }
                     let has_keys = matches!(
                         self.builtin_hasattr(
                             vec![candidate.clone(), Value::Str("keys".to_string())],
@@ -2359,73 +2358,66 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                         .unwrap_or(raw_name.as_ref());
                     let value = if let Value::Dict(dict_obj) = &mapping {
                         dict_get_value(dict_obj, &Value::Str(key.to_string()))
-                    } else {
-                        if let Some(getitem) =
-                            self.lookup_bound_special_method(&mapping, "__getitem__")?
-                        {
-                            match self.call_internal(
-                                getitem,
-                                vec![Value::Str(key.to_string())],
-                                HashMap::new(),
-                            ) {
-                                Ok(InternalCallOutcome::Value(value)) => Some(value),
-                                Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                                    if self.active_exception_is("KeyError") {
-                                        self.clear_active_exception();
-                                        None
-                                    } else {
-                                        return Err(self.runtime_error_from_active_exception(
-                                            "__getitem__() failed",
-                                        ));
-                                    }
-                                }
-                                Err(err) if classify_runtime_error(&err.message) == "KeyError" => {
+                    } else if let Some(getitem) =
+                        self.lookup_bound_special_method(&mapping, "__getitem__")?
+                    {
+                        match self.call_internal(
+                            getitem,
+                            vec![Value::Str(key.to_string())],
+                            HashMap::new(),
+                        ) {
+                            Ok(InternalCallOutcome::Value(value)) => Some(value),
+                            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                                if self.active_exception_is("KeyError") {
+                                    self.clear_active_exception();
                                     None
-                                }
-                                Err(err) => return Err(err),
-                            }
-                        } else if let Value::Instance(instance) = &mapping {
-                            if let Some(backing_dict) = self.instance_backing_dict(instance) {
-                                if let Some(value) =
-                                    dict_get_value(&backing_dict, &Value::Str(key.to_string()))
-                                {
-                                    Some(value)
-                                } else if let Some(missing) =
-                                    self.lookup_bound_special_method(&mapping, "__missing__")?
-                                {
-                                    match self.call_internal(
-                                        missing,
-                                        vec![Value::Str(key.to_string())],
-                                        HashMap::new(),
-                                    ) {
-                                        Ok(InternalCallOutcome::Value(value)) => Some(value),
-                                        Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                                            if self.active_exception_is("KeyError") {
-                                                self.clear_active_exception();
-                                                None
-                                            } else {
-                                                return Err(self
-                                                    .runtime_error_from_active_exception(
-                                                        "__missing__() failed",
-                                                    ));
-                                            }
-                                        }
-                                        Err(err)
-                                            if classify_runtime_error(&err.message)
-                                                == "KeyError" =>
-                                        {
-                                            None
-                                        }
-                                        Err(err) => return Err(err),
-                                    }
                                 } else {
-                                    None
+                                    return Err(self.runtime_error_from_active_exception(
+                                        "__getitem__() failed",
+                                    ));
+                                }
+                            }
+                            Err(err) if classify_runtime_error(&err.message) == "KeyError" => {
+                                None
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    } else if let Value::Instance(instance) = &mapping {
+                        if let Some(backing_dict) = self.instance_backing_dict(instance) {
+                            if let Some(value) =
+                                dict_get_value(&backing_dict, &Value::Str(key.to_string()))
+                            {
+                                Some(value)
+                            } else if let Some(missing) =
+                                self.lookup_bound_special_method(&mapping, "__missing__")?
+                            {
+                                match self.call_internal(
+                                    missing,
+                                    vec![Value::Str(key.to_string())],
+                                    HashMap::new(),
+                                ) {
+                                    Ok(InternalCallOutcome::Value(value)) => Some(value),
+                                    Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                                        if self.active_exception_is("KeyError") {
+                                            self.clear_active_exception();
+                                            None
+                                        } else {
+                                            return Err(self
+                                                .runtime_error_from_active_exception(
+                                                    "__missing__() failed",
+                                                ));
+                                        }
+                                    }
+                                    Err(err)
+                                        if classify_runtime_error(&err.message)
+                                            == "KeyError" =>
+                                    {
+                                        None
+                                    }
+                                    Err(err) => return Err(err),
                                 }
                             } else {
-                                return Err(sqlite_error(
-                                    "ProgrammingError",
-                                    "parameters are of unsupported type",
-                                ));
+                                None
                             }
                         } else {
                             return Err(sqlite_error(
@@ -2433,6 +2425,11 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                                 "parameters are of unsupported type",
                             ));
                         }
+                    } else {
+                        return Err(sqlite_error(
+                            "ProgrammingError",
+                            "parameters are of unsupported type",
+                        ));
                     };
                     let Some(value) = value else {
                         return Err(sqlite_error(
@@ -4926,13 +4923,12 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
             Value::Slice(slice) => {
                 let payload = match replacement {
                     Value::MemoryView(obj) => {
-                        if let Object::MemoryView(view) = &*obj.kind() {
-                            if !view.contiguous {
+                        if let Object::MemoryView(view) = &*obj.kind()
+                            && !view.contiguous {
                                 return Err(RuntimeError::new(
                                     "BufferError: underlying buffer is not C-contiguous",
                                 ));
                             }
-                        }
                         bytes_like_from_value(Value::MemoryView(obj)).map_err(|_| {
                             sqlite_error("TypeError", "a bytes-like object is required")
                         })?
@@ -5359,11 +5355,10 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
         }
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "setinputsizes")?;
         let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
-        if let Some(state) = self.sqlite_cursors.get(&cursor_id) {
-            if state.closed {
+        if let Some(state) = self.sqlite_cursors.get(&cursor_id)
+            && state.closed {
                 return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
             }
-        }
         Ok(Value::None)
     }
 
@@ -5380,11 +5375,10 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
         }
         let cursor_id = self.sqlite_cursor_id_from_value(&args[0], "setoutputsize")?;
         let connection_id = self.sqlite_cursor_ensure_thread_affinity(cursor_id)?;
-        if let Some(state) = self.sqlite_cursors.get(&cursor_id) {
-            if state.closed {
+        if let Some(state) = self.sqlite_cursors.get(&cursor_id)
+            && state.closed {
                 return Err(self.sqlite_cursor_closed_runtime_error(connection_id));
             }
-        }
         Ok(Value::None)
     }
 

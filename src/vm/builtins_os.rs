@@ -1,4 +1,4 @@
-use super::*;
+use super::{Vm, Value, HashMap, RuntimeError, Object, dict_get_value, ModuleObject, value_to_int, fs, AsRawFd, Stdio, ExitStatusExt, UnixStream, FromRawFd, IntoRawFd, Read, Write, SeekFrom, Seek, IsTerminal, is_truthy, value_to_f64, SystemTime, UNIX_EPOCH, seconds_to_system_time, ClassObject, BuiltinFunction, PathBuf, Path, ExceptionObject, InternalCallOutcome, format_value, collect_process_argv, collect_env_entries, Command, value_to_process_text, is_pyrs_executable, parse_modules_to_block_literal, ObjRef, InstanceObject, system_time_to_secs_f64, TUPLE_BACKING_STORAGE_ATTR, value_to_bigint, value_from_bigint, parse_decimal_bigint_literal, BigInt, parse_string_formatter, split_formatter_field_name, FormatterFieldKey, normalize_codec_encoding, normalize_codec_errors, encode_text_bytes, bytes_like_from_value, decode_text_bytes, decode_escape_bytes, NativeMethodKind, AtexitHandler, Duration};
 
 const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
 const CODECS_ATTR_ERRORS: &str = "__pyrs_codec_errors__";
@@ -290,9 +290,9 @@ impl Vm {
                 self.alloc_open_fd(unsafe { fs::File::from_raw_fd(read_end.into_raw_fd()) });
             let write_fd =
                 self.alloc_open_fd(unsafe { fs::File::from_raw_fd(write_end.into_raw_fd()) });
-            return Ok(self
+            Ok(self
                 .heap
-                .alloc_tuple(vec![Value::Int(read_fd), Value::Int(write_fd)]));
+                .alloc_tuple(vec![Value::Int(read_fd), Value::Int(write_fd)]))
         }
         #[cfg(not(unix))]
         {
@@ -745,11 +745,10 @@ impl Vm {
         } else {
             0o777
         };
-        if let Some(dir_fd) = kwargs.remove("dir_fd") {
-            if !matches!(dir_fd, Value::None) {
+        if let Some(dir_fd) = kwargs.remove("dir_fd")
+            && !matches!(dir_fd, Value::None) {
                 return Err(RuntimeError::new("mkdir() dir_fd is unsupported"));
             }
-        }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "mkdir() got an unexpected keyword argument",
@@ -778,16 +777,14 @@ impl Vm {
         }
         let path = self.path_arg_to_string(args.remove(0))?;
         let mode = value_to_int(args.remove(0))?;
-        if let Some(dir_fd) = kwargs.remove("dir_fd") {
-            if !matches!(dir_fd, Value::None) {
+        if let Some(dir_fd) = kwargs.remove("dir_fd")
+            && !matches!(dir_fd, Value::None) {
                 return Err(RuntimeError::new("chmod() dir_fd is unsupported"));
             }
-        }
-        if let Some(follow_symlinks) = kwargs.remove("follow_symlinks") {
-            if !is_truthy(&follow_symlinks) {
+        if let Some(follow_symlinks) = kwargs.remove("follow_symlinks")
+            && !is_truthy(&follow_symlinks) {
                 return Err(RuntimeError::new("chmod() follow_symlinks is unsupported"));
             }
-        }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "chmod() got an unexpected keyword argument",
@@ -1354,7 +1351,7 @@ impl Vm {
             let name = entry.file_name().to_string_lossy().to_string();
             names.push(Value::Str(name));
         }
-        names.sort_by(|a, b| format_value(a).cmp(&format_value(b)));
+        names.sort_by_key(format_value);
         Ok(self.heap.alloc_list(names))
     }
 
@@ -1370,21 +1367,18 @@ impl Vm {
         }
         let (path, _) = self.path_arg_to_string_and_type(args.remove(0))?;
         let mode = value_to_int(args.remove(0))?;
-        if let Some(dir_fd) = kwargs.remove("dir_fd") {
-            if !matches!(dir_fd, Value::None) {
+        if let Some(dir_fd) = kwargs.remove("dir_fd")
+            && !matches!(dir_fd, Value::None) {
                 return Err(RuntimeError::new("access() dir_fd is unsupported"));
             }
-        }
-        if let Some(effective_ids) = kwargs.remove("effective_ids") {
-            if is_truthy(&effective_ids) {
+        if let Some(effective_ids) = kwargs.remove("effective_ids")
+            && is_truthy(&effective_ids) {
                 return Err(RuntimeError::new("access() effective_ids is unsupported"));
             }
-        }
-        if let Some(follow_symlinks) = kwargs.remove("follow_symlinks") {
-            if !is_truthy(&follow_symlinks) {
+        if let Some(follow_symlinks) = kwargs.remove("follow_symlinks")
+            && !is_truthy(&follow_symlinks) {
                 return Err(RuntimeError::new("access() follow_symlinks is unsupported"));
             }
-        }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "access() got an unexpected keyword argument",
@@ -2015,8 +2009,8 @@ impl Vm {
             _ => None,
         };
         if let Some(mut child) = self.child_processes.remove(&pid) {
-            if let Some(input) = input {
-                if let Some(stdin) = child.stdin.as_mut() {
+            if let Some(input) = input
+                && let Some(stdin) = child.stdin.as_mut() {
                     let payload = match input {
                         Value::Str(text) if text_mode => {
                             let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
@@ -2033,7 +2027,6 @@ impl Vm {
                         .write_all(&payload)
                         .map_err(|err| RuntimeError::new(format!("stdin write failed: {err}")))?;
                 }
-            }
             let output = child
                 .wait_with_output()
                 .map_err(|err| RuntimeError::new(format!("communicate failed: {err}")))?;
@@ -2228,13 +2221,12 @@ impl Vm {
         if kind != "stdin" {
             return Ok(Value::None);
         }
-        if let Some(child) = self.child_processes.get_mut(&pid) {
-            if let Some(stdin) = child.stdin.as_mut() {
+        if let Some(child) = self.child_processes.get_mut(&pid)
+            && let Some(stdin) = child.stdin.as_mut() {
                 stdin
                     .flush()
                     .map_err(|err| RuntimeError::new(format!("pipe flush failed: {err}")))?;
             }
-        }
         Ok(Value::None)
     }
 
@@ -2333,8 +2325,8 @@ impl Vm {
             Some(Value::Int(pid)) => pid,
             _ => return Err(RuntimeError::new("invalid subprocess handle")),
         };
-        if let Some(child) = self.child_processes.get_mut(&pid) {
-            if let Some(status) = child
+        if let Some(child) = self.child_processes.get_mut(&pid)
+            && let Some(status) = child
                 .try_wait()
                 .map_err(|err| RuntimeError::new(format!("poll failed: {err}")))?
             {
@@ -2347,7 +2339,6 @@ impl Vm {
                 let returncode = status.code().unwrap_or(-1) as i64;
                 Self::instance_attr_set(&instance, "returncode", Value::Int(returncode))?;
             }
-        }
         Ok(Self::instance_attr_get(&instance, "returncode").unwrap_or(Value::None))
     }
 
@@ -2909,12 +2900,10 @@ impl Vm {
             } else {
                 Ok(Value::Str(".".to_string()))
             }
+        } else if return_bytes {
+            Ok(self.heap.alloc_bytes(out.into_bytes()))
         } else {
-            if return_bytes {
-                Ok(self.heap.alloc_bytes(out.into_bytes()))
-            } else {
-                Ok(Value::Str(out))
-            }
+            Ok(Value::Str(out))
         }
     }
 
@@ -3291,7 +3280,7 @@ impl Vm {
         path_parts.drain(0..common);
         start_parts.drain(0..common);
         let mut rel_parts: Vec<String> = Vec::new();
-        rel_parts.extend(std::iter::repeat("..".to_string()).take(start_parts.len()));
+        rel_parts.extend(std::iter::repeat_n("..".to_string(), start_parts.len()));
         rel_parts.extend(path_parts.into_iter().map(ToOwned::to_owned));
 
         if rel_parts.is_empty() {
@@ -3431,7 +3420,7 @@ impl Vm {
                     let exponent_u32 = u32::try_from(exponent)
                         .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
                     let value = base_big.pow_u64(exponent_u32 as u64);
-                    entries.push((Value::Int(exponent as i64), value_from_bigint(value)));
+                    entries.push((Value::Int(exponent), value_from_bigint(value)));
                 }
             }
             Value::Bool(base) => {
@@ -3440,7 +3429,7 @@ impl Vm {
                     let exponent_u32 = u32::try_from(exponent)
                         .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
                     let value = base_big.pow_u64(exponent_u32 as u64);
-                    entries.push((Value::Int(exponent as i64), value_from_bigint(value)));
+                    entries.push((Value::Int(exponent), value_from_bigint(value)));
                 }
             }
             Value::BigInt(base_big) => {
@@ -3448,7 +3437,7 @@ impl Vm {
                     let exponent_u32 = u32::try_from(exponent)
                         .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
                     let value = base_big.pow_u64(exponent_u32 as u64);
-                    entries.push((Value::Int(exponent as i64), value_from_bigint(value)));
+                    entries.push((Value::Int(exponent), value_from_bigint(value)));
                 }
             }
             Value::Float(base) => {
@@ -4445,7 +4434,7 @@ impl Vm {
         let data = bytes_like_from_value(args.remove(0))?;
         const TABLE: &[u8; 64] =
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = Vec::with_capacity(((data.len() + 2) / 3) * 4 + if newline { 1 } else { 0 });
+        let mut out = Vec::with_capacity(data.len().div_ceil(3) * 4 + if newline { 1 } else { 0 });
         let mut i = 0usize;
         while i < data.len() {
             let b0 = data[i];
@@ -4630,14 +4619,13 @@ impl Vm {
         let timeout = kwargs
             .remove("timeout")
             .or_else(|| if args.len() > 3 { args.pop() } else { None });
-        if let Some(timeout) = timeout {
-            if !matches!(timeout, Value::None) {
+        if let Some(timeout) = timeout
+            && !matches!(timeout, Value::None) {
                 let timeout_secs = value_to_f64(timeout)?;
                 if timeout_secs > 0.0 {
                     std::thread::sleep(Duration::from_secs_f64(timeout_secs.min(0.01)));
                 }
             }
-        }
         let read_values = match args.first() {
             Some(value) => self
                 .collect_iterable_values(value.clone())

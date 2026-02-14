@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, Vm, HashMap, RuntimeError, value_to_int, is_truthy, InternalCallOutcome, fs, Read, Write, Seek, SeekFrom, BuiltinFunction, ObjRef, Object, format_value, ClassObject, InstanceObject, bytes_like_from_value, class_attr_walk, ExceptionObject, classify_runtime_error, extract_runtime_error_exception_name, extract_runtime_error_final_message, extract_prefixed_exception_message, is_os_error_family, extract_os_error_errno, infer_os_error_errno, extract_os_error_strerror, memoryview_bounds, AsRawFd, GeneratorResumeOutcome, StructFormatSpec, StructEndian, StructFieldKind, StructFieldSpec, value_to_f64, BigInt};
 
 const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
 const IO_BUFFERED_ATTR_BUF_SIZE: &str = "__pyrs_buffer_size";
@@ -222,13 +222,12 @@ impl Vm {
             Value::Str(value) => Some(value),
             _ => return Err(RuntimeError::new("open() newline must be str or None")),
         };
-        if let Some(value) = newline.as_deref() {
-            if !matches!(value, "" | "\n" | "\r" | "\r\n") {
+        if let Some(value) = newline.as_deref()
+            && !matches!(value, "" | "\n" | "\r" | "\r\n") {
                 return Err(RuntimeError::new(format!(
                     "ValueError: illegal newline value: {value}",
                 )));
             }
-        }
         if binary_mode && encoding.is_some() {
             return Err(RuntimeError::new(
                 "binary mode doesn't take an encoding argument",
@@ -367,11 +366,10 @@ impl Vm {
                 }
             }
         };
-        if mode_kind == 'a' {
-            if let Some(file) = self.find_open_file_mut(fd) {
+        if mode_kind == 'a'
+            && let Some(file) = self.find_open_file_mut(fd) {
                 let _ = file.seek(SeekFrom::End(0));
             }
-        }
 
         let raw_mode = if binary_mode {
             mode.clone()
@@ -487,7 +485,7 @@ impl Vm {
                     ));
                 }
             };
-            if bytes.iter().any(|byte| *byte == 0) {
+            if bytes.contains(&0) {
                 return Err(RuntimeError::new(
                     "ValueError: embedded null character in path",
                 ));
@@ -1706,12 +1704,11 @@ impl Vm {
         match exc {
             Value::Exception(exception) => {
                 let mut line = exception.name.clone();
-                if let Some(message) = &exception.message {
-                    if !message.is_empty() {
+                if let Some(message) = &exception.message
+                    && !message.is_empty() {
                         line.push_str(": ");
                         line.push_str(message);
                     }
-                }
                 RuntimeError::new(line)
             }
             _ => RuntimeError::new(fallback),
@@ -3366,11 +3363,10 @@ impl Vm {
             Some(Value::Int(fd)) => Ok(fd),
             _ => {
                 for key in ["buffer", "raw"] {
-                    if let Some(Value::Instance(inner)) = Self::instance_attr_get(instance, key) {
-                        if inner.id() != instance.id() {
+                    if let Some(Value::Instance(inner)) = Self::instance_attr_get(instance, key)
+                        && inner.id() != instance.id() {
                             return self.io_file_fd_from_instance_inner(&inner, depth + 1);
                         }
-                    }
                 }
                 Err(RuntimeError::new("invalid file object"))
             }
@@ -3484,16 +3480,14 @@ impl Vm {
         }
 
         let mut linked = Vec::new();
-        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") {
-            if buffer.id() != instance.id() {
+        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer")
+            && buffer.id() != instance.id() {
                 linked.push(buffer);
             }
-        }
-        if let Some(Value::Instance(raw)) = Self::instance_attr_get(instance, "raw") {
-            if raw.id() != instance.id() && !linked.iter().any(|item| item.id() == raw.id()) {
+        if let Some(Value::Instance(raw)) = Self::instance_attr_get(instance, "raw")
+            && raw.id() != instance.id() && !linked.iter().any(|item| item.id() == raw.id()) {
                 linked.push(raw);
             }
-        }
 
         if let Some(Value::Int(fd)) = Self::instance_attr_get(instance, "_fd") {
             let closefd = !matches!(
@@ -3673,11 +3667,10 @@ impl Vm {
                 break;
             }
             out.push(byte[0]);
-            if byte[0] == b'\n' {
-                if binary || newline.as_deref() != Some("\r") {
+            if byte[0] == b'\n'
+                && (binary || newline.as_deref() != Some("\r")) {
                     break;
                 }
-            }
             if !binary {
                 match newline.as_deref() {
                     None | Some("") => {
@@ -3714,8 +3707,8 @@ impl Vm {
                         }
                     }
                     Some("\r\n") => {
-                        if byte[0] == b'\r' {
-                            if limit.map(|max| out.len() < max).unwrap_or(true) {
+                        if byte[0] == b'\r'
+                            && limit.map(|max| out.len() < max).unwrap_or(true) {
                                 let mut next = [0u8; 1];
                                 let next_count = file.read(&mut next).map_err(|err| {
                                     RuntimeError::new(format!("readline failed: {err}"))
@@ -3730,7 +3723,6 @@ impl Vm {
                                     })?;
                                 }
                             }
-                        }
                     }
                     Some(_) => {}
                 }
@@ -3777,7 +3769,7 @@ impl Vm {
                 HashMap::new(),
             )?;
             let bytes = match &line {
-                Value::Str(text) => text.as_bytes().len(),
+                Value::Str(text) => text.len(),
                 Value::Bytes(obj) => match &*obj.kind() {
                     Object::Bytes(values) => values.len(),
                     _ => 0,
@@ -4187,15 +4179,14 @@ impl Vm {
             return Err(RuntimeError::new("detach() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "detach")?;
-        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer") {
-            if buffer.id() != instance.id() {
+        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer")
+            && buffer.id() != instance.id() {
                 Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
                 Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
                 Self::instance_attr_set(&instance, "buffer", Value::None)?;
                 Self::instance_attr_set(&instance, "raw", Value::None)?;
                 return Ok(Value::Instance(buffer));
             }
-        }
         Err(RuntimeError::new("detach"))
     }
 
@@ -4239,8 +4230,8 @@ impl Vm {
             return Err(RuntimeError::new("seekable() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "seekable")?;
-        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer") {
-            if buffer.id() != instance.id() {
+        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer")
+            && buffer.id() != instance.id() {
                 let seekable = self.builtin_getattr(
                     vec![Value::Instance(buffer), Value::Str("seekable".to_string())],
                     HashMap::new(),
@@ -4253,7 +4244,6 @@ impl Vm {
                     }
                 };
             }
-        }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let file = self
             .open_files
@@ -4310,7 +4300,7 @@ impl Vm {
         let mut text_chunks = String::new();
         let mut binary_chunks: Vec<u8> = Vec::new();
         let mut text_mode: Option<bool> = None;
-        while remaining < 0 || remaining > 0 {
+        while remaining != 0 {
             let request = if remaining < 0 { 1 } else { remaining.min(1) };
             let chunk = match self.call_internal(
                 read.clone(),
@@ -5344,7 +5334,7 @@ impl Vm {
             self.io_index_arg_to_int(args.remove(0))?
         };
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
-        if !matches!(whence, 0 | 1 | 2) {
+        if !matches!(whence, 0..=2) {
             return Err(RuntimeError::new(format!(
                 "ValueError: Invalid whence ({whence}, should be 0, 1 or 2)"
             )));
@@ -6647,7 +6637,7 @@ impl Vm {
         for field in &spec.fields {
             match field.kind {
                 StructFieldKind::Pad => {
-                    result.extend(std::iter::repeat(0u8).take(field.count));
+                    result.extend(std::iter::repeat_n(0u8, field.count));
                 }
                 StructFieldKind::Bytes => {
                     let bytes = bytes_like_from_value(values[value_idx].clone())?;
@@ -6656,7 +6646,7 @@ impl Vm {
                         result.extend_from_slice(&bytes[..field.count]);
                     } else {
                         result.extend_from_slice(&bytes);
-                        result.extend(std::iter::repeat(0u8).take(field.count - bytes.len()));
+                        result.extend(std::iter::repeat_n(0u8, field.count - bytes.len()));
                     }
                 }
                 StructFieldKind::Char => {

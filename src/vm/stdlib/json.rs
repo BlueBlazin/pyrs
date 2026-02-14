@@ -1,4 +1,4 @@
-use super::super::{Vm, Value, HashMap, RuntimeError, is_truthy, BuiltinFunction, ModuleObject, Object, value_to_int, InternalCallOutcome, BigInt, Hasher, Heap};
+use super::super::{Vm, Value, HashMap, RuntimeError, is_truthy, BuiltinFunction, ModuleObject, Object, value_to_int, InternalCallOutcome, BigInt, Heap};
 
 #[derive(Clone)]
 struct JsonDumpsOptions {

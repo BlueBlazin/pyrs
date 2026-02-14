@@ -1,4 +1,4 @@
-use super::*;
+use super::{Vm, NativeMethodKind, ObjRef, Value, HashMap, NativeCallResult, RuntimeError, BuiltinFunction, Object, GeneratorResumeKind, GeneratorResumeOutcome, exception_is_named, InternalCallOutcome, dict_set_value_checked, ensure_hashable, dict_get_value, dict_set_value, dict_remove_value, value_to_int, is_truthy, value_to_bigint, bigint_to_fixed_bytes, normalize_codec_encoding, normalize_codec_errors, encode_text_bytes, bytes_like_from_value, decode_text_bytes, find_bytes_subslice, InstanceObject, with_bytes_like_source, memoryview_bounds, parse_string_formatter, split_formatter_field_name, FormatterFieldKey, py_split_whitespace, py_splitlines, py_rsplit_whitespace, runtime_error_matches_exception, ReMode, re_pattern_from_compiled_module, RePatternValue, BoundMethod, dedup_hashable_values, AttrMutationOutcome, ModuleObject, CodeObject, Instruction, Opcode, Rc, Frame, GeneratorObject, class_attr_lookup, IteratorObject, IteratorKind, Block, BigInt, Ordering, value_from_bigint, call_builtin_with_kwargs};
 
 impl Vm {
     pub(super) fn call_native_method(
@@ -447,8 +447,8 @@ impl Vm {
                 if let Some(value) = dict_get_value(&dict_receiver, &key) {
                     return Ok(NativeCallResult::Value(value));
                 }
-                if let Some(owner) = missing_owner {
-                    if let Some(missing) =
+                if let Some(owner) = missing_owner
+                    && let Some(missing) =
                         self.lookup_bound_special_method(&owner, "__missing__")?
                     {
                         return match self.call_internal(missing, vec![key], HashMap::new())? {
@@ -459,7 +459,6 @@ impl Vm {
                             }
                         };
                     }
-                }
                 Err(RuntimeError::new("key not found"))
             }
             NativeMethodKind::DictSetItem => {
@@ -2362,12 +2361,11 @@ impl Vm {
                 let view = self
                     .heap
                     .alloc_memoryview_with(source, itemsize, Some(format));
-                if let Value::MemoryView(view_obj) = &view {
-                    if let Object::MemoryView(view_data) = &mut *view_obj.kind_mut() {
+                if let Value::MemoryView(view_obj) = &view
+                    && let Object::MemoryView(view_data) = &mut *view_obj.kind_mut() {
                         view_data.start = start;
                         view_data.length = length;
                     }
-                }
                 Ok(NativeCallResult::Value(view))
             }
             NativeMethodKind::MemoryViewToList => {
@@ -2604,7 +2602,7 @@ impl Vm {
                     _ => return Err(RuntimeError::new("str receiver is invalid")),
                 };
                 Ok(NativeCallResult::Value(Value::Bool(
-                    text.chars().all(|ch| ch.is_ascii()),
+                    text.is_ascii(),
                 )))
             }
             NativeMethodKind::StrIsAlpha => {
@@ -3524,12 +3522,11 @@ impl Vm {
                 exception.notes.push(note.clone());
                 if let Some(frame) = self.frames.last_mut() {
                     let append_matching_note = |value: &mut Value| {
-                        if let Value::Exception(candidate) = value {
-                            if candidate.name == target_name && candidate.message == target_message
+                        if let Value::Exception(candidate) = value
+                            && candidate.name == target_name && candidate.message == target_message
                             {
                                 candidate.notes.push(note.clone());
                             }
-                        }
                     };
                     for value in frame.locals.values_mut() {
                         append_matching_note(value);
@@ -3543,13 +3540,12 @@ impl Vm {
                     if let Some(active_exception) = frame.active_exception.as_mut() {
                         append_matching_note(active_exception);
                     }
-                    if frame.is_module {
-                        if let Object::Module(module_data) = &mut *frame.module.kind_mut() {
+                    if frame.is_module
+                        && let Object::Module(module_data) = &mut *frame.module.kind_mut() {
                             for value in module_data.globals.values_mut() {
                                 append_matching_note(value);
                             }
                         }
-                    }
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -3981,11 +3977,10 @@ impl Vm {
                 let Some(attr_name) = attr_name else {
                     return Err(RuntimeError::new("cached_property is missing attrname"));
                 };
-                if let Object::Instance(instance_data) = &*instance.kind() {
-                    if let Some(existing) = instance_data.attrs.get(&attr_name).cloned() {
+                if let Object::Instance(instance_data) = &*instance.kind()
+                    && let Some(existing) = instance_data.attrs.get(&attr_name).cloned() {
                         return Ok(NativeCallResult::Value(existing));
                     }
-                }
                 let value = match self.call_internal(
                     func,
                     vec![Value::Instance(instance.clone())],
@@ -4087,15 +4082,14 @@ impl Vm {
                             _ => Vec::new(),
                         };
                         let mut call_kwargs = HashMap::new();
-                        if let Some(Value::Dict(obj)) = module_data.globals.get("kwargs") {
-                            if let Object::Dict(entries) = &*obj.kind() {
+                        if let Some(Value::Dict(obj)) = module_data.globals.get("kwargs")
+                            && let Object::Dict(entries) = &*obj.kind() {
                                 for (key, value) in entries {
                                     if let Value::Str(name) = key {
                                         call_kwargs.insert(name.clone(), value.clone());
                                     }
                                 }
                             }
-                        }
                         (method_name, call_args, call_kwargs)
                     }
                     _ => return Err(RuntimeError::new("methodcaller receiver is invalid")),
@@ -4146,15 +4140,14 @@ impl Vm {
                             _ => Vec::new(),
                         };
                         let mut frozen_kwargs = HashMap::new();
-                        if let Some(Value::Dict(obj)) = module_data.globals.get("kwargs") {
-                            if let Object::Dict(entries) = &*obj.kind() {
+                        if let Some(Value::Dict(obj)) = module_data.globals.get("kwargs")
+                            && let Object::Dict(entries) = &*obj.kind() {
                                 for (key, value) in entries {
                                     if let Value::Str(name) = key {
                                         frozen_kwargs.insert(name.clone(), value.clone());
                                     }
                                 }
                             }
-                        }
                         (callable, frozen_args, frozen_kwargs)
                     }
                     _ => return Err(RuntimeError::new("partial receiver is invalid")),
@@ -4209,7 +4202,7 @@ impl Vm {
         let mut code = CodeObject::new("<awaitable>", "<builtin>");
         let const_idx = code.add_const(value);
         code.instructions
-            .push(Instruction::new(Opcode::LoadConst, Some(const_idx as u32)));
+            .push(Instruction::new(Opcode::LoadConst, Some(const_idx)));
         code.instructions
             .push(Instruction::new(Opcode::ReturnValue, None));
         code.is_generator = true;
@@ -4254,13 +4247,12 @@ impl Vm {
                 match self.call_internal(method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(awaitable) => match awaitable {
                         Value::Generator(generator) => {
-                            if let Object::Generator(state) = &*generator.kind() {
-                                if state.is_async_generator {
+                            if let Object::Generator(state) = &*generator.kind()
+                                && state.is_async_generator {
                                     return Err(RuntimeError::new(
                                         "__await__() returned an async generator",
                                     ));
                                 }
-                            }
                             Ok(Value::Generator(generator))
                         }
                         Value::Iterator(iterator) => Ok(Value::Iterator(iterator)),
@@ -4309,13 +4301,11 @@ impl Vm {
     }
 
     pub(super) fn ensure_sync_iterator_target(&self, value: &Value) -> Result<(), RuntimeError> {
-        if let Value::Generator(generator) = value {
-            if let Object::Generator(state) = &*generator.kind() {
-                if state.is_coroutine || state.is_async_generator {
+        if let Value::Generator(generator) = value
+            && let Object::Generator(state) = &*generator.kind()
+                && (state.is_coroutine || state.is_async_generator) {
                     return Err(RuntimeError::new("object is not iterable"));
                 }
-            }
-        }
         Ok(())
     }
 
@@ -4526,11 +4516,10 @@ impl Vm {
                 }
             }
             other => {
-                if let Value::Class(class) = &other {
-                    if let Some(iterator) = self.class_fallback_iterator(class) {
+                if let Value::Class(class) = &other
+                    && let Some(iterator) = self.class_fallback_iterator(class) {
                         return Ok(iterator);
                     }
-                }
 
                 let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
                 else {
@@ -4741,14 +4730,13 @@ impl Vm {
                 }
                 match self.call_internal(method, Vec::new(), HashMap::new()) {
                     Ok(InternalCallOutcome::Value(value)) => {
-                        if self.frames.len() == caller_depth {
-                            if let Some(frame) = self.frames.last_mut() {
+                        if self.frames.len() == caller_depth
+                            && let Some(frame) = self.frames.last_mut() {
                                 frame.ip = caller_ip;
                                 frame.stack.truncate(caller_stack_len);
                                 frame.blocks = caller_blocks.clone();
                                 frame.active_exception = caller_active_exception.clone();
                             }
-                        }
                         if exception_is_named(&value, "StopIteration") {
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
                         } else {
@@ -4778,14 +4766,13 @@ impl Vm {
                         Ok(GeneratorResumeOutcome::PropagatedException)
                     }
                     Err(err) => {
-                        if self.frames.len() == caller_depth {
-                            if let Some(frame) = self.frames.last_mut() {
+                        if self.frames.len() == caller_depth
+                            && let Some(frame) = self.frames.last_mut() {
                                 frame.ip = caller_ip;
                                 frame.stack.truncate(caller_stack_len);
                                 frame.blocks = caller_blocks.clone();
                                 frame.active_exception = caller_active_exception.clone();
                             }
-                        }
                         if runtime_error_matches_exception(&err.message, "StopIteration") {
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
                         } else {
@@ -5113,11 +5100,10 @@ impl Vm {
                         GeneratorResumeOutcome::Yield(value) => call_args.push(value),
                         GeneratorResumeOutcome::Complete(_) => {
                             let mut iter = iterator_ref.kind_mut();
-                            if let Object::Iterator(state) = &mut *iter {
-                                if let IteratorKind::Map { exhausted, .. } = &mut state.kind {
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::Map { exhausted, .. } = &mut state.kind {
                                     *exhausted = true;
                                 }
-                            }
                             return Ok(None);
                         }
                         GeneratorResumeOutcome::PropagatedException => {
@@ -5134,13 +5120,12 @@ impl Vm {
                 };
 
                 let mut iter = iterator_ref.kind_mut();
-                if let Object::Iterator(state) = &mut *iter {
-                    if let IteratorKind::Map { values, .. } = &mut state.kind {
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::Map { values, .. } = &mut state.kind {
                         values.push(value.clone());
                         state.index += 1;
                         return Ok(Some(value));
                     }
-                }
                 Ok(None)
             }
             PendingIteratorStep::SequenceGetItem {
@@ -5154,11 +5139,10 @@ impl Vm {
                     Ok(InternalCallOutcome::Value(value)) => {
                         {
                             let mut iter = iterator_ref.kind_mut();
-                            if let Object::Iterator(state) = &mut *iter {
-                                if let IteratorKind::SequenceGetItem { .. } = &mut state.kind {
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::SequenceGetItem { .. } = &mut state.kind {
                                     state.index += 1;
                                 }
-                            }
                         }
                         Ok(Some(value))
                     }
@@ -5211,15 +5195,13 @@ impl Vm {
                 .unwrap_or(Value::None);
             return Ok(GeneratorResumeOutcome::Complete(value));
         }
-        if thrown.is_none() && !started {
-            if let Some(value) = &sent {
-                if *value != Value::None {
+        if thrown.is_none() && !started
+            && let Some(value) = &sent
+                && *value != Value::None {
                     return Err(RuntimeError::new(
                         "can't send non-None value to a just-started generator",
                     ));
                 }
-            }
-        }
 
         let mut frame = self
             .generator_states
@@ -5360,11 +5342,10 @@ impl Vm {
             _ => None,
         });
         let result = self.builtin_setattr(args, kwargs);
-        if result.is_ok() {
-            if let Some(class_id) = class_target_id {
+        if result.is_ok()
+            && let Some(class_id) = class_target_id {
                 self.touch_class_attr_version_by_id(class_id);
             }
-        }
         result
     }
 
@@ -5378,11 +5359,10 @@ impl Vm {
             _ => None,
         });
         let result = self.builtin_delattr(args, kwargs);
-        if result.is_ok() {
-            if let Some(class_id) = class_target_id {
+        if result.is_ok()
+            && let Some(class_id) = class_target_id {
                 self.touch_class_attr_version_by_id(class_id);
             }
-        }
         result
     }
 
