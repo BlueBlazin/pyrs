@@ -23,6 +23,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_new_none(void* module_ctx)`
 - `object_new_bool(void* module_ctx, int value)`
 - `object_new_float(void* module_ctx, double value)`
+- `object_new_bytes(void* module_ctx, const uint8_t* data, uintptr_t len)`
 - `object_new_string(void* module_ctx, const char* value)`
 - `object_incref(void* module_ctx, PyrsObjectHandle handle)`
 - `object_decref(void* module_ctx, PyrsObjectHandle handle)`
@@ -31,6 +32,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_get_int(void* module_ctx, PyrsObjectHandle handle, int64_t* out)`
 - `object_get_float(void* module_ctx, PyrsObjectHandle handle, double* out)`
 - `object_get_bool(void* module_ctx, PyrsObjectHandle handle, int* out)`
+- `object_get_bytes(void* module_ctx, PyrsObjectHandle handle, const uint8_t** out_data, uintptr_t* out_len)`
 - `object_get_string(void* module_ctx, PyrsObjectHandle handle)`
 - `error_set(void* module_ctx, const char* message)`
 - `error_clear(void* module_ctx)`

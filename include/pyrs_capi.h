@@ -13,6 +13,7 @@ extern "C" {
 #define PYRS_TYPE_INT 3
 #define PYRS_TYPE_STR 4
 #define PYRS_TYPE_FLOAT 5
+#define PYRS_TYPE_BYTES 6
 
 typedef uint64_t PyrsObjectHandle;
 typedef struct PyrsApiV1 PyrsApiV1;
@@ -48,6 +49,7 @@ struct PyrsApiV1 {
     PyrsObjectHandle (*object_new_none)(void* module_ctx);
     PyrsObjectHandle (*object_new_bool)(void* module_ctx, int value);
     PyrsObjectHandle (*object_new_float)(void* module_ctx, double value);
+    PyrsObjectHandle (*object_new_bytes)(void* module_ctx, const uint8_t* data, uintptr_t len);
     PyrsObjectHandle (*object_new_string)(void* module_ctx, const char* value);
 
     int (*object_incref)(void* module_ctx, PyrsObjectHandle handle);
@@ -57,6 +59,7 @@ struct PyrsApiV1 {
     int (*object_get_int)(void* module_ctx, PyrsObjectHandle handle, int64_t* out);
     int (*object_get_float)(void* module_ctx, PyrsObjectHandle handle, double* out);
     int (*object_get_bool)(void* module_ctx, PyrsObjectHandle handle, int* out);
+    int (*object_get_bytes)(void* module_ctx, PyrsObjectHandle handle, const uint8_t** out_data, uintptr_t* out_len);
     const char* (*object_get_string)(void* module_ctx, PyrsObjectHandle handle);
 
     int (*error_set)(void* module_ctx, const char* message);

@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 
 use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
-    PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_FLOAT,
-    PYRS_TYPE_INT, PYRS_TYPE_NONE, PYRS_TYPE_STR, PyrsApiV1, PyrsCFunctionKwV1, PyrsCFunctionV1,
-    PyrsObjectHandle, load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
+    PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
+    PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_NONE, PYRS_TYPE_STR, PyrsApiV1, PyrsCFunctionKwV1,
+    PyrsCFunctionV1, PyrsObjectHandle, load_dynamic_initializer, parse_extension_manifest,
+    path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -100,6 +101,7 @@ impl ModuleCapiContext {
             Value::Int(_) => PYRS_TYPE_INT,
             Value::Str(_) => PYRS_TYPE_STR,
             Value::Float(_) => PYRS_TYPE_FLOAT,
+            Value::Bytes(_) | Value::ByteArray(_) => PYRS_TYPE_BYTES,
             _ => 0,
         };
         Ok(ty)
@@ -132,6 +134,27 @@ impl ModuleCapiContext {
         match slot.value {
             Value::Float(value) => Ok(value),
             _ => Err(format!("object handle {} is not a float", handle)),
+        }
+    }
+
+    fn object_get_bytes_parts(
+        &self,
+        handle: PyrsObjectHandle,
+    ) -> Result<(*const u8, usize), String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        match &slot.value {
+            Value::Bytes(bytes_obj) | Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(values) | Object::ByteArray(values) => {
+                    Ok((values.as_ptr(), values.len()))
+                }
+                _ => Err(format!(
+                    "object handle {} has invalid bytes storage",
+                    handle
+                )),
+            },
+            _ => Err(format!("object handle {} is not bytes-like", handle)),
         }
     }
 
@@ -357,6 +380,33 @@ unsafe extern "C" fn capi_object_new_float(
     context.alloc_object(Value::Float(value))
 }
 
+unsafe extern "C" fn capi_object_new_bytes(
+    module_ctx: *mut c_void,
+    data: *const u8,
+    len: usize,
+) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    if data.is_null() && len != 0 {
+        context.set_error("object_new_bytes received null data pointer with non-zero len");
+        return 0;
+    }
+    let bytes = if len == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: caller-provided pointer/len pair is assumed valid for read.
+        unsafe { std::slice::from_raw_parts(data, len) }.to_vec()
+    };
+    if context.vm.is_null() {
+        context.set_error("object_new_bytes missing VM context");
+        return 0;
+    }
+    // SAFETY: VM pointer is set by extension entrypoint dispatch and valid here.
+    let vm = unsafe { &mut *context.vm };
+    context.alloc_object(vm.heap.alloc_bytes(bytes))
+}
+
 unsafe extern "C" fn capi_object_new_string(
     module_ctx: *mut c_void,
     value: *const c_char,
@@ -509,6 +559,35 @@ unsafe extern "C" fn capi_object_get_bool(
     }
 }
 
+unsafe extern "C" fn capi_object_get_bytes(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    out_data: *mut *const u8,
+    out_len: *mut usize,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_data.is_null() || out_len.is_null() {
+        context.set_error("object_get_bytes received null output pointer");
+        return -1;
+    }
+    match context.object_get_bytes_parts(handle) {
+        Ok((data_ptr, len)) => {
+            // SAFETY: caller provided non-null out pointers.
+            unsafe {
+                *out_data = data_ptr;
+                *out_len = len;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_get_string(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -586,6 +665,7 @@ impl Vm {
             object_new_none: capi_object_new_none,
             object_new_bool: capi_object_new_bool,
             object_new_float: capi_object_new_float,
+            object_new_bytes: capi_object_new_bytes,
             object_new_string: capi_object_new_string,
             object_incref: capi_object_incref,
             object_decref: capi_object_decref,
@@ -594,6 +674,7 @@ impl Vm {
             object_get_int: capi_object_get_int,
             object_get_float: capi_object_get_float,
             object_get_bool: capi_object_get_bool,
+            object_get_bytes: capi_object_get_bytes,
             object_get_string: capi_object_get_string,
             error_set: capi_error_set,
             error_clear: capi_error_clear,

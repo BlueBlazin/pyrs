@@ -525,16 +525,24 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
         return -1;
     }
+    const uint8_t payload[] = {104, 105}; /* b"hi" */
     PyrsObjectHandle answer = api->object_new_int(module_ctx, 99);
     PyrsObjectHandle none_value = api->object_new_none(module_ctx);
     PyrsObjectHandle ratio = api->object_new_float(module_ctx, 3.5);
+    PyrsObjectHandle blob = api->object_new_bytes(module_ctx, payload, 2);
     PyrsObjectHandle text = api->object_new_string(module_ctx, "from-object-handle");
-    if (!answer || !none_value || !ratio || !text) {
+    if (!answer || !none_value || !ratio || !blob || !text) {
         return -2;
     }
     double ratio_check = 0.0;
     if (api->object_get_float(module_ctx, ratio, &ratio_check) != 0 || ratio_check != 3.5) {
         return -9;
+    }
+    const uint8_t* blob_data = 0;
+    uintptr_t blob_len = 0;
+    if (api->object_get_bytes(module_ctx, blob, &blob_data, &blob_len) != 0 ||
+        blob_len != 2 || !blob_data || blob_data[0] != 104 || blob_data[1] != 105) {
+        return -14;
     }
     if (api->module_set_object(module_ctx, "ANSWER", answer) != 0) {
         return -3;
@@ -544,6 +552,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->module_set_object(module_ctx, "RATIO", ratio) != 0) {
         return -11;
+    }
+    if (api->module_set_object(module_ctx, "BLOB", blob) != 0) {
+        return -15;
     }
     if (api->module_set_object(module_ctx, "TEXT", text) != 0) {
         return -4;
@@ -562,6 +573,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->object_decref(module_ctx, ratio) != 0) {
         return -13;
+    }
+    if (api->object_decref(module_ctx, blob) != 0) {
+        return -16;
     }
     if (api->object_decref(module_ctx, text) != 0) {
         return -8;
@@ -589,7 +603,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.NONE_VALUE is None\nassert abs(native_handles.RATIO - 3.5) < 1e-12\nassert native_handles.TEXT == 'from-object-handle'",
+        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.NONE_VALUE is None\nassert abs(native_handles.RATIO - 3.5) < 1e-12\nassert native_handles.BLOB == b'hi'\nassert native_handles.TEXT == 'from-object-handle'",
     )
     .expect("object-handle dynamic extension import should succeed");
 
