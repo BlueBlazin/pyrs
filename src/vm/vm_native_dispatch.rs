@@ -201,6 +201,26 @@ impl Vm {
                     }
                 }
             }
+            NativeMethodKind::IteratorIter => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__iter__() expects no arguments"));
+                }
+                let receiver_value = Value::Iterator(receiver.clone());
+                let iter_value = self.to_iterator_value(receiver_value)?;
+                Ok(NativeCallResult::Value(iter_value))
+            }
+            NativeMethodKind::IteratorNext => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__next__() expects no arguments"));
+                }
+                if !matches!(&*receiver.kind(), Object::Iterator(_)) {
+                    return Err(RuntimeError::new("__next__() expects iterator"));
+                }
+                match self.iterator_next_value(&receiver)? {
+                    Some(value) => Ok(NativeCallResult::Value(value)),
+                    None => Err(RuntimeError::new("StopIteration")),
+                }
+            }
             NativeMethodKind::DictKeys => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("dict.keys() expects no arguments"));
@@ -1688,6 +1708,81 @@ impl Vm {
                     }
                 }
                 let out = bytes[..end].to_vec();
+                Ok(NativeCallResult::Value(match receiver_value {
+                    Value::ByteArray(_) => self.heap.alloc_bytearray(out),
+                    _ => self.heap.alloc_bytes(out),
+                }))
+            }
+            NativeMethodKind::BytesLStrip => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("lstrip() expects at most one argument"));
+                }
+                let receiver_value = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("value")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let bytes = bytes_like_from_value(receiver_value.clone())?;
+                let chars = if args.is_empty() || matches!(args[0], Value::None) {
+                    None
+                } else {
+                    Some(bytes_like_from_value(args.remove(0))?)
+                };
+                let mut start = 0usize;
+                if let Some(chars) = chars {
+                    while start < bytes.len() && chars.contains(&bytes[start]) {
+                        start += 1;
+                    }
+                } else {
+                    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                        start += 1;
+                    }
+                }
+                let out = bytes[start..].to_vec();
+                Ok(NativeCallResult::Value(match receiver_value {
+                    Value::ByteArray(_) => self.heap.alloc_bytearray(out),
+                    _ => self.heap.alloc_bytes(out),
+                }))
+            }
+            NativeMethodKind::BytesStrip => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new("strip() expects at most one argument"));
+                }
+                let receiver_value = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("value")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                };
+                let bytes = bytes_like_from_value(receiver_value.clone())?;
+                let chars = if args.is_empty() || matches!(args[0], Value::None) {
+                    None
+                } else {
+                    Some(bytes_like_from_value(args.remove(0))?)
+                };
+                let mut start = 0usize;
+                let mut end = bytes.len();
+                if let Some(chars) = chars {
+                    while start < end && chars.contains(&bytes[start]) {
+                        start += 1;
+                    }
+                    while end > start && chars.contains(&bytes[end - 1]) {
+                        end -= 1;
+                    }
+                } else {
+                    while start < end && bytes[start].is_ascii_whitespace() {
+                        start += 1;
+                    }
+                    while end > start && bytes[end - 1].is_ascii_whitespace() {
+                        end -= 1;
+                    }
+                }
+                let out = bytes[start..end].to_vec();
                 Ok(NativeCallResult::Value(match receiver_value {
                     Value::ByteArray(_) => self.heap.alloc_bytearray(out),
                     _ => self.heap.alloc_bytes(out),

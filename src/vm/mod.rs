@@ -356,7 +356,7 @@ const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
-const LOCAL_SHIM_MODULES: &[&str] = &["pkgutil", "importlib.resources"];
+const LOCAL_SHIM_MODULES: &[&str] = &["pkgutil", "importlib.resources", "pyexpat"];
 
 thread_local! {
     static VM_THREAD_IDENT_OVERRIDE: Cell<Option<i64>> = const { Cell::new(None) };
@@ -749,7 +749,9 @@ impl Vm {
             pending_del_instances: HashMap::new(),
             weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
-            local_shim_fallback_enabled: env_flag_enabled("PYRS_ENABLE_LOCAL_SHIMS"),
+            // Shim fallback is restricted by LOCAL_SHIM_MODULES and only used when normal
+            // path resolution fails, so keep it enabled by default (allow explicit opt-out).
+            local_shim_fallback_enabled: !env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,

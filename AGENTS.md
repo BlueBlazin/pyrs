@@ -31,9 +31,9 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
-## Current Snapshot (2026-02-13)
+## Current Snapshot (2026-02-14)
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
-- Extended stdlib probe: `50/50` import, `47/50` smoke (`perf/stdlib_compat_extended_latest.json`).
+- Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Newly landed parity checkpoints:
   - `math.gcd()` baseline (unblocks `fractions` common path).
   - `threading.Condition.__enter__/__exit__` baseline.
@@ -80,9 +80,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - runtime threading identity emulation now assigns per-start synthetic ids for `_thread.start_new_thread` and `threading.Thread.start` target execution; `threading.get_ident()` reports those ids inside spawned targets.
   - object-model parity checkpoint: `object.__format__` now follows CPython semantics (empty spec -> `str(self)`, non-empty spec -> `TypeError`), unblocking unittest subtest rendering paths that rely on `str.format`.
   - builtin `threading` module now exposes `_dangling` registry baseline required by CPython test/support threading helpers.
-- Extended probe remaining red modules:
-  - `xml`, `gzip`, `bz2`, `lzma`.
-  - `smtplib` targeted smoke is green but still logs unsupported `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`).
+  - iterator protocol parity for native iterators now exposes `__iter__`/`__next__` where required (including `itertools.count`), unblocking `concurrent.futures` smoke path.
+  - `bytes.lstrip`/`bytes.strip` native methods are now implemented (plus metadata/dispatch wiring), closing `gzip.decompress` common smoke path.
+  - `threading.Semaphore`/`BoundedSemaphore` bound semantics were corrected (`Semaphore` unbounded by default; `BoundedSemaphore` enforces initial bound), removing `Semaphore released too many times` failures in threadpool shutdown flows.
+  - allowlist-restricted local shim fallback is now enabled by default (opt-out via `PYRS_DISABLE_LOCAL_SHIMS=1`), and `shims/pyexpat.py` baseline now closes `xml.etree.ElementTree.fromstring()` common smoke.
+- Extended probe remaining red modules: none (`50/50` smoke green).
 
 ## Execution Policy
 - CPython behavior is the source of truth:
@@ -97,7 +99,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Local shim policy:
   - CPython `Lib/enum.py` path is now the default.
   - local `enum` shim has been retired (`shims/enum.py` removed); enum behavior now always follows CPython `Lib/enum.py` when stdlib is present.
-  - `pkgutil`/`importlib.resources` local shims are fallback-only and require `PYRS_ENABLE_LOCAL_SHIMS=1`.
+  - `pkgutil`/`importlib.resources`/`pyexpat` local shims are fallback-only and allowlist-restricted; fallback is enabled by default and can be disabled with `PYRS_DISABLE_LOCAL_SHIMS=1`.
   - CPython enum probe regression: `tests/vm.rs::cpython_enum_path_supports_member_value_and_name`.
 - Keep docs updated in the same checkpoint as behavior changes.
 - Keep worktrees clean; commit small focused checkpoints.

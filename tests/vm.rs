@@ -180,6 +180,63 @@ fn executes_name_expression_with_global() {
 }
 
 #[test]
+fn iterator_count_exposes_iter_and_next_attributes() {
+    let source = "import itertools\nit = itertools.count(2, 3)\na = it.__next__()\nb = (it.__iter__() is it)\nc = next(it)\nok = (a == 2 and b and c == 5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_lstrip_and_strip_match_common_semantics() {
+    let source = "a = b'  abc  '.lstrip()\nb = b'  abc  '.strip()\nc = bytearray(b'..abc..').lstrip(b'.')\nd = bytearray(b'..abc..').strip(b'.')\nok = (a == b'abc  ' and b == b'abc' and bytes(c) == b'abc..' and bytes(d) == b'abc')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn xml_elementtree_fromstring_smoke_uses_pyexpat_fallback() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nimport xml.etree.ElementTree as ET\nroot = ET.fromstring('<a><b/></a>')\nok = (root.tag == 'a' and root[0].tag == 'b')\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn concurrent_futures_threadpool_smoke_no_semaphore_overrelease() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nimport concurrent.futures\nwith concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:\n    fut = ex.submit(lambda: 5)\n    value = fut.result()\nok = (value == 5)\n"
+    );
+    let handle = std::thread::Builder::new()
+        .name("vm-concurrent-futures-smoke".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("thread spawn should succeed");
+    handle.join().expect("thread should complete");
+}
+
+#[test]
 fn executes_assignment_statement() {
     let module = parser::parse_module("x = 5\nx").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

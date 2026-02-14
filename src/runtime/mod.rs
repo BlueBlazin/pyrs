@@ -209,6 +209,8 @@ pub enum NativeMethodKind {
     GeneratorSend,
     GeneratorThrow,
     GeneratorClose,
+    IteratorIter,
+    IteratorNext,
     DictKeys,
     DictValues,
     DictItems,
@@ -255,6 +257,8 @@ pub enum NativeMethodKind {
     BytesTranslate,
     BytesJoin,
     BytesLJust,
+    BytesLStrip,
+    BytesStrip,
     BytesRStrip,
     ByteArrayExtend,
     ByteArrayClear,
@@ -6864,6 +6868,8 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::GeneratorSend => "<bound method send>".to_string(),
                     NativeMethodKind::GeneratorThrow => "<bound method throw>".to_string(),
                     NativeMethodKind::GeneratorClose => "<bound method close>".to_string(),
+                    NativeMethodKind::IteratorIter => "<bound method __iter__>".to_string(),
+                    NativeMethodKind::IteratorNext => "<bound method __next__>".to_string(),
                     NativeMethodKind::DictKeys => "<bound method dict.keys>".to_string(),
                     NativeMethodKind::DictValues => "<bound method dict.values>".to_string(),
                     NativeMethodKind::DictItems => "<bound method dict.items>".to_string(),
@@ -6920,6 +6926,8 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
                     NativeMethodKind::BytesLJust => "<bound method bytes.ljust>".to_string(),
+                    NativeMethodKind::BytesLStrip => "<bound method bytes.lstrip>".to_string(),
+                    NativeMethodKind::BytesStrip => "<bound method bytes.strip>".to_string(),
                     NativeMethodKind::BytesRStrip => "<bound method bytes.rstrip>".to_string(),
                     NativeMethodKind::ByteArrayExtend => {
                         "<bound method bytearray.extend>".to_string()

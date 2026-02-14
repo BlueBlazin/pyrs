@@ -1147,6 +1147,8 @@ impl Vm {
             "translate" => NativeMethodKind::BytesTranslate,
             "join" => NativeMethodKind::BytesJoin,
             "ljust" => NativeMethodKind::BytesLJust,
+            "lstrip" => NativeMethodKind::BytesLStrip,
+            "strip" => NativeMethodKind::BytesStrip,
             "rstrip" => NativeMethodKind::BytesRStrip,
             "extend" if matches!(receiver_value, Value::ByteArray(_)) => {
                 NativeMethodKind::ByteArrayExtend
@@ -1191,33 +1193,44 @@ impl Vm {
         iterator: ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
-        let (type_name, range_start, range_stop, range_step, allow_reduce) = match &*iterator.kind()
-        {
-            Object::Iterator(state) => match &state.kind {
-                IteratorKind::RangeObject { start, stop, step } => (
-                    "range",
-                    Some(start.clone()),
-                    Some(stop.clone()),
-                    Some(step.clone()),
-                    true,
-                ),
-                IteratorKind::Map { .. } => ("map", None, None, None, true),
-                IteratorKind::Range { .. } => ("range_iterator", None, None, None, false),
-                IteratorKind::List(_) => ("list_iterator", None, None, None, false),
-                IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false),
-                IteratorKind::Str(_) => ("str_iterator", None, None, None, false),
-                IteratorKind::Dict(_) => ("dict_keyiterator", None, None, None, false),
-                IteratorKind::Set(_) => ("set_iterator", None, None, None, false),
-                IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false),
-                IteratorKind::ByteArray(_) => ("bytearray_iterator", None, None, None, false),
-                IteratorKind::MemoryView(_) => ("memoryview_iterator", None, None, None, false),
-                IteratorKind::Cycle { .. } => ("cycle", None, None, None, false),
-                IteratorKind::Count { .. } => ("count", None, None, None, false),
-                IteratorKind::SequenceGetItem { .. } => ("iterator", None, None, None, false),
-            },
-            _ => return Err(RuntimeError::new("attribute access unsupported type")),
-        };
+        let (type_name, range_start, range_stop, range_step, allow_reduce, allow_next) =
+            match &*iterator.kind() {
+                Object::Iterator(state) => match &state.kind {
+                    IteratorKind::RangeObject { start, stop, step } => (
+                        "range",
+                        Some(start.clone()),
+                        Some(stop.clone()),
+                        Some(step.clone()),
+                        true,
+                        false,
+                    ),
+                    IteratorKind::Map { .. } => ("map", None, None, None, true, true),
+                    IteratorKind::Range { .. } => ("range_iterator", None, None, None, false, true),
+                    IteratorKind::List(_) => ("list_iterator", None, None, None, false, true),
+                    IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false, true),
+                    IteratorKind::Str(_) => ("str_iterator", None, None, None, false, true),
+                    IteratorKind::Dict(_) => ("dict_keyiterator", None, None, None, false, true),
+                    IteratorKind::Set(_) => ("set_iterator", None, None, None, false, true),
+                    IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false, true),
+                    IteratorKind::ByteArray(_) => {
+                        ("bytearray_iterator", None, None, None, false, true)
+                    }
+                    IteratorKind::MemoryView(_) => {
+                        ("memoryview_iterator", None, None, None, false, true)
+                    }
+                    IteratorKind::Cycle { .. } => ("cycle", None, None, None, false, true),
+                    IteratorKind::Count { .. } => ("count", None, None, None, false, true),
+                    IteratorKind::SequenceGetItem { .. } => {
+                        ("iterator", None, None, None, false, true)
+                    }
+                },
+                _ => return Err(RuntimeError::new("attribute access unsupported type")),
+            };
         match attr_name {
+            "__iter__" => Ok(self.alloc_native_bound_method(NativeMethodKind::IteratorIter, iterator)),
+            "__next__" if allow_next => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::IteratorNext, iterator))
+            }
             "__reduce_ex__" | "__reduce__" if allow_reduce => {
                 Ok(self.alloc_reduce_ex_bound_method(Value::Iterator(iterator)))
             }

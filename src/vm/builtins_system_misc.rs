@@ -1778,7 +1778,8 @@ impl Vm {
             return Err(RuntimeError::new("semaphore initial value must be >= 0"));
         }
         Self::instance_attr_set(&instance, "_value", Value::Int(value))?;
-        Self::instance_attr_set(&instance, "_bound", Value::Int(value))?;
+        // Plain Semaphore has no upper release bound; BoundedSemaphore sets this explicitly.
+        Self::instance_attr_set(&instance, "_bound", Value::Int(i64::MAX))?;
         Ok(Value::None)
     }
 
@@ -1856,10 +1857,18 @@ impl Vm {
 
     pub(super) fn builtin_thread_bounded_semaphore_init(
         &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        self.builtin_thread_semaphore_init(args, kwargs)
+        self.builtin_thread_semaphore_init(args.clone(), kwargs.clone())?;
+        let instance = self.take_bound_instance_arg(&mut args, "BoundedSemaphore.__init__")?;
+        let value_arg = kwargs
+            .remove("value")
+            .or_else(|| args.pop())
+            .unwrap_or(Value::Int(1));
+        let bound = value_to_int(value_arg)?;
+        Self::instance_attr_set(&instance, "_bound", Value::Int(bound))?;
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_thread_barrier_init(
