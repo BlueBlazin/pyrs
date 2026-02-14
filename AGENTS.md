@@ -83,7 +83,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - iterator protocol parity for native iterators now exposes `__iter__`/`__next__` where required (including `itertools.count`), unblocking `concurrent.futures` smoke path.
   - `bytes.lstrip`/`bytes.strip` native methods are now implemented (plus metadata/dispatch wiring), closing `gzip.decompress` common smoke path.
   - `threading.Semaphore`/`BoundedSemaphore` bound semantics were corrected (`Semaphore` unbounded by default; `BoundedSemaphore` enforces initial bound), removing `Semaphore released too many times` failures in threadpool shutdown flows.
-  - allowlist-restricted local shim fallback is now enabled by default (opt-out via `PYRS_DISABLE_LOCAL_SHIMS=1`), and `shims/pyexpat.py` baseline now closes `xml.etree.ElementTree.fromstring()` common smoke.
+  - range-iterator parity checkpoint: `iterator_next_value()` now advances `IteratorKind::RangeObject`, fixing `bytes(range(...))` / `bytearray(range(...))` constructor semantics.
+  - loop-compiler parity checkpoint: `for`/`while` loop contexts no longer leak into `else` blocks; `continue` in loop-`else` now correctly targets enclosing loops (or raises compile error if no enclosing loop), and CPython `re._parser` no longer underflows at `FOR_ITER`.
+  - local shim retirement checkpoint: `shims/pyexpat.py` and `shims/pkgutil.py` are removed; native runtime fallbacks now cover `pyexpat` and `pkgutil` surfaces.
+  - allowlist-restricted local shim fallback remains enabled by default (opt-out via `PYRS_DISABLE_LOCAL_SHIMS=1`) for `importlib.resources` only.
 - Extended probe remaining red modules: none (`50/50` smoke green).
 
 ## Execution Policy
@@ -99,7 +102,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Local shim policy:
   - CPython `Lib/enum.py` path is now the default.
   - local `enum` shim has been retired (`shims/enum.py` removed); enum behavior now always follows CPython `Lib/enum.py` when stdlib is present.
-  - `pkgutil`/`importlib.resources`/`pyexpat` local shims are fallback-only and allowlist-restricted; fallback is enabled by default and can be disabled with `PYRS_DISABLE_LOCAL_SHIMS=1`.
+  - local shim fallback is allowlist-restricted to `importlib.resources`; fallback is enabled by default and can be disabled with `PYRS_DISABLE_LOCAL_SHIMS=1`.
+  - `pkgutil` and `pyexpat` stdlib-less fallback now use native runtime modules (no filesystem shim).
   - CPython enum probe regression: `tests/vm.rs::cpython_enum_path_supports_member_value_and_name`.
 - Keep docs updated in the same checkpoint as behavior changes.
 - Keep worktrees clean; commit small focused checkpoints.

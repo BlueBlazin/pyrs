@@ -61,7 +61,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `smtplib` | DONE | PASS* | PASS* | targeted import + common constructor smoke is green; runtime still logs missing `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`) |
 | `imaplib` | DONE | PASS | PASS | targeted `Time2Internaldate(0)` smoke now green after `datetime.datetime.fromtimestamp` + `%z` baseline |
 | `ftplib` | DONE | PASS | PASS | - |
-| `xml` | DONE | PASS | PASS | `pyexpat` shim fallback landed for ElementTree core parse path (`fromstring`) |
+| `xml` | DONE | PASS | PASS | native runtime `pyexpat` baseline is active; shim removed |
 | `html` | DONE | PASS | PASS | - |
 | `pickle` | DONE | PASS | PASS | - |
 | `gzip` | DONE | PASS | PASS | `bytes.lstrip`/`bytes.strip` parity landed, unblocking `gzip.decompress` smoke |
@@ -76,7 +76,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 ## Shim and Probe Notes
 - Default runtime behavior now uses CPython `Lib/enum.py`.
 - Local `enum` shim has been retired (`shims/enum.py` removed).
-- Local shim fallback remains allowlist-restricted (`pkgutil`, `importlib.resources`, `pyexpat`) and is enabled by default; set `PYRS_DISABLE_LOCAL_SHIMS=1` to force-disable fallback.
+- Local shim fallback remains allowlist-restricted (`importlib.resources` only) and is enabled by default; set `PYRS_DISABLE_LOCAL_SHIMS=1` to force-disable fallback.
 
 ## Refresh Procedure
 1. Regenerate `perf/stdlib_compat_extended_latest.json` with the extended stdlib probe command.

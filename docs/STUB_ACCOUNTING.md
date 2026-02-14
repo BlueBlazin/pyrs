@@ -27,7 +27,7 @@ Status values:
 | `_csv`/`csv` | Common workflows are green; long-tail dialect/error parity is open. | `test_csv` parity closed with malformed-input hardening and perf baseline. | `test_csv` parity + differential probes + benchmark artifact | IN_PROGRESS | 13 |
 | `_sre` | Core surface works; long-tail regex behavior blocks full pure-`re` closure. | Pure `Lib/re/*` path passes curated/strict harness lanes in scope. | strict/curated harness green for `re`-dependent suites | IN_PROGRESS | 13 |
 | `_ssl`/`ssl` | `_ssl` baseline is landed and a native bootstrap `ssl` module now closes extended matrix import/common smoke. Remaining gap: full CPython `Lib/ssl.py` path is still blocked by namedtuple/super object-model semantics. | Replace temporary bootstrap `ssl` module with CPython `Lib/ssl.py` as default path, while keeping common-usecase smoke green and adding regression coverage for the namedtuple/super closure. | Extended probe (`perf/stdlib_compat_extended_latest.json`) shows `ssl` import/smoke green + targeted `tests/vm.rs` coverage + object-model closure evidence. | IN_PROGRESS | 13 |
-| `pyexpat`/`xml` | `pyexpat` shim fallback now exists (`shims/pyexpat.py`) and closes `xml.etree.ElementTree.fromstring()` common smoke; backend is still a temporary shim, not a native `pyexpat` core implementation. | Replace shim with native/runtime `pyexpat` baseline while keeping XML common smoke + regression coverage green. | Extended probe (`perf/stdlib_compat_extended_latest.json`) stays `50/50` smoke and targeted XML regression remains green without behavior regressions. | IN_PROGRESS | 13 |
+| `pyexpat`/`xml` | Native/runtime `pyexpat` baseline is installed (`ParserCreate`, `ExpatError`, parser callbacks) and `shims/pyexpat.py` is removed. | Keep XML common-smoke and parse-error regressions green without shim fallback. | `tests/vm.rs::xml_elementtree_fromstring_smoke_uses_native_pyexpat`, `tests/vm.rs::pyexpat_parse_error_exposes_code_lineno_offset`, strict/extended suites green. | CLOSED | 13 |
 | Hash containers (`dict`/`set`/`frozenset`) | Architecture upgrade landed; long-tail semantic/perf closure remains. | CPython parity on edge behavior and performance closure criteria from readiness/audit docs. | targeted parity tests + benchmark/profile artifacts | IN_PROGRESS | 13/14 |
 | Builtin symbol surface (`builtins`) | Parity gate currently green. | Keep `145/145`, zero probe mismatches, and empty allowlists. | `./scripts/run_builtin_parity_gate.sh` | CLOSED | 13 |
 
@@ -35,7 +35,7 @@ Status values:
 
 | Surface | Gap summary | Closure criteria | Status | Milestone |
 |---|---|---|---|---|
-| Importlib/resources/pkgutil helpers | Long-tail packaging/resource behavior is partial. | In-scope CPython compatibility for packaging/resource paths. | IN_PROGRESS | 13 |
+| Importlib/resources/pkgutil helpers | `pkgutil` fallback is now native (`get_data`, `resolve_name`, `iter_modules`, `walk_packages`) and local `pkgutil` shim is removed; long-tail `importlib.resources` behavior remains partial. | In-scope CPython compatibility for packaging/resource paths. | IN_PROGRESS | 13 |
 | `inspect`/`types` | Foundational behavior exists; stdlib-required edges remain. | Full stdlib-required behavior parity in scope. | IN_PROGRESS | 13 |
 | `threading`/`signal`/`_thread`/`_warnings` | Foundations exist; behavior depth is incomplete. `concurrent.futures` common smoke is now green after iterator protocol + semaphore bound fixes. | Full in-scope behavioral parity in strict/curated suites beyond common smoke paths. | IN_PROGRESS | 13/16 |
 | `socket`/`_socket` | Baseline exists; long-tail API/behavior remains. | Full in-scope API and behavior parity. | IN_PROGRESS | 13 |
@@ -66,9 +66,9 @@ Shims are temporary bootstrap fallbacks and are not allowed to shadow CPython `L
 | Shim surface | Current state | Closure criteria | Status |
 |---|---|---|---|
 | `enum` | Local `shims/enum.py` is removed; enum resolution now follows CPython `Lib/enum.py` only. | Keep `tests/vm.rs::cpython_enum_path_supports_member_value_and_name` and strict stdlib suites green without enum-specific fallback toggles. | CLOSED |
-| `pkgutil` | Local shim is fallback-only (allowlist-restricted) with fallback enabled by default. | Remove shim after stdlib-less bootstrap requirement is removed or replaced by native/runtime capability. | IN_PROGRESS |
+| `pkgutil` | Local shim is removed (`shims/pkgutil.py` deleted); stdlib-less fallback is now native runtime (`pkgutil` builtin module surface). | Keep fallback resource and resolve-name regressions green without filesystem shim fallback. | CLOSED |
 | `importlib.resources` | Local shim is fallback-only (allowlist-restricted) with fallback enabled by default. | Remove shim after stdlib-less bootstrap requirement is removed or replaced by native/runtime capability. | IN_PROGRESS |
-| `pyexpat` | Local shim fallback is active for XML parser baseline (`xml.etree.ElementTree.fromstring` smoke). | Replace shim with native/runtime `pyexpat` implementation and keep XML common smoke + regressions green. | IN_PROGRESS |
+| `pyexpat` | Local shim is removed (`shims/pyexpat.py` deleted); runtime-native parser baseline is active. | Keep XML parser regressions green on native path. | CLOSED |
 
 ## Remaining Intentional NoOp Scope
 - Test-only CPython helper modules (`_testcapi`, `_testinternalcapi` family)
