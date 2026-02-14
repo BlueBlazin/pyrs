@@ -83,6 +83,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - memoryview cast now accepts `shape` through positional or keyword call forms (`cast("B", shape=[...])`, `cast(format="B", shape=[...])`), and memoryview layout attrs now expose shaped metadata (`ndim`, `shape`, `strides`, `format`, `c_contiguous`, `f_contiguous`).
   - memoryview cast/tolist now supports expanded native format set (`B`, `b`, `c`, `H`, `h`, `I`, `i`, `L`, `l`, `Q`, `q`, `f`, `d`) with platform-native `long` width and parity tests in VM suite.
   - memoryview scalar indexing/stores now honor cast format semantics (`b` signed reads/writes, typed integer widths, `f`/`d` float writes, `c` bytes-only writes with CPython-style invalid-type/value errors) and scalar multi-dimensional indexing now raises `NotImplementedError` parity messages.
+  - memoryview multi-dimensional first-axis slicing now preserves source-backed shape/stride metadata and nested `tolist()` output (e.g. `view[0:1]`, `view[::2]`) instead of flattening/copying.
   - stepped memoryview slicing now keeps source-backed strided views (no forced bytes copy), including negative-stride views (`[::-1]`) and in-place write propagation back to underlying mutable buffers.
   - extension smoke now includes resize-blocking export-pin coverage (`dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release`).
   - extension smoke now includes leaked-pin cleanup coverage (`dynamic_extension_unreleased_buffer_pin_is_cleared_on_context_drop`) for context-drop unpin behavior.
