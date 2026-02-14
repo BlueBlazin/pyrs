@@ -2009,6 +2009,47 @@ impl Vm {
                 let value = self.pop_value()?;
                 self.push_value(invert_value(value)?);
             }
+            Opcode::ConvertValue => {
+                let value = self.pop_value()?;
+                let converted = match instr.arg.unwrap_or(0) {
+                    1 => self.builtin_str(vec![value], HashMap::new())?,
+                    2 => self.builtin_repr(vec![value], HashMap::new())?,
+                    3 => self.builtin_ascii(vec![value], HashMap::new())?,
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "unsupported CONVERT_VALUE arg {other}"
+                        )));
+                    }
+                };
+                self.push_value(converted);
+            }
+            Opcode::FormatSimple => {
+                let value = self.pop_value()?;
+                let rendered = self.builtin_format(vec![value], HashMap::new())?;
+                match rendered {
+                    Value::Str(_) => self.push_value(rendered),
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "format() returned non-string '{}'",
+                            self.value_type_name_for_error(&other)
+                        )));
+                    }
+                }
+            }
+            Opcode::FormatWithSpec => {
+                let fmt_spec = self.pop_value()?;
+                let value = self.pop_value()?;
+                let rendered = self.builtin_format(vec![value, fmt_spec], HashMap::new())?;
+                match rendered {
+                    Value::Str(_) => self.push_value(rendered),
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "format() returned non-string '{}'",
+                            self.value_type_name_for_error(&other)
+                        )));
+                    }
+                }
+            }
             Opcode::ToBool => {
                 let value = self.pop_value()?;
                 let truthy = self.truthy_from_value(&value)?;
@@ -2037,6 +2078,30 @@ impl Vm {
                 }
                 values.reverse();
                 self.push_value(self.heap.alloc_tuple(values));
+            }
+            Opcode::BuildString => {
+                let count = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing string build size"))?
+                    as usize;
+                let mut pieces = Vec::with_capacity(count);
+                for _ in 0..count {
+                    pieces.push(self.pop_value()?);
+                }
+                pieces.reverse();
+                let mut out = String::new();
+                for piece in pieces {
+                    match piece {
+                        Value::Str(text) => out.push_str(&text),
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "BUILD_STRING expects str, got '{}'",
+                                self.value_type_name_for_error(&other)
+                            )));
+                        }
+                    }
+                }
+                self.push_value(Value::Str(out));
             }
             Opcode::BuildDict => {
                 let count = instr

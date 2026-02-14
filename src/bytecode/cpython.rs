@@ -55,6 +55,8 @@ pub enum PyObject {
     Tuple(Vec<PyObject>),
     List(Vec<PyObject>),
     Dict(Vec<(PyObject, PyObject)>),
+    Set(Vec<PyObject>),
+    FrozenSet(Vec<PyObject>),
     Code(Rc<CpythonCode>),
     Slice {
         lower: Option<Box<PyObject>>,
@@ -431,6 +433,7 @@ impl<'a> Translator<'a> {
                 "END_FOR" | "INSTRUMENTED_END_FOR" => Instruction::new(Opcode::EndFor, None),
                 "BUILD_LIST" => Instruction::new(Opcode::BuildList, Some(arg)),
                 "BUILD_TUPLE" => Instruction::new(Opcode::BuildTuple, Some(arg)),
+                "BUILD_STRING" => Instruction::new(Opcode::BuildString, Some(arg)),
                 "BUILD_MAP" | "BUILD_DICT" => Instruction::new(Opcode::BuildDict, Some(arg)),
                 "BUILD_SLICE" => Instruction::new(Opcode::BuildSlice, Some(arg)),
                 "UNPACK_SEQUENCE"
@@ -448,6 +451,9 @@ impl<'a> Translator<'a> {
                 "UNARY_NEGATIVE" => Instruction::new(Opcode::UnaryNeg, None),
                 "UNARY_POSITIVE" => Instruction::new(Opcode::UnaryPos, None),
                 "UNARY_NOT" => Instruction::new(Opcode::UnaryNot, None),
+                "CONVERT_VALUE" => Instruction::new(Opcode::ConvertValue, Some(arg)),
+                "FORMAT_SIMPLE" => Instruction::new(Opcode::FormatSimple, None),
+                "FORMAT_WITH_SPEC" => Instruction::new(Opcode::FormatWithSpec, None),
                 "TO_BOOL"
                 | "TO_BOOL_ALWAYS_TRUE"
                 | "TO_BOOL_BOOL"
@@ -475,8 +481,37 @@ impl<'a> Translator<'a> {
                 name if name.starts_with("BINARY_OP_MULTIPLY") => {
                     Instruction::new(Opcode::BinaryMul, None)
                 }
+                name if name.starts_with("BINARY_OP_MATRIX_MULTIPLY")
+                    || name.starts_with("BINARY_OP_MATMULT") =>
+                {
+                    Instruction::new(Opcode::BinaryMatMul, None)
+                }
                 name if name.starts_with("BINARY_OP_TRUE_DIVIDE") => {
                     Instruction::new(Opcode::BinaryDiv, None)
+                }
+                name if name.starts_with("BINARY_OP_FLOOR_DIVIDE") => {
+                    Instruction::new(Opcode::BinaryFloorDiv, None)
+                }
+                name if name.starts_with("BINARY_OP_REMAINDER") => {
+                    Instruction::new(Opcode::BinaryMod, None)
+                }
+                name if name.starts_with("BINARY_OP_POWER") => {
+                    Instruction::new(Opcode::BinaryPow, None)
+                }
+                name if name.starts_with("BINARY_OP_LSHIFT") => {
+                    Instruction::new(Opcode::BinaryLShift, None)
+                }
+                name if name.starts_with("BINARY_OP_RSHIFT") => {
+                    Instruction::new(Opcode::BinaryRShift, None)
+                }
+                name if name.starts_with("BINARY_OP_AND") => {
+                    Instruction::new(Opcode::BinaryAnd, None)
+                }
+                name if name.starts_with("BINARY_OP_XOR") => {
+                    Instruction::new(Opcode::BinaryXor, None)
+                }
+                name if name.starts_with("BINARY_OP_OR") => {
+                    Instruction::new(Opcode::BinaryOr, None)
                 }
                 name if name.starts_with("BINARY_OP_SUBSCR") => {
                     Instruction::new(Opcode::Subscript, None)
@@ -581,6 +616,20 @@ impl<'a> Translator<'a> {
                 }
                 Ok(self.heap.alloc_dict(values))
             }
+            PyObject::Set(items) => {
+                let mut values = Vec::with_capacity(items.len());
+                for item in items {
+                    values.push(self.convert_object(item)?);
+                }
+                Ok(self.heap.alloc_set(values))
+            }
+            PyObject::FrozenSet(items) => {
+                let mut values = Vec::with_capacity(items.len());
+                for item in items {
+                    values.push(self.convert_object(item)?);
+                }
+                Ok(self.heap.alloc_frozenset(values))
+            }
             PyObject::Code(code) => {
                 let code = translate_code(code, self.heap)?;
                 Ok(Value::Code(Rc::new(code)))
@@ -666,10 +715,20 @@ impl<'a> Translator<'a> {
     fn map_inplace_binary_op(&self, idx: usize, name: &str) -> Result<Instruction, CpythonError> {
         let instr = if name.contains("ADD") {
             Instruction::new(Opcode::BinaryAdd, None)
+        } else if name.contains("AND") {
+            Instruction::new(Opcode::BinaryAnd, None)
         } else if name.contains("SUBTRACT") {
             Instruction::new(Opcode::BinarySub, None)
+        } else if name.contains("LSHIFT") {
+            Instruction::new(Opcode::BinaryLShift, None)
+        } else if name.contains("RSHIFT") {
+            Instruction::new(Opcode::BinaryRShift, None)
+        } else if name.contains("MATRIX_MULTIPLY") || name.contains("MATMULT") {
+            Instruction::new(Opcode::BinaryMatMul, None)
         } else if name.contains("MULTIPLY") {
             Instruction::new(Opcode::BinaryMul, None)
+        } else if name.contains("OR") {
+            Instruction::new(Opcode::BinaryOr, None)
         } else if name.contains("TRUE_DIVIDE") {
             Instruction::new(Opcode::BinaryDiv, None)
         } else if name.contains("FLOOR_DIVIDE") {
@@ -678,6 +737,8 @@ impl<'a> Translator<'a> {
             Instruction::new(Opcode::BinaryMod, None)
         } else if name.contains("POWER") {
             Instruction::new(Opcode::BinaryPow, None)
+        } else if name.contains("XOR") {
+            Instruction::new(Opcode::BinaryXor, None)
         } else {
             return Err(CpythonError::new(format!(
                 "unsupported {} at instruction {}",
@@ -690,19 +751,31 @@ impl<'a> Translator<'a> {
     fn map_binary_op(&self, idx: usize, oparg: u32) -> Result<Instruction, CpythonError> {
         match oparg {
             0 => Ok(Instruction::new(Opcode::BinaryAdd, None)),
+            1 => Ok(Instruction::new(Opcode::BinaryAnd, None)),
             2 => Ok(Instruction::new(Opcode::BinaryFloorDiv, None)),
+            3 => Ok(Instruction::new(Opcode::BinaryLShift, None)),
+            4 => Ok(Instruction::new(Opcode::BinaryMatMul, None)),
             5 => Ok(Instruction::new(Opcode::BinaryMul, None)),
             6 => Ok(Instruction::new(Opcode::BinaryMod, None)),
+            7 => Ok(Instruction::new(Opcode::BinaryOr, None)),
             8 => Ok(Instruction::new(Opcode::BinaryPow, None)),
+            9 => Ok(Instruction::new(Opcode::BinaryRShift, None)),
             10 => Ok(Instruction::new(Opcode::BinarySub, None)),
             11 => Ok(Instruction::new(Opcode::BinaryDiv, None)),
+            12 => Ok(Instruction::new(Opcode::BinaryXor, None)),
             13 => Ok(Instruction::new(Opcode::BinaryAdd, None)),
+            14 => Ok(Instruction::new(Opcode::BinaryAnd, None)),
             15 => Ok(Instruction::new(Opcode::BinaryFloorDiv, None)),
+            16 => Ok(Instruction::new(Opcode::BinaryLShift, None)),
+            17 => Ok(Instruction::new(Opcode::BinaryMatMul, None)),
             18 => Ok(Instruction::new(Opcode::BinaryMul, None)),
             19 => Ok(Instruction::new(Opcode::BinaryMod, None)),
+            20 => Ok(Instruction::new(Opcode::BinaryOr, None)),
             21 => Ok(Instruction::new(Opcode::BinaryPow, None)),
+            22 => Ok(Instruction::new(Opcode::BinaryRShift, None)),
             23 => Ok(Instruction::new(Opcode::BinarySub, None)),
             24 => Ok(Instruction::new(Opcode::BinaryDiv, None)),
+            25 => Ok(Instruction::new(Opcode::BinaryXor, None)),
             26 => Ok(Instruction::new(Opcode::Subscript, None)),
             _ => Err(CpythonError::new(format!(
                 "unsupported BINARY_OP arg {} at instruction {}",
@@ -903,11 +976,13 @@ fn translated_successors(
         | Opcode::StoreFast
         | Opcode::StoreGlobal
         | Opcode::StoreDeref
-        | Opcode::PopTop
-        | Opcode::UnaryNeg
+        | Opcode::PopTop => vec![(next_ip, pop(1)?)],
+        Opcode::UnaryNeg
         | Opcode::UnaryNot
         | Opcode::UnaryPos
-        | Opcode::ToBool => vec![(next_ip, pop(1)?)],
+        | Opcode::ConvertValue
+        | Opcode::FormatSimple
+        | Opcode::ToBool => vec![(next_ip, pop(1)? + 1)],
         Opcode::StoreFastLoadFast => {
             let depth = pop(1)? + 1;
             vec![(next_ip, depth)]
@@ -937,10 +1012,11 @@ fn translated_successors(
         | Opcode::ListExtend
         | Opcode::DictUpdate => vec![(next_ip, pop(2)? + 1)],
         Opcode::MatchExceptionStar => vec![(next_ip, pop(2)? + 2)],
-        Opcode::BuildList | Opcode::BuildTuple => {
+        Opcode::BuildList | Opcode::BuildTuple | Opcode::BuildString => {
             let count = arg.ok_or_else(|| CpythonError::new("missing build count"))? as i32;
             vec![(next_ip, pop(count)? + 1)]
         }
+        Opcode::FormatWithSpec => vec![(next_ip, pop(2)? + 1)],
         Opcode::BuildDict => {
             let count = arg.ok_or_else(|| CpythonError::new("missing dict count"))? as i32;
             vec![(next_ip, pop(count * 2)? + 1)]
@@ -1162,6 +1238,26 @@ impl MarshalWriter {
                 }
                 self.write_u8(b'0');
             }
+            PyObject::Set(items) => {
+                self.write_u8(b'<');
+                self.write_i32(
+                    i32::try_from(items.len())
+                        .map_err(|_| CpythonError::new("set constant too large"))?,
+                );
+                for item in items {
+                    self.write_object(item)?;
+                }
+            }
+            PyObject::FrozenSet(items) => {
+                self.write_u8(b'>');
+                self.write_i32(
+                    i32::try_from(items.len())
+                        .map_err(|_| CpythonError::new("frozenset constant too large"))?,
+                );
+                for item in items {
+                    self.write_object(item)?;
+                }
+            }
             PyObject::Code(code) => {
                 self.write_code_object(code)?;
             }
@@ -1313,6 +1409,22 @@ impl<'a> MarshalReader<'a> {
                     items.push((key, value));
                 }
                 PyObject::Dict(items)
+            }
+            '<' => {
+                let size = self.read_i32()? as usize;
+                let mut items = Vec::with_capacity(size);
+                for _ in 0..size {
+                    items.push(self.read_object(allow_code)?);
+                }
+                PyObject::Set(items)
+            }
+            '>' => {
+                let size = self.read_i32()? as usize;
+                let mut items = Vec::with_capacity(size);
+                for _ in 0..size {
+                    items.push(self.read_object(allow_code)?);
+                }
+                PyObject::FrozenSet(items)
             }
             'c' => {
                 if !allow_code {

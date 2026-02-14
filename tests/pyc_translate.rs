@@ -1,3 +1,4 @@
+use pyrs::bytecode::Opcode;
 use pyrs::bytecode::cpython::{CpythonCode, PyObject, translate_code};
 use pyrs::bytecode::metadata::OpcodeMetadata;
 use pyrs::runtime::Heap;
@@ -54,5 +55,41 @@ fn rejects_stack_underflow_after_translation() {
         err.message.contains("stack underflow"),
         "unexpected error: {}",
         err.message
+    );
+}
+
+#[test]
+fn translates_binary_op_and_and_formatting_ops() {
+    let code = test_code(vec![
+        op("LOAD_SMALL_INT"),
+        6,
+        op("LOAD_SMALL_INT"),
+        3,
+        op("BINARY_OP"),
+        1,
+        op("CONVERT_VALUE"),
+        2,
+        op("FORMAT_SIMPLE"),
+        0,
+        op("RETURN_VALUE"),
+        0,
+    ]);
+    let mut heap = Heap::new();
+    let translated = translate_code(&code, &mut heap).expect("translation should succeed");
+    let opcodes: Vec<Opcode> = translated
+        .instructions
+        .iter()
+        .map(|instr| instr.opcode)
+        .collect();
+    assert_eq!(
+        opcodes,
+        vec![
+            Opcode::LoadConst,
+            Opcode::LoadConst,
+            Opcode::BinaryAnd,
+            Opcode::ConvertValue,
+            Opcode::FormatSimple,
+            Opcode::ReturnValue
+        ]
     );
 }

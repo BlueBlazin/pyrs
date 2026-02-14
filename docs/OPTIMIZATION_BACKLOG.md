@@ -107,6 +107,8 @@ Do not rely on stale point-in-time numbers in this document.
   - release profile now uses `lto = "fat"` (from thin) to improve cross-function optimization in hot VM call/dispatch paths.
   - dispatch hotpath benchmark remains non-regressing after terminal-op fusion extension (`scripts/bench_dispatch_hotpath.sh`: `0.8493s` at `bfeba79` vs `0.8470s` current in local runs; lower is better).
   - startup/import optimization wave: positive module-source lookup cache (`(root, module_name)`), `sys.path` sync short-circuit, and resolver-state signatures for `meta_path`/`path_hooks` are landed; default CPython stdlib auto-detection now selects one canonical fallback root to cut startup/import search churn.
+  - pyc translation closure wave (startup-focused): marshal set/frozenset support (`<`/`>`), full CPython 3.14 `BINARY_OP` arg mapping, and f-string opcode translation (`CONVERT_VALUE`/`FORMAT_SIMPLE`/`FORMAT_WITH_SPEC` + `BUILD_STRING`) are landed with regression coverage in `tests/pyc_translate.rs` and `tests/pyc_exec.rs`.
+  - pyc-preference startup gap remains: `PYRS_IMPORT_PREFER_PYC=1` now fails later on additional opcode gaps (`DICT_MERGE`, `COPY`, and extended-flag `COMPARE_OP` arg forms); these are the next P0 import-startup closure items before enabling pyc preference by default.
   - startup benchmark methodology now uses wall-clock `perf_counter` in `scripts/bench_startup_gate.sh` (replacing coarse `/usr/bin/time -p` user-time sampling).
   - latest local startup gate (`scripts/bench_startup_gate.sh 20`, warmup `1`):
     - `pass(site)`: `0.0097s`

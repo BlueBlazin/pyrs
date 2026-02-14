@@ -116,3 +116,33 @@ value = mul(6, 7)
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("value"), Some(Value::Int(42)));
 }
+
+#[test]
+fn executes_cpython_pyc_with_frozenset_and_fstring_conversion() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+mask = 6 & 3
+message = f"mask={mask!r}"
+padded = f"{mask:04d}"
+in_set = 2 in {1, 2, 3}
+"#;
+
+    let pyc_path = compile_pyc(source, "feature_matrix_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let mut vm = Vm::new();
+    let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("mask"), Some(Value::Int(2)));
+    assert_eq!(
+        vm.get_global("message"),
+        Some(Value::Str("mask=2".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("padded"),
+        Some(Value::Str("0002".to_string()))
+    );
+    assert_eq!(vm.get_global("in_set"), Some(Value::Bool(true)));
+}
