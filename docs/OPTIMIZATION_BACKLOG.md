@@ -102,6 +102,7 @@ Do not rely on stale point-in-time numbers in this document.
   - reduced `LOAD_GLOBAL` fused-call overhead by caching direct one-arg/no-cells frame metadata (`code/module/owner`) and reusing ref-based frame entry paths after epoch validation.
   - added memoization for filesystem stdlib-preference probes (`has_preferred_filesystem_module`) with invalidation on `sys.path` mutations to reduce startup/import stat churn.
   - removed full tuple payload clones from native tuple methods (`tuple.count`, `tuple.index`) and validated bound/subclass semantics with regression coverage.
-  - fused terminal arithmetic return for simple no-cells frames: `BinaryAdd` / `BinarySub` / `BinaryMul` now fast-return directly to caller when next opcode is `ReturnValue`, avoiding extra dispatch and stack roundtrips.
+  - fused terminal arithmetic return for simple no-cells frames: `BinaryAdd` / `BinarySub` / `BinaryMul` / `BinaryDiv` / `BinaryFloorDiv` / `BinaryMod` now fast-return directly to caller when next opcode is `ReturnValue`, avoiding extra dispatch and stack roundtrips.
   - tightened `CompareLt`/`CompareLtConst` jump path truthiness handling to avoid temporary `Value::Bool` materialization when the result is used only for branch control.
   - release profile now uses `lto = "fat"` (from thin) to improve cross-function optimization in hot VM call/dispatch paths.
+  - dispatch hotpath benchmark remains non-regressing after terminal-op fusion extension (`scripts/bench_dispatch_hotpath.sh`: `0.8493s` at `bfeba79` vs `0.8470s` current in local runs; lower is better).

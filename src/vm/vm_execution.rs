@@ -1749,6 +1749,11 @@ impl Vm {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
                 let value = self.binary_div_runtime(left, right)?;
+                #[cfg(not(debug_assertions))]
+                let value = match self.try_fast_terminal_return_simple_no_cells(value) {
+                    Ok(()) => return Ok(None),
+                    Err(value) => value,
+                };
                 self.push_value(value);
             }
             Opcode::BinaryPow => {
@@ -1759,12 +1764,24 @@ impl Vm {
             Opcode::BinaryFloorDiv => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                self.push_value(floor_div_values(left, right)?);
+                let value = floor_div_values(left, right)?;
+                #[cfg(not(debug_assertions))]
+                let value = match self.try_fast_terminal_return_simple_no_cells(value) {
+                    Ok(()) => return Ok(None),
+                    Err(value) => value,
+                };
+                self.push_value(value);
             }
             Opcode::BinaryMod => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                self.push_value(mod_values(left, right, &self.heap)?);
+                let value = mod_values(left, right, &self.heap)?;
+                #[cfg(not(debug_assertions))]
+                let value = match self.try_fast_terminal_return_simple_no_cells(value) {
+                    Ok(()) => return Ok(None),
+                    Err(value) => value,
+                };
+                self.push_value(value);
             }
             Opcode::BinaryLShift => {
                 let right = self.pop_value()?;

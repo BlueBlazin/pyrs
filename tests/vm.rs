@@ -5875,6 +5875,50 @@ fn lambda_mul_return_path_preserves_result() {
 }
 
 #[test]
+fn lambda_div_return_path_mixed_numeric_preserves_result() {
+    let source = "f = lambda n: n / 2.0\nok = (f(9) == 4.5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn lambda_floordiv_return_path_bigint_preserves_result() {
+    let source = "f = lambda n: n // 7\nv = 1000000000000000000000000000001\nexpected = v // 7\nok = (f(v) == expected)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn lambda_mod_return_path_bigint_preserves_result() {
+    let source = "f = lambda n: n % 7\nv = 1000000000000000000000000000001\nexpected = v % 7\nok = (f(v) == expected)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn lambda_mod_return_path_mixed_numeric_preserves_result() {
+    let source = "f = lambda n: n % 2.5\nok = (f(9) == 1.5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_module_attribute_access() {
     let module = parser::parse_module("y = mod.x").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
