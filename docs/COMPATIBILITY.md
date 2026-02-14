@@ -18,6 +18,7 @@ Status:
 ## Bytecode and VM
 - `[x]` CPython 3.14 opcode-table foundation and decode/translate/execute support
 - `[x]` `.pyc` read/write baseline
+- `[~]` CPython exception-table execution for translated `.pyc` is not complete (current policy: explicit source fallback)
 - `[~]` Full opcode-family parity
 
 ## Runtime and Object Model
