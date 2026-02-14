@@ -66,6 +66,9 @@ impl Vm {
                 let value = self.call_builtin(builtin, call_args, kwargs)?;
                 Ok(NativeCallResult::Value(value))
             }
+            NativeMethodKind::ExtensionFunctionCall(function_id) => {
+                self.call_extension_callable(function_id, args, kwargs)
+            }
             NativeMethodKind::GeneratorIter => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("__iter__() expects no arguments"));

@@ -338,6 +338,7 @@ pub enum NativeMethodKind {
     FunctoolsWrapsDecorator,
     FunctoolsPartialCall,
     FunctoolsCmpToKeyCall,
+    ExtensionFunctionCall(u64),
     CodecsIncrementalEncoderFactoryCall,
     CodecsIncrementalDecoderFactoryCall,
     CodecsIncrementalEncoderEncode,
@@ -7116,6 +7117,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::FunctoolsCmpToKeyCall => {
                         "<bound method functools.cmp_to_key-call>".to_string()
+                    }
+                    NativeMethodKind::ExtensionFunctionCall(id) => {
+                        format!("<bound method extension callable {}>", id)
                     }
                     NativeMethodKind::CodecsIncrementalEncoderFactoryCall => {
                         "<bound method codecs.incrementalencoder-factory-call>".to_string()

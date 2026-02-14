@@ -7,6 +7,10 @@ pub const PYRS_EXTENSION_ABI_TAG: &str = "pyrs314";
 pub const PYRS_CAPI_ABI_VERSION: u32 = 1;
 pub const PYRS_DYNAMIC_INIT_SYMBOL_V1: &str = "pyrs_extension_init_v1";
 pub type PyrsObjectHandle = u64;
+pub const PYRS_TYPE_NONE: i32 = 1;
+pub const PYRS_TYPE_BOOL: i32 = 2;
+pub const PYRS_TYPE_INT: i32 = 3;
+pub const PYRS_TYPE_STR: i32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionEntrypoint {
@@ -289,6 +293,11 @@ pub struct PyrsApiV1 {
         name: *const c_char,
         value: *const c_char,
     ) -> i32,
+    pub module_add_function: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        name: *const c_char,
+        callback: Option<PyrsCFunctionV1>,
+    ) -> i32,
     pub object_new_int:
         unsafe extern "C" fn(module_ctx: *mut c_void, value: i64) -> PyrsObjectHandle,
     pub object_new_bool:
@@ -304,10 +313,31 @@ pub struct PyrsApiV1 {
         name: *const c_char,
         handle: PyrsObjectHandle,
     ) -> i32,
+    pub object_type: unsafe extern "C" fn(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> i32,
+    pub object_get_int: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        handle: PyrsObjectHandle,
+        out: *mut i64,
+    ) -> i32,
+    pub object_get_bool: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        handle: PyrsObjectHandle,
+        out: *mut i32,
+    ) -> i32,
+    pub object_get_string:
+        unsafe extern "C" fn(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> *const c_char,
     pub error_set: unsafe extern "C" fn(module_ctx: *mut c_void, message: *const c_char) -> i32,
     pub error_clear: unsafe extern "C" fn(module_ctx: *mut c_void) -> i32,
     pub error_occurred: unsafe extern "C" fn(module_ctx: *mut c_void) -> i32,
 }
+
+pub type PyrsCFunctionV1 = unsafe extern "C" fn(
+    api: *const PyrsApiV1,
+    module_ctx: *mut c_void,
+    argc: usize,
+    argv: *const PyrsObjectHandle,
+    result: *mut PyrsObjectHandle,
+) -> i32;
 
 pub type PyrsExtensionInitV1 =
     unsafe extern "C" fn(api: *const PyrsApiV1, module_ctx: *mut c_void) -> i32;

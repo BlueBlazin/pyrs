@@ -1,16 +1,18 @@
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::{Path, PathBuf};
 
 use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
-    PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PyrsApiV1, PyrsObjectHandle,
+    PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_INT,
+    PYRS_TYPE_NONE, PYRS_TYPE_STR, PyrsApiV1, PyrsCFunctionV1, PyrsObjectHandle,
     load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
 };
-use crate::runtime::{Object, RuntimeError, Value};
+use crate::runtime::{
+    BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
+};
 
-use super::ObjRef;
-use super::Vm;
+use super::{NativeCallResult, ObjRef, Vm};
 
 struct CapiObjectSlot {
     value: Value,
@@ -18,19 +20,23 @@ struct CapiObjectSlot {
 }
 
 struct ModuleCapiContext {
+    vm: *mut Vm,
     module: ObjRef,
     next_object_handle: PyrsObjectHandle,
     objects: HashMap<PyrsObjectHandle, CapiObjectSlot>,
     last_error: Option<String>,
+    scratch_strings: Vec<CString>,
 }
 
 impl ModuleCapiContext {
-    fn new(module: ObjRef) -> Self {
+    fn new(vm: *mut Vm, module: ObjRef) -> Self {
         Self {
+            vm,
             module,
             next_object_handle: 1,
             objects: HashMap::new(),
             last_error: None,
+            scratch_strings: Vec::new(),
         }
     }
 
@@ -53,8 +59,12 @@ impl ModuleCapiContext {
         handle
     }
 
+    fn object_slot(&self, handle: PyrsObjectHandle) -> Option<&CapiObjectSlot> {
+        self.objects.get(&handle)
+    }
+
     fn object_value(&self, handle: PyrsObjectHandle) -> Option<Value> {
-        self.objects.get(&handle).map(|slot| slot.value.clone())
+        self.object_slot(handle).map(|slot| slot.value.clone())
     }
 
     fn incref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
@@ -78,6 +88,62 @@ impl ModuleCapiContext {
             self.objects.remove(&handle);
         }
         Ok(())
+    }
+
+    fn object_type(&self, handle: PyrsObjectHandle) -> Result<i32, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        let ty = match slot.value {
+            Value::None => PYRS_TYPE_NONE,
+            Value::Bool(_) => PYRS_TYPE_BOOL,
+            Value::Int(_) => PYRS_TYPE_INT,
+            Value::Str(_) => PYRS_TYPE_STR,
+            _ => 0,
+        };
+        Ok(ty)
+    }
+
+    fn object_get_int(&self, handle: PyrsObjectHandle) -> Result<i64, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        match slot.value {
+            Value::Int(value) => Ok(value),
+            _ => Err(format!("object handle {} is not an int", handle)),
+        }
+    }
+
+    fn object_get_bool(&self, handle: PyrsObjectHandle) -> Result<i32, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        match slot.value {
+            Value::Bool(value) => Ok(if value { 1 } else { 0 }),
+            _ => Err(format!("object handle {} is not a bool", handle)),
+        }
+    }
+
+    fn object_get_string_ptr(&mut self, handle: PyrsObjectHandle) -> Result<*const c_char, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        let Value::Str(text) = &slot.value else {
+            return Err(format!("object handle {} is not a str", handle));
+        };
+        let cstring = CString::new(text.as_str())
+            .map_err(|_| "string contains interior NUL byte".to_string())?;
+        self.scratch_strings.push(cstring);
+        let ptr = self
+            .scratch_strings
+            .last()
+            .map(|value| value.as_ptr())
+            .unwrap_or(std::ptr::null());
+        if ptr.is_null() {
+            Err("failed to materialize string pointer".to_string())
+        } else {
+            Ok(ptr)
+        }
     }
 }
 
@@ -161,6 +227,46 @@ unsafe extern "C" fn capi_module_set_string(
     unsafe { capi_module_insert_value(context, name, Value::Str(value)) }
 }
 
+unsafe extern "C" fn capi_module_add_function(
+    module_ctx: *mut c_void,
+    name: *const c_char,
+    callback: Option<PyrsCFunctionV1>,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    let Some(callback) = callback else {
+        context.set_error("module_add_function requires a non-null callback");
+        return -1;
+    };
+    let name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    if context.vm.is_null() {
+        context.set_error("module_add_function missing VM context");
+        return -1;
+    }
+    // SAFETY: VM pointer is set by `exec_extension_module` and valid during init callback.
+    let vm = unsafe { &mut *context.vm };
+    let callable = match vm.register_extension_callable(context.module.clone(), &name, callback) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err.message);
+            return -1;
+        }
+    };
+    let Object::Module(module_data) = &mut *context.module.kind_mut() else {
+        context.set_error("module context no longer points to a module");
+        return -1;
+    };
+    module_data.globals.insert(name, callable);
+    0
+}
+
 unsafe extern "C" fn capi_object_new_int(module_ctx: *mut c_void, value: i64) -> PyrsObjectHandle {
     let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
         return 0;
@@ -233,6 +339,89 @@ unsafe extern "C" fn capi_module_set_object(
     unsafe { capi_module_insert_value(context, name, value) }
 }
 
+unsafe extern "C" fn capi_object_type(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    match context.object_type(handle) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err);
+            0
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_get_int(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    out: *mut i64,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out.is_null() {
+        context.set_error("object_get_int received null out pointer");
+        return -1;
+    }
+    match context.object_get_int(handle) {
+        Ok(value) => {
+            // SAFETY: caller provided non-null out pointer.
+            unsafe {
+                *out = value;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_get_bool(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    out: *mut i32,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out.is_null() {
+        context.set_error("object_get_bool received null out pointer");
+        return -1;
+    }
+    match context.object_get_bool(handle) {
+        Ok(value) => {
+            // SAFETY: caller provided non-null out pointer.
+            unsafe {
+                *out = value;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_get_string(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+) -> *const c_char {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return std::ptr::null();
+    };
+    match context.object_get_string_ptr(handle) {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            context.set_error(err);
+            std::ptr::null()
+        }
+    }
+}
+
 unsafe extern "C" fn capi_error_set(module_ctx: *mut c_void, message: *const c_char) -> i32 {
     let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
         return -1;
@@ -240,7 +429,7 @@ unsafe extern "C" fn capi_error_set(module_ctx: *mut c_void, message: *const c_c
     match unsafe { c_name_to_string(message) } {
         Ok(message) => {
             context.set_error(message);
-            0
+            -1
         }
         Err(err) => {
             context.set_error(err);
@@ -273,6 +462,138 @@ enum ExtensionExecutionPlan {
 }
 
 impl Vm {
+    fn capi_api_v1(&self) -> PyrsApiV1 {
+        PyrsApiV1 {
+            abi_version: PYRS_CAPI_ABI_VERSION,
+            module_set_int: capi_module_set_int,
+            module_set_bool: capi_module_set_bool,
+            module_set_string: capi_module_set_string,
+            module_add_function: capi_module_add_function,
+            object_new_int: capi_object_new_int,
+            object_new_bool: capi_object_new_bool,
+            object_new_string: capi_object_new_string,
+            object_incref: capi_object_incref,
+            object_decref: capi_object_decref,
+            module_set_object: capi_module_set_object,
+            object_type: capi_object_type,
+            object_get_int: capi_object_get_int,
+            object_get_bool: capi_object_get_bool,
+            object_get_string: capi_object_get_string,
+            error_set: capi_error_set,
+            error_clear: capi_error_clear,
+            error_occurred: capi_error_occurred,
+        }
+    }
+
+    pub(super) fn register_extension_callable(
+        &mut self,
+        module: ObjRef,
+        name: &str,
+        callback: PyrsCFunctionV1,
+    ) -> Result<Value, RuntimeError> {
+        let id = self.next_extension_callable_id;
+        self.next_extension_callable_id = self.next_extension_callable_id.wrapping_add(1);
+        if self.next_extension_callable_id == 0 {
+            self.next_extension_callable_id = 1;
+        }
+        self.extension_callable_registry.insert(
+            id,
+            super::ExtensionCallableEntry {
+                module: module.clone(),
+                name: name.to_string(),
+                callback,
+            },
+        );
+
+        let native = self.heap.alloc_native_method(NativeMethodObject::new(
+            NativeMethodKind::ExtensionFunctionCall(id),
+        ));
+        let bound = match self
+            .heap
+            .alloc_bound_method(BoundMethod::new(native, module))
+        {
+            Value::BoundMethod(obj) => obj,
+            _ => unreachable!(),
+        };
+        Ok(Value::BoundMethod(bound))
+    }
+
+    pub(super) fn call_extension_callable(
+        &mut self,
+        function_id: u64,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<NativeCallResult, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "extension callables do not accept keyword arguments yet",
+            ));
+        }
+        let Some(entry) = self.extension_callable_registry.get(&function_id).cloned() else {
+            return Err(RuntimeError::new(format!(
+                "unknown extension callable id {}",
+                function_id
+            )));
+        };
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, entry.module.clone());
+        let mut arg_handles = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_handles.push(call_ctx.alloc_object(arg));
+        }
+        let api = self.capi_api_v1();
+        let mut result_handle: PyrsObjectHandle = 0;
+        // SAFETY: callback pointer comes from extension registration and the API/context
+        // pointers remain valid for the duration of this call.
+        let status = unsafe {
+            (entry.callback)(
+                &api as *const PyrsApiV1,
+                (&mut call_ctx as *mut ModuleCapiContext).cast(),
+                arg_handles.len(),
+                arg_handles.as_ptr(),
+                &mut result_handle as *mut PyrsObjectHandle,
+            )
+        };
+        if status != 0 {
+            let detail = call_ctx
+                .last_error
+                .as_deref()
+                .map(|text| format!(": {text}"))
+                .unwrap_or_default();
+            return Err(RuntimeError::new(format!(
+                "extension function '{}.{}' failed with status {}{}",
+                match &*entry.module.kind() {
+                    Object::Module(module_data) => module_data.name.clone(),
+                    _ => "<extension>".to_string(),
+                },
+                entry.name,
+                status,
+                detail
+            )));
+        }
+        if result_handle == 0 {
+            return Err(RuntimeError::new(format!(
+                "extension function '{}.{}' returned null handle",
+                match &*entry.module.kind() {
+                    Object::Module(module_data) => module_data.name.clone(),
+                    _ => "<extension>".to_string(),
+                },
+                entry.name
+            )));
+        }
+        let Some(result) = call_ctx.object_value(result_handle) else {
+            return Err(RuntimeError::new(format!(
+                "extension function '{}.{}' returned unknown handle {}",
+                match &*entry.module.kind() {
+                    Object::Module(module_data) => module_data.name.clone(),
+                    _ => "<extension>".to_string(),
+                },
+                entry.name,
+                result_handle
+            )));
+        };
+        Ok(NativeCallResult::Value(result))
+    }
+
     fn set_extension_metadata(
         &mut self,
         module: &ObjRef,
@@ -314,22 +635,8 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         let (handle, initializer) =
             load_dynamic_initializer(library_path, symbol).map_err(RuntimeError::new)?;
-        let mut module_ctx = ModuleCapiContext::new(module.clone());
-        let api = PyrsApiV1 {
-            abi_version: PYRS_CAPI_ABI_VERSION,
-            module_set_int: capi_module_set_int,
-            module_set_bool: capi_module_set_bool,
-            module_set_string: capi_module_set_string,
-            object_new_int: capi_object_new_int,
-            object_new_bool: capi_object_new_bool,
-            object_new_string: capi_object_new_string,
-            object_incref: capi_object_incref,
-            object_decref: capi_object_decref,
-            module_set_object: capi_module_set_object,
-            error_set: capi_error_set,
-            error_clear: capi_error_clear,
-            error_occurred: capi_error_occurred,
-        };
+        let mut module_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
+        let api = self.capi_api_v1();
         // SAFETY: initializer is resolved from the shared object symbol with expected signature;
         // pointers are valid for the duration of the call.
         let status = unsafe {

@@ -484,3 +484,97 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     let _ = fs::remove_file(source_path);
     let _ = fs::remove_dir_all(temp_root);
 }
+
+#[test]
+fn dynamic_extension_can_register_callable() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping callable extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping callable extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_callable");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_callable.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int native_add(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    PyrsObjectHandle* result
+) {
+    if (!api || !argv || !result) {
+        return -1;
+    }
+    if (argc != 2) {
+        api->error_set(module_ctx, "native_add expects exactly 2 positional arguments");
+        return -2;
+    }
+    if (api->object_type(module_ctx, argv[0]) != PYRS_TYPE_INT ||
+        api->object_type(module_ctx, argv[1]) != PYRS_TYPE_INT) {
+        api->error_set(module_ctx, "native_add only accepts ints");
+        return -3;
+    }
+    int64_t left = 0;
+    int64_t right = 0;
+    if (api->object_get_int(module_ctx, argv[0], &left) != 0 ||
+        api->object_get_int(module_ctx, argv[1], &right) != 0) {
+        return -4;
+    }
+    *result = api->object_new_int(module_ctx, left + right);
+    if (*result == 0) {
+        return -5;
+    }
+    return 0;
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    if (api->module_add_function(module_ctx, "add", native_add) != 0) {
+        return -2;
+    }
+    if (api->module_set_string(module_ctx, "API_KIND", "callable") != 0) {
+        return -3;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_callable");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_callable.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_callable\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_callable\nassert native_callable.API_KIND == 'callable'\nassert native_callable.add(20, 22) == 42",
+    )
+    .expect("callable extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
