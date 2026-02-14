@@ -26,6 +26,15 @@ CASES: list[tuple[str, str]] = [
 
 def classify_failure(stderr: str) -> dict[str, str]:
     diagnostics: dict[str, str] = {}
+    abi_mode_match = re.search(
+        r"expected '([^']+)'.*CPython-style extension symbols such as '([^']+)'",
+        stderr,
+    )
+    if abi_mode_match:
+        diagnostics["expected_symbol"] = abi_mode_match.group(1)
+        diagnostics["found_symbol_style"] = abi_mode_match.group(2)
+        diagnostics["kind"] = "abi-mode-mismatch"
+        return diagnostics
     symbol_match = re.search(r"failed to resolve symbol '([^']+)'", stderr)
     if symbol_match:
         diagnostics["missing_symbol"] = symbol_match.group(1)

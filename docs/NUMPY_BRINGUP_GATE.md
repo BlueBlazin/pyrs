@@ -53,7 +53,7 @@ If `--numpy-src` does not exist, the build stage is recorded as `SKIP` and the r
 
 - Before real C-extension substrate closure, this probe is expected to report failures.
 - Import-probe and source-build mode both produce actionable failure diagnostics in JSON.
-- Probe output now classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
+- Probe output now classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `abi-mode-mismatch`, `init-failure`) to guide C-API/loader closure work.
 - Failures are signal, not noise; they should be used to drive substrate work in:
   - `docs/EXTENSION_CAPABILITY_MATRIX.md`
   - `docs/EXTENSION_PACKAGING_CONTRACT.md`
