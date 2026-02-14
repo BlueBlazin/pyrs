@@ -130,9 +130,9 @@ Return semantics:
 - generic length/subscript helpers are available through `object_len(...)`, `object_get_item(...)`, `object_set_item(...)`, and `object_del_item(...)`.
 - generic membership probes are available through `object_contains(...)`.
 - dict-view helpers are available through `object_dict_keys(...)` and `object_dict_items(...)`.
-- buffer access helpers are available through `object_get_buffer(...)` and `object_release_buffer(...)`.
+- buffer access helpers are available through `object_get_buffer(...)` and `object_release_buffer(...)`; non-contiguous memoryview layouts are rejected by the pointer-only `object_get_buffer(...)` path.
 - current buffer helper coverage is `bytes`/`bytearray`/`memoryview` handles with pointer+length+readonly metadata.
-- writable buffer helper is available through `object_get_writable_buffer(...)` for mutable bytes-like handles (`bytearray` and writable `memoryview`) and rejects read-only sources (`bytes`/readonly `memoryview`).
+- writable buffer helper is available through `object_get_writable_buffer(...)` for mutable bytes-like handles (`bytearray` and writable `memoryview`), rejects read-only sources (`bytes`/readonly `memoryview`), and rejects non-contiguous memoryview layouts (use metadata APIs for those).
 - buffer metadata helper is available through `object_get_buffer_info(...)` with scalar metadata (`itemsize`, `ndim`, `shape0`, `stride0`, `format`, `contiguous`) for `bytes`/`bytearray`/`memoryview`; shaped memoryviews (for example `memoryview.cast(..., shape=[...])`) now report `ndim > 1`.
 - buffer metadata v2 helper is available through `object_get_buffer_info_v2(...)` with pointer-based shape/stride metadata arrays (`shape[ndim]`, `strides[ndim]`) for `bytes`/`bytearray`/`memoryview`, including shaped memoryview cast layouts.
 - active C-API buffer acquisitions on mutable bytes-like sources now pin exports and block bytearray resizing paths until `object_release_buffer(...)` is called.
