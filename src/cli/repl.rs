@@ -134,11 +134,17 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                 }
 
                 if pending.trim().is_empty()
-                    && let Some(timed_source) = parse_timed_command(trimmed)
+                    && let Some(command) = parse_magic_command(trimmed)
                 {
-                    if let Err(err) =
-                        execute_with_optional_timing(vm, &timed_source, "<stdin>", true, true)
-                    {
+                    let result = match command {
+                        ReplMagicCommand::Time(source) => {
+                            execute_with_optional_timing(vm, &source, "<stdin>", true, true)
+                        }
+                        ReplMagicCommand::TimeIt(request) => {
+                            execute_timeit_command(vm, &request, "<stdin>")
+                        }
+                    };
+                    if let Err(err) = result {
                         eprintln!("{err}");
                     } else {
                         refresh_completion_state(vm, &completion_state);
@@ -223,9 +229,13 @@ fn build_editor(completion_state: Arc<Mutex<CompletionState>>) -> Result<Reedlin
             ReedlineEvent::MenuNext,
         ]),
     );
+    keybindings.add_binding(KeyModifiers::NONE, KeyCode::Esc, ReedlineEvent::Esc);
     let edit_mode = Box::new(Emacs::new(keybindings));
+    let history_hint_style = Style::new().italic().fg(AnsiColor::DarkGray);
     let mut editor = Reedline::create()
-        .with_hinter(Box::new(DefaultHinter::default()))
+        .with_hinter(Box::new(
+            DefaultHinter::default().with_style(history_hint_style),
+        ))
         .with_highlighter(Box::new(PythonHighlighter::default()))
         .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(edit_mode)
@@ -262,7 +272,7 @@ fn refresh_completion_state(vm: &Vm, state: &Arc<Mutex<CompletionState>>) {
 }
 
 fn build_completion_state(vm: &Vm) -> CompletionState {
-    const MAX_COMPLETION_DEPTH: usize = 2;
+    const MAX_COMPLETION_DEPTH: usize = 6;
     let mut state = CompletionState::default();
     let mut visited = HashSet::new();
     for (name, value) in vm.repl_root_bindings() {
@@ -319,7 +329,7 @@ fn collect_completion_members(
             continue;
         }
         names.push(member_name.clone());
-        if depth < max_depth {
+        if depth < max_depth && !matches!(member_value, Value::None) {
             let next_path = format!("{path}.{member_name}");
             collect_completion_members(
                 state,
@@ -362,6 +372,71 @@ fn value_member_bindings(value: &Value) -> Vec<(String, Value)> {
                 collect_class_bindings_into(&instance_data.class, &mut bindings);
             }
         }
+        Value::Builtin(builtin) => {
+            for name in builtin_member_names(*builtin) {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Bool(_) => {
+            for name in primitive_member_names("bool") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Int(_) => {
+            for name in primitive_member_names("int") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Float(_) => {
+            for name in primitive_member_names("float") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Complex { .. } => {
+            for name in primitive_member_names("complex") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Str(_) => {
+            for name in primitive_member_names("str") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Bytes(_) => {
+            for name in primitive_member_names("bytes") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::ByteArray(_) => {
+            for name in primitive_member_names("bytearray") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::List(_) => {
+            for name in primitive_member_names("list") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Tuple(_) => {
+            for name in primitive_member_names("tuple") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Dict(_) => {
+            for name in primitive_member_names("dict") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::Set(_) => {
+            for name in primitive_member_names("set") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
+        Value::FrozenSet(_) => {
+            for name in primitive_member_names("frozenset") {
+                bindings.entry(name.to_string()).or_insert(Value::None);
+            }
+        }
         _ => {}
     }
     let mut out = bindings.into_iter().collect::<Vec<_>>();
@@ -385,6 +460,271 @@ fn collect_class_bindings_into(
                 out.entry(name.clone()).or_insert_with(|| value.clone());
             }
         }
+    }
+}
+
+fn builtin_member_names(builtin: crate::runtime::BuiltinFunction) -> &'static [&'static str] {
+    if builtin_type_name(builtin).is_some() {
+        return primitive_member_names("type");
+    }
+    &[
+        "__annotations__",
+        "__call__",
+        "__class__",
+        "__doc__",
+        "__module__",
+        "__name__",
+        "__qualname__",
+    ]
+}
+
+fn builtin_type_name(builtin: crate::runtime::BuiltinFunction) -> Option<&'static str> {
+    match builtin {
+        crate::runtime::BuiltinFunction::Type => Some("type"),
+        crate::runtime::BuiltinFunction::Bool => Some("bool"),
+        crate::runtime::BuiltinFunction::Int => Some("int"),
+        crate::runtime::BuiltinFunction::Float => Some("float"),
+        crate::runtime::BuiltinFunction::Complex => Some("complex"),
+        crate::runtime::BuiltinFunction::Str => Some("str"),
+        crate::runtime::BuiltinFunction::List => Some("list"),
+        crate::runtime::BuiltinFunction::Tuple => Some("tuple"),
+        crate::runtime::BuiltinFunction::Dict => Some("dict"),
+        crate::runtime::BuiltinFunction::Set => Some("set"),
+        crate::runtime::BuiltinFunction::FrozenSet => Some("frozenset"),
+        crate::runtime::BuiltinFunction::Bytes => Some("bytes"),
+        crate::runtime::BuiltinFunction::ByteArray => Some("bytearray"),
+        crate::runtime::BuiltinFunction::MemoryView => Some("memoryview"),
+        crate::runtime::BuiltinFunction::Slice => Some("slice"),
+        crate::runtime::BuiltinFunction::Range => Some("range"),
+        crate::runtime::BuiltinFunction::Zip => Some("zip"),
+        crate::runtime::BuiltinFunction::Map => Some("map"),
+        crate::runtime::BuiltinFunction::Filter => Some("filter"),
+        crate::runtime::BuiltinFunction::Enumerate => Some("enumerate"),
+        crate::runtime::BuiltinFunction::Super => Some("super"),
+        crate::runtime::BuiltinFunction::ClassMethod => Some("classmethod"),
+        crate::runtime::BuiltinFunction::StaticMethod => Some("staticmethod"),
+        crate::runtime::BuiltinFunction::Property => Some("property"),
+        _ => None,
+    }
+}
+
+fn primitive_member_names(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "type" => &[
+            "__base__",
+            "__bases__",
+            "__class__",
+            "__dict__",
+            "__doc__",
+            "__module__",
+            "__mro__",
+            "__name__",
+            "__qualname__",
+            "__subclasses__",
+        ],
+        "bool" => &[
+            "__class__",
+            "__int__",
+            "__bool__",
+            "bit_count",
+            "bit_length",
+            "conjugate",
+            "to_bytes",
+        ],
+        "int" => &[
+            "__class__",
+            "as_integer_ratio",
+            "bit_count",
+            "bit_length",
+            "conjugate",
+            "from_bytes",
+            "to_bytes",
+        ],
+        "float" => &[
+            "__class__",
+            "as_integer_ratio",
+            "conjugate",
+            "fromhex",
+            "hex",
+            "is_integer",
+        ],
+        "complex" => &["__class__", "conjugate", "imag", "real"],
+        "str" => &[
+            "__class__",
+            "capitalize",
+            "casefold",
+            "center",
+            "count",
+            "encode",
+            "endswith",
+            "expandtabs",
+            "find",
+            "format",
+            "format_map",
+            "index",
+            "isalnum",
+            "isalpha",
+            "isascii",
+            "isdecimal",
+            "isdigit",
+            "isidentifier",
+            "islower",
+            "isnumeric",
+            "isprintable",
+            "isspace",
+            "istitle",
+            "isupper",
+            "join",
+            "ljust",
+            "lower",
+            "lstrip",
+            "partition",
+            "removeprefix",
+            "removesuffix",
+            "replace",
+            "rfind",
+            "rindex",
+            "rjust",
+            "rpartition",
+            "rsplit",
+            "rstrip",
+            "split",
+            "splitlines",
+            "startswith",
+            "strip",
+            "swapcase",
+            "title",
+            "translate",
+            "upper",
+            "zfill",
+        ],
+        "bytes" => &[
+            "__class__",
+            "capitalize",
+            "center",
+            "count",
+            "decode",
+            "endswith",
+            "expandtabs",
+            "find",
+            "fromhex",
+            "hex",
+            "index",
+            "isalnum",
+            "isalpha",
+            "isascii",
+            "isdigit",
+            "islower",
+            "isspace",
+            "istitle",
+            "isupper",
+            "join",
+            "ljust",
+            "lower",
+            "lstrip",
+            "partition",
+            "removeprefix",
+            "removesuffix",
+            "replace",
+            "rfind",
+            "rindex",
+            "rjust",
+            "rpartition",
+            "rsplit",
+            "rstrip",
+            "split",
+            "splitlines",
+            "startswith",
+            "strip",
+            "swapcase",
+            "title",
+            "translate",
+            "upper",
+            "zfill",
+        ],
+        "bytearray" => &[
+            "__class__",
+            "append",
+            "clear",
+            "copy",
+            "count",
+            "decode",
+            "extend",
+            "find",
+            "fromhex",
+            "hex",
+            "index",
+            "insert",
+            "join",
+            "pop",
+            "remove",
+            "replace",
+            "reverse",
+            "split",
+            "strip",
+            "translate",
+        ],
+        "list" => &[
+            "__class__",
+            "append",
+            "clear",
+            "copy",
+            "count",
+            "extend",
+            "index",
+            "insert",
+            "pop",
+            "remove",
+            "reverse",
+            "sort",
+        ],
+        "tuple" => &["__class__", "count", "index"],
+        "dict" => &[
+            "__class__",
+            "clear",
+            "copy",
+            "fromkeys",
+            "get",
+            "items",
+            "keys",
+            "pop",
+            "popitem",
+            "setdefault",
+            "update",
+            "values",
+        ],
+        "set" => &[
+            "__class__",
+            "add",
+            "clear",
+            "copy",
+            "difference",
+            "difference_update",
+            "discard",
+            "intersection",
+            "intersection_update",
+            "isdisjoint",
+            "issubset",
+            "issuperset",
+            "pop",
+            "remove",
+            "symmetric_difference",
+            "symmetric_difference_update",
+            "union",
+            "update",
+        ],
+        "frozenset" => &[
+            "__class__",
+            "copy",
+            "difference",
+            "intersection",
+            "isdisjoint",
+            "issubset",
+            "issuperset",
+            "symmetric_difference",
+            "union",
+        ],
+        _ => &["__class__"],
     }
 }
 
@@ -835,13 +1175,139 @@ fn parse_meta_command(line: &str) -> Option<MetaCommand> {
     }
 }
 
-fn parse_timed_command(line: &str) -> Option<String> {
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum ReplMagicCommand {
+    Time(String),
+    TimeIt(TimeItRequest),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct TimeItRequest {
+    source: String,
+    loops: Option<u64>,
+    repeats: Option<u32>,
+}
+
+fn parse_magic_command(line: &str) -> Option<ReplMagicCommand> {
     let trimmed = line.trim_start();
-    let source = trimmed.strip_prefix("%time")?.trim_start();
+    if let Some(request) = parse_timeit_command(trimmed) {
+        return Some(ReplMagicCommand::TimeIt(request));
+    }
+    parse_time_command(trimmed).map(ReplMagicCommand::Time)
+}
+
+fn parse_time_command(line: &str) -> Option<String> {
+    let source = strip_magic_prefix(line, "%time")?;
     if source.is_empty() {
         return None;
     }
     Some(format!("{source}\n"))
+}
+
+fn parse_timeit_command(line: &str) -> Option<TimeItRequest> {
+    let mut cursor = strip_magic_prefix(line, "%timeit")?;
+    if cursor.is_empty() {
+        return None;
+    }
+
+    let mut loops = None;
+    let mut repeats = None;
+    while !cursor.is_empty() {
+        let (token, rest) = split_first_word(cursor);
+        if token == "-n" || token == "--number" {
+            let (value, tail) = split_first_word(rest.trim_start());
+            let parsed = value.parse::<u64>().ok()?;
+            if parsed == 0 {
+                return None;
+            }
+            loops = Some(parsed);
+            cursor = tail.trim_start();
+            continue;
+        }
+        if token == "-r" || token == "--repeat" {
+            let (value, tail) = split_first_word(rest.trim_start());
+            let parsed = value.parse::<u32>().ok()?;
+            if parsed == 0 {
+                return None;
+            }
+            repeats = Some(parsed);
+            cursor = tail.trim_start();
+            continue;
+        }
+        if let Some(value) = token.strip_prefix("-n") {
+            let parsed = value.parse::<u64>().ok()?;
+            if parsed == 0 {
+                return None;
+            }
+            loops = Some(parsed);
+            cursor = rest.trim_start();
+            continue;
+        }
+        if let Some(value) = token.strip_prefix("-r") {
+            let parsed = value.parse::<u32>().ok()?;
+            if parsed == 0 {
+                return None;
+            }
+            repeats = Some(parsed);
+            cursor = rest.trim_start();
+            continue;
+        }
+        if let Some(value) = token.strip_prefix("--number=") {
+            let parsed = value.parse::<u64>().ok()?;
+            if parsed == 0 {
+                return None;
+            }
+            loops = Some(parsed);
+            cursor = rest.trim_start();
+            continue;
+        }
+        if let Some(value) = token.strip_prefix("--repeat=") {
+            let parsed = value.parse::<u32>().ok()?;
+            if parsed == 0 {
+                return None;
+            }
+            repeats = Some(parsed);
+            cursor = rest.trim_start();
+            continue;
+        }
+        break;
+    }
+
+    let source = cursor.trim_start();
+    if source.is_empty() {
+        return None;
+    }
+    Some(TimeItRequest {
+        source: format!("{source}\n"),
+        loops,
+        repeats,
+    })
+}
+
+fn strip_magic_prefix<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix(prefix)?;
+    if rest.is_empty() {
+        return Some(rest);
+    }
+    let first = rest.chars().next()?;
+    if first.is_whitespace() {
+        Some(rest.trim_start())
+    } else {
+        None
+    }
+}
+
+fn split_first_word(input: &str) -> (&str, &str) {
+    let trimmed = input.trim_start();
+    if trimmed.is_empty() {
+        return ("", "");
+    }
+    for (idx, ch) in trimmed.char_indices() {
+        if ch.is_whitespace() {
+            return (&trimmed[..idx], &trimmed[idx..]);
+        }
+    }
+    (trimmed, "")
 }
 
 fn apply_meta_command(
@@ -860,10 +1326,12 @@ fn apply_meta_command(
             println!(":paste            toggle paste mode (finish with :paste)");
             println!(":timing           toggle execution timing display");
             println!("%time <expr>      run one snippet with timing");
+            println!("%timeit <expr>    run repeated timings (options: -n, -r)");
             println!(":reset            reset interpreter state");
             println!(":exit / :quit     exit REPL");
             println!("Tab               insert {} spaces", INDENT_WIDTH);
             println!("Shift-Tab/Ctrl-Space  completion menu");
+            println!("Esc               dismiss completion menu/current suggestion");
             Ok(false)
         }
         MetaCommand::Clear => {
@@ -928,6 +1396,91 @@ fn execute_with_optional_timing(
         eprintln!("[timing] {elapsed_ms:.3} ms");
     }
     result
+}
+
+fn execute_timeit_command(
+    vm: &mut Vm,
+    request: &TimeItRequest,
+    filename: &str,
+) -> Result<(), String> {
+    const DEFAULT_REPEATS: u32 = 7;
+    const TARGET_SECONDS: f64 = 0.2;
+    const MAX_CALIBRATION_LOOPS: u64 = 1_000_000_000;
+
+    let module = parser::parse_module(&request.source).map_err(|err| format_parse_error(&err))?;
+    let code = compiler::compile_module_with_filename(&module, filename)
+        .map_err(|err| format!("compile error: {}", err.message))?;
+    let loops = if let Some(loops) = request.loops {
+        loops
+    } else {
+        let mut loops = 1u64;
+        loop {
+            let started = Instant::now();
+            for _ in 0..loops {
+                vm.execute(&code)
+                    .map_err(|err| format!("runtime error: {}", err.message))?;
+            }
+            let elapsed = started.elapsed().as_secs_f64();
+            if elapsed >= TARGET_SECONDS || loops >= MAX_CALIBRATION_LOOPS {
+                break loops.max(1);
+            }
+            let scale = if elapsed > 0.0 {
+                ((TARGET_SECONDS / elapsed).ceil() as u64).clamp(2, 10)
+            } else {
+                10
+            };
+            loops = loops
+                .saturating_mul(scale)
+                .min(MAX_CALIBRATION_LOOPS)
+                .max(1);
+        }
+    };
+    let repeats = request.repeats.unwrap_or(DEFAULT_REPEATS).max(1);
+
+    let mut samples = Vec::with_capacity(repeats as usize);
+    for _ in 0..repeats {
+        let started = Instant::now();
+        for _ in 0..loops {
+            vm.execute(&code)
+                .map_err(|err| format!("runtime error: {}", err.message))?;
+        }
+        samples.push(started.elapsed().as_secs_f64() / loops as f64);
+    }
+
+    let best = samples
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, |current, sample| current.min(sample));
+    let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+    let variance = samples
+        .iter()
+        .map(|sample| {
+            let delta = sample - mean;
+            delta * delta
+        })
+        .sum::<f64>()
+        / samples.len() as f64;
+    let stddev = variance.sqrt();
+
+    eprintln!(
+        "[timeit] {loops} loops, best of {repeats}: {} per loop (mean {} ± {})",
+        format_duration(best),
+        format_duration(mean),
+        format_duration(stddev),
+    );
+    Ok(())
+}
+
+fn format_duration(seconds: f64) -> String {
+    if seconds < 1e-6 {
+        format!("{:.3} ns", seconds * 1e9)
+    } else if seconds < 1e-3 {
+        format!("{:.3} us", seconds * 1e6)
+    } else if seconds < 1.0 {
+        format!("{:.3} ms", seconds * 1e3)
+    } else {
+        format!("{seconds:.3} s")
+    }
 }
 
 fn execute_parsed_module_with_timing(
@@ -1043,9 +1596,9 @@ mod tests {
     use reedline::{Completer, Highlighter};
 
     use super::{
-        CompletionState, MetaCommand, PythonHighlighter, ReplCompleter, completion_fragment,
-        format_parse_error, is_path_like, parse_meta_command, parse_timed_command,
-        repl_input_is_incomplete,
+        CompletionState, MetaCommand, PythonHighlighter, ReplCompleter, ReplMagicCommand,
+        TimeItRequest, completion_fragment, format_parse_error, is_path_like, parse_magic_command,
+        parse_meta_command, repl_input_is_incomplete,
     };
     use crate::parser;
 
@@ -1092,17 +1645,34 @@ mod tests {
     }
 
     #[test]
-    fn parses_timed_command() {
+    fn parses_time_and_timeit_magic_commands() {
         assert_eq!(
-            parse_timed_command("%time 1 + 1"),
-            Some("1 + 1\n".to_string())
+            parse_magic_command("%time 1 + 1"),
+            Some(ReplMagicCommand::Time("1 + 1\n".to_string()))
         );
         assert_eq!(
-            parse_timed_command("   %time print('ok')"),
-            Some("print('ok')\n".to_string())
+            parse_magic_command("   %time print('ok')"),
+            Some(ReplMagicCommand::Time("print('ok')\n".to_string()))
         );
-        assert_eq!(parse_timed_command("%time"), None);
-        assert_eq!(parse_timed_command("print(1)"), None);
+        assert_eq!(
+            parse_magic_command("%timeit -n 25 -r 3 x += 1"),
+            Some(ReplMagicCommand::TimeIt(TimeItRequest {
+                source: "x += 1\n".to_string(),
+                loops: Some(25),
+                repeats: Some(3),
+            }))
+        );
+        assert_eq!(
+            parse_magic_command("%timeit --number=10 --repeat=5 print('ok')"),
+            Some(ReplMagicCommand::TimeIt(TimeItRequest {
+                source: "print('ok')\n".to_string(),
+                loops: Some(10),
+                repeats: Some(5),
+            }))
+        );
+        assert_eq!(parse_magic_command("%timeit"), None);
+        assert_eq!(parse_magic_command("%time"), None);
+        assert_eq!(parse_magic_command("print(1)"), None);
     }
 
     #[test]
@@ -1172,24 +1742,26 @@ mod tests {
     }
 
     #[test]
-    fn completer_suggests_module_member_names() {
-        let mut members = std::collections::HashMap::new();
-        members.insert(
-            "os.path".to_string(),
-            vec![
-                "join".to_string(),
-                "exists".to_string(),
-                "dirname".to_string(),
-            ],
-        );
-        let state = Arc::new(Mutex::new(CompletionState {
-            symbols: vec!["os".to_string()],
-            members,
-        }));
+    fn completer_resolves_deep_module_member_names_dynamically() {
+        let mut vm = super::build_vm(false, true).expect("vm");
+        super::execute_module_source(&mut vm, "import os\n", "<stdin>", false)
+            .expect("import should succeed");
+        let state = Arc::new(Mutex::new(super::build_completion_state(&vm)));
         let mut completer = ReplCompleter::new(state);
         let suggestions = completer.complete("os.path.j", "os.path.j".len());
         let values: Vec<String> = suggestions.into_iter().map(|item| item.value).collect();
         assert!(values.iter().any(|value| value == "os.path.join"));
+    }
+
+    #[test]
+    fn completer_suggests_common_members_for_primitive_values() {
+        let mut vm = super::build_vm(false, true).expect("vm");
+        vm.set_global("text", crate::runtime::Value::Str("abc".to_string()));
+        let state = Arc::new(Mutex::new(super::build_completion_state(&vm)));
+        let mut completer = ReplCompleter::new(state);
+        let suggestions = completer.complete("text.spl", "text.spl".len());
+        let values: Vec<String> = suggestions.into_iter().map(|item| item.value).collect();
+        assert!(values.iter().any(|value| value == "text.split"));
     }
 
     #[test]

@@ -192,8 +192,7 @@ fn type_repr_matches_cpython_for_builtin_type_objects() {
 
 #[test]
 fn type_str_matches_cpython_for_builtin_type_objects() {
-    let source =
-        "ok = (str(type(7)) == \"<class 'int'>\" and str(int) == \"<class 'int'>\" and str(type) == \"<class 'type'>\")\n";
+    let source = "ok = (str(type(7)) == \"<class 'int'>\" and str(int) == \"<class 'int'>\" and str(type) == \"<class 'type'>\")\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

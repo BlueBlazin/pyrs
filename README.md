@@ -75,6 +75,7 @@ REPL commands:
 ```text
 :help   :clear   :paste   :timing   :reset   :exit/:quit
 %time <expr-or-stmt>
+%timeit [-n N] [-r R] <expr-or-stmt>
 ```
 
 REPL keys:
@@ -82,6 +83,7 @@ REPL keys:
 ```text
 Tab                     insert 4 spaces
 Shift-Tab / Ctrl-Space  open completion menu
+Esc                     dismiss active suggestion/menu
 ```
 
 REPL startup script:
