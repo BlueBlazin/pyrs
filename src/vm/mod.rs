@@ -4427,6 +4427,248 @@ fn parse_formatter_key(text: &str) -> FormatterFieldKey {
     FormatterFieldKey::Str(text.to_string())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MemoryViewCastFormat {
+    UnsignedByte,
+    SignedByte,
+    Char,
+    UnsignedShort,
+    SignedShort,
+    UnsignedInt,
+    SignedInt,
+    UnsignedLong,
+    SignedLong,
+    UnsignedLongLong,
+    SignedLongLong,
+    Float,
+    Double,
+}
+
+impl MemoryViewCastFormat {
+    fn code(self) -> &'static str {
+        match self {
+            Self::UnsignedByte => "B",
+            Self::SignedByte => "b",
+            Self::Char => "c",
+            Self::UnsignedShort => "H",
+            Self::SignedShort => "h",
+            Self::UnsignedInt => "I",
+            Self::SignedInt => "i",
+            Self::UnsignedLong => "L",
+            Self::SignedLong => "l",
+            Self::UnsignedLongLong => "Q",
+            Self::SignedLongLong => "q",
+            Self::Float => "f",
+            Self::Double => "d",
+        }
+    }
+
+    fn itemsize(self) -> usize {
+        match self {
+            Self::UnsignedByte | Self::SignedByte | Self::Char => 1,
+            Self::UnsignedShort | Self::SignedShort => 2,
+            Self::UnsignedInt | Self::SignedInt | Self::Float => 4,
+            Self::UnsignedLong | Self::SignedLong => std::mem::size_of::<std::os::raw::c_long>(),
+            Self::UnsignedLongLong | Self::SignedLongLong | Self::Double => 8,
+        }
+    }
+
+    fn integer_signedness(self) -> Option<bool> {
+        match self {
+            Self::UnsignedByte
+            | Self::UnsignedShort
+            | Self::UnsignedInt
+            | Self::UnsignedLong
+            | Self::UnsignedLongLong => Some(false),
+            Self::SignedByte
+            | Self::SignedShort
+            | Self::SignedInt
+            | Self::SignedLong
+            | Self::SignedLongLong => Some(true),
+            Self::Char | Self::Float | Self::Double => None,
+        }
+    }
+}
+
+fn parse_memoryview_cast_format(format: &str) -> Option<MemoryViewCastFormat> {
+    match format {
+        "B" => Some(MemoryViewCastFormat::UnsignedByte),
+        "b" => Some(MemoryViewCastFormat::SignedByte),
+        "c" => Some(MemoryViewCastFormat::Char),
+        "H" => Some(MemoryViewCastFormat::UnsignedShort),
+        "h" => Some(MemoryViewCastFormat::SignedShort),
+        "I" => Some(MemoryViewCastFormat::UnsignedInt),
+        "i" => Some(MemoryViewCastFormat::SignedInt),
+        "L" => Some(MemoryViewCastFormat::UnsignedLong),
+        "l" => Some(MemoryViewCastFormat::SignedLong),
+        "Q" => Some(MemoryViewCastFormat::UnsignedLongLong),
+        "q" => Some(MemoryViewCastFormat::SignedLongLong),
+        "f" => Some(MemoryViewCastFormat::Float),
+        "d" => Some(MemoryViewCastFormat::Double),
+        _ => None,
+    }
+}
+
+fn memoryview_format_for_view(
+    itemsize: usize,
+    format: Option<&str>,
+) -> Result<MemoryViewCastFormat, RuntimeError> {
+    let format_spec = format.unwrap_or("B");
+    let cast_format = parse_memoryview_cast_format(format_spec)
+        .ok_or_else(|| RuntimeError::new("memoryview: unsupported format"))?;
+    if cast_format.itemsize() != itemsize.max(1) {
+        return Err(RuntimeError::new("memoryview: unsupported format"));
+    }
+    Ok(cast_format)
+}
+
+fn memoryview_invalid_type_error(format: MemoryViewCastFormat) -> RuntimeError {
+    RuntimeError::new(format!(
+        "memoryview: invalid type for format '{}'",
+        format.code()
+    ))
+}
+
+fn memoryview_invalid_value_error(format: MemoryViewCastFormat) -> RuntimeError {
+    RuntimeError::new(format!(
+        "memoryview: invalid value for format '{}'",
+        format.code()
+    ))
+}
+
+fn memoryview_integer_bounds(bits: usize, signed: bool) -> (BigInt, BigInt) {
+    if signed {
+        let limit = BigInt::one().shl_bits(bits.saturating_sub(1));
+        let min = limit.negated();
+        let max = limit.sub(&BigInt::one());
+        (min, max)
+    } else {
+        let max = BigInt::one().shl_bits(bits).sub(&BigInt::one());
+        (BigInt::zero(), max)
+    }
+}
+
+fn memoryview_decode_element(
+    chunk: &[u8],
+    format: MemoryViewCastFormat,
+    itemsize: usize,
+    heap: &Heap,
+) -> Result<Value, RuntimeError> {
+    let itemsize = itemsize.max(1);
+    if chunk.len() != itemsize || format.itemsize() != itemsize {
+        return Err(RuntimeError::new("memoryview: unsupported format"));
+    }
+    match format {
+        MemoryViewCastFormat::UnsignedByte
+        | MemoryViewCastFormat::SignedByte
+        | MemoryViewCastFormat::UnsignedShort
+        | MemoryViewCastFormat::SignedShort
+        | MemoryViewCastFormat::UnsignedInt
+        | MemoryViewCastFormat::SignedInt
+        | MemoryViewCastFormat::UnsignedLong
+        | MemoryViewCastFormat::SignedLong
+        | MemoryViewCastFormat::UnsignedLongLong
+        | MemoryViewCastFormat::SignedLongLong => {
+            let signed = format.integer_signedness().unwrap_or(false);
+            Ok(value_from_bigint(bigint_from_bytes(
+                chunk,
+                cfg!(target_endian = "little"),
+                signed,
+            )))
+        }
+        MemoryViewCastFormat::Char => Ok(heap.alloc_bytes(vec![chunk[0]])),
+        MemoryViewCastFormat::Float => {
+            let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
+            Ok(Value::Float(f32::from_ne_bytes(raw) as f64))
+        }
+        MemoryViewCastFormat::Double => {
+            let raw = [
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ];
+            Ok(Value::Float(f64::from_ne_bytes(raw)))
+        }
+    }
+}
+
+fn memoryview_encode_element(
+    value: Value,
+    format: MemoryViewCastFormat,
+    itemsize: usize,
+) -> Result<Vec<u8>, RuntimeError> {
+    let itemsize = itemsize.max(1);
+    if format.itemsize() != itemsize {
+        return Err(RuntimeError::new("memoryview: unsupported format"));
+    }
+    match format {
+        MemoryViewCastFormat::UnsignedByte
+        | MemoryViewCastFormat::SignedByte
+        | MemoryViewCastFormat::UnsignedShort
+        | MemoryViewCastFormat::SignedShort
+        | MemoryViewCastFormat::UnsignedInt
+        | MemoryViewCastFormat::SignedInt
+        | MemoryViewCastFormat::UnsignedLong
+        | MemoryViewCastFormat::SignedLong
+        | MemoryViewCastFormat::UnsignedLongLong
+        | MemoryViewCastFormat::SignedLongLong => {
+            let numeric = match value {
+                Value::Int(value) => BigInt::from_i64(value),
+                Value::Bool(flag) => BigInt::from_i64(if flag { 1 } else { 0 }),
+                Value::BigInt(value) => *value,
+                _ => return Err(memoryview_invalid_type_error(format)),
+            };
+            let signed = format.integer_signedness().unwrap_or(false);
+            let (min, max) = memoryview_integer_bounds(itemsize.saturating_mul(8), signed);
+            if numeric.cmp_total(&min) == Ordering::Less
+                || numeric.cmp_total(&max) == Ordering::Greater
+            {
+                return Err(memoryview_invalid_value_error(format));
+            }
+            bigint_to_fixed_bytes(&numeric, itemsize, cfg!(target_endian = "little"), signed)
+                .map_err(|_| memoryview_invalid_value_error(format))
+        }
+        MemoryViewCastFormat::Char => match value {
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) if values.len() == 1 => Ok(vec![values[0]]),
+                Object::Bytes(_) => Err(memoryview_invalid_value_error(format)),
+                _ => Err(memoryview_invalid_type_error(format)),
+            },
+            _ => Err(memoryview_invalid_type_error(format)),
+        },
+        MemoryViewCastFormat::Float => {
+            let numeric = match value {
+                Value::Float(value) => value,
+                Value::Int(value) => value as f64,
+                Value::Bool(flag) => {
+                    if flag {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                Value::BigInt(value) => value.to_f64(),
+                _ => return Err(memoryview_invalid_type_error(format)),
+            };
+            Ok((numeric as f32).to_ne_bytes().to_vec())
+        }
+        MemoryViewCastFormat::Double => {
+            let numeric = match value {
+                Value::Float(value) => value,
+                Value::Int(value) => value as f64,
+                Value::Bool(flag) => {
+                    if flag {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                Value::BigInt(value) => value.to_f64(),
+                _ => return Err(memoryview_invalid_type_error(format)),
+            };
+            Ok(numeric.to_ne_bytes().to_vec())
+        }
+    }
+}
+
 fn with_bytes_like_source<R>(source: &ObjRef, map: impl FnOnce(&[u8]) -> R) -> Option<R> {
     match &*source.kind() {
         Object::Bytes(values) | Object::ByteArray(values) => Some(map(values)),

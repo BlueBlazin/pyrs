@@ -5002,6 +5002,79 @@ ok = ok and (buf.cast("d").itemsize == 8 and len(d_values) == 1 and type(d_value
 }
 
 #[test]
+fn memoryview_cast_index_and_store_follow_format_semantics() {
+    let source = r#"buf = bytearray([255, 0, 0, 0])
+signed = memoryview(buf).cast("b")
+signed_index_ok = (signed[0] == -1)
+signed[0] = -2
+signed_store_ok = (signed[0] == -2 and buf[0] == 254)
+u16 = memoryview(bytearray(4)).cast("H")
+u16[0] = 258
+u16_store_ok = (u16[0] == 258 and u16.tolist()[0] == 258)
+char = memoryview(bytearray(b"A")).cast("c")
+char_index_ok = (char[0] == b"A")
+char[0] = b"Z"
+char_store_ok = (char[0] == b"Z" and bytes(char.obj) == b"Z")
+fview = memoryview(bytearray(4)).cast("f")
+fview[0] = 1.5
+float_store_ok = abs(fview[0] - 1.5) < 1e-6
+type_err = False
+value_err = False
+try:
+    signed[0] = 1.25
+except Exception as exc:
+    type_err = "invalid type for format 'b'" in str(exc)
+try:
+    signed[0] = 128
+except Exception as exc:
+    value_err = "invalid value for format 'b'" in str(exc)
+ok = (
+    signed_index_ok
+    and signed_store_ok
+    and u16_store_ok
+    and char_index_ok
+    and char_store_ok
+    and float_store_ok
+    and type_err
+    and value_err
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn memoryview_multidim_scalar_indexing_reports_not_implemented() {
+    let source = r#"view = memoryview(bytearray(b"abcd")).cast("B", [2, 2])
+read_err = False
+write_err = False
+try:
+    _ = view[0]
+except Exception as exc:
+    read_err = (
+        type(exc).__name__ == "NotImplementedError"
+        and "multi-dimensional sub-views are not implemented" in str(exc)
+    )
+try:
+    view[0] = 1
+except Exception as exc:
+    write_err = (
+        type(exc).__name__ == "NotImplementedError"
+        and "sub-views are not implemented" in str(exc)
+    )
+ok = read_err and write_err
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn memoryview_strided_slice_is_noncontiguous_writable_view() {
     let source = r#"buf = bytearray(b"ABCDE")
 view = memoryview(buf)[::2]

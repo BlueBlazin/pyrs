@@ -3,9 +3,9 @@ use super::{
     InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind, ObjRef, Object, Ordering,
     RuntimeError, Value, Vm, builtin_exception_parent, classify_runtime_error, dict_get_value,
     dict_set_value_checked, ensure_hashable, format_repr, memoryview_bounds,
-    memoryview_element_offset, memoryview_layout_1d, module_globals_version,
-    slice_bounds_for_step_one, slice_indices, value_from_bigint, value_to_bytes_payload,
-    value_to_int, with_bytes_like_source,
+    memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
+    memoryview_layout_1d, module_globals_version, slice_bounds_for_step_one, slice_indices,
+    value_from_bigint, value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
 use crate::runtime::SliceValue;
 
@@ -517,6 +517,14 @@ impl Vm {
                 },
                 Value::MemoryView(obj) => match &*obj.kind() {
                     Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                        if view.shape.as_ref().is_some_and(|shape| shape.len() > 1) {
+                            return Err(RuntimeError::new(
+                                "NotImplementedError: multi-dimensional sub-views are not implemented",
+                            ));
+                        }
+                        let itemsize = view.itemsize.max(1);
+                        let format =
+                            memoryview_format_for_view(itemsize, view.format.as_deref())?;
                         if let Some((origin, logical_len, stride, _itemsize)) =
                             memoryview_layout_1d(view, values.len())
                         {
@@ -524,19 +532,38 @@ impl Vm {
                             let offset =
                                 memoryview_element_offset(origin, logical_len, stride, index_int)
                                     .ok_or_else(|| RuntimeError::new("index out of range"))?;
-                            Ok(Value::Int(values[offset] as i64))
+                            let end = offset
+                                .checked_add(itemsize)
+                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                            let chunk = values
+                                .get(offset..end)
+                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                            memoryview_decode_element(chunk, format, itemsize, &self.heap)
                         } else {
                             let (start, end) =
                                 memoryview_bounds(view.start, view.length, values.len());
                             let span_len = end.saturating_sub(start);
+                            if span_len % itemsize != 0 {
+                                return Err(RuntimeError::new(
+                                    "memoryview length is not a multiple of itemsize",
+                                ));
+                            }
+                            let logical_len = span_len / itemsize;
                             let mut index_int = value_to_int(index)? as isize;
                             if index_int < 0 {
-                                index_int += span_len as isize;
+                                index_int += logical_len as isize;
                             }
-                            if index_int < 0 || index_int as usize >= span_len {
+                            if index_int < 0 || index_int as usize >= logical_len {
                                 return Err(RuntimeError::new("index out of range"));
                             }
-                            Ok(Value::Int(values[start + index_int as usize] as i64))
+                            let offset = start + (index_int as usize).saturating_mul(itemsize);
+                            let end = offset
+                                .checked_add(itemsize)
+                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                            let chunk = values
+                                .get(offset..end)
+                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                            memoryview_decode_element(chunk, format, itemsize, &self.heap)
                         }
                     })
                     .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type"))),

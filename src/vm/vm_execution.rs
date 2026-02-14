@@ -18,7 +18,8 @@ use super::{
     extract_prefixed_exception_message, extract_runtime_error_exception_name,
     extract_runtime_error_final_message, floor_div_values, format_value, infer_os_error_errno,
     invert_value, is_comprehension_code, is_os_error_family, lshift_values, matmul_values,
-    memoryview_bounds, memoryview_element_offset, memoryview_layout_1d_from_parts, mod_values,
+    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
+    memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
     module_globals_version, mul_values, neg_value, or_values, pos_value, pow_values, rshift_values,
     runtime_error_line_matches_exception, slice_bounds_for_step_one, slice_indices,
     slot_names_from_value, strip_sqlite_exception_metadata, sub_values, value_from_bigint,
@@ -2879,6 +2880,11 @@ impl Vm {
                                     ));
                                 }
                             };
+                            if view_shape.as_ref().is_some_and(|shape| shape.len() > 1) {
+                                return Err(RuntimeError::new(
+                                    "NotImplementedError: memoryview slice assignments are currently restricted to ndim = 1",
+                                ));
+                            }
                             let replacement = self.value_to_bytes_payload(value)?;
                             match &mut *source.kind_mut() {
                                 Object::ByteArray(values) => {
@@ -3064,6 +3070,7 @@ impl Vm {
                                 view_itemsize,
                                 view_shape,
                                 view_strides,
+                                view_format,
                             ) = match &*obj.kind() {
                                 Object::MemoryView(view) => (
                                     view.source.clone(),
@@ -3072,6 +3079,7 @@ impl Vm {
                                     view.itemsize,
                                     view.shape.clone(),
                                     view.strides.clone(),
+                                    view.format.clone(),
                                 ),
                                 _ => {
                                     return Err(RuntimeError::new(
@@ -3079,15 +3087,20 @@ impl Vm {
                                     ));
                                 }
                             };
+                            if view_shape.as_ref().is_some_and(|shape| shape.len() > 1) {
+                                return Err(RuntimeError::new(
+                                    "NotImplementedError: sub-views are not implemented",
+                                ));
+                            }
+                            let itemsize = view_itemsize.max(1);
+                            let cast_format =
+                                memoryview_format_for_view(itemsize, view_format.as_deref())?;
+                            let replacement =
+                                memoryview_encode_element(value, cast_format, itemsize)?;
+                            let idx = value_to_int(index)? as isize;
                             match &mut *source.kind_mut() {
                                 Object::ByteArray(values) => {
-                                    let byte = value_to_int(value)?;
-                                    if !(0..=255).contains(&byte) {
-                                        return Err(RuntimeError::new(
-                                            "byte must be in range(0, 256)",
-                                        ));
-                                    }
-                                    if let Some((origin, logical_len, stride, itemsize)) =
+                                    let offset = if let Some((origin, logical_len, stride, _)) =
                                         memoryview_layout_1d_from_parts(
                                             view_start,
                                             view_length,
@@ -3095,34 +3108,40 @@ impl Vm {
                                             view_shape.as_ref(),
                                             view_strides.as_ref(),
                                             values.len(),
-                                        )
-                                        && itemsize == 1
-                                    {
-                                        let idx = value_to_int(index)? as isize;
-                                        let offset = memoryview_element_offset(
-                                            origin,
-                                            logical_len,
-                                            stride,
-                                            idx,
-                                        )
-                                        .ok_or_else(|| RuntimeError::new("index out of range"))?;
-                                        values[offset] = byte as u8;
+                                        ) {
+                                        memoryview_element_offset(origin, logical_len, stride, idx)
+                                            .ok_or_else(|| {
+                                                RuntimeError::new("index out of range")
+                                            })?
                                     } else {
                                         let (range_start, range_end) = memoryview_bounds(
                                             view_start,
                                             view_length,
                                             values.len(),
                                         );
-                                        let range_len = range_end.saturating_sub(range_start);
-                                        let mut idx = value_to_int(index)? as isize;
-                                        if idx < 0 {
-                                            idx += range_len as isize;
+                                        let span_len = range_end.saturating_sub(range_start);
+                                        if span_len % itemsize != 0 {
+                                            return Err(RuntimeError::new(
+                                                "memoryview length is not a multiple of itemsize",
+                                            ));
                                         }
-                                        if idx < 0 || idx as usize >= range_len {
+                                        let logical_len = span_len / itemsize;
+                                        let mut normalized = idx;
+                                        if normalized < 0 {
+                                            normalized += logical_len as isize;
+                                        }
+                                        if normalized < 0 || normalized as usize >= logical_len {
                                             return Err(RuntimeError::new("index out of range"));
                                         }
-                                        values[range_start + idx as usize] = byte as u8;
-                                    }
+                                        range_start + (normalized as usize).saturating_mul(itemsize)
+                                    };
+                                    let end = offset
+                                        .checked_add(itemsize)
+                                        .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                    let target = values
+                                        .get_mut(offset..end)
+                                        .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                    target.copy_from_slice(&replacement);
                                 }
                                 Object::Module(module_data) if module_data.name == "__array__" => {
                                     let Some(Value::List(values_obj)) =
@@ -3137,13 +3156,7 @@ impl Vm {
                                             "store subscript unsupported type",
                                         ));
                                     };
-                                    let byte = value_to_int(value)?;
-                                    if !(0..=255).contains(&byte) {
-                                        return Err(RuntimeError::new(
-                                            "byte must be in range(0, 256)",
-                                        ));
-                                    }
-                                    if let Some((origin, logical_len, stride, itemsize)) =
+                                    let offset = if let Some((origin, logical_len, stride, _)) =
                                         memoryview_layout_1d_from_parts(
                                             view_start,
                                             view_length,
@@ -3151,33 +3164,41 @@ impl Vm {
                                             view_shape.as_ref(),
                                             view_strides.as_ref(),
                                             values.len(),
-                                        )
-                                        && itemsize == 1
-                                    {
-                                        let idx = value_to_int(index)? as isize;
-                                        let offset = memoryview_element_offset(
-                                            origin,
-                                            logical_len,
-                                            stride,
-                                            idx,
-                                        )
-                                        .ok_or_else(|| RuntimeError::new("index out of range"))?;
-                                        values[offset] = Value::Int(byte);
+                                        ) {
+                                        memoryview_element_offset(origin, logical_len, stride, idx)
+                                            .ok_or_else(|| {
+                                                RuntimeError::new("index out of range")
+                                            })?
                                     } else {
                                         let (range_start, range_end) = memoryview_bounds(
                                             view_start,
                                             view_length,
                                             values.len(),
                                         );
-                                        let range_len = range_end.saturating_sub(range_start);
-                                        let mut idx = value_to_int(index)? as isize;
-                                        if idx < 0 {
-                                            idx += range_len as isize;
+                                        let span_len = range_end.saturating_sub(range_start);
+                                        if span_len % itemsize != 0 {
+                                            return Err(RuntimeError::new(
+                                                "memoryview length is not a multiple of itemsize",
+                                            ));
                                         }
-                                        if idx < 0 || idx as usize >= range_len {
+                                        let logical_len = span_len / itemsize;
+                                        let mut normalized = idx;
+                                        if normalized < 0 {
+                                            normalized += logical_len as isize;
+                                        }
+                                        if normalized < 0 || normalized as usize >= logical_len {
                                             return Err(RuntimeError::new("index out of range"));
                                         }
-                                        values[range_start + idx as usize] = Value::Int(byte);
+                                        range_start + (normalized as usize).saturating_mul(itemsize)
+                                    };
+                                    let end = offset
+                                        .checked_add(itemsize)
+                                        .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                    if end > values.len() {
+                                        return Err(RuntimeError::new("index out of range"));
+                                    }
+                                    for (byte_offset, byte) in replacement.iter().enumerate() {
+                                        values[offset + byte_offset] = Value::Int(*byte as i64);
                                     }
                                 }
                                 Object::Bytes(_) => {

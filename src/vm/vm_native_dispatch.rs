@@ -7,59 +7,12 @@ use super::{
     call_builtin_with_kwargs, class_attr_lookup, decode_text_bytes, dedup_hashable_values,
     dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked, encode_text_bytes,
     ensure_hashable, exception_is_named, find_bytes_subslice, is_truthy, memoryview_bounds,
-    normalize_codec_encoding, normalize_codec_errors, parse_string_formatter, py_rsplit_whitespace,
-    py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
+    memoryview_decode_element, memoryview_format_for_view, normalize_codec_encoding,
+    normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
+    py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
     runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
     value_to_bigint, value_to_int, with_bytes_like_source,
 };
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MemoryViewCastFormat {
-    UnsignedByte,
-    SignedByte,
-    Char,
-    UnsignedShort,
-    SignedShort,
-    UnsignedInt,
-    SignedInt,
-    UnsignedLong,
-    SignedLong,
-    UnsignedLongLong,
-    SignedLongLong,
-    Float,
-    Double,
-}
-
-impl MemoryViewCastFormat {
-    fn itemsize(self) -> usize {
-        match self {
-            Self::UnsignedByte | Self::SignedByte | Self::Char => 1,
-            Self::UnsignedShort | Self::SignedShort => 2,
-            Self::UnsignedInt | Self::SignedInt | Self::Float => 4,
-            Self::UnsignedLong | Self::SignedLong => std::mem::size_of::<std::os::raw::c_long>(),
-            Self::UnsignedLongLong | Self::SignedLongLong | Self::Double => 8,
-        }
-    }
-}
-
-fn parse_memoryview_cast_format(format: &str) -> Option<MemoryViewCastFormat> {
-    match format {
-        "B" => Some(MemoryViewCastFormat::UnsignedByte),
-        "b" => Some(MemoryViewCastFormat::SignedByte),
-        "c" => Some(MemoryViewCastFormat::Char),
-        "H" => Some(MemoryViewCastFormat::UnsignedShort),
-        "h" => Some(MemoryViewCastFormat::SignedShort),
-        "I" => Some(MemoryViewCastFormat::UnsignedInt),
-        "i" => Some(MemoryViewCastFormat::SignedInt),
-        "L" => Some(MemoryViewCastFormat::UnsignedLong),
-        "l" => Some(MemoryViewCastFormat::SignedLong),
-        "Q" => Some(MemoryViewCastFormat::UnsignedLongLong),
-        "q" => Some(MemoryViewCastFormat::SignedLongLong),
-        "f" => Some(MemoryViewCastFormat::Float),
-        "d" => Some(MemoryViewCastFormat::Double),
-        _ => None,
-    }
-}
 
 fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
     let shape_items = match value {
@@ -2592,13 +2545,8 @@ impl Vm {
                     _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
                 };
                 let bytes = self.value_to_bytes_payload(Value::MemoryView(receiver.clone()))?;
-                let format_spec = format.as_deref().unwrap_or("B");
-                let cast_format = parse_memoryview_cast_format(format_spec)
-                    .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
-                let decode_itemsize = cast_format.itemsize();
-                if decode_itemsize != itemsize {
-                    return Err(RuntimeError::new("memoryview.tolist() unsupported format"));
-                }
+                let cast_format = memoryview_format_for_view(itemsize, format.as_deref())
+                    .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
                 if bytes.len() % itemsize != 0 {
                     return Err(RuntimeError::new(
                         "memoryview length is not a multiple of itemsize",
@@ -2606,94 +2554,8 @@ impl Vm {
                 }
                 let mut values = Vec::new();
                 for chunk in bytes.chunks_exact(itemsize) {
-                    let value = match cast_format {
-                        MemoryViewCastFormat::UnsignedByte => Value::Int(chunk[0] as i64),
-                        MemoryViewCastFormat::SignedByte => Value::Int((chunk[0] as i8) as i64),
-                        MemoryViewCastFormat::Char => self.heap.alloc_bytes(vec![chunk[0]]),
-                        MemoryViewCastFormat::UnsignedShort => {
-                            let raw = [chunk[0], chunk[1]];
-                            Value::Int(u16::from_ne_bytes(raw) as i64)
-                        }
-                        MemoryViewCastFormat::SignedShort => {
-                            let raw = [chunk[0], chunk[1]];
-                            Value::Int(i16::from_ne_bytes(raw) as i64)
-                        }
-                        MemoryViewCastFormat::UnsignedInt => {
-                            let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
-                            Value::Int(u32::from_ne_bytes(raw) as i64)
-                        }
-                        MemoryViewCastFormat::SignedInt => {
-                            let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
-                            Value::Int(i32::from_ne_bytes(raw) as i64)
-                        }
-                        MemoryViewCastFormat::UnsignedLong => {
-                            if itemsize == 8 {
-                                let raw = [
-                                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5],
-                                    chunk[6], chunk[7],
-                                ];
-                                let value = u64::from_ne_bytes(raw);
-                                if let Ok(int_value) = i64::try_from(value) {
-                                    Value::Int(int_value)
-                                } else {
-                                    value_from_bigint(BigInt::from_u64(value))
-                                }
-                            } else if itemsize == 4 {
-                                let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
-                                Value::Int(u32::from_ne_bytes(raw) as i64)
-                            } else {
-                                return Err(RuntimeError::new(
-                                    "memoryview.tolist() unsupported format",
-                                ));
-                            }
-                        }
-                        MemoryViewCastFormat::SignedLong => {
-                            if itemsize == 8 {
-                                let raw = [
-                                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5],
-                                    chunk[6], chunk[7],
-                                ];
-                                Value::Int(i64::from_ne_bytes(raw))
-                            } else if itemsize == 4 {
-                                let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
-                                Value::Int(i32::from_ne_bytes(raw) as i64)
-                            } else {
-                                return Err(RuntimeError::new(
-                                    "memoryview.tolist() unsupported format",
-                                ));
-                            }
-                        }
-                        MemoryViewCastFormat::UnsignedLongLong => {
-                            let raw = [
-                                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5],
-                                chunk[6], chunk[7],
-                            ];
-                            let value = u64::from_ne_bytes(raw);
-                            if let Ok(int_value) = i64::try_from(value) {
-                                Value::Int(int_value)
-                            } else {
-                                value_from_bigint(BigInt::from_u64(value))
-                            }
-                        }
-                        MemoryViewCastFormat::SignedLongLong => {
-                            let raw = [
-                                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5],
-                                chunk[6], chunk[7],
-                            ];
-                            Value::Int(i64::from_ne_bytes(raw))
-                        }
-                        MemoryViewCastFormat::Float => {
-                            let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
-                            Value::Float(f32::from_ne_bytes(raw) as f64)
-                        }
-                        MemoryViewCastFormat::Double => {
-                            let raw = [
-                                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5],
-                                chunk[6], chunk[7],
-                            ];
-                            Value::Float(f64::from_ne_bytes(raw))
-                        }
-                    };
+                    let value = memoryview_decode_element(chunk, cast_format, itemsize, &self.heap)
+                        .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
                     values.push(value);
                 }
                 Ok(NativeCallResult::Value(self.heap.alloc_list(values)))

@@ -25,6 +25,7 @@ Status:
 - `[x]` Identity/refcount/cycle-GC foundations
 - `[x]` Core object/class/function/frame foundations
 - `[x]` Core truthiness and membership fallback baselines
+- `[x]` `memoryview` typed scalar index/store baseline (`cast('b'/'H'/'f'/'c')` semantics + scalar multidim `NotImplementedError` parity)
 - `[~]` Descriptor/attribute/metaclass/slots long-tail parity
 - `[~]` Numeric long-tail parity (big-int conversion/formatting/error edges)
 - `[~]` Hash-container semantic/perf closure (`dict`/`set`/`frozenset`)
