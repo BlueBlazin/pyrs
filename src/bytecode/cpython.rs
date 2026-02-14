@@ -129,6 +129,11 @@ impl<'a> Translator<'a> {
     }
 
     fn translate(&mut self) -> Result<CodeObject, CpythonError> {
+        if !self.code.exceptiontable.is_empty() {
+            return Err(CpythonError::new(
+                "unsupported CPython exception table (fallback to source required)",
+            ));
+        }
         self.build_name_maps()?;
         self.constants = self.convert_constants(&self.code.consts)?;
 
@@ -281,6 +286,7 @@ impl<'a> Translator<'a> {
                 "LOAD_NAME" => Instruction::new(Opcode::LoadName, Some(self.map_name(arg)?)),
                 "LOAD_LOCALS" => Instruction::new(Opcode::LoadLocals, None),
                 "STORE_NAME" => Instruction::new(Opcode::StoreName, Some(self.map_name(arg)?)),
+                "DELETE_NAME" => Instruction::new(Opcode::DeleteName, Some(self.map_name(arg)?)),
                 "LOAD_DEREF" => Instruction::new(Opcode::LoadDeref, Some(self.map_deref(arg)?)),
                 "STORE_DEREF" => Instruction::new(Opcode::StoreDeref, Some(self.map_deref(arg)?)),
                 "LOAD_CLOSURE" => Instruction::new(Opcode::LoadClosure, Some(self.map_deref(arg)?)),
@@ -335,6 +341,7 @@ impl<'a> Translator<'a> {
                     let encoded = (mapped << 1) | push_null;
                     Instruction::new(Opcode::LoadAttr, Some(encoded))
                 }
+                "LOAD_SPECIAL" => Instruction::new(Opcode::LoadSpecial, Some(arg)),
                 name if name.starts_with("STORE_ATTR") => {
                     Instruction::new(Opcode::StoreAttrCpython, Some(self.map_name(arg)?))
                 }
@@ -380,6 +387,7 @@ impl<'a> Translator<'a> {
                 | "CALL_KW_BOUND_METHOD"
                 | "CALL_KW_NON_PY"
                 | "CALL_KW_PY" => Instruction::new(Opcode::CallCpythonKwStack, Some(arg)),
+                "CALL_INTRINSIC_1" => Instruction::new(Opcode::CallIntrinsic1, Some(arg)),
                 "POP_JUMP_IF_FALSE" => Instruction::new(
                     Opcode::JumpIfFalse,
                     Some(relative_forward_target(idx, arg)?),
@@ -434,8 +442,14 @@ impl<'a> Translator<'a> {
                 "BUILD_LIST" => Instruction::new(Opcode::BuildList, Some(arg)),
                 "BUILD_TUPLE" => Instruction::new(Opcode::BuildTuple, Some(arg)),
                 "BUILD_STRING" => Instruction::new(Opcode::BuildString, Some(arg)),
+                "LIST_APPEND" => Instruction::new(Opcode::ListAppend, Some(arg)),
+                "LIST_EXTEND" => Instruction::new(Opcode::ListExtend, Some(arg)),
                 "BUILD_MAP" | "BUILD_DICT" => Instruction::new(Opcode::BuildDict, Some(arg)),
+                "DICT_UPDATE" => Instruction::new(Opcode::DictUpdate, Some(arg)),
+                "DICT_MERGE" => Instruction::new(Opcode::DictMerge, Some(arg)),
                 "BUILD_SLICE" => Instruction::new(Opcode::BuildSlice, Some(arg)),
+                "COPY" => Instruction::new(Opcode::Copy, Some(arg)),
+                "SWAP" => Instruction::new(Opcode::Swap, Some(arg)),
                 "UNPACK_SEQUENCE"
                 | "UNPACK_SEQUENCE_LIST"
                 | "UNPACK_SEQUENCE_TUPLE"
@@ -667,7 +681,8 @@ impl<'a> Translator<'a> {
     }
 
     fn map_compare_op(&self, idx: usize, oparg: u32) -> Result<Instruction, CpythonError> {
-        let instr = match oparg {
+        let compare_kind = oparg >> 5;
+        let instr = match compare_kind {
             0 => Instruction::new(Opcode::CompareLt, None),
             1 => Instruction::new(Opcode::CompareLe, None),
             2 => Instruction::new(Opcode::CompareEq, None),
@@ -901,14 +916,14 @@ fn validate_cpython_control_flow(instructions: &[CpInstr]) -> Result<(), Cpython
 
 fn validate_translated_code(instructions: &[Instruction]) -> Result<(), CpythonError> {
     let mut queue = VecDeque::new();
-    let mut seen: HashSet<(usize, i32)> = HashSet::new();
+    let mut seen: HashSet<usize> = HashSet::new();
     queue.push_back((0usize, 0i32));
 
     while let Some((ip, stack_depth)) = queue.pop_front() {
         if ip >= instructions.len() {
             continue;
         }
-        if !seen.insert((ip, stack_depth)) {
+        if !seen.insert(ip) {
             continue;
         }
         let instr = &instructions[ip];
@@ -972,6 +987,12 @@ fn translated_successors(
             let pushes = if push_null == 1 { 2 } else { 1 };
             vec![(next_ip, stack_depth + pushes)]
         }
+        Opcode::LoadAttr => {
+            let raw = arg.ok_or_else(|| CpythonError::new("missing LOAD_ATTR arg"))?;
+            let push_null = (raw & 1) as i32;
+            vec![(next_ip, pop(1)? + 1 + push_null)]
+        }
+        Opcode::LoadSpecial => vec![(next_ip, pop(1)? + 2)],
         Opcode::StoreName
         | Opcode::StoreFast
         | Opcode::StoreGlobal
@@ -982,6 +1003,7 @@ fn translated_successors(
         | Opcode::UnaryPos
         | Opcode::ConvertValue
         | Opcode::FormatSimple
+        | Opcode::CallIntrinsic1
         | Opcode::ToBool => vec![(next_ip, pop(1)? + 1)],
         Opcode::StoreFastLoadFast => {
             let depth = pop(1)? + 1;
@@ -989,6 +1011,26 @@ fn translated_successors(
         }
         Opcode::StoreFastStoreFast => vec![(next_ip, pop(2)?)],
         Opcode::StoreAttr | Opcode::StoreAttrCpython => vec![(next_ip, pop(2)?)],
+        Opcode::Copy => {
+            let depth = arg.ok_or_else(|| CpythonError::new("missing COPY depth"))? as i32;
+            if depth <= 0 {
+                return Err(CpythonError::new(format!(
+                    "invalid COPY arg {} at instruction {}",
+                    depth, ip
+                )));
+            }
+            vec![(next_ip, pop(depth)? + depth + 1)]
+        }
+        Opcode::Swap => {
+            let depth = arg.ok_or_else(|| CpythonError::new("missing SWAP depth"))? as i32;
+            if depth < 2 {
+                return Err(CpythonError::new(format!(
+                    "invalid SWAP arg {} at instruction {}",
+                    depth, ip
+                )));
+            }
+            vec![(next_ip, pop(depth)? + depth)]
+        }
         Opcode::BinaryAdd
         | Opcode::BinarySub
         | Opcode::BinaryMul
@@ -1007,10 +1049,7 @@ fn translated_successors(
         | Opcode::CompareIs
         | Opcode::CompareIsNot
         | Opcode::Subscript
-        | Opcode::MatchException
-        | Opcode::ListAppend
-        | Opcode::ListExtend
-        | Opcode::DictUpdate => vec![(next_ip, pop(2)? + 1)],
+        | Opcode::MatchException => vec![(next_ip, pop(2)? + 1)],
         Opcode::MatchExceptionStar => vec![(next_ip, pop(2)? + 2)],
         Opcode::BuildList | Opcode::BuildTuple | Opcode::BuildString => {
             let count = arg.ok_or_else(|| CpythonError::new("missing build count"))? as i32;
@@ -1020,6 +1059,26 @@ fn translated_successors(
         Opcode::BuildDict => {
             let count = arg.ok_or_else(|| CpythonError::new("missing dict count"))? as i32;
             vec![(next_ip, pop(count * 2)? + 1)]
+        }
+        Opcode::ListAppend | Opcode::ListExtend => {
+            let oparg = arg.ok_or_else(|| CpythonError::new("missing LIST_* arg"))? as i32;
+            if oparg <= 0 {
+                return Err(CpythonError::new(format!(
+                    "invalid LIST_* arg {} at instruction {}",
+                    oparg, ip
+                )));
+            }
+            vec![(next_ip, pop(oparg + 1)? + oparg)]
+        }
+        Opcode::DictMerge => {
+            let oparg = arg.ok_or_else(|| CpythonError::new("missing DICT_MERGE arg"))? as i32;
+            if oparg <= 0 {
+                return Err(CpythonError::new(format!(
+                    "invalid DICT_MERGE arg {} at instruction {}",
+                    oparg, ip
+                )));
+            }
+            vec![(next_ip, pop(oparg + 1)? + oparg)]
         }
         Opcode::BuildSlice => {
             let count = arg.unwrap_or(3) as i32;
@@ -1036,6 +1095,16 @@ fn translated_successors(
             vec![(next_ip, pop(1)? + count)]
         }
         Opcode::DictSet => vec![(next_ip, pop(3)? + 1)],
+        Opcode::DictUpdate => {
+            let oparg = arg.unwrap_or(1) as i32;
+            if oparg <= 0 {
+                return Err(CpythonError::new(format!(
+                    "invalid DICT_UPDATE arg {} at instruction {}",
+                    oparg, ip
+                )));
+            }
+            vec![(next_ip, pop(oparg + 1)? + oparg)]
+        }
         Opcode::StoreSubscript => vec![(next_ip, pop(3)? + 1)],
         Opcode::DupTop => vec![(next_ip, pop(1)? + 2)],
         Opcode::JumpIfFalse | Opcode::JumpIfTrue | Opcode::JumpIfNone | Opcode::JumpIfNotNone => {

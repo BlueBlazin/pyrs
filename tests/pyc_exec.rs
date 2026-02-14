@@ -146,3 +146,62 @@ in_set = 2 in {1, 2, 3}
     );
     assert_eq!(vm.get_global("in_set"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn executes_cpython_pyc_with_copy_swap_dict_merge_and_compare_masks() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+def collect(**kwargs):
+    return kwargs
+
+merged = collect(a=1, **{"b": 2})
+
+if (x := 1):
+    copied = x
+
+x, y = 1, 2
+x, y = y, x
+
+cmp_flag = (__name__ == "__main__")
+ok = (
+    merged["a"] == 1
+    and merged["b"] == 2
+    and copied == 1
+    and x == 2
+    and y == 1
+    and cmp_flag
+)
+"#;
+
+    let pyc_path = compile_pyc(source, "copy_swap_merge_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let mut vm = Vm::new();
+    let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_cpython_pyc_with_intrinsic_import_star_and_unary_positive() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+from math import *
+
+imported = sqrt(16)
+a = +3
+ok = imported == 4.0 and a == 3
+"#;
+
+    let pyc_path = compile_pyc(source, "intrinsic_import_star_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let mut vm = Vm::new();
+    let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

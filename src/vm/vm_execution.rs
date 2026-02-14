@@ -12,16 +12,17 @@ use super::{
     OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, QuickenedSiteKind, Rc, RuntimeError,
     TraceFrame, Value, Vm, and_values, apply_bindings, bind_arguments, builtin_exception_parent,
     class_attr_lookup, class_attr_lookup_direct, classify_runtime_error, decode_call_counts,
-    deref_name, dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked,
-    ensure_hashable, exception_message_from_call_args, extract_import_error_name,
-    extract_os_error_errno, extract_os_error_strerror, extract_prefixed_exception_message,
-    extract_runtime_error_exception_name, extract_runtime_error_final_message, floor_div_values,
-    format_value, infer_os_error_errno, invert_value, is_comprehension_code, is_os_error_family,
-    lshift_values, matmul_values, memoryview_bounds, mod_values, module_globals_version,
-    mul_values, neg_value, or_values, pos_value, pow_values, rshift_values,
-    runtime_error_line_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, strip_sqlite_exception_metadata, sub_values, value_from_bigint,
-    value_to_int, value_to_optional_index, xor_values,
+    deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value,
+    dict_set_value_checked, ensure_hashable, exception_message_from_call_args,
+    extract_import_error_name, extract_os_error_errno, extract_os_error_strerror,
+    extract_prefixed_exception_message, extract_runtime_error_exception_name,
+    extract_runtime_error_final_message, floor_div_values, format_value, infer_os_error_errno,
+    invert_value, is_comprehension_code, is_os_error_family, lshift_values, matmul_values,
+    memoryview_bounds, mod_values, module_globals_version, mul_values, neg_value, or_values,
+    pos_value, pow_values, rshift_values, runtime_error_line_matches_exception,
+    slice_bounds_for_step_one, slice_indices, slot_names_from_value,
+    strip_sqlite_exception_metadata, sub_values, value_from_bigint, value_to_int,
+    value_to_optional_index, xor_values,
 };
 use crate::runtime::SliceValue;
 
@@ -63,6 +64,308 @@ impl Vm {
             Value::None => Value::None,
             _ => value.clone(),
         }
+    }
+
+    fn stack_dict_target_for_merge(
+        &self,
+        oparg: usize,
+        opname: &str,
+    ) -> Result<ObjRef, RuntimeError> {
+        let frame = self.frames.last().expect("frame exists");
+        if frame.stack.len() < oparg + 1 {
+            return Err(RuntimeError::new(format!("{opname} stack underflow")));
+        }
+        let dict_index = frame.stack.len() - oparg;
+        let dict_value = frame
+            .stack
+            .get(dict_index)
+            .cloned()
+            .ok_or_else(|| RuntimeError::new(format!("{opname} stack underflow")))?;
+        match dict_value {
+            Value::Dict(dict) => Ok(dict),
+            _ => Err(RuntimeError::new(format!("{opname} expects dict target"))),
+        }
+    }
+
+    fn stack_list_target(&self, oparg: usize, opname: &str) -> Result<ObjRef, RuntimeError> {
+        let frame = self.frames.last().expect("frame exists");
+        if frame.stack.len() < oparg + 1 {
+            return Err(RuntimeError::new(format!("{opname} stack underflow")));
+        }
+        let list_index = frame.stack.len() - oparg;
+        let list_value = frame
+            .stack
+            .get(list_index)
+            .cloned()
+            .ok_or_else(|| RuntimeError::new(format!("{opname} stack underflow")))?;
+        match list_value {
+            Value::List(list) => Ok(list),
+            _ => Err(RuntimeError::new(format!("{opname} expects list target"))),
+        }
+    }
+
+    fn mapping_entries_for_update(
+        &mut self,
+        source: Value,
+        require_mapping: bool,
+    ) -> Result<Vec<(Value, Value)>, RuntimeError> {
+        if let Value::Dict(other) = &source {
+            let Object::Dict(entries) = &*other.kind() else {
+                return Err(RuntimeError::new("dict update expects dict"));
+            };
+            return Ok(entries.to_vec());
+        }
+
+        let keys_callable = self
+            .builtin_getattr(
+                vec![source.clone(), Value::Str("keys".to_string())],
+                HashMap::new(),
+            )
+            .ok();
+        if let Some(keys_callable) = keys_callable {
+            if std::env::var_os("PYRS_TRACE_DICT_MERGE").is_some() {
+                eprintln!(
+                    "[dict-merge] keys() path for {}",
+                    self.value_type_name_for_error(&source)
+                );
+            }
+            let keys_value = match self.call_internal(keys_callable, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(
+                        self.runtime_error_from_active_exception("mapping keys() lookup failed")
+                    );
+                }
+            };
+            let mut incoming = Vec::new();
+            for key in self.collect_iterable_values(keys_value)? {
+                let value = self.getitem_value(source.clone(), key.clone())?;
+                incoming.push((key, value));
+            }
+            return Ok(incoming);
+        }
+
+        if require_mapping {
+            return Err(RuntimeError::new(format!(
+                "'{}' object is not a mapping",
+                self.value_type_name_for_error(&source)
+            )));
+        }
+
+        let mut incoming = Vec::new();
+        let pairs = self.collect_iterable_values(source)?;
+        for pair in pairs {
+            let pair_tuple = match pair {
+                Value::Tuple(obj) => match &*obj.kind() {
+                    Object::Tuple(values) if values.len() == 2 => {
+                        (values[0].clone(), values[1].clone())
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "dict.update() expects mapping or iterable of pairs",
+                        ));
+                    }
+                },
+                Value::List(obj) => match &*obj.kind() {
+                    Object::List(values) if values.len() == 2 => {
+                        (values[0].clone(), values[1].clone())
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "dict.update() expects mapping or iterable of pairs",
+                        ));
+                    }
+                },
+                _ => {
+                    return Err(RuntimeError::new(
+                        "dict.update() expects mapping or iterable of pairs",
+                    ));
+                }
+            };
+            incoming.push(pair_tuple);
+        }
+        Ok(incoming)
+    }
+
+    fn apply_dict_stack_merge(
+        &mut self,
+        oparg: usize,
+        update: Value,
+        reject_duplicates: bool,
+        opname: &str,
+    ) -> Result<(), RuntimeError> {
+        let dict = self.stack_dict_target_for_merge(oparg, opname)?;
+        let incoming = self.mapping_entries_for_update(update, reject_duplicates)?;
+        for (key, value) in incoming {
+            if reject_duplicates && dict_contains_key_checked(&dict, &key)? {
+                let key_text = match &key {
+                    Value::Str(name) => name.clone(),
+                    _ => format_value(&key),
+                };
+                return Err(RuntimeError::new(format!(
+                    "got multiple values for keyword argument '{key_text}'"
+                )));
+            }
+            dict_set_value_checked(&dict, key, value)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn load_special_spec(oparg: u32) -> Option<(&'static str, &'static str)> {
+        match oparg {
+            0 => Some((
+                "__enter__",
+                "object does not support the context manager protocol (missed __enter__ method)",
+            )),
+            1 => Some((
+                "__exit__",
+                "object does not support the context manager protocol (missed __exit__ method)",
+            )),
+            2 => Some((
+                "__aenter__",
+                "object does not support the asynchronous context manager protocol (missed __aenter__ method)",
+            )),
+            3 => Some((
+                "__aexit__",
+                "object does not support the asynchronous context manager protocol (missed __aexit__ method)",
+            )),
+            _ => None,
+        }
+    }
+
+    fn load_special_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some(class_ref) = self.class_of_value(receiver) else {
+            return Ok(None);
+        };
+        let Some(method) = class_attr_lookup(&class_ref, method_name) else {
+            return Ok(None);
+        };
+        if let Some(bound) = self.bind_descriptor_method(method.clone(), receiver)? {
+            Ok(Some(bound))
+        } else {
+            Ok(Some(method))
+        }
+    }
+
+    fn import_star_entries_from_module(
+        &self,
+        module_obj: &ObjRef,
+    ) -> Result<Vec<(String, Value)>, RuntimeError> {
+        let Object::Module(module_data) = &*module_obj.kind() else {
+            return Err(RuntimeError::new("import from expects module object"));
+        };
+
+        let export_names: Vec<String> = if let Some(all_names) = module_data.globals.get("__all__")
+        {
+            match all_names {
+                Value::List(obj) => {
+                    let Object::List(values) = &*obj.kind() else {
+                        return Err(RuntimeError::new("__all__ must be a sequence of strings"));
+                    };
+                    let mut names = Vec::with_capacity(values.len());
+                    for value in values {
+                        match value {
+                            Value::Str(name) => names.push(name.clone()),
+                            _ => {
+                                return Err(RuntimeError::new("__all__ must contain only strings"));
+                            }
+                        }
+                    }
+                    names
+                }
+                Value::Tuple(obj) => {
+                    let Object::Tuple(values) = &*obj.kind() else {
+                        return Err(RuntimeError::new("__all__ must be a sequence of strings"));
+                    };
+                    let mut names = Vec::with_capacity(values.len());
+                    for value in values {
+                        match value {
+                            Value::Str(name) => names.push(name.clone()),
+                            _ => {
+                                return Err(RuntimeError::new("__all__ must contain only strings"));
+                            }
+                        }
+                    }
+                    names
+                }
+                _ => return Err(RuntimeError::new("__all__ must be a sequence of strings")),
+            }
+        } else {
+            module_data
+                .globals
+                .keys()
+                .filter(|name| !name.starts_with('_'))
+                .cloned()
+                .collect()
+        };
+
+        let mut values = Vec::with_capacity(export_names.len());
+        for name in export_names {
+            if let Some(value) = module_data.globals.get(&name).cloned() {
+                values.push((name, value));
+            }
+        }
+        Ok(values)
+    }
+
+    fn bind_import_star_entries_to_caller(
+        &mut self,
+        caller_idx: usize,
+        entries: Vec<(String, Value)>,
+    ) -> Result<(), RuntimeError> {
+        let frame = if let Some(frame) = self.frames.get_mut(caller_idx) {
+            frame
+        } else if let Some(frame) = self.frames.last_mut() {
+            frame
+        } else {
+            return Err(RuntimeError::new("import caller frame missing"));
+        };
+
+        let mut touched_globals_version = None;
+        for (name, value) in entries {
+            if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied() {
+                if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                    Self::write_fast_local_slot(slot, value.clone());
+                }
+                if let Some(existing) = frame.locals.get_mut(&name) {
+                    *existing = value.clone();
+                }
+            } else {
+                frame.locals.insert(name.clone(), value.clone());
+            }
+            if let Object::Module(module_data) = &mut *frame.function_globals.kind_mut() {
+                module_data.globals.insert(name, value);
+                module_data.touch_globals_version();
+                touched_globals_version =
+                    Some((frame.function_globals.id(), module_data.globals_version));
+            }
+        }
+        if let Some((module_id, version)) = touched_globals_version {
+            self.propagate_module_globals_version(module_id, version);
+        }
+        Ok(())
+    }
+
+    fn import_star_into_caller_scope(
+        &mut self,
+        caller_idx: usize,
+        source: Value,
+    ) -> Result<(), RuntimeError> {
+        let module = match source {
+            Value::Module(module) => module,
+            _ => {
+                return Err(RuntimeError::new(
+                    "from-import-* object has no __dict__ and no __all__",
+                ));
+            }
+        };
+        let entries = self.import_star_entries_from_module(&module)?;
+        self.bind_import_star_entries_to_caller(caller_idx, entries)
     }
 
     pub(super) fn run(&mut self) -> Result<Value, RuntimeError> {
@@ -180,6 +483,16 @@ impl Vm {
                 frame.ip += 1;
                 instr
             };
+            if let Some(limit) = self.instruction_step_limit {
+                self.instruction_steps = self.instruction_steps.saturating_add(1);
+                if self.instruction_steps > limit {
+                    let frame = self.frames.last().expect("frame exists");
+                    return Err(RuntimeError::new(format!(
+                        "instruction step limit exceeded at {}:{} in {} ({:?})",
+                        frame.code.filename, frame.last_ip, frame.code.name, instr.opcode
+                    )));
+                }
+            }
             let step_result = self.execute_instruction(instr);
 
             match step_result {
@@ -1305,6 +1618,26 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::new("attribute caller frame missing"))?;
                 frame.stack.push(attr);
             }
+            Opcode::LoadSpecial => {
+                let oparg = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing LOAD_SPECIAL argument"))?;
+                let (method_name, error_suffix) =
+                    Self::load_special_spec(oparg).ok_or_else(|| {
+                        RuntimeError::new(format!("unsupported LOAD_SPECIAL arg {oparg}"))
+                    })?;
+                let receiver = self.pop_value()?;
+                let maybe_method = self.load_special_method(&receiver, method_name)?;
+                let method = maybe_method.ok_or_else(|| {
+                    RuntimeError::new(format!(
+                        "'{}' {}",
+                        self.value_type_name_for_error(&receiver),
+                        error_suffix
+                    ))
+                })?;
+                self.push_value(Value::None);
+                self.push_value(method);
+            }
             Opcode::StoreName => {
                 let idx = instr
                     .arg
@@ -2023,6 +2356,39 @@ impl Vm {
                 };
                 self.push_value(converted);
             }
+            Opcode::CallIntrinsic1 => {
+                let intrinsic = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing CALL_INTRINSIC_1 argument"))?;
+                let value = self.pop_value()?;
+                let result = match intrinsic {
+                    2 => {
+                        let caller_idx = self.frames.len().saturating_sub(1);
+                        self.import_star_into_caller_scope(caller_idx, value)?;
+                        Value::None
+                    }
+                    5 => pos_value(value)?,
+                    6 => match value {
+                        Value::List(list) => match &*list.kind() {
+                            Object::List(values) => self.heap.alloc_tuple(values.to_vec()),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "INTRINSIC_LIST_TO_TUPLE expects list",
+                                ));
+                            }
+                        },
+                        _ => {
+                            return Err(RuntimeError::new("INTRINSIC_LIST_TO_TUPLE expects list"));
+                        }
+                    },
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "unsupported CALL_INTRINSIC_1 arg {other}"
+                        )));
+                    }
+                };
+                self.push_value(result);
+            }
             Opcode::FormatSimple => {
                 let value = self.pop_value()?;
                 let rendered = self.builtin_format(vec![value], HashMap::new())?;
@@ -2262,32 +2628,32 @@ impl Vm {
                 }
             }
             Opcode::ListAppend => {
+                let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
+                if oparg == 0 {
+                    return Err(RuntimeError::new("LIST_APPEND expects oparg >= 1"));
+                }
                 let value = self.pop_value()?;
-                let list = self.pop_value()?;
-                match list {
-                    Value::List(obj) => {
-                        if let Object::List(values) = &mut *obj.kind_mut() {
-                            values.push(value);
-                        }
-                        self.push_value(Value::List(obj));
-                    }
-                    _ => return Err(RuntimeError::new("list append expects list")),
+                let list = self.stack_list_target(oparg, "LIST_APPEND")?;
+                if let Object::List(values) = &mut *list.kind_mut() {
+                    values.push(value);
+                } else {
+                    return Err(RuntimeError::new("list append expects list"));
                 }
             }
             Opcode::ListExtend => {
+                let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
+                if oparg == 0 {
+                    return Err(RuntimeError::new("LIST_EXTEND expects oparg >= 1"));
+                }
                 let other = self.pop_value()?;
-                let list = self.pop_value()?;
-                match list {
-                    Value::List(obj) => {
-                        let extra = self
-                            .collect_iterable_values(other)
-                            .map_err(|_| RuntimeError::new("list extend expects iterable"))?;
-                        if let Object::List(values) = &mut *obj.kind_mut() {
-                            values.extend(extra);
-                        }
-                        self.push_value(Value::List(obj));
-                    }
-                    _ => return Err(RuntimeError::new("list extend expects list")),
+                let list = self.stack_list_target(oparg, "LIST_EXTEND")?;
+                let extra = self
+                    .collect_iterable_values(other)
+                    .map_err(|_| RuntimeError::new("list extend expects iterable"))?;
+                if let Object::List(values) = &mut *list.kind_mut() {
+                    values.extend(extra);
+                } else {
+                    return Err(RuntimeError::new("list extend expects list"));
                 }
             }
             Opcode::DictSet => {
@@ -2303,26 +2669,27 @@ impl Vm {
                 }
             }
             Opcode::DictUpdate => {
-                let other = self.pop_value()?;
-                let dict = self.pop_value()?;
-                match (dict, other) {
-                    (Value::Dict(obj), Value::Dict(other)) => {
-                        if obj.id() != other.id() {
-                            if !matches!(&*obj.kind(), Object::Dict(_)) {
-                                return Err(RuntimeError::new("dict update expects dict"));
-                            }
-                            let other_kind = other.kind();
-                            let Object::Dict(other_entries) = &*other_kind else {
-                                return Err(RuntimeError::new("dict update expects dict"));
-                            };
-                            for (key, value) in other_entries {
-                                dict_set_value_checked(&obj, key.clone(), value.clone())?;
-                            }
-                        }
-                        self.push_value(Value::Dict(obj));
-                    }
-                    _ => return Err(RuntimeError::new("dict update expects dict")),
+                let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
+                if oparg == 0 {
+                    return Err(RuntimeError::new("DICT_UPDATE expects oparg >= 1"));
                 }
+                let update = self.pop_value()?;
+                self.apply_dict_stack_merge(oparg, update, false, "DICT_UPDATE")?;
+            }
+            Opcode::DictMerge => {
+                let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
+                if oparg == 0 {
+                    return Err(RuntimeError::new("DICT_MERGE expects oparg >= 1"));
+                }
+                let update = self.pop_value()?;
+                if std::env::var_os("PYRS_TRACE_DICT_MERGE").is_some() {
+                    eprintln!(
+                        "[dict-merge] oparg={} source={}",
+                        oparg,
+                        self.value_type_name_for_error(&update)
+                    );
+                }
+                self.apply_dict_stack_merge(oparg, update, true, "DICT_MERGE")?;
             }
             Opcode::BuildSlice => {
                 let step = self.pop_value()?;
@@ -4186,98 +4553,11 @@ impl Vm {
                 match module {
                     Value::Module(module_obj) => {
                         if attr_name == "*" {
-                            let exports = match &*module_obj.kind() {
-                                Object::Module(module_data) => {
-                                    if let Some(all_names) = module_data.globals.get("__all__") {
-                                        match all_names {
-                                            Value::List(obj) => match &*obj.kind() {
-                                                Object::List(values) => values
-                                                    .iter()
-                                                    .filter_map(|value| match value {
-                                                        Value::Str(name) => Some(name.clone()),
-                                                        _ => None,
-                                                    })
-                                                    .collect::<Vec<_>>(),
-                                                _ => Vec::new(),
-                                            },
-                                            Value::Tuple(obj) => match &*obj.kind() {
-                                                Object::Tuple(values) => values
-                                                    .iter()
-                                                    .filter_map(|value| match value {
-                                                        Value::Str(name) => Some(name.clone()),
-                                                        _ => None,
-                                                    })
-                                                    .collect::<Vec<_>>(),
-                                                _ => Vec::new(),
-                                            },
-                                            _ => Vec::new(),
-                                        }
-                                    } else {
-                                        module_data
-                                            .globals
-                                            .keys()
-                                            .filter(|name| !name.starts_with('_'))
-                                            .cloned()
-                                            .collect::<Vec<_>>()
-                                    }
-                                }
-                                _ => {
-                                    return Err(RuntimeError::new(
-                                        "import from expects module object",
-                                    ));
-                                }
-                            };
-                            let values = match &*module_obj.kind() {
-                                Object::Module(module_data) => exports
-                                    .into_iter()
-                                    .filter_map(|name| {
-                                        module_data
-                                            .globals
-                                            .get(&name)
-                                            .cloned()
-                                            .map(|value| (name, value))
-                                    })
-                                    .collect::<Vec<_>>(),
-                                _ => Vec::new(),
-                            };
-                            let frame = if let Some(frame) = self.frames.get_mut(caller_idx) {
-                                frame
-                            } else if let Some(frame) = self.frames.last_mut() {
-                                frame
-                            } else {
-                                return Err(RuntimeError::new("import caller frame missing"));
-                            };
-                            let mut touched_globals_version = None;
-                            {
-                                for (name, value) in values {
-                                    if let Some(slot_idx) =
-                                        frame.code.name_to_index.get(&name).copied()
-                                    {
-                                        if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
-                                            Self::write_fast_local_slot(slot, value.clone());
-                                        }
-                                        if let Some(existing) = frame.locals.get_mut(&name) {
-                                            *existing = value.clone();
-                                        }
-                                    } else {
-                                        frame.locals.insert(name.clone(), value.clone());
-                                    }
-                                    if let Object::Module(module_data) =
-                                        &mut *frame.function_globals.kind_mut()
-                                    {
-                                        module_data.globals.insert(name, value);
-                                        module_data.touch_globals_version();
-                                        touched_globals_version = Some((
-                                            frame.function_globals.id(),
-                                            module_data.globals_version,
-                                        ));
-                                    }
-                                }
-                                frame.stack.push(Value::None);
-                            }
-                            if let Some((module_id, version)) = touched_globals_version {
-                                self.propagate_module_globals_version(module_id, version);
-                            }
+                            self.import_star_into_caller_scope(
+                                caller_idx,
+                                Value::Module(module_obj),
+                            )?;
+                            self.push_value_to_caller_frame(caller_idx, Value::None)?;
                             return Ok(None);
                         }
 
@@ -4369,6 +4649,39 @@ impl Vm {
                     .cloned()
                     .ok_or_else(|| RuntimeError::new("stack underflow (CopyTop)"))?;
                 self.push_value(value);
+            }
+            Opcode::Copy => {
+                let depth = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing COPY depth"))?
+                    as usize;
+                if depth == 0 {
+                    return Err(RuntimeError::new("COPY expects depth >= 1"));
+                }
+                let value = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.stack.get(frame.stack.len().checked_sub(depth)?))
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("stack underflow (COPY)"))?;
+                self.push_value(value);
+            }
+            Opcode::Swap => {
+                let depth = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing SWAP depth"))?
+                    as usize;
+                if depth < 2 {
+                    return Err(RuntimeError::new("SWAP expects depth >= 2"));
+                }
+                let frame = self.frames.last_mut().expect("frame exists");
+                let top_index = frame.stack.len().saturating_sub(1);
+                let bottom_index = frame
+                    .stack
+                    .len()
+                    .checked_sub(depth)
+                    .ok_or_else(|| RuntimeError::new("stack underflow (SWAP)"))?;
+                frame.stack.swap(top_index, bottom_index);
             }
             Opcode::Jump => {
                 let target = instr

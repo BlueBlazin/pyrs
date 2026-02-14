@@ -18,7 +18,7 @@ fn test_code(code: Vec<u8>) -> CpythonCode {
         argcount: 0,
         posonlyargcount: 0,
         kwonlyargcount: 0,
-        stacksize: 1,
+        stacksize: 8,
         flags: 0,
         code,
         consts: vec![PyObject::None],
@@ -89,6 +89,75 @@ fn translates_binary_op_and_and_formatting_ops() {
             Opcode::BinaryAnd,
             Opcode::ConvertValue,
             Opcode::FormatSimple,
+            Opcode::ReturnValue
+        ]
+    );
+}
+
+#[test]
+fn translates_compare_op_with_masked_arg_bits() {
+    let code = test_code(vec![
+        op("LOAD_SMALL_INT"),
+        1,
+        op("LOAD_SMALL_INT"),
+        1,
+        op("COMPARE_OP"),
+        72,
+        op("RETURN_VALUE"),
+        0,
+    ]);
+    let mut heap = Heap::new();
+    let translated = translate_code(&code, &mut heap).expect("translation should succeed");
+    let opcodes: Vec<Opcode> = translated
+        .instructions
+        .iter()
+        .map(|instr| instr.opcode)
+        .collect();
+    assert_eq!(
+        opcodes,
+        vec![
+            Opcode::LoadConst,
+            Opcode::LoadConst,
+            Opcode::CompareEq,
+            Opcode::ReturnValue
+        ]
+    );
+}
+
+#[test]
+fn translates_load_special_and_call_intrinsic_1() {
+    let code = test_code(vec![
+        op("LOAD_CONST"),
+        0,
+        op("LOAD_SPECIAL"),
+        1,
+        op("POP_TOP"),
+        0,
+        op("POP_TOP"),
+        0,
+        op("LOAD_CONST"),
+        0,
+        op("CALL_INTRINSIC_1"),
+        2,
+        op("RETURN_VALUE"),
+        0,
+    ]);
+    let mut heap = Heap::new();
+    let translated = translate_code(&code, &mut heap).expect("translation should succeed");
+    let opcodes: Vec<Opcode> = translated
+        .instructions
+        .iter()
+        .map(|instr| instr.opcode)
+        .collect();
+    assert_eq!(
+        opcodes,
+        vec![
+            Opcode::LoadConst,
+            Opcode::LoadSpecial,
+            Opcode::PopTop,
+            Opcode::PopTop,
+            Opcode::LoadConst,
+            Opcode::CallIntrinsic1,
             Opcode::ReturnValue
         ]
     );

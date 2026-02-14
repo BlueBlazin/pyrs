@@ -38,8 +38,8 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::containers::{
-    dedup_hashable_values, dict_get_value, dict_remove_value, dict_set_value,
-    dict_set_value_checked, ensure_hashable,
+    dedup_hashable_values, dict_contains_key_checked, dict_get_value, dict_remove_value,
+    dict_set_value, dict_set_value_checked, ensure_hashable,
 };
 use self::ops::{
     add_values, and_values, compare_ge, compare_gt, compare_in, compare_le, compare_lt,
@@ -724,6 +724,8 @@ pub struct Vm {
     next_synthetic_thread_ident: i64,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
+    instruction_step_limit: Option<u64>,
+    instruction_steps: u64,
 }
 
 impl Drop for Vm {
@@ -834,6 +836,11 @@ impl Vm {
             next_synthetic_thread_ident: SYNTHETIC_THREAD_IDENT_START,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
+            instruction_step_limit: std::env::var("PYRS_STEP_LIMIT")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|limit| *limit > 0),
+            instruction_steps: 0,
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
