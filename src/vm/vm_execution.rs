@@ -1,4 +1,6 @@
 #[cfg(not(debug_assertions))]
+use super::FusedDirectOneArgNoCellsMetadata;
+#[cfg(not(debug_assertions))]
 use super::LoadFastSiteCacheEntry;
 use super::{
     AttrAccessOutcome, AttrMutationOutcome, Block, BoundArguments, BoundMethod, BuiltinFunction,
@@ -188,7 +190,9 @@ impl Vm {
                     Err(err) => return Err(err),
                 },
             }
-            self.maybe_gc_collect_automatic();
+            if self.gc_auto_collect_enabled {
+                self.maybe_gc_collect_automatic();
+            }
             if !self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty() {
                 // Keep __del__ suppressed only while an active exception is being processed.
                 // Refcount-style cleanup in CPython can happen while ordinary operands are live,
@@ -304,6 +308,9 @@ impl Vm {
                         fused_direct_one_arg_no_cells: false,
                         fused_direct_func: None,
                         fused_direct_func_epoch: 0,
+                        fused_direct_code: None,
+                        fused_direct_module: None,
+                        fused_direct_owner_class: None,
                     });
                 }
                 self.frames
@@ -663,6 +670,12 @@ impl Vm {
                 #[cfg(not(debug_assertions))]
                 let mut fused_direct_cached_epoch: u64 = 0;
                 #[cfg(not(debug_assertions))]
+                let mut fused_direct_cached_code: Option<Rc<CodeObject>> = None;
+                #[cfg(not(debug_assertions))]
+                let mut fused_direct_cached_module: Option<ObjRef> = None;
+                #[cfg(not(debug_assertions))]
+                let mut fused_direct_cached_owner_class: Option<ObjRef> = None;
+                #[cfg(not(debug_assertions))]
                 let mut fused_const_small_int: Option<i64> = None;
                 #[cfg(not(debug_assertions))]
                 let mut cached_direct_local_idx = 0usize;
@@ -671,7 +684,11 @@ impl Vm {
                 #[cfg(not(debug_assertions))]
                 let mut cached_direct_small_int: Option<i64> = None;
                 #[cfg(not(debug_assertions))]
-                let mut cached_direct_func: Option<ObjRef> = None;
+                let mut cached_direct_code: Option<Rc<CodeObject>> = None;
+                #[cfg(not(debug_assertions))]
+                let mut cached_direct_module: Option<ObjRef> = None;
+                #[cfg(not(debug_assertions))]
+                let mut cached_direct_owner_class: Option<ObjRef> = None;
                 if let Some(frame) = self.frames.last()
                     && let Some(entry) = frame.load_global_inline_cache.get(site_index)
                     && let Some(cached) = entry
@@ -682,10 +699,18 @@ impl Vm {
                     #[cfg(not(debug_assertions))]
                     {
                         if !push_null && cached.fused_direct_one_arg_no_cells {
-                            if let (Some(local_idx), Some(const_idx), Some(func)) = (
+                            if let (
+                                Some(local_idx),
+                                Some(const_idx),
+                                Some(func),
+                                Some(code),
+                                Some(module),
+                            ) = (
                                 cached.fused_local_idx,
                                 cached.fused_const_idx,
                                 cached.fused_direct_func.as_ref(),
+                                cached.fused_direct_code.as_ref(),
+                                cached.fused_direct_module.as_ref(),
                             ) {
                                 let direct_ok = {
                                     let func_kind = func.kind();
@@ -701,11 +726,14 @@ impl Vm {
                                     cached_direct_local_idx = local_idx as usize;
                                     cached_direct_const_idx = const_idx as usize;
                                     cached_direct_small_int = cached.fused_const_small_int;
-                                    cached_direct_func = Some(func.clone());
+                                    cached_direct_code = Some(code.clone());
+                                    cached_direct_module = Some(module.clone());
+                                    cached_direct_owner_class =
+                                        cached.fused_direct_owner_class.clone();
                                 }
                             }
                         }
-                        if cached_direct_func.is_none() {
+                        if cached_direct_code.is_none() {
                             value = Some(cached.value.clone());
                             if let (Some(local_idx), Some(const_idx)) =
                                 (cached.fused_local_idx, cached.fused_const_idx)
@@ -718,6 +746,10 @@ impl Vm {
                                 fused_direct_cached_func = Some(func.clone());
                                 fused_direct_cached_epoch = cached.fused_direct_func_epoch;
                             }
+                            fused_direct_cached_code = cached.fused_direct_code.clone();
+                            fused_direct_cached_module = cached.fused_direct_module.clone();
+                            fused_direct_cached_owner_class =
+                                cached.fused_direct_owner_class.clone();
                         }
                     }
                     #[cfg(debug_assertions)]
@@ -726,7 +758,7 @@ impl Vm {
                     }
                 }
                 #[cfg(not(debug_assertions))]
-                if let Some(func_obj) = cached_direct_func {
+                if let (Some(code), Some(module)) = (cached_direct_code, cached_direct_module) {
                     let arg = if let Some(right_int) = cached_direct_small_int {
                         let left_small = {
                             let frame = self.frames.last().expect("frame exists");
@@ -765,8 +797,11 @@ impl Vm {
                         let caller = self.frames.last_mut().expect("frame exists");
                         caller.ip += 3;
                     }
-                    self.push_simple_positional_function_frame_one_arg_no_cells_from_func(
-                        &func_obj, arg,
+                    self.push_simple_positional_function_frame_one_arg_no_cells_cached_ref(
+                        &code,
+                        &module,
+                        cached_direct_owner_class.as_ref(),
+                        arg,
                     )?;
                     return Ok(None);
                 }
@@ -781,16 +816,22 @@ impl Vm {
                         self.resolve_load_global_value(idx)?;
                     if cacheable {
                         if fused_candidate.is_some() {
-                            if let Some((func, epoch)) =
+                            if let Some(metadata) =
                                 self.fused_direct_one_arg_no_cells_metadata(&value)
                             {
                                 fused_direct_one_arg_no_cells = true;
-                                fused_direct_cached_func = Some(func);
-                                fused_direct_cached_epoch = epoch;
+                                fused_direct_cached_func = Some(metadata.func);
+                                fused_direct_cached_epoch = metadata.func_epoch;
+                                fused_direct_cached_code = Some(metadata.code);
+                                fused_direct_cached_module = Some(metadata.module);
+                                fused_direct_cached_owner_class = metadata.owner_class;
                             } else {
                                 fused_direct_one_arg_no_cells = false;
                                 fused_direct_cached_func = None;
                                 fused_direct_cached_epoch = 0;
+                                fused_direct_cached_code = None;
+                                fused_direct_cached_module = None;
+                                fused_direct_cached_owner_class = None;
                             }
                             fused_const_small_int = fused_candidate.and_then(|(_, const_idx)| {
                                 self.frames
@@ -820,6 +861,10 @@ impl Vm {
                                     fused_direct_one_arg_no_cells,
                                     fused_direct_func: fused_direct_cached_func.clone(),
                                     fused_direct_func_epoch: fused_direct_cached_epoch,
+                                    fused_direct_code: fused_direct_cached_code.clone(),
+                                    fused_direct_module: fused_direct_cached_module.clone(),
+                                    fused_direct_owner_class: fused_direct_cached_owner_class
+                                        .clone(),
                                 });
                             }
                         }
@@ -847,6 +892,9 @@ impl Vm {
                             fused_direct_one_arg_no_cells: false,
                             fused_direct_func: None,
                             fused_direct_func_epoch: 0,
+                            fused_direct_code: None,
+                            fused_direct_module: None,
+                            fused_direct_owner_class: None,
                         });
                     }
                     value
@@ -1949,32 +1997,66 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::new("missing unpack size"))?
                     as usize;
                 let value = self.pop_value()?;
-                let items = match value {
-                    Value::List(obj) => match &*obj.kind() {
-                        Object::List(values) => values.clone(),
-                        _ => return Err(RuntimeError::new("unpack expects iterable")),
-                    },
-                    Value::Tuple(obj) => match &*obj.kind() {
-                        Object::Tuple(values) => values.clone(),
-                        _ => return Err(RuntimeError::new("unpack expects iterable")),
-                    },
-                    other => self
-                        .collect_iterable_values(other)
-                        .map_err(|_| RuntimeError::new("unpack expects iterable"))?,
-                };
-                if items.len() < count {
-                    return Err(RuntimeError::new(format!(
-                        "not enough values to unpack (expected {count}, got {})",
-                        items.len()
-                    )));
-                }
-                if items.len() > count {
-                    return Err(RuntimeError::new(format!(
-                        "too many values to unpack (expected {count})"
-                    )));
-                }
-                for item in items {
-                    self.push_value(item);
+                match value {
+                    Value::List(obj) => {
+                        let kind = obj.kind();
+                        let Object::List(values) = &*kind else {
+                            return Err(RuntimeError::new("unpack expects iterable"));
+                        };
+                        if values.len() < count {
+                            return Err(RuntimeError::new(format!(
+                                "not enough values to unpack (expected {count}, got {})",
+                                values.len()
+                            )));
+                        }
+                        if values.len() > count {
+                            return Err(RuntimeError::new(format!(
+                                "too many values to unpack (expected {count})"
+                            )));
+                        }
+                        for item in values {
+                            self.push_value(item.clone());
+                        }
+                    }
+                    Value::Tuple(obj) => {
+                        let kind = obj.kind();
+                        let Object::Tuple(values) = &*kind else {
+                            return Err(RuntimeError::new("unpack expects iterable"));
+                        };
+                        if values.len() < count {
+                            return Err(RuntimeError::new(format!(
+                                "not enough values to unpack (expected {count}, got {})",
+                                values.len()
+                            )));
+                        }
+                        if values.len() > count {
+                            return Err(RuntimeError::new(format!(
+                                "too many values to unpack (expected {count})"
+                            )));
+                        }
+                        for item in values {
+                            self.push_value(item.clone());
+                        }
+                    }
+                    other => {
+                        let items = self
+                            .collect_iterable_values(other)
+                            .map_err(|_| RuntimeError::new("unpack expects iterable"))?;
+                        if items.len() < count {
+                            return Err(RuntimeError::new(format!(
+                                "not enough values to unpack (expected {count}, got {})",
+                                items.len()
+                            )));
+                        }
+                        if items.len() > count {
+                            return Err(RuntimeError::new(format!(
+                                "too many values to unpack (expected {count})"
+                            )));
+                        }
+                        for item in items {
+                            self.push_value(item);
+                        }
+                    }
                 }
             }
             Opcode::UnpackEx => {
@@ -1984,34 +2066,72 @@ impl Vm {
                 let before = (packed & 0xFFFF) as usize;
                 let after = (packed >> 16) as usize;
                 let value = self.pop_value()?;
-                let mut items = match value {
-                    Value::List(obj) => match &*obj.kind() {
-                        Object::List(values) => values.clone(),
-                        _ => return Err(RuntimeError::new("unpack expects iterable")),
-                    },
-                    Value::Tuple(obj) => match &*obj.kind() {
-                        Object::Tuple(values) => values.clone(),
-                        _ => return Err(RuntimeError::new("unpack expects iterable")),
-                    },
-                    other => self
-                        .collect_iterable_values(other)
-                        .map_err(|_| RuntimeError::new("unpack expects iterable"))?,
-                };
-                if items.len() < before + after {
-                    return Err(RuntimeError::new(format!(
-                        "not enough values to unpack (expected at least {}, got {})",
-                        before + after,
-                        items.len()
-                    )));
-                }
-                let trailing = items.split_off(items.len() - after);
-                let middle = items.split_off(before);
-                for item in items {
-                    self.push_value(item);
-                }
-                self.push_value(self.heap.alloc_list(middle));
-                for item in trailing {
-                    self.push_value(item);
+                match value {
+                    Value::List(obj) => {
+                        let kind = obj.kind();
+                        let Object::List(values) = &*kind else {
+                            return Err(RuntimeError::new("unpack expects iterable"));
+                        };
+                        if values.len() < before + after {
+                            return Err(RuntimeError::new(format!(
+                                "not enough values to unpack (expected at least {}, got {})",
+                                before + after,
+                                values.len()
+                            )));
+                        }
+                        let split_after = values.len() - after;
+                        for item in &values[..before] {
+                            self.push_value(item.clone());
+                        }
+                        let middle: Vec<Value> = values[before..split_after].to_vec();
+                        self.push_value(self.heap.alloc_list(middle));
+                        for item in &values[split_after..] {
+                            self.push_value(item.clone());
+                        }
+                    }
+                    Value::Tuple(obj) => {
+                        let kind = obj.kind();
+                        let Object::Tuple(values) = &*kind else {
+                            return Err(RuntimeError::new("unpack expects iterable"));
+                        };
+                        if values.len() < before + after {
+                            return Err(RuntimeError::new(format!(
+                                "not enough values to unpack (expected at least {}, got {})",
+                                before + after,
+                                values.len()
+                            )));
+                        }
+                        let split_after = values.len() - after;
+                        for item in &values[..before] {
+                            self.push_value(item.clone());
+                        }
+                        let middle: Vec<Value> = values[before..split_after].to_vec();
+                        self.push_value(self.heap.alloc_list(middle));
+                        for item in &values[split_after..] {
+                            self.push_value(item.clone());
+                        }
+                    }
+                    other => {
+                        let mut items = self
+                            .collect_iterable_values(other)
+                            .map_err(|_| RuntimeError::new("unpack expects iterable"))?;
+                        if items.len() < before + after {
+                            return Err(RuntimeError::new(format!(
+                                "not enough values to unpack (expected at least {}, got {})",
+                                before + after,
+                                items.len()
+                            )));
+                        }
+                        let trailing = items.split_off(items.len() - after);
+                        let middle = items.split_off(before);
+                        for item in items {
+                            self.push_value(item);
+                        }
+                        self.push_value(self.heap.alloc_list(middle));
+                        for item in trailing {
+                            self.push_value(item);
+                        }
+                    }
                 }
             }
             Opcode::ListAppend => {
@@ -2060,15 +2180,17 @@ impl Vm {
                 let dict = self.pop_value()?;
                 match (dict, other) {
                     (Value::Dict(obj), Value::Dict(other)) => {
-                        let other_entries = match &*other.kind() {
-                            Object::Dict(entries) => entries.clone(),
-                            _ => return Err(RuntimeError::new("dict update expects dict")),
-                        };
-                        if !matches!(&*obj.kind(), Object::Dict(_)) {
-                            return Err(RuntimeError::new("dict update expects dict"));
-                        }
-                        for (key, value) in other_entries {
-                            dict_set_value_checked(&obj, key, value)?;
+                        if obj.id() != other.id() {
+                            if !matches!(&*obj.kind(), Object::Dict(_)) {
+                                return Err(RuntimeError::new("dict update expects dict"));
+                            }
+                            let other_kind = other.kind();
+                            let Object::Dict(other_entries) = &*other_kind else {
+                                return Err(RuntimeError::new("dict update expects dict"));
+                            };
+                            for (key, value) in other_entries {
+                                dict_set_value_checked(&obj, key.clone(), value.clone())?;
+                            }
                         }
                         self.push_value(Value::Dict(obj));
                     }
@@ -6572,7 +6694,10 @@ impl Vm {
 
     #[cfg(not(debug_assertions))]
     #[inline]
-    fn fused_direct_one_arg_no_cells_metadata(&self, value: &Value) -> Option<(ObjRef, u64)> {
+    fn fused_direct_one_arg_no_cells_metadata(
+        &self,
+        value: &Value,
+    ) -> Option<FusedDirectOneArgNoCellsMetadata> {
         let func = match value {
             Value::Function(func) => func,
             _ => return None,
@@ -6594,7 +6719,13 @@ impl Vm {
         {
             return None;
         }
-        Some((func.clone(), func_data.call_cache_epoch))
+        Some(FusedDirectOneArgNoCellsMetadata {
+            func: func.clone(),
+            func_epoch: func_data.call_cache_epoch,
+            code: func_data.code.clone(),
+            module: func_data.module.clone(),
+            owner_class: func_data.owner_class.clone(),
+        })
     }
 
     #[inline]
@@ -7241,7 +7372,7 @@ impl Vm {
             *slot = None;
         }
 
-        let (code, module, closure, owner_class, simple_positional_path, no_cells_hot, func_epoch) = {
+        let (code, module, owner_class, simple_positional_path, no_cells_hot, func_epoch) = {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
@@ -7258,7 +7389,6 @@ impl Vm {
             (
                 code,
                 func_data.module.clone(),
-                func_data.closure.clone(),
                 func_data.owner_class.clone(),
                 simple_positional_path,
                 no_cells_hot,
@@ -7266,6 +7396,16 @@ impl Vm {
             )
         };
         if simple_positional_path {
+            let closure = if no_cells_hot {
+                None
+            } else {
+                let func_kind = func.kind();
+                let func_data = match &*func_kind {
+                    Object::Function(data) => data,
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                };
+                Some(func_data.closure.clone())
+            };
             if let Some(frame) = self.frames.last_mut()
                 && let Some(slot) = frame.one_arg_inline_cache.get_mut(site_index)
             {
@@ -7280,11 +7420,7 @@ impl Vm {
                     cached_code: Some(code.clone()),
                     cached_module: Some(module.clone()),
                     cached_owner_class: owner_class.clone(),
-                    cached_closure: if no_cells_hot {
-                        None
-                    } else {
-                        Some(closure.clone())
-                    },
+                    cached_closure: if no_cells_hot { None } else { closure.clone() },
                 });
             }
             if no_cells_hot {
@@ -7299,7 +7435,7 @@ impl Vm {
                 code,
                 module,
                 owner_class,
-                closure,
+                closure.unwrap_or_default(),
                 arg0,
             );
         }
@@ -7494,21 +7630,28 @@ impl Vm {
         arg0: Value,
         arg1: Value,
     ) -> Result<(), RuntimeError> {
-        let (code, module, closure, owner_class, simple_positional_path) = {
+        let simple_positional_path = {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
-            (
-                func_data.code.clone(),
-                func_data.module.clone(),
-                func_data.closure.clone(),
-                func_data.owner_class.clone(),
-                func_data.plain_positional_call_arity == Some(2),
-            )
+            func_data.plain_positional_call_arity == Some(2)
         };
         if simple_positional_path {
+            let (code, module, closure, owner_class) = {
+                let func_kind = func.kind();
+                let func_data = match &*func_kind {
+                    Object::Function(data) => data,
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                };
+                (
+                    func_data.code.clone(),
+                    func_data.module.clone(),
+                    func_data.closure.clone(),
+                    func_data.owner_class.clone(),
+                )
+            };
             return self.push_simple_positional_function_frame_two_args(
                 code,
                 module,
@@ -7528,21 +7671,28 @@ impl Vm {
         arg1: Value,
         arg2: Value,
     ) -> Result<(), RuntimeError> {
-        let (code, module, closure, owner_class, simple_positional_path) = {
+        let simple_positional_path = {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
-            (
-                func_data.code.clone(),
-                func_data.module.clone(),
-                func_data.closure.clone(),
-                func_data.owner_class.clone(),
-                func_data.plain_positional_call_arity == Some(3),
-            )
+            func_data.plain_positional_call_arity == Some(3)
         };
         if simple_positional_path {
+            let (code, module, closure, owner_class) = {
+                let func_kind = func.kind();
+                let func_data = match &*func_kind {
+                    Object::Function(data) => data,
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                };
+                (
+                    func_data.code.clone(),
+                    func_data.module.clone(),
+                    func_data.closure.clone(),
+                    func_data.owner_class.clone(),
+                )
+            };
             return self.push_simple_positional_function_frame_three_args(
                 code,
                 module,

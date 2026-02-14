@@ -367,9 +367,11 @@ impl Vm {
                         } else {
                             let pairs = self.collect_iterable_values(source.clone())?;
                             for pair in pairs {
-                                let values = match pair {
+                                let pair_tuple = match pair {
                                     Value::Tuple(obj) => match &*obj.kind() {
-                                        Object::Tuple(values) => values.clone(),
+                                        Object::Tuple(values) if values.len() == 2 => {
+                                            (values[0].clone(), values[1].clone())
+                                        }
                                         _ => {
                                             return Err(RuntimeError::new(
                                                 "dict.update() expects mapping or iterable of pairs",
@@ -377,7 +379,9 @@ impl Vm {
                                         }
                                     },
                                     Value::List(obj) => match &*obj.kind() {
-                                        Object::List(values) => values.clone(),
+                                        Object::List(values) if values.len() == 2 => {
+                                            (values[0].clone(), values[1].clone())
+                                        }
                                         _ => {
                                             return Err(RuntimeError::new(
                                                 "dict.update() expects mapping or iterable of pairs",
@@ -390,12 +394,7 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                if values.len() != 2 {
-                                    return Err(RuntimeError::new(
-                                        "dict.update() expects mapping or iterable of pairs",
-                                    ));
-                                }
-                                incoming.push((values[0].clone(), values[1].clone()));
+                                incoming.push(pair_tuple);
                             }
                         }
                         for (key, value) in incoming {
@@ -695,12 +694,14 @@ impl Vm {
                 if args.is_empty() {
                     return Err(RuntimeError::new("tuple.count() expects one argument"));
                 }
-                let (values, target) = match &*receiver.kind() {
+                match &*receiver.kind() {
                     Object::Tuple(values) => {
                         if args.len() != 1 {
                             return Err(RuntimeError::new("tuple.count() expects one argument"));
                         }
-                        (values.clone(), args.remove(0))
+                        let target = args.remove(0);
+                        let count = values.iter().filter(|value| **value == target).count() as i64;
+                        Ok(NativeCallResult::Value(Value::Int(count)))
                     }
                     Object::Module(module_data) => {
                         let tuple_obj = if let Some(Value::Tuple(tuple)) =
@@ -735,12 +736,11 @@ impl Vm {
                         let Object::Tuple(values) = &*tuple_kind else {
                             return Err(RuntimeError::new("tuple.count() receiver must be tuple"));
                         };
-                        (values.clone(), target)
+                        let count = values.iter().filter(|value| **value == target).count() as i64;
+                        Ok(NativeCallResult::Value(Value::Int(count)))
                     }
-                    _ => return Err(RuntimeError::new("tuple.count() receiver must be tuple")),
-                };
-                let count = values.iter().filter(|value| **value == target).count() as i64;
-                Ok(NativeCallResult::Value(Value::Int(count)))
+                    _ => Err(RuntimeError::new("tuple.count() receiver must be tuple")),
+                }
             }
             NativeMethodKind::TupleIndex => {
                 if !(1..=3).contains(&args.len()) {
@@ -749,8 +749,53 @@ impl Vm {
                     ));
                 }
                 let target = args.remove(0);
-                let (values, mut remaining_args) = match &*receiver.kind() {
-                    Object::Tuple(values) => (values.clone(), args),
+                let find_index = |values: &[Value],
+                                  target: &Value,
+                                  remaining_args: &mut Vec<Value>|
+                 -> Result<Option<i64>, RuntimeError> {
+                    let len = values.len() as i64;
+                    let mut start = if remaining_args.is_empty() {
+                        0
+                    } else {
+                        value_to_int(remaining_args.remove(0))?
+                    };
+                    let mut stop = if remaining_args.is_empty() {
+                        len
+                    } else {
+                        value_to_int(remaining_args.remove(0))?
+                    };
+                    if start < 0 {
+                        start += len;
+                    }
+                    if stop < 0 {
+                        stop += len;
+                    }
+                    start = start.clamp(0, len);
+                    stop = stop.clamp(0, len);
+                    if stop < start {
+                        stop = start;
+                    }
+                    for (idx, value) in values
+                        .iter()
+                        .enumerate()
+                        .take(stop as usize)
+                        .skip(start as usize)
+                    {
+                        if value == target {
+                            return Ok(Some(idx as i64));
+                        }
+                    }
+                    Ok(None)
+                };
+                match &*receiver.kind() {
+                    Object::Tuple(values) => {
+                        let mut remaining_args = args;
+                        if let Some(index) = find_index(values, &target, &mut remaining_args)? {
+                            Ok(NativeCallResult::Value(Value::Int(index)))
+                        } else {
+                            Err(RuntimeError::new("tuple.index(x): x not in tuple"))
+                        }
+                    }
                     Object::Module(module_data) => {
                         let tuple_obj = if let Some(Value::Tuple(tuple)) =
                             module_data.globals.get("value")
@@ -776,48 +821,19 @@ impl Vm {
                                 }
                             }
                         };
+                        let mut remaining_args = args;
                         let tuple_kind = tuple_obj.kind();
                         let Object::Tuple(values) = &*tuple_kind else {
                             return Err(RuntimeError::new("tuple.index() receiver must be tuple"));
                         };
-                        (values.clone(), args)
+                        if let Some(index) = find_index(values, &target, &mut remaining_args)? {
+                            Ok(NativeCallResult::Value(Value::Int(index)))
+                        } else {
+                            Err(RuntimeError::new("tuple.index(x): x not in tuple"))
+                        }
                     }
-                    _ => return Err(RuntimeError::new("tuple.index() receiver must be tuple")),
-                };
-
-                let len = values.len() as i64;
-                let mut start = if remaining_args.is_empty() {
-                    0
-                } else {
-                    value_to_int(remaining_args.remove(0))?
-                };
-                let mut stop = if remaining_args.is_empty() {
-                    len
-                } else {
-                    value_to_int(remaining_args.remove(0))?
-                };
-                if start < 0 {
-                    start += len;
+                    _ => Err(RuntimeError::new("tuple.index() receiver must be tuple")),
                 }
-                if stop < 0 {
-                    stop += len;
-                }
-                start = start.clamp(0, len);
-                stop = stop.clamp(0, len);
-                if stop < start {
-                    stop = start;
-                }
-                for (idx, value) in values
-                    .iter()
-                    .enumerate()
-                    .take(stop as usize)
-                    .skip(start as usize)
-                {
-                    if *value == target {
-                        return Ok(NativeCallResult::Value(Value::Int(idx as i64)));
-                    }
-                }
-                Err(RuntimeError::new("tuple.index(x): x not in tuple"))
             }
             NativeMethodKind::ListIndex => {
                 if !(1..=3).contains(&args.len()) {
@@ -3783,11 +3799,10 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::SetUnion => {
-                let receiver_values = match &*receiver.kind() {
-                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                let mut out = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("union() receiver must be set")),
                 };
-                let mut out = receiver_values.to_vec();
                 for iterable in args {
                     for item in self.collect_iterable_values(iterable)? {
                         ensure_hashable(&item)?;
@@ -3803,11 +3818,10 @@ impl Vm {
                 }
             }
             NativeMethodKind::SetIntersection => {
-                let receiver_values = match &*receiver.kind() {
-                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                let mut out = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("intersection() receiver must be set")),
                 };
-                let mut out = receiver_values.to_vec();
                 for iterable in args {
                     let other = dedup_hashable_values(self.collect_iterable_values(iterable)?)?;
                     out.retain(|item| other.contains(item));
@@ -3819,11 +3833,10 @@ impl Vm {
                 }
             }
             NativeMethodKind::SetDifference => {
-                let receiver_values = match &*receiver.kind() {
-                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                let mut out = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("difference() receiver must be set")),
                 };
-                let mut out = receiver_values.to_vec();
                 for iterable in args {
                     let other = dedup_hashable_values(self.collect_iterable_values(iterable)?)?;
                     out.retain(|item| !other.contains(item));
@@ -3838,11 +3851,12 @@ impl Vm {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("issuperset() expects one argument"));
                 }
-                let receiver_values = match &*receiver.kind() {
-                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                let other_values = self.collect_iterable_values(args[0].clone())?;
+                let receiver_values = receiver.kind();
+                let receiver_values = match &*receiver_values {
+                    Object::Set(values) | Object::FrozenSet(values) => values,
                     _ => return Err(RuntimeError::new("issuperset() receiver must be set")),
                 };
-                let other_values = self.collect_iterable_values(args[0].clone())?;
                 let mut is_superset = true;
                 for item in &other_values {
                     ensure_hashable(item)?;
@@ -3857,11 +3871,12 @@ impl Vm {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("issubset() expects one argument"));
                 }
-                let receiver_values = match &*receiver.kind() {
-                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                let other = dedup_hashable_values(self.collect_iterable_values(args[0].clone())?)?;
+                let receiver_values = receiver.kind();
+                let receiver_values = match &*receiver_values {
+                    Object::Set(values) | Object::FrozenSet(values) => values,
                     _ => return Err(RuntimeError::new("issubset() receiver must be set")),
                 };
-                let other = dedup_hashable_values(self.collect_iterable_values(args[0].clone())?)?;
                 let is_subset = receiver_values.iter().all(|item| other.contains(item));
                 Ok(NativeCallResult::Value(Value::Bool(is_subset)))
             }
@@ -3869,11 +3884,12 @@ impl Vm {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("isdisjoint() expects one argument"));
                 }
-                let receiver_values = match &*receiver.kind() {
-                    Object::Set(values) | Object::FrozenSet(values) => values.clone(),
+                let other = dedup_hashable_values(self.collect_iterable_values(args[0].clone())?)?;
+                let receiver_values = receiver.kind();
+                let receiver_values = match &*receiver_values {
+                    Object::Set(values) | Object::FrozenSet(values) => values,
                     _ => return Err(RuntimeError::new("isdisjoint() receiver must be set")),
                 };
-                let other = dedup_hashable_values(self.collect_iterable_values(args[0].clone())?)?;
                 let is_disjoint = receiver_values.iter().all(|item| !other.contains(item));
                 Ok(NativeCallResult::Value(Value::Bool(is_disjoint)))
             }

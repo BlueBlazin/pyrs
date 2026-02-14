@@ -12617,6 +12617,34 @@ ok = (idx == 1 and missing)
 }
 
 #[test]
+fn tuple_count_and_index_bound_and_subclass_paths_match() {
+    let source = r#"class T(tuple):
+    pass
+
+t = (1, 2, 3, 2, 4, 2)
+u = T((1, 2, 1, 3))
+
+bound_count = t.count(2)
+sub_count = u.count(1)
+
+bound_index = t.index(2, 2, 5)
+sub_index = u.index(1, 1)
+
+ok = (
+    bound_count == 3 and
+    sub_count == 2 and
+    bound_index == 3 and
+    sub_index == 2
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn closure_cell_contents_get_set_paths_are_supported() {
     let source = r#"def outer():
     x = 1

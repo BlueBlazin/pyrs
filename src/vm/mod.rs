@@ -319,6 +319,19 @@ struct LoadGlobalSiteCacheEntry {
     fused_direct_one_arg_no_cells: bool,
     fused_direct_func: Option<ObjRef>,
     fused_direct_func_epoch: u64,
+    fused_direct_code: Option<Rc<CodeObject>>,
+    fused_direct_module: Option<ObjRef>,
+    fused_direct_owner_class: Option<ObjRef>,
+}
+
+#[derive(Clone)]
+#[cfg_attr(debug_assertions, allow(dead_code))]
+struct FusedDirectOneArgNoCellsMetadata {
+    func: ObjRef,
+    func_epoch: u64,
+    code: Rc<CodeObject>,
+    module: ObjRef,
+    owner_class: Option<ObjRef>,
 }
 
 #[derive(Clone, Copy)]
@@ -638,6 +651,7 @@ pub struct Vm {
     modules: HashMap<String, ObjRef>,
     main_module: ObjRef,
     module_paths: Vec<PathBuf>,
+    preferred_filesystem_module_cache: HashMap<String, bool>,
     heap: Heap,
     random: Mt19937,
     generator_states: HashMap<u64, Box<Frame>>,
@@ -732,6 +746,7 @@ impl Vm {
             modules,
             main_module,
             module_paths,
+            preferred_filesystem_module_cache: HashMap::new(),
             heap,
             random: Mt19937::new(5489),
             generator_states: HashMap::new(),
@@ -1273,6 +1288,7 @@ impl Vm {
             return;
         }
         self.module_paths.push(path);
+        self.preferred_filesystem_module_cache.clear();
         self.sync_sys_path_from_module_paths();
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }
@@ -1281,6 +1297,7 @@ impl Vm {
         let path = path.into();
         self.module_paths.retain(|existing| existing != &path);
         self.module_paths.insert(0, path);
+        self.preferred_filesystem_module_cache.clear();
         self.sync_sys_path_from_module_paths();
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }

@@ -5474,9 +5474,15 @@ impl Vm {
             || shim_root.join(rel).join("__init__.py").is_file()
     }
 
-    pub(super) fn has_preferred_filesystem_module(&self, module_name: &str) -> bool {
-        self.has_cpython_pure_module_on_module_path(module_name)
-            || self.has_local_shim_module(module_name)
+    pub(super) fn has_preferred_filesystem_module(&mut self, module_name: &str) -> bool {
+        if let Some(cached) = self.preferred_filesystem_module_cache.get(module_name) {
+            return *cached;
+        }
+        let present = self.has_cpython_pure_module_on_module_path(module_name)
+            || self.has_local_shim_module(module_name);
+        self.preferred_filesystem_module_cache
+            .insert(module_name.to_string(), present);
+        present
     }
 
     pub(super) fn maybe_prefer_cpython_pure_stdlib_modules(&mut self) {

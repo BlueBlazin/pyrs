@@ -97,3 +97,7 @@ Do not rely on stale point-in-time numbers in this document.
   - landed `CALL_FUNCTION` site quickening metadata for zero-arg and two-arg direct function lanes.
   - landed `gc` control surface (`enable/disable/isenabled/get_threshold/set_threshold/get_count`); automatic cycle GC is enabled after explicit threshold configuration and guarded to avoid semantic regressions.
   - reduced clone churn in iterator conversion and dict update native paths (`vm_native_dispatch`), including alias-safe `dict.update(self)` handling.
+  - reduced clone churn in opcode execution paths (`UNPACK_SEQUENCE` / `UNPACK_EX` / `DICT_UPDATE`) by removing whole-container vector cloning on list/tuple/dict fast paths.
+  - reduced `LOAD_GLOBAL` fused-call overhead by caching direct one-arg/no-cells frame metadata (`code/module/owner`) and reusing ref-based frame entry paths after epoch validation.
+  - added memoization for filesystem stdlib-preference probes (`has_preferred_filesystem_module`) with invalidation on `sys.path` mutations to reduce startup/import stat churn.
+  - removed full tuple payload clones from native tuple methods (`tuple.count`, `tuple.index`) and validated bound/subclass semantics with regression coverage.
