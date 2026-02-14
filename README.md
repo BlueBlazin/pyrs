@@ -13,7 +13,7 @@
 ## What Works Today
 
 - Substantial pure-Python execution: modules/packages, classes, closures, generators, comprehensions, core async flows.
-- CPython `.pyc` execution for a supported subset, including sourceless import fallback paths.
+- CPython `.pyc` execution for a supported subset, including sourceless import fallback paths and exception-table `try`/`except`/`with` baseline semantics.
 - Broad stdlib foundation (`sys`, import foundations, `os`/`pathlib`, `json`, `re`, `math`, `datetime`, `random`, `sqlite3` baseline, core `asyncio`/`threading`/`signal`).
 - Curated CPython harness suites and project test suite are green.
 

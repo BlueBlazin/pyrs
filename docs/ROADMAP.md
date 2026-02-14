@@ -56,7 +56,7 @@ Milestone 13 is complete only when all are true:
 ### Workstreams
 - Runtime/native core parity:
   - `_io`, `_csv`, `_sre`, `_pickle`
-  - translated `.pyc` exception-table execution parity
+  - translated `.pyc` long-tail opcode/state parity closure (exception-table runtime baseline is landed)
   - object-model protocol long-tail parity
 - Pure-stdlib handoff:
   - make CPython pure modules the default behavior path where feasible
