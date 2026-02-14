@@ -76,6 +76,8 @@ Unsupported extension paths must fail explicitly with:
 - missing/invalid manifest keys,
 - unimplemented C-ABI surfaces.
 
+Current loader diagnostic baseline explicitly flags CPython-style `PyInit_*` symbol-only modules as unsupported when `pyrs_extension_init_v1` is absent.
+
 No silent fallback is allowed for native-extension errors.
 
 ## CI and Quality Gates

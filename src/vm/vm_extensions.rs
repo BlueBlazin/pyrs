@@ -462,6 +462,15 @@ enum ExtensionExecutionPlan {
 }
 
 impl Vm {
+    fn cpython_init_symbol_for_module(module_name: &str) -> String {
+        let leaf = module_name
+            .rsplit('.')
+            .next()
+            .unwrap_or(module_name)
+            .replace('-', "_");
+        format!("PyInit_{leaf}")
+    }
+
     fn capi_api_v1(&self) -> PyrsApiV1 {
         PyrsApiV1 {
             abi_version: PYRS_CAPI_ABI_VERSION,
@@ -633,8 +642,17 @@ impl Vm {
         library_path: &Path,
         symbol: &str,
     ) -> Result<(), RuntimeError> {
-        let (handle, initializer) =
-            load_dynamic_initializer(library_path, symbol).map_err(RuntimeError::new)?;
+        let (handle, initializer) = load_dynamic_initializer(library_path, symbol).map_err(|err| {
+            if symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 {
+                let cpython_symbol = Self::cpython_init_symbol_for_module(module_name);
+                RuntimeError::new(format!(
+                    "{err}; expected '{}'. CPython-style extension symbols such as '{}' are not supported yet",
+                    PYRS_DYNAMIC_INIT_SYMBOL_V1, cpython_symbol
+                ))
+            } else {
+                RuntimeError::new(err)
+            }
+        })?;
         let mut module_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
         let api = self.capi_api_v1();
         // SAFETY: initializer is resolved from the shared object symbol with expected signature;

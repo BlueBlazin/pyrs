@@ -314,6 +314,49 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn direct_cpython_style_symbol_reports_explicit_unsupported_error() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython-symbol smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython-symbol smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_symbol");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_symbol_only.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int PyInit_cpython_symbol_only(void) {
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename("cpython_symbol_only"));
+    compile_shared_extension(&source_path, &library_path)
+        .expect("cp-style symbol shared object should build");
+
+    run_import_snippet_expect_error(
+        &bin,
+        &temp_root,
+        "import cpython_symbol_only",
+        "CPython-style extension symbols",
+    )
+    .expect("cpython-only symbol should produce explicit unsupported diagnostic");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
