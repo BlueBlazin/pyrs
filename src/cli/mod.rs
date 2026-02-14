@@ -168,11 +168,10 @@ fn configure_vm_for_execution(
     import_site: bool,
 ) -> Result<(), String> {
     configure_vm_for_command(vm, import_site)?;
-    if let Some(parent) = Path::new(script_path).parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = Path::new(script_path).parent()
+        && !parent.as_os_str().is_empty() {
             vm.add_module_path_front(parent.to_path_buf());
         }
-    }
     Ok(())
 }
 
@@ -182,13 +181,11 @@ fn configure_vm_for_command(vm: &mut Vm, import_site: bool) -> Result<(), String
     for stdlib_path in &stdlib_paths {
         vm.add_module_path(stdlib_path.clone());
     }
-    if import_site && !stdlib_paths.is_empty() {
-        if let Err(err) = vm.import_module("site") {
-            if strict_site_import {
+    if import_site && !stdlib_paths.is_empty()
+        && let Err(err) = vm.import_module("site")
+            && strict_site_import {
                 return Err(format!("startup site import failed: {}", err.message));
             }
-        }
-    }
     Ok(())
 }
 

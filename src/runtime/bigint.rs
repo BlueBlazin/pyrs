@@ -83,7 +83,7 @@ impl BigInt {
     }
 
     pub fn from_str_radix(text: &str, radix: u32) -> Option<Self> {
-        if radix < 2 || radix > 36 {
+        if !(2..=36).contains(&radix) {
             return None;
         }
         if text.is_empty() {
@@ -526,7 +526,7 @@ impl BigInt {
         F: Fn(u32, u32) -> u32,
     {
         let width_bits = self.bit_length().max(other.bit_length()) + 2;
-        let words = (width_bits + 31) / 32;
+        let words = width_bits.div_ceil(32);
         let left = self.twos_complement_words(words);
         let right = other.twos_complement_words(words);
         let mut out = Vec::with_capacity(words);

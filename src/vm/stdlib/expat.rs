@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{RuntimeError, Vm, ObjRef, Object, Value, ExceptionObject, HashMap, InternalCallOutcome, is_truthy, InstanceObject};
 
 #[derive(Clone)]
 pub(in crate::vm) struct ExpatParserState {

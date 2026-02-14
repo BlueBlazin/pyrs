@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{Vm, ObjRef, Object, Value, HashMap, RuntimeError, is_truthy, bytes_like_from_value};
 
 const SSL_NID_SERVER_AUTH: i64 = 129;
 const SSL_NID_CLIENT_AUTH: i64 = 130;

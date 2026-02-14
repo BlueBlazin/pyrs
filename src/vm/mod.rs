@@ -690,6 +690,12 @@ impl Drop for Vm {
     }
 }
 
+impl Default for Vm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Vm {
     pub fn new() -> Self {
         let heap = Heap::new();
@@ -1365,11 +1371,10 @@ impl Vm {
         }
         let mut fallback = frame.locals.clone();
         for (idx, slot) in frame.fast_locals.iter().enumerate() {
-            if let Some(value) = slot {
-                if let Some(name) = frame.code.names.get(idx) {
+            if let Some(value) = slot
+                && let Some(name) = frame.code.names.get(idx) {
                     fallback.insert(name.clone(), value.clone());
                 }
-            }
         }
         for name in &frame.code.cellvars {
             if let Some(value) = frame_cell_value(frame, name) {
@@ -2869,21 +2874,19 @@ fn frame_cell_value(frame: &Frame, name: &str) -> Option<Value> {
     let cellvar_len = frame.code.cellvars.len();
     for (index, cell_name) in frame.code.cellvars.iter().enumerate() {
         if cell_name == name {
-            if let Some(cell) = frame.cells.get(index) {
-                if let Object::Cell(cell_data) = &*cell.kind() {
+            if let Some(cell) = frame.cells.get(index)
+                && let Object::Cell(cell_data) = &*cell.kind() {
                     return cell_data.value.clone();
                 }
-            }
             return None;
         }
     }
     for (offset, free_name) in frame.code.freevars.iter().enumerate() {
         if free_name == name {
-            if let Some(cell) = frame.cells.get(cellvar_len + offset) {
-                if let Object::Cell(cell_data) = &*cell.kind() {
+            if let Some(cell) = frame.cells.get(cellvar_len + offset)
+                && let Object::Cell(cell_data) = &*cell.kind() {
                     return cell_data.value.clone();
                 }
-            }
             return None;
         }
     }
@@ -3009,7 +3012,7 @@ fn round_float_with_ndigits(value: f64, ndigits: i64) -> f64 {
             rounded
         }
     } else {
-        let shift = (-ndigits) as i64;
+        let shift = -ndigits;
         if shift > 308 {
             return 0.0f64.copysign(value);
         }
@@ -3654,14 +3657,12 @@ fn source_path_from_cache_path(path: &str) -> String {
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str())
         == Some("__pycache__")
-    {
-        if let Some(parent) = cache_path.parent().and_then(|parent| parent.parent()) {
+        && let Some(parent) = cache_path.parent().and_then(|parent| parent.parent()) {
             return parent
                 .join(format!("{module_stem}.py"))
                 .to_string_lossy()
                 .to_string();
         }
-    }
     path.trim_end_matches('c').to_string()
 }
 
@@ -3951,11 +3952,10 @@ fn split_formatter_field_name(
 }
 
 fn parse_formatter_key(text: &str) -> FormatterFieldKey {
-    if !text.is_empty() && text.chars().all(|ch| ch.is_ascii_digit()) {
-        if let Ok(value) = text.parse::<i64>() {
+    if !text.is_empty() && text.chars().all(|ch| ch.is_ascii_digit())
+        && let Ok(value) = text.parse::<i64>() {
             return FormatterFieldKey::Int(value);
         }
-    }
     FormatterFieldKey::Str(text.to_string())
 }
 
@@ -4831,11 +4831,10 @@ fn match_simple_regex_tokens(
             ReAtom::Group { tokens, capture } => {
                 let (end, mut next_state) =
                     match_simple_regex_tokens(tokens, chars, 0, char_idx, false, state.clone())?;
-                if let Some(index) = capture {
-                    if let Some(slot) = next_state.captures.get_mut(index - 1) {
+                if let Some(index) = capture
+                    && let Some(slot) = next_state.captures.get_mut(index - 1) {
                         *slot = Some((char_idx, end));
                     }
-                }
                 Some((end, next_state))
             }
         }
@@ -4857,8 +4856,7 @@ fn match_simple_regex_tokens(
         ReQuantifier::ZeroOrOne => {
             if let Some((next_idx, next_state)) =
                 match_atom_once(&token.atom, chars, char_idx, &state)
-            {
-                if let Some(result) = match_simple_regex_tokens(
+                && let Some(result) = match_simple_regex_tokens(
                     tokens,
                     chars,
                     token_idx + 1,
@@ -4868,7 +4866,6 @@ fn match_simple_regex_tokens(
                 ) {
                     return Some(result);
                 }
-            }
             match_simple_regex_tokens(tokens, chars, token_idx + 1, char_idx, require_end, state)
         }
         ReQuantifier::ZeroOrMore | ReQuantifier::OneOrMore | ReQuantifier::Exactly(_) => {
@@ -6347,7 +6344,7 @@ fn is_truthy(value: &Value) -> bool {
             _ => true,
         },
         Value::Cell(obj) => match &*obj.kind() {
-            Object::Cell(cell) => cell.value.as_ref().map_or(false, is_truthy),
+            Object::Cell(cell) => cell.value.as_ref().is_some_and(is_truthy),
             _ => true,
         },
         Value::Iterator(_) => true,
@@ -6616,14 +6613,12 @@ fn bind_arguments(
 }
 
 fn assign_binding(frame: &mut Frame, code: &CodeObject, name: &str, value: Value) {
-    if let Some(idx) = code.cellvar_to_index.get(name).copied() {
-        if let Some(cell) = frame.cells.get(idx) {
-            if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+    if let Some(idx) = code.cellvar_to_index.get(name).copied()
+        && let Some(cell) = frame.cells.get(idx)
+            && let Object::Cell(cell_data) = &mut *cell.kind_mut() {
                 cell_data.value = Some(value);
                 return;
             }
-        }
-    }
     if let Some(slot_idx) = code.name_to_index.get(name).copied() {
         if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
             *slot = Some(value.clone());
@@ -7120,12 +7115,11 @@ fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
         let mut mro = class_data.mro.clone();
         if let Some(object_idx) = mro.iter().position(|entry| {
             matches!(&*entry.kind(), Object::Class(candidate) if candidate.name == "object")
-        }) {
-            if object_idx + 1 != mro.len() {
+        })
+            && object_idx + 1 != mro.len() {
                 let object_entry = mro.remove(object_idx);
                 mro.push(object_entry);
             }
-        }
         return mro;
     }
 
@@ -7176,21 +7170,18 @@ fn collect_slot_names(class: &ObjRef) -> Option<Vec<String>> {
     let Object::Class(input_class_data) = &*class.kind() else {
         return None;
     };
-    if input_class_data.slots.is_none() {
-        return None;
-    }
+    input_class_data.slots.as_ref()?;
 
     let mut names = Vec::new();
     for candidate in class_attr_walk(class) {
-        if let Object::Class(class_data) = &*candidate.kind() {
-            if let Some(slots) = &class_data.slots {
+        if let Object::Class(class_data) = &*candidate.kind()
+            && let Some(slots) = &class_data.slots {
                 for slot in slots {
                     if !names.iter().any(|existing| existing == slot) {
                         names.push(slot.clone());
                     }
                 }
             }
-        }
     }
     Some(names)
 }
@@ -7349,12 +7340,11 @@ fn py_splitlines(text: &str, keepends: bool) -> Vec<String> {
         let mut linebreak_end = None;
         if ch == '\r' {
             let mut end = idx + ch.len_utf8();
-            if let Some((next_idx, next_ch)) = chars.peek().copied() {
-                if next_ch == '\n' {
+            if let Some((next_idx, next_ch)) = chars.peek().copied()
+                && next_ch == '\n' {
                     let _ = chars.next();
                     end = next_idx + next_ch.len_utf8();
                 }
-            }
             linebreak_end = Some(end);
         } else if is_py_splitline_break(ch) {
             linebreak_end = Some(idx + ch.len_utf8());
@@ -7598,16 +7588,14 @@ fn extract_os_error_strerror(message: &str) -> Option<String> {
     if let Some((_, tail)) = line.split_once(": ") {
         line = tail.to_string();
     }
-    if let Some(rest) = line.strip_prefix("[Errno ") {
-        if let Some((_, tail)) = rest.split_once("] ") {
+    if let Some(rest) = line.strip_prefix("[Errno ")
+        && let Some((_, tail)) = rest.split_once("] ") {
             line = tail.to_string();
         }
-    }
-    if let Some(idx) = line.rfind(" (os error ") {
-        if line[idx..].ends_with(')') {
+    if let Some(idx) = line.rfind(" (os error ")
+        && line[idx..].ends_with(')') {
             line = line[..idx].to_string();
         }
-    }
     let line = line.trim();
     if line.is_empty() {
         return None;
@@ -7681,8 +7669,8 @@ fn classify_runtime_error(message: &str) -> &'static str {
         "BufferError",
     ];
     let trimmed = message.trim();
-    if message.starts_with("Traceback (most recent call last):") {
-        if let Some(last_non_empty_line) = message
+    if message.starts_with("Traceback (most recent call last):")
+        && let Some(last_non_empty_line) = message
             .lines()
             .rev()
             .find(|line| !line.trim().is_empty())
@@ -7697,7 +7685,6 @@ fn classify_runtime_error(message: &str) -> &'static str {
                 }
             }
         }
-    }
     for exception in DIRECT_PREFIX_EXCEPTIONS {
         if runtime_error_line_matches_exception(message, exception) {
             if exception == "OSError" && should_refine_os_error(message) {
@@ -8026,11 +8013,10 @@ fn runtime_error_matches_exception(message: &str, expected: &str) -> bool {
     if classified == expected || exception_type_is_subclass(classified, expected) {
         return true;
     }
-    if let Some(exception_name) = extract_runtime_error_exception_name(message) {
-        if exception_name == expected || exception_type_is_subclass(&exception_name, expected) {
+    if let Some(exception_name) = extract_runtime_error_exception_name(message)
+        && (exception_name == expected || exception_type_is_subclass(&exception_name, expected)) {
             return true;
         }
-    }
     let Some(last_non_empty_line) = message
         .lines()
         .rev()

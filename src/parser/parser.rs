@@ -245,11 +245,9 @@ impl Parser {
         }
         if self.match_soft_keyword(pos, Keyword::Type, "type")
             && matches!(self.token_at(pos + 1).kind, TokenKind::Name)
-        {
-            if let Ok(parsed) = self.parse_type_stmt(pos) {
+            && let Ok(parsed) = self.parse_type_stmt(pos) {
                 return Ok(parsed);
             }
-        }
         if let Some((target_expr, next_pos)) = self.parse_assignment_target_list(pos) {
             let kind = self.token_at(next_pos).kind.clone();
             if kind == TokenKind::Colon {
@@ -594,8 +592,7 @@ impl Parser {
                     let next_token = self.token_at(pos + 2);
                     if matches!(next_kind, TokenKind::Plus | TokenKind::Minus)
                         && next_token.kind == TokenKind::Number
-                    {
-                        if let Some(imag) = self.parse_imag_literal(&next_token.lexeme, pos + 2)? {
+                        && let Some(imag) = self.parse_imag_literal(&next_token.lexeme, pos + 2)? {
                             let real = match value {
                                 Constant::Int(value) => value as f64,
                                 Constant::Float(value) => value.value(),
@@ -628,7 +625,6 @@ impl Parser {
                             );
                             return Ok((Pattern::Value(expr), pos + 3));
                         }
-                    }
                     Ok((Pattern::Constant(value), pos + 1))
                 }
             }
@@ -675,8 +671,7 @@ impl Parser {
                     let next_token = self.token_at(pos + 3);
                     if matches!(next_kind, TokenKind::Plus | TokenKind::Minus)
                         && next_token.kind == TokenKind::Number
-                    {
-                        if let Some(imag) = self.parse_imag_literal(&next_token.lexeme, pos + 3)? {
+                        && let Some(imag) = self.parse_imag_literal(&next_token.lexeme, pos + 3)? {
                             let real = match value {
                                 Constant::Int(value) => -(value as f64),
                                 Constant::Float(value) => -value.value(),
@@ -709,7 +704,6 @@ impl Parser {
                             );
                             return Ok((Pattern::Value(expr), pos + 4));
                         }
-                    }
                     let negated = match value {
                         Constant::Int(value) => Constant::Int(-value),
                         Constant::Float(value) => Constant::Float(FloatLiteral(-value.value())),
@@ -2329,20 +2323,18 @@ impl Parser {
                 Some((target, pos))
             }
             TokenKind::LParen => {
-                if let Ok((expr, next)) = self.parse_expr_at(pos) {
-                    if let Some(target) = self.expr_to_assign_target(expr) {
+                if let Ok((expr, next)) = self.parse_expr_at(pos)
+                    && let Some(target) = self.expr_to_assign_target(expr) {
                         return Some((target, next));
                     }
-                }
                 let (targets, next) = self.parse_target_sequence(pos + 1, TokenKind::RParen)?;
                 Some((AssignTarget::Tuple(targets), next))
             }
             TokenKind::LBracket => {
-                if let Ok((expr, next)) = self.parse_expr_at(pos) {
-                    if let Some(target) = self.expr_to_assign_target(expr) {
+                if let Ok((expr, next)) = self.parse_expr_at(pos)
+                    && let Some(target) = self.expr_to_assign_target(expr) {
                         return Some((target, next));
                     }
-                }
                 let (targets, next) = self.parse_target_sequence(pos + 1, TokenKind::RBracket)?;
                 Some((AssignTarget::List(targets), next))
             }
@@ -2882,7 +2874,7 @@ impl Parser {
         if let Ok(expr) = direct {
             return Ok(self.wrap_fstring_value(span, expr, None));
         }
-        let fallback = direct.err().expect("checked above");
+        let fallback = direct.expect_err("checked above");
         let Some(parts) = self.split_fstring_field_parts(trimmed) else {
             return Err(fallback);
         };
@@ -3044,8 +3036,8 @@ impl Parser {
             return Ok((self.make_expr(start, ExprKind::List(Vec::new())), pos + 1));
         }
         let (first, mut pos) = self.parse_sequence_element(pos)?;
-        if let SequenceElement::Expr(ref first_expr) = first {
-            if self.is_comprehension_start(pos) {
+        if let SequenceElement::Expr(ref first_expr) = first
+            && self.is_comprehension_start(pos) {
                 let (clauses, next) = self.parse_comp_clauses(pos)?;
                 let pos = self.expect_kind(next, TokenKind::RBracket)?;
                 return Ok((
@@ -3059,7 +3051,6 @@ impl Parser {
                     pos,
                 ));
             }
-        }
 
         let mut elements = vec![first];
         let mut has_star = matches!(elements.first(), Some(SequenceElement::Star(_)));
@@ -3298,8 +3289,8 @@ impl Parser {
         }
 
         let (first, mut pos) = self.parse_sequence_element(pos)?;
-        if let SequenceElement::Expr(first_expr) = &first {
-            if self.is_comprehension_start(pos) {
+        if let SequenceElement::Expr(first_expr) = &first
+            && self.is_comprehension_start(pos) {
                 let (clauses, next) = self.parse_comp_clauses(pos)?;
                 let pos = self.expect_kind(next, TokenKind::RParen)?;
                 return Ok((
@@ -3313,7 +3304,6 @@ impl Parser {
                     pos,
                 ));
             }
-        }
         if !matches!(self.token_at(pos).kind, TokenKind::Comma) {
             let pos = self.expect_kind(pos, TokenKind::RParen)?;
             return match first {

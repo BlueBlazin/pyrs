@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{Vm, RuntimeError, Value, ObjRef, Object, HashMap, bytes_like_from_value};
 use std::os::raw::{c_char, c_int, c_uint};
 
 const BZ_OK: c_int = 0;

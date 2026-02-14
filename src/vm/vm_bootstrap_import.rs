@@ -1,4 +1,4 @@
-use super::*;
+use super::{Vm, RuntimeError, Object, Value, BuiltinFunction, ClassObject, InstanceObject, ModuleObject, BUILTIN_MODULE_LOADER, parse_uuid_like_string, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, PathBuf, HashMap, LOCAL_SHIM_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_PATHLIB_MODULES, ObjRef, NAMESPACE_LOADER, SOURCELESS_FILE_LOADER, SOURCE_FILE_LOADER, ModuleSourceInfo, parser, compiler, Rc, Frame, cpython, matches_finder_kind, DEFAULT_META_PATH_FINDER, dict_get_value, dict_set_value, DEFAULT_PATH_HOOK, cached_module_path, SUBMODULE_TRACE_COUNT, AtomicOrdering, HashSet, dict_remove_value};
 
 impl Vm {
     pub(super) fn set_module_class_bases(
@@ -487,13 +487,12 @@ impl Vm {
         if let (Some(os_module), Some(os_path_module)) = (
             self.modules.get("os").cloned(),
             self.modules.get("os.path").cloned(),
-        ) {
-            if let Object::Module(module_data) = &mut *os_module.kind_mut() {
+        )
+            && let Object::Module(module_data) = &mut *os_module.kind_mut() {
                 module_data
                     .globals
                     .insert("path".to_string(), Value::Module(os_path_module));
             }
-        }
         self.install_builtin_module(
             "json",
             &[
@@ -1228,8 +1227,8 @@ impl Vm {
             "IncrementalEncoder".to_string(),
             Vec::new(),
         ));
-        if let Value::Class(class_obj) = &incremental_decoder_class {
-            if let Object::Class(class_data) = &mut *class_obj.kind_mut() {
+        if let Value::Class(class_obj) = &incremental_decoder_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut() {
                 class_data
                     .attrs
                     .insert("__module__".to_string(), Value::Str("codecs".to_string()));
@@ -1254,9 +1253,8 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::CodecsIncrementalDecoderSetState),
                 );
             }
-        }
-        if let Value::Class(class_obj) = &incremental_encoder_class {
-            if let Object::Class(class_data) = &mut *class_obj.kind_mut() {
+        if let Value::Class(class_obj) = &incremental_encoder_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut() {
                 class_data
                     .attrs
                     .insert("__module__".to_string(), Value::Str("codecs".to_string()));
@@ -1281,7 +1279,6 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::CodecsIncrementalEncoderSetState),
                 );
             }
-        }
         let stream_reader_class = self
             .heap
             .alloc_class(ClassObject::new("StreamReader".to_string(), Vec::new()));
@@ -1694,8 +1691,8 @@ impl Vm {
         let sqlite_row_class = self
             .heap
             .alloc_class(ClassObject::new("Row".to_string(), Vec::new()));
-        if let Value::Class(class) = &sqlite_row_class {
-            if let Object::Class(class_data) = &mut *class.kind_mut() {
+        if let Value::Class(class) = &sqlite_row_class
+            && let Object::Class(class_data) = &mut *class.kind_mut() {
                 class_data
                     .attrs
                     .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
@@ -1728,17 +1725,15 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::SqliteRowHash),
                 );
             }
-        }
         let sqlite_prepare_protocol_class = self
             .heap
             .alloc_class(ClassObject::new("PrepareProtocol".to_string(), Vec::new()));
-        if let Value::Class(class) = &sqlite_prepare_protocol_class {
-            if let Object::Class(class_data) = &mut *class.kind_mut() {
+        if let Value::Class(class) = &sqlite_prepare_protocol_class
+            && let Object::Class(class_data) = &mut *class.kind_mut() {
                 class_data
                     .attrs
                     .insert("__module__".to_string(), Value::Str("_sqlite3".to_string()));
             }
-        }
         self.install_builtin_module(
             "_sqlite3",
             &[
@@ -2721,8 +2716,8 @@ impl Vm {
         let simple_namespace_class = self
             .heap
             .alloc_class(ClassObject::new("SimpleNamespace".to_string(), Vec::new()));
-        if let Value::Class(class_obj) = &simple_namespace_class {
-            if let Object::Class(class_data) = &mut *class_obj.kind_mut() {
+        if let Value::Class(class_obj) = &simple_namespace_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut() {
                 class_data.attrs.insert(
                     "__repr__".to_string(),
                     Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
@@ -2732,7 +2727,6 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
                 );
             }
-        }
         self.install_builtin_module(
             "types",
             &[
@@ -3478,8 +3472,8 @@ impl Vm {
                     let textio = self
                         .heap
                         .alloc_class(ClassObject::new("TextIOWrapper".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &textio {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &textio
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             class_data.attrs.insert(
                                 "__init__".to_string(),
                                 Value::Builtin(BuiltinFunction::IoTextIOWrapperInit),
@@ -3561,52 +3555,48 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoFileSeekable),
                             );
                         }
-                    }
                     ("TextIOWrapper", textio)
                 },
                 {
                     let fileio = self
                         .heap
                         .alloc_class(ClassObject::new("FileIO".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &fileio {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &fileio
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileInit),
                             );
                         }
-                    }
                     ("FileIO", fileio)
                 },
                 {
                     let stringio = self
                         .heap
                         .alloc_class(ClassObject::new("StringIO".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &stringio {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &stringio
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_stringio_methods(class_data);
                         }
-                    }
                     ("StringIO", stringio)
                 },
                 {
                     let bytesio = self
                         .heap
                         .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &bytesio {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &bytesio
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_bytesio_methods(class_data);
                         }
-                    }
                     ("BytesIO", bytesio)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
@@ -3689,15 +3679,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedSeekable),
                             );
                         }
-                    }
                     ("BufferedReader", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
@@ -3780,15 +3769,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedSeekable),
                             );
                         }
-                    }
                     ("BufferedWriter", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
@@ -3871,15 +3859,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedSeekable),
                             );
                         }
-                    }
                     ("BufferedRandom", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedRWPair".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
@@ -3954,26 +3941,24 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedRWPairPeek),
                             );
                         }
-                    }
                     ("BufferedRWPair", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                         }
-                    }
                     ("IOBase", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("RawIOBase".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "read".to_string(),
@@ -3984,15 +3969,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoRawReadAll),
                             );
                         }
-                    }
                     ("RawIOBase", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedIOBase".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "readinto".to_string(),
@@ -4027,18 +4011,16 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedSeekable),
                             );
                         }
-                    }
                     ("BufferedIOBase", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("TextIOBase".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                         }
-                    }
                     ("TextIOBase", class)
                 },
                 (
@@ -4107,8 +4089,8 @@ impl Vm {
                     let textio = self
                         .heap
                         .alloc_class(ClassObject::new("TextIOWrapper".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &textio {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &textio
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             class_data.attrs.insert(
                                 "__init__".to_string(),
                                 Value::Builtin(BuiltinFunction::IoTextIOWrapperInit),
@@ -4190,41 +4172,38 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoFileSeekable),
                             );
                         }
-                    }
                     ("TextIOWrapper", textio)
                 },
                 {
                     let fileio = self
                         .heap
                         .alloc_class(ClassObject::new("FileIO".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &fileio {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &fileio
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_io_file_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
                                 Value::Builtin(BuiltinFunction::IoFileInit),
                             );
                         }
-                    }
                     ("FileIO", fileio)
                 },
                 {
                     let bytesio = self
                         .heap
                         .alloc_class(ClassObject::new("BytesIO".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &bytesio {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &bytesio
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_bytesio_methods(class_data);
                         }
-                    }
                     ("BytesIO", bytesio)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedReader".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
@@ -4299,15 +4278,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedSeekable),
                             );
                         }
-                    }
                     ("BufferedReader", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedWriter".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
@@ -4382,15 +4360,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedSeekable),
                             );
                         }
-                    }
                     ("BufferedWriter", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedRandom".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
@@ -4461,15 +4438,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedSeekable),
                             );
                         }
-                    }
                     ("BufferedRandom", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedRWPair".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "__init__".to_string(),
@@ -4544,37 +4520,34 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedRWPairPeek),
                             );
                         }
-                    }
                     ("BufferedRWPair", class)
                 },
                 ("StringIO", {
                     let stringio = self
                         .heap
                         .alloc_class(ClassObject::new("StringIO".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &stringio {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &stringio
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_stringio_methods(class_data);
                         }
-                    }
                     stringio
                 }),
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("IOBase".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                         }
-                    }
                     ("IOBase", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("RawIOBase".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "read".to_string(),
@@ -4585,15 +4558,14 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoRawReadAll),
                             );
                         }
-                    }
                     ("RawIOBase", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("BufferedIOBase".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                             class_data.attrs.insert(
                                 "readinto".to_string(),
@@ -4616,18 +4588,16 @@ impl Vm {
                                 Value::Builtin(BuiltinFunction::IoBufferedSeekable),
                             );
                         }
-                    }
                     ("BufferedIOBase", class)
                 },
                 {
                     let class = self
                         .heap
                         .alloc_class(ClassObject::new("TextIOBase".to_string(), Vec::new()));
-                    if let Value::Class(class_ref) = &class {
-                        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                             Self::install_iobase_methods(class_data);
                         }
-                    }
                     ("TextIOBase", class)
                 },
                 (
@@ -5365,8 +5335,8 @@ impl Vm {
             _ => None,
         };
         let mut preserved_entries: HashMap<String, Value> = HashMap::new();
-        if let Some(Value::Dict(existing)) = existing_modules {
-            if let Object::Dict(existing_entries) = &*existing.kind() {
+        if let Some(Value::Dict(existing)) = existing_modules
+            && let Object::Dict(existing_entries) = &*existing.kind() {
                 for (key, value) in existing_entries.iter() {
                     let Value::Str(name) = key else {
                         continue;
@@ -5384,7 +5354,6 @@ impl Vm {
                     }
                 }
             }
-        }
         let mut entries = Vec::with_capacity(self.modules.len() + preserved_entries.len());
         for (name, module) in self.modules.iter() {
             if preserved_entries.contains_key(name) {
@@ -5546,13 +5515,12 @@ impl Vm {
             return Ok(module);
         }
 
-        if let Some((parent, _)) = name.rsplit_once('.') {
-            if !self.modules.contains_key(parent) {
+        if let Some((parent, _)) = name.rsplit_once('.')
+            && !self.modules.contains_key(parent) {
                 let parent_caller_depth = self.frames.len();
                 let _ = self.load_module(parent)?;
                 self.run_pending_import_frames(parent_caller_depth)?;
             }
-        }
 
         let source_info = self
             .find_module_source(name)
@@ -5684,13 +5652,11 @@ impl Vm {
     }
 
     pub(super) fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
-        if let Some((parent_name, child_name)) = name.rsplit_once('.') {
-            if let Some(parent_paths) = self.package_search_paths(parent_name) {
-                if let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths) {
+        if let Some((parent_name, child_name)) = name.rsplit_once('.')
+            && let Some(parent_paths) = self.package_search_paths(parent_name)
+                && let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths) {
                     return Some(source);
                 }
-            }
-        }
         let roots = self.module_paths.clone();
         if let Some(source) = self.find_module_source_in_roots(name, &roots) {
             return Some(source);
@@ -6002,12 +5968,11 @@ impl Vm {
         } else if let Some(module) = self.modules.get(&full_name).cloned() {
             return Some(module);
         }
-        if self.find_module_file(&full_name).is_some() {
-            if let Ok(module) = self.import_module_object(&full_name) {
+        if self.find_module_file(&full_name).is_some()
+            && let Ok(module) = self.import_module_object(&full_name) {
                 self.upsert_module_global(parent, attr_name, Value::Module(module.clone()));
                 return Some(module);
             }
-        }
         None
     }
 
@@ -6268,15 +6233,14 @@ impl Vm {
                     let _ = dict_remove_value(&modules_dict, &key);
                 }
             } else {
-                if !present_in_sys_modules {
-                    if let Some(modules_dict) = self.sys_dict_obj("modules") {
-                        let _ = dict_set_value(
+                if !present_in_sys_modules
+                    && let Some(modules_dict) = self.sys_dict_obj("modules") {
+                        dict_set_value(
                             &modules_dict,
                             Value::Str(name.to_string()),
                             Value::Module(module.clone()),
                         );
                     }
-                }
                 return self.return_imported_module(module, caller_depth);
             }
         }
@@ -6287,7 +6251,7 @@ impl Vm {
                     let _ = self.import_module_object(parent)?;
                     if let Some(module) = self.modules.get(name).cloned() {
                         if let Some(modules_dict) = self.sys_dict_obj("modules") {
-                            let _ = dict_set_value(
+                            dict_set_value(
                                 &modules_dict,
                                 Value::Str(name.to_string()),
                                 Value::Module(module.clone()),
@@ -6375,13 +6339,11 @@ impl Vm {
             if let Some(modules_dict) = self.sys_dict_obj("modules") {
                 let _ = dict_remove_value(&modules_dict, &Value::Str(name.clone()));
             }
-            if let Some((parent, child)) = name.rsplit_once('.') {
-                if let Some(parent_module) = self.modules.get(parent) {
-                    if let Object::Module(parent_data) = &mut *parent_module.kind_mut() {
+            if let Some((parent, child)) = name.rsplit_once('.')
+                && let Some(parent_module) = self.modules.get(parent)
+                    && let Object::Module(parent_data) = &mut *parent_module.kind_mut() {
                         parent_data.globals.remove(child);
                     }
-                }
-            }
         }
     }
 

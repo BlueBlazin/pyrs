@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{Vm, RuntimeError, Value, HashMap, bytes_like_from_value, ObjRef, Object};
 use std::ffi::CStr;
 use std::mem;
 use std::os::raw::{c_char, c_int, c_uint, c_ulong, c_void};
@@ -522,13 +522,12 @@ impl Vm {
             Self::zlib_parse_optional_int(strategy, Z_DEFAULT_STRATEGY as i64, "strategy")?
                 as c_int;
 
-        if let Some(zdict_value) = zdict {
-            if !matches!(zdict_value, Value::None) {
+        if let Some(zdict_value) = zdict
+            && !matches!(zdict_value, Value::None) {
                 return Err(RuntimeError::new(
                     "NotImplementedError: compressobj(zdict=...) is not implemented",
                 ));
             }
-        }
 
         let class = self.zlib_compress_class()?;
         let instance = self.alloc_instance_for_class(&class);
@@ -574,13 +573,12 @@ impl Vm {
                 "TypeError: decompressobj() got an unexpected keyword argument '{key}'"
             )));
         }
-        if let Some(zdict_value) = zdict {
-            if !matches!(zdict_value, Value::None) {
+        if let Some(zdict_value) = zdict
+            && !matches!(zdict_value, Value::None) {
                 return Err(RuntimeError::new(
                     "NotImplementedError: decompressobj(zdict=...) is not implemented",
                 ));
             }
-        }
 
         let wbits = Self::zlib_parse_optional_int(wbits, Z_DEFAULT_WINDOW_BITS as i64, "wbits")?
             as c_int;

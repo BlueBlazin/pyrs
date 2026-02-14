@@ -623,16 +623,14 @@ fn collect_locals_namedexpr_params(
             collect_locals_namedexpr_expr(annotation, locals);
         }
     }
-    if let Some(param) = vararg {
-        if let Some(annotation) = &param.annotation {
+    if let Some(param) = vararg
+        && let Some(annotation) = &param.annotation {
             collect_locals_namedexpr_expr(annotation, locals);
         }
-    }
-    if let Some(param) = kwarg {
-        if let Some(annotation) = &param.annotation {
+    if let Some(param) = kwarg
+        && let Some(annotation) = &param.annotation {
             collect_locals_namedexpr_expr(annotation, locals);
         }
-    }
 }
 
 fn collect_locals_namedexpr_target(target: &AssignTarget, locals: &mut HashSet<String>) {
@@ -930,7 +928,7 @@ fn collect_uses_stmt(
                 body,
                 enclosing,
             )?;
-            child_free.extend(scope.freevars.into_iter());
+            child_free.extend(scope.freevars);
         }
         StmtKind::ClassDef {
             bases,
@@ -950,7 +948,7 @@ fn collect_uses_stmt(
             }
             let scope =
                 analyze_scope(ScopeType::Class, &[], &[], &[], None, None, body, enclosing)?;
-            child_free.extend(scope.freevars.into_iter());
+            child_free.extend(scope.freevars);
         }
         StmtKind::Decorated { decorators, stmt } => {
             for decorator in decorators {
@@ -1102,7 +1100,7 @@ fn collect_uses_expr(
                 body,
                 enclosing,
             )?;
-            child_free.extend(scope.freevars.into_iter());
+            child_free.extend(scope.freevars);
         }
         ExprKind::Yield { value } => {
             if let Some(expr) = value.as_ref() {
@@ -1127,7 +1125,7 @@ fn collect_uses_expr(
                 &body,
                 enclosing,
             )?;
-            child_free.extend(scope.freevars.into_iter());
+            child_free.extend(scope.freevars);
         }
         ExprKind::GeneratorExp { elt, clauses } => {
             let body = build_genexpr_body(elt, clauses);
@@ -1141,7 +1139,7 @@ fn collect_uses_expr(
                 &body,
                 enclosing,
             )?;
-            child_free.extend(scope.freevars.into_iter());
+            child_free.extend(scope.freevars);
         }
         ExprKind::DictComp {
             key,
@@ -1159,7 +1157,7 @@ fn collect_uses_expr(
                 &body,
                 enclosing,
             )?;
-            child_free.extend(scope.freevars.into_iter());
+            child_free.extend(scope.freevars);
         }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(expr) = lower.as_ref() {
@@ -1535,8 +1533,8 @@ impl Compiler {
 
     fn validate_future_imports(&self, body: &[Stmt]) -> Result<bool, CompileError> {
         let mut idx = 0usize;
-        if let Some(first) = body.first() {
-            if matches!(
+        if let Some(first) = body.first()
+            && matches!(
                 first.node,
                 StmtKind::Expr(Expr {
                     node: ExprKind::Constant(Constant::Str(_)),
@@ -1545,7 +1543,6 @@ impl Compiler {
             ) {
                 idx = 1;
             }
-        }
 
         let mut seen_non_future = false;
         let mut future_annotations = false;
@@ -1783,8 +1780,8 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::Binary { left, op, right } => {
-                if matches!(op, crate::ast::BinaryOp::Sub | crate::ast::BinaryOp::Lt) {
-                    if let ExprKind::Constant(constant) = &right.node {
+                if matches!(op, crate::ast::BinaryOp::Sub | crate::ast::BinaryOp::Lt)
+                    && let ExprKind::Constant(constant) = &right.node {
                         compiler.compile_expr(left)?;
                         let idx = compiler.code.add_const(constant_to_value(constant));
                         let opcode = match op {
@@ -1795,7 +1792,6 @@ impl Compiler {
                         compiler.emit(opcode, Some(idx));
                         return Ok(());
                     }
-                }
                 compiler.compile_expr(left)?;
                 compiler.compile_expr(right)?;
                 let opcode = match op {
@@ -2766,11 +2762,10 @@ impl Compiler {
     fn validate_match_cases(&self, cases: &[MatchCase]) -> Result<(), CompileError> {
         for (idx, case) in cases.iter().enumerate() {
             Self::validate_pattern_bindings(&case.pattern)?;
-            if idx + 1 < cases.len() && case.guard.is_none() {
-                if let Some(kind) = Self::irrefutable_pattern_kind(&case.pattern) {
+            if idx + 1 < cases.len() && case.guard.is_none()
+                && let Some(kind) = Self::irrefutable_pattern_kind(&case.pattern) {
                     return Err(CompileError::new(kind.unreachable_message()));
                 }
-            }
         }
         Ok(())
     }
@@ -2829,11 +2824,10 @@ impl Compiler {
             Pattern::Or(options) => {
                 let mut expected_bindings: Option<HashSet<String>> = None;
                 for (idx, option) in options.iter().enumerate() {
-                    if idx + 1 < options.len() {
-                        if let Some(kind) = Self::irrefutable_pattern_kind(option) {
+                    if idx + 1 < options.len()
+                        && let Some(kind) = Self::irrefutable_pattern_kind(option) {
                             return Err(CompileError::new(kind.unreachable_message()));
                         }
-                    }
 
                     let option_bindings = Self::validate_pattern_bindings(option)?;
                     if let Some(expected) = &expected_bindings {

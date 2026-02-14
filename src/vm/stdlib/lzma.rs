@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{Vm, RuntimeError, Value, ObjRef, Object, HashMap, bytes_like_from_value};
 use std::os::raw::{c_int, c_uint, c_void};
 
 const LZMA_OK: c_uint = 0;
@@ -234,13 +234,12 @@ impl Vm {
                 "NotImplementedError: only FORMAT_XZ compression is supported",
             ));
         }
-        if let Some(filters) = filters_arg {
-            if !matches!(filters, Value::None) {
+        if let Some(filters) = filters_arg
+            && !matches!(filters, Value::None) {
                 return Err(RuntimeError::new(
                     "NotImplementedError: LZMACompressor(filters=...) is not implemented",
                 ));
             }
-        }
 
         let mut check = Self::lzma_parse_optional_int(check_arg, -1, "check")?;
         if check == -1 {
@@ -393,13 +392,12 @@ impl Vm {
                 "NotImplementedError: FORMAT_RAW decompression is not supported",
             ));
         }
-        if let Some(filters) = filters_arg {
-            if !matches!(filters, Value::None) {
+        if let Some(filters) = filters_arg
+            && !matches!(filters, Value::None) {
                 return Err(RuntimeError::new(
                     "NotImplementedError: LZMADecompressor(filters=...) is not implemented",
                 ));
             }
-        }
 
         self.lzma_decompressors.insert(
             receiver.id(),
