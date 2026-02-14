@@ -2461,6 +2461,130 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_can_use_contains_and_dict_view_apis() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping contains/dict-view extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping contains/dict-view extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_contains_dict_views");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_contains_dict_views.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    PyrsObjectHandle dict_obj = api->object_new_dict(module_ctx);
+    PyrsObjectHandle key_a = api->object_new_string(module_ctx, "a");
+    PyrsObjectHandle key_b = api->object_new_string(module_ctx, "b");
+    PyrsObjectHandle key_z = api->object_new_string(module_ctx, "z");
+    PyrsObjectHandle value_1 = api->object_new_int(module_ctx, 1);
+    PyrsObjectHandle value_2 = api->object_new_int(module_ctx, 2);
+    if (!dict_obj || !key_a || !key_b || !key_z || !value_1 || !value_2) {
+        return -2;
+    }
+    if (api->object_set_item(module_ctx, dict_obj, key_a, value_1) != 0) {
+        return -3;
+    }
+    if (api->object_set_item(module_ctx, dict_obj, key_b, value_2) != 0) {
+        return -4;
+    }
+    if (api->object_contains(module_ctx, dict_obj, key_a) != 1) {
+        return -5;
+    }
+    if (api->object_contains(module_ctx, dict_obj, key_z) != 0) {
+        return -6;
+    }
+
+    PyrsObjectHandle keys = 0;
+    if (api->object_dict_keys(module_ctx, dict_obj, &keys) != 0 || !keys) {
+        return -7;
+    }
+    uintptr_t keys_len = 0;
+    if (api->object_len(module_ctx, keys, &keys_len) != 0 || keys_len != 2) {
+        return -8;
+    }
+    if (api->object_contains(module_ctx, keys, key_a) != 1) {
+        return -9;
+    }
+
+    PyrsObjectHandle items = 0;
+    if (api->object_dict_items(module_ctx, dict_obj, &items) != 0 || !items) {
+        return -10;
+    }
+    uintptr_t items_len = 0;
+    if (api->object_len(module_ctx, items, &items_len) != 0 || items_len != 2) {
+        return -11;
+    }
+    PyrsObjectHandle pair_values[2];
+    pair_values[0] = key_a;
+    pair_values[1] = value_1;
+    PyrsObjectHandle pair_a = api->object_new_tuple(module_ctx, 2, pair_values);
+    if (!pair_a) {
+        return -12;
+    }
+    if (api->object_contains(module_ctx, items, pair_a) != 1) {
+        return -13;
+    }
+
+    PyrsObjectHandle bogus = 0;
+    if (api->object_dict_keys(module_ctx, key_a, &bogus) == 0 ||
+        api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
+        return -14;
+    }
+
+    if (api->module_set_bool(module_ctx, "CONTAINS_DICT_VIEWS_OK", 1) != 0) {
+        return -15;
+    }
+    if (api->module_set_int(module_ctx, "DICT_KEYS_LEN", (int64_t)keys_len) != 0) {
+        return -16;
+    }
+    if (api->module_set_int(module_ctx, "DICT_ITEMS_LEN", (int64_t)items_len) != 0) {
+        return -17;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_contains_dict_views");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_contains_dict_views.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_contains_dict_views\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_contains_dict_views\nassert native_contains_dict_views.CONTAINS_DICT_VIEWS_OK is True\nassert native_contains_dict_views.DICT_KEYS_LEN == 2\nassert native_contains_dict_views.DICT_ITEMS_LEN == 2",
+    )
+    .expect("contains/dict-view extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_query_capabilities() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping capability-query extension smoke (pyrs binary not found)");
@@ -2495,6 +2619,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_object_get_item = api->api_has_capability(module_ctx, "object_get_item");
     int has_object_set_item = api->api_has_capability(module_ctx, "object_set_item");
     int has_object_del_item = api->api_has_capability(module_ctx, "object_del_item");
+    int has_object_contains = api->api_has_capability(module_ctx, "object_contains");
+    int has_object_dict_keys = api->api_has_capability(module_ctx, "object_dict_keys");
+    int has_object_dict_items = api->api_has_capability(module_ctx, "object_dict_items");
     int has_get_iter = api->api_has_capability(module_ctx, "object_get_iter");
     int has_iter_next = api->api_has_capability(module_ctx, "object_iter_next");
     int has_list_append = api->api_has_capability(module_ctx, "object_list_append");
@@ -2517,6 +2644,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
         has_module_set_attr != 1 || has_module_del_attr != 1 || has_module_has_attr != 1 ||
         has_object_len != 1 || has_object_get_item != 1 ||
         has_object_set_item != 1 || has_object_del_item != 1 ||
+        has_object_contains != 1 || has_object_dict_keys != 1 || has_object_dict_items != 1 ||
         has_get_iter != 1 || has_iter_next != 1 ||
         has_list_append != 1 || has_list_set_item != 1 ||
         has_dict_contains != 1 || has_dict_del_item != 1 ||
@@ -2561,6 +2689,15 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->module_set_bool(module_ctx, "HAS_OBJECT_DEL_ITEM", has_object_del_item) != 0) {
         return -31;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_OBJECT_CONTAINS", has_object_contains) != 0) {
+        return -32;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_OBJECT_DICT_KEYS", has_object_dict_keys) != 0) {
+        return -33;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_OBJECT_DICT_ITEMS", has_object_dict_items) != 0) {
+        return -34;
     }
     if (api->module_set_bool(module_ctx, "HAS_GET_ITER", has_get_iter) != 0) {
         return -23;
@@ -2636,7 +2773,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_MODULE_SET_ATTR is True\nassert native_capabilities.HAS_MODULE_DEL_ATTR is True\nassert native_capabilities.HAS_MODULE_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_LEN is True\nassert native_capabilities.HAS_OBJECT_GET_ITEM is True\nassert native_capabilities.HAS_OBJECT_SET_ITEM is True\nassert native_capabilities.HAS_OBJECT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ITER is True\nassert native_capabilities.HAS_ITER_NEXT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_CALL_NOARGS is True\nassert native_capabilities.HAS_CALL_ONEARG is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_ERROR_GET_MESSAGE is True\nassert native_capabilities.HAS_MISSING is False",
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_MODULE_SET_ATTR is True\nassert native_capabilities.HAS_MODULE_DEL_ATTR is True\nassert native_capabilities.HAS_MODULE_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_LEN is True\nassert native_capabilities.HAS_OBJECT_GET_ITEM is True\nassert native_capabilities.HAS_OBJECT_SET_ITEM is True\nassert native_capabilities.HAS_OBJECT_DEL_ITEM is True\nassert native_capabilities.HAS_OBJECT_CONTAINS is True\nassert native_capabilities.HAS_OBJECT_DICT_KEYS is True\nassert native_capabilities.HAS_OBJECT_DICT_ITEMS is True\nassert native_capabilities.HAS_GET_ITER is True\nassert native_capabilities.HAS_ITER_NEXT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_CALL_NOARGS is True\nassert native_capabilities.HAS_CALL_ONEARG is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_ERROR_GET_MESSAGE is True\nassert native_capabilities.HAS_MISSING is False",
     )
     .expect("capability-query extension import should succeed");
 

@@ -547,6 +547,80 @@ impl ModuleCapiContext {
         }
     }
 
+    fn object_contains(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+        needle_handle: PyrsObjectHandle,
+    ) -> Result<i32, String> {
+        if self.vm.is_null() {
+            return Err("object_contains missing VM context".to_string());
+        }
+        let container = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let needle = self
+            .object_value(needle_handle)
+            .ok_or_else(|| format!("invalid needle handle {}", needle_handle))?;
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let contains = vm
+            .compare_in_runtime(needle, container)
+            .map_err(|err| err.message)?;
+        Ok(if contains { 1 } else { 0 })
+    }
+
+    fn object_dict_keys(
+        &mut self,
+        dict_handle: PyrsObjectHandle,
+    ) -> Result<PyrsObjectHandle, String> {
+        if self.vm.is_null() {
+            return Err("object_dict_keys missing VM context".to_string());
+        }
+        let dict_obj = self.object_dict_obj(dict_handle)?;
+        let entries = match &*dict_obj.kind() {
+            Object::Dict(entries) => entries.to_vec(),
+            _ => {
+                return Err(format!(
+                    "object handle {} has invalid dict storage",
+                    dict_handle
+                ));
+            }
+        };
+        let mut keys = Vec::with_capacity(entries.len());
+        for (key, _) in entries {
+            keys.push(key);
+        }
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        Ok(self.alloc_object(vm.heap.alloc_list(keys)))
+    }
+
+    fn object_dict_items(
+        &mut self,
+        dict_handle: PyrsObjectHandle,
+    ) -> Result<PyrsObjectHandle, String> {
+        if self.vm.is_null() {
+            return Err("object_dict_items missing VM context".to_string());
+        }
+        let dict_obj = self.object_dict_obj(dict_handle)?;
+        let entries = match &*dict_obj.kind() {
+            Object::Dict(entries) => entries.to_vec(),
+            _ => {
+                return Err(format!(
+                    "object handle {} has invalid dict storage",
+                    dict_handle
+                ));
+            }
+        };
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let mut items = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            items.push(vm.heap.alloc_tuple(vec![key, value]));
+        }
+        Ok(self.alloc_object(vm.heap.alloc_list(items)))
+    }
+
     fn object_sequence_len(&self, handle: PyrsObjectHandle) -> Result<usize, String> {
         let Some(slot) = self.object_slot(handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -1033,6 +1107,9 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_get_item"
             | "object_set_item"
             | "object_del_item"
+            | "object_contains"
+            | "object_dict_keys"
+            | "object_dict_items"
             | "object_sequence_len"
             | "object_sequence_get_item"
             | "object_get_iter"
@@ -1808,6 +1885,77 @@ unsafe extern "C" fn capi_object_del_item(
     }
 }
 
+unsafe extern "C" fn capi_object_contains(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    needle_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_contains(object_handle, needle_handle) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_dict_keys(
+    module_ctx: *mut c_void,
+    dict_handle: PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_dict_keys received null output pointer");
+        return -1;
+    }
+    match context.object_dict_keys(dict_handle) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_dict_items(
+    module_ctx: *mut c_void,
+    dict_handle: PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_dict_items received null output pointer");
+        return -1;
+    }
+    match context.object_dict_items(dict_handle) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_sequence_len(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -2423,6 +2571,9 @@ impl Vm {
             module_has_attr: capi_module_has_attr,
             object_set_item: capi_object_set_item,
             object_del_item: capi_object_del_item,
+            object_contains: capi_object_contains,
+            object_dict_keys: capi_object_dict_keys,
+            object_dict_items: capi_object_dict_items,
         }
     }
 

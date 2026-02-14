@@ -538,6 +538,21 @@ pub struct PyrsApiV1 {
         object_handle: PyrsObjectHandle,
         key_handle: PyrsObjectHandle,
     ) -> i32,
+    pub object_contains: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        object_handle: PyrsObjectHandle,
+        needle_handle: PyrsObjectHandle,
+    ) -> i32,
+    pub object_dict_keys: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        dict_handle: PyrsObjectHandle,
+        out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
+    pub object_dict_items: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        dict_handle: PyrsObjectHandle,
+        out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
 }
 
 pub type PyrsCFunctionV1 = unsafe extern "C" fn(
