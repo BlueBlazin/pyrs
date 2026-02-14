@@ -1306,19 +1306,29 @@ impl Vm {
         None
     }
 
-    pub fn repl_symbol_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
+    pub fn repl_root_bindings(&self) -> Vec<(String, Value)> {
+        let mut bindings = Vec::new();
         if let Object::Module(module) = &*self.main_module.kind() {
-            names.extend(module.globals.keys().cloned());
+            bindings.extend(
+                module
+                    .globals
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
         }
         if let Some(builtins_obj) = self.modules.get("builtins")
             && let Object::Module(module) = &*builtins_obj.kind()
         {
-            names.extend(module.globals.keys().cloned());
+            bindings.extend(
+                module
+                    .globals
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
         }
-        names.sort();
-        names.dedup();
-        names
+        bindings.sort_by(|left, right| left.0.cmp(&right.0));
+        bindings.dedup_by(|left, right| left.0 == right.0);
+        bindings
     }
 
     pub fn run_shutdown_hooks(&mut self) -> Result<(), RuntimeError> {
