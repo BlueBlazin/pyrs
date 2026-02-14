@@ -8,7 +8,8 @@ use crate::extensions::{
     PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
     PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferViewV1, PyrsCFunctionKwV1, PyrsCFunctionV1,
     PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1, PyrsModuleStateFreeV1, PyrsObjectHandle,
-    load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
+    PyrsWritableBufferViewV1, load_dynamic_initializer, parse_extension_manifest,
+    path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -1171,6 +1172,38 @@ impl ModuleCapiContext {
         Ok(self.alloc_object(vm.heap.alloc_list(items)))
     }
 
+    fn writable_buffer_from_source(
+        source: &ObjRef,
+        start: usize,
+        length: Option<usize>,
+    ) -> Result<(*mut u8, usize), String> {
+        let mut source_kind = source.kind_mut();
+        match &mut *source_kind {
+            Object::ByteArray(values) => {
+                let (start, end) = memoryview_bounds(start, length, values.len());
+                Ok((
+                    values.as_mut_ptr().wrapping_add(start),
+                    end.saturating_sub(start),
+                ))
+            }
+            Object::Bytes(_) => Err("buffer is read-only".to_string()),
+            Object::MemoryView(view) => {
+                if view.released {
+                    return Err("memoryview is released".to_string());
+                }
+                let nested_source = view.source.clone();
+                let nested_start = view.start;
+                let nested_length = view.length;
+                drop(source_kind);
+                let (ptr, len) =
+                    Self::writable_buffer_from_source(&nested_source, nested_start, nested_length)?;
+                let (start, end) = memoryview_bounds(start, length, len);
+                Ok((ptr.wrapping_add(start), end.saturating_sub(start)))
+            }
+            _ => Err("memoryview source is not writable bytes-like".to_string()),
+        }
+    }
+
     fn object_get_buffer(
         &mut self,
         object_handle: PyrsObjectHandle,
@@ -1235,6 +1268,45 @@ impl ModuleCapiContext {
             len,
             readonly: if readonly { 1 } else { 0 },
         })
+    }
+
+    fn object_get_writable_buffer(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+    ) -> Result<PyrsWritableBufferViewV1, String> {
+        let value = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let (data, len) = match &value {
+            Value::ByteArray(obj) => Self::writable_buffer_from_source(obj, 0, None)?,
+            Value::MemoryView(obj) => {
+                let (source, start, length, released) = match &*obj.kind() {
+                    Object::MemoryView(view) => {
+                        (view.source.clone(), view.start, view.length, view.released)
+                    }
+                    _ => {
+                        return Err(format!(
+                            "object handle {} has invalid memoryview storage",
+                            object_handle
+                        ));
+                    }
+                };
+                if released {
+                    return Err("memoryview is released".to_string());
+                }
+                Self::writable_buffer_from_source(&source, start, length)?
+            }
+            Value::Bytes(_) => return Err("buffer is read-only".to_string()),
+            _ => {
+                return Err(format!(
+                    "object handle {} does not support writable buffer access",
+                    object_handle
+                ));
+            }
+        };
+        self.incref(object_handle)?;
+        *self.buffer_pins.entry(object_handle).or_insert(0) += 1;
+        Ok(PyrsWritableBufferViewV1 { data, len })
     }
 
     fn object_release_buffer(&mut self, object_handle: PyrsObjectHandle) -> Result<(), String> {
@@ -1747,6 +1819,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_dict_keys"
             | "object_dict_items"
             | "object_get_buffer"
+            | "object_get_writable_buffer"
             | "object_release_buffer"
             | "capsule_new"
             | "capsule_get_pointer"
@@ -2746,6 +2819,33 @@ unsafe extern "C" fn capi_object_get_buffer(
     }
 }
 
+unsafe extern "C" fn capi_object_get_writable_buffer(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    out_view: *mut PyrsWritableBufferViewV1,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_view.is_null() {
+        context.set_error("object_get_writable_buffer received null output pointer");
+        return -1;
+    }
+    match context.object_get_writable_buffer(object_handle) {
+        Ok(view) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_view = view;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_release_buffer(
     module_ctx: *mut c_void,
     object_handle: PyrsObjectHandle,
@@ -3615,6 +3715,7 @@ impl Vm {
             object_dict_keys: capi_object_dict_keys,
             object_dict_items: capi_object_dict_items,
             object_get_buffer: capi_object_get_buffer,
+            object_get_writable_buffer: capi_object_get_writable_buffer,
             object_release_buffer: capi_object_release_buffer,
             capsule_new: capi_capsule_new,
             capsule_get_pointer: capi_capsule_get_pointer,

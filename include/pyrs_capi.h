@@ -21,6 +21,7 @@ extern "C" {
 typedef uint64_t PyrsObjectHandle;
 typedef struct PyrsApiV1 PyrsApiV1;
 typedef struct PyrsBufferViewV1 PyrsBufferViewV1;
+typedef struct PyrsWritableBufferViewV1 PyrsWritableBufferViewV1;
 
 typedef int (*PyrsCFunctionV1)(
     const PyrsApiV1* api,
@@ -47,6 +48,11 @@ struct PyrsBufferViewV1 {
     const uint8_t* data;
     uintptr_t len;
     int readonly;
+};
+
+struct PyrsWritableBufferViewV1 {
+    uint8_t* data;
+    uintptr_t len;
 };
 
 struct PyrsApiV1 {
@@ -131,6 +137,7 @@ struct PyrsApiV1 {
     int (*object_dict_keys)(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle* out_handle);
     int (*object_dict_items)(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle* out_handle);
     int (*object_get_buffer)(void* module_ctx, PyrsObjectHandle object_handle, PyrsBufferViewV1* out_view);
+    int (*object_get_writable_buffer)(void* module_ctx, PyrsObjectHandle object_handle, PyrsWritableBufferViewV1* out_view);
     int (*object_release_buffer)(void* module_ctx, PyrsObjectHandle object_handle);
     PyrsObjectHandle (*capsule_new)(void* module_ctx, void* pointer, const char* name);
     void* (*capsule_get_pointer)(void* module_ctx, PyrsObjectHandle capsule_handle, const char* name);

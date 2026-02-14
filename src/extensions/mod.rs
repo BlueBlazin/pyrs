@@ -24,6 +24,12 @@ pub struct PyrsBufferViewV1 {
     pub readonly: i32,
 }
 
+#[repr(C)]
+pub struct PyrsWritableBufferViewV1 {
+    pub data: *mut u8,
+    pub len: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionEntrypoint {
     HelloExt,
@@ -583,6 +589,11 @@ pub struct PyrsApiV1 {
         module_ctx: *mut c_void,
         object_handle: PyrsObjectHandle,
         out_view: *mut PyrsBufferViewV1,
+    ) -> i32,
+    pub object_get_writable_buffer: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        object_handle: PyrsObjectHandle,
+        out_view: *mut PyrsWritableBufferViewV1,
     ) -> i32,
     pub object_release_buffer:
         unsafe extern "C" fn(module_ctx: *mut c_void, object_handle: PyrsObjectHandle) -> i32,
