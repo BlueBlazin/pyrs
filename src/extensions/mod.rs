@@ -43,6 +43,19 @@ pub struct PyrsBufferInfoV1 {
     pub contiguous: i32,
 }
 
+#[repr(C)]
+pub struct PyrsBufferInfoV2 {
+    pub data: *const u8,
+    pub len: usize,
+    pub readonly: i32,
+    pub itemsize: usize,
+    pub ndim: usize,
+    pub shape: *const isize,
+    pub strides: *const isize,
+    pub format: *const c_char,
+    pub contiguous: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionEntrypoint {
     HelloExt,
@@ -668,6 +681,11 @@ pub struct PyrsApiV1 {
         module_ctx: *mut c_void,
         object_handle: PyrsObjectHandle,
         out_info: *mut PyrsBufferInfoV1,
+    ) -> i32,
+    pub object_get_buffer_info_v2: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        object_handle: PyrsObjectHandle,
+        out_info: *mut PyrsBufferInfoV2,
     ) -> i32,
 }
 

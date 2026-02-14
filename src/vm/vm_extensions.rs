@@ -6,10 +6,10 @@ use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
     PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
-    PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferInfoV1, PyrsBufferViewV1, PyrsCFunctionKwV1,
-    PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1, PyrsModuleStateFreeV1,
-    PyrsObjectHandle, PyrsWritableBufferViewV1, load_dynamic_initializer, parse_extension_manifest,
-    path_is_shared_library,
+    PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferInfoV1, PyrsBufferInfoV2, PyrsBufferViewV1,
+    PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1,
+    PyrsModuleStateFreeV1, PyrsObjectHandle, PyrsWritableBufferViewV1, load_dynamic_initializer,
+    parse_extension_manifest, path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -43,6 +43,7 @@ struct ModuleCapiContext {
     capsules: HashMap<PyrsObjectHandle, CapiCapsuleSlot>,
     last_error: Option<String>,
     scratch_strings: Vec<CString>,
+    scratch_isize_arrays: Vec<Vec<isize>>,
     buffer_pins: HashMap<PyrsObjectHandle, usize>,
 }
 
@@ -92,6 +93,7 @@ impl ModuleCapiContext {
             capsules: HashMap::new(),
             last_error: None,
             scratch_strings: Vec::new(),
+            scratch_isize_arrays: Vec::new(),
             buffer_pins: HashMap::new(),
         }
     }
@@ -1496,6 +1498,26 @@ impl ModuleCapiContext {
         })
     }
 
+    fn object_get_buffer_info_v2(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+    ) -> Result<PyrsBufferInfoV2, String> {
+        let info_v1 = self.object_get_buffer_info(object_handle)?;
+        let shape_ptr = self.scratch_isize_ptr(&[info_v1.shape0])?;
+        let strides_ptr = self.scratch_isize_ptr(&[info_v1.stride0])?;
+        Ok(PyrsBufferInfoV2 {
+            data: info_v1.data,
+            len: info_v1.len,
+            readonly: info_v1.readonly,
+            itemsize: info_v1.itemsize,
+            ndim: info_v1.ndim,
+            shape: shape_ptr,
+            strides: strides_ptr,
+            format: info_v1.format,
+            contiguous: info_v1.contiguous,
+        })
+    }
+
     fn object_release_buffer(&mut self, object_handle: PyrsObjectHandle) -> Result<(), String> {
         let Some(pins) = self.buffer_pins.get_mut(&object_handle) else {
             return Err("buffer was not acquired for this handle".to_string());
@@ -1916,6 +1938,17 @@ impl ModuleCapiContext {
             .ok_or_else(|| "failed to materialize string pointer".to_string())
     }
 
+    fn scratch_isize_ptr(&mut self, values: &[isize]) -> Result<*const isize, String> {
+        if values.is_empty() {
+            return Ok(std::ptr::null());
+        }
+        self.scratch_isize_arrays.push(values.to_vec());
+        self.scratch_isize_arrays
+            .last()
+            .map(|value| value.as_ptr())
+            .ok_or_else(|| "failed to materialize isize array pointer".to_string())
+    }
+
     fn object_get_string_ptr(&mut self, handle: PyrsObjectHandle) -> Result<*const c_char, String> {
         let Some(slot) = self.object_slot(handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -2010,6 +2043,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_get_buffer"
             | "object_get_writable_buffer"
             | "object_get_buffer_info"
+            | "object_get_buffer_info_v2"
             | "object_release_buffer"
             | "capsule_new"
             | "capsule_get_pointer"
@@ -3063,6 +3097,33 @@ unsafe extern "C" fn capi_object_get_buffer_info(
     }
 }
 
+unsafe extern "C" fn capi_object_get_buffer_info_v2(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    out_info: *mut PyrsBufferInfoV2,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_info.is_null() {
+        context.set_error("object_get_buffer_info_v2 received null output pointer");
+        return -1;
+    }
+    match context.object_get_buffer_info_v2(object_handle) {
+        Ok(info) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_info = info;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_release_buffer(
     module_ctx: *mut c_void,
     object_handle: PyrsObjectHandle,
@@ -3947,6 +4008,7 @@ impl Vm {
             capsule_export: capi_capsule_export,
             capsule_import: capi_capsule_import,
             object_get_buffer_info: capi_object_get_buffer_info,
+            object_get_buffer_info_v2: capi_object_get_buffer_info_v2,
         }
     }
 

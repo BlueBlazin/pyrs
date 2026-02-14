@@ -2914,6 +2914,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
 
     PyrsBufferInfoV1 info;
+    PyrsBufferInfoV2 info2;
     if (api->object_get_buffer_info(module_ctx, bytearray_obj, &info) != 0) {
         return -3;
     }
@@ -2925,39 +2926,75 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
         return -5;
     }
+    if (api->object_get_buffer_info_v2(module_ctx, bytearray_obj, &info2) != 0) {
+        return -6;
+    }
+    if (!info2.data || info2.len != 4 || info2.readonly != 0 || info2.itemsize != 1 ||
+        info2.ndim != 1 || !info2.shape || !info2.strides ||
+        info2.shape[0] != 4 || info2.strides[0] != 1 || info2.contiguous != 1 ||
+        !info2.format || strcmp(info2.format, "B") != 0) {
+        return -7;
+    }
+    if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
+        return -8;
+    }
 
     PyrsObjectHandle bytes_obj = api->object_new_bytes(module_ctx, payload, 4);
     if (!bytes_obj) {
-        return -6;
+        return -9;
     }
     if (api->object_get_buffer_info(module_ctx, bytes_obj, &info) != 0) {
-        return -7;
+        return -10;
     }
     if (!info.data || info.len != 4 || info.readonly != 1 ||
         info.ndim != 1 || info.shape0 != 4 || info.stride0 != 1 || info.contiguous != 1) {
-        return -8;
+        return -11;
     }
     if (api->object_release_buffer(module_ctx, bytes_obj) != 0) {
-        return -9;
+        return -12;
+    }
+    if (api->object_get_buffer_info_v2(module_ctx, bytes_obj, &info2) != 0) {
+        return -13;
+    }
+    if (!info2.data || info2.len != 4 || info2.readonly != 1 || info2.itemsize != 1 ||
+        info2.ndim != 1 || !info2.shape || !info2.strides ||
+        info2.shape[0] != 4 || info2.strides[0] != 1 || info2.contiguous != 1 ||
+        !info2.format || strcmp(info2.format, "B") != 0) {
+        return -14;
+    }
+    if (api->object_release_buffer(module_ctx, bytes_obj) != 0) {
+        return -15;
     }
 
     PyrsObjectHandle view_obj = api->object_new_memoryview(module_ctx, bytearray_obj);
     if (!view_obj) {
-        return -10;
+        return -16;
     }
     if (api->object_get_buffer_info(module_ctx, view_obj, &info) != 0) {
-        return -11;
+        return -17;
     }
     if (!info.data || info.len != 4 || info.readonly != 0 ||
         info.ndim != 1 || info.shape0 != 4 || info.stride0 != 1 || info.contiguous != 1) {
-        return -12;
+        return -18;
     }
     if (api->object_release_buffer(module_ctx, view_obj) != 0) {
-        return -13;
+        return -19;
+    }
+    if (api->object_get_buffer_info_v2(module_ctx, view_obj, &info2) != 0) {
+        return -20;
+    }
+    if (!info2.data || info2.len != 4 || info2.readonly != 0 || info2.itemsize != 1 ||
+        info2.ndim != 1 || !info2.shape || !info2.strides ||
+        info2.shape[0] != 4 || info2.strides[0] != 1 || info2.contiguous != 1 ||
+        !info2.format || strcmp(info2.format, "B") != 0) {
+        return -21;
+    }
+    if (api->object_release_buffer(module_ctx, view_obj) != 0) {
+        return -22;
     }
 
     if (api->module_set_bool(module_ctx, "BUFFER_INFO_APIS_OK", 1) != 0) {
-        return -14;
+        return -23;
     }
     return 0;
 }
@@ -3051,6 +3088,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
 
     PyrsBufferInfoV1 info;
+    PyrsBufferInfoV2 info2;
     if (api->object_get_buffer_info(module_ctx, subview, &info) != 0) {
         return -9;
     }
@@ -3062,15 +3100,27 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_release_buffer(module_ctx, subview) != 0) {
         return -11;
     }
+    if (api->object_get_buffer_info_v2(module_ctx, subview, &info2) != 0) {
+        return -12;
+    }
+    if (!info2.data || info2.len != 2 || info2.readonly != 1 || info2.itemsize != 1 ||
+        info2.ndim != 1 || !info2.shape || !info2.strides ||
+        info2.shape[0] != 2 || info2.strides[0] != 1 || info2.contiguous != 0 ||
+        !info2.format || strcmp(info2.format, "B") != 0) {
+        return -13;
+    }
+    if (api->object_release_buffer(module_ctx, subview) != 0) {
+        return -14;
+    }
 
     PyrsWritableBufferViewV1 writable;
     if (api->object_get_writable_buffer(module_ctx, subview, &writable) == 0 ||
         api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
-        return -12;
+        return -15;
     }
 
     if (api->module_set_bool(module_ctx, "BUFFER_INFO_NONCONTIG_OK", 1) != 0) {
-        return -13;
+        return -16;
     }
     return 0;
 }
@@ -3153,6 +3203,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
 
     PyrsBufferInfoV1 info;
+    PyrsBufferInfoV2 info2;
     if (api->object_get_buffer_info(module_ctx, casted, &info) != 0) {
         return -7;
     }
@@ -3164,32 +3215,44 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_release_buffer(module_ctx, casted) != 0) {
         return -9;
     }
-
-    PyrsWritableBufferViewV1 writable;
-    if (api->object_get_writable_buffer(module_ctx, casted, &writable) != 0) {
+    if (api->object_get_buffer_info_v2(module_ctx, casted, &info2) != 0) {
         return -10;
     }
-    if (!writable.data || writable.len != 8) {
+    if (!info2.data || info2.len != 8 || info2.readonly != 0 || info2.itemsize != 4 ||
+        info2.ndim != 1 || !info2.shape || !info2.strides ||
+        info2.shape[0] != 2 || info2.strides[0] != 4 || info2.contiguous != 1 ||
+        !info2.format || strcmp(info2.format, "I") != 0) {
         return -11;
     }
-    writable.data[0] = 42;
     if (api->object_release_buffer(module_ctx, casted) != 0) {
         return -12;
     }
 
-    PyrsBufferViewV1 readonly;
-    if (api->object_get_buffer(module_ctx, bytearray_obj, &readonly) != 0) {
+    PyrsWritableBufferViewV1 writable;
+    if (api->object_get_writable_buffer(module_ctx, casted, &writable) != 0) {
         return -13;
     }
-    if (!readonly.data || readonly.len != 8 || readonly.data[0] != 42) {
+    if (!writable.data || writable.len != 8) {
         return -14;
     }
-    if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
+    writable.data[0] = 42;
+    if (api->object_release_buffer(module_ctx, casted) != 0) {
         return -15;
     }
 
-    if (api->module_set_bool(module_ctx, "BUFFER_INFO_CAST_ITEMSIZE_OK", 1) != 0) {
+    PyrsBufferViewV1 readonly;
+    if (api->object_get_buffer(module_ctx, bytearray_obj, &readonly) != 0) {
         return -16;
+    }
+    if (!readonly.data || readonly.len != 8 || readonly.data[0] != 42) {
+        return -17;
+    }
+    if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
+        return -18;
+    }
+
+    if (api->module_set_bool(module_ctx, "BUFFER_INFO_CAST_ITEMSIZE_OK", 1) != 0) {
+        return -19;
     }
     return 0;
 }
@@ -4100,6 +4163,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_object_get_buffer = api->api_has_capability(module_ctx, "object_get_buffer");
     int has_object_get_writable_buffer = api->api_has_capability(module_ctx, "object_get_writable_buffer");
     int has_object_get_buffer_info = api->api_has_capability(module_ctx, "object_get_buffer_info");
+    int has_object_get_buffer_info_v2 = api->api_has_capability(module_ctx, "object_get_buffer_info_v2");
     int has_object_release_buffer = api->api_has_capability(module_ctx, "object_release_buffer");
     int has_capsule_new = api->api_has_capability(module_ctx, "capsule_new");
     int has_capsule_get_pointer = api->api_has_capability(module_ctx, "capsule_get_pointer");
@@ -4137,7 +4201,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
         has_object_len != 1 || has_object_get_item != 1 ||
         has_object_set_item != 1 || has_object_del_item != 1 ||
         has_object_contains != 1 || has_object_dict_keys != 1 || has_object_dict_items != 1 ||
-        has_object_get_buffer != 1 || has_object_get_writable_buffer != 1 || has_object_get_buffer_info != 1 || has_object_release_buffer != 1 ||
+        has_object_get_buffer != 1 || has_object_get_writable_buffer != 1 ||
+        has_object_get_buffer_info != 1 || has_object_get_buffer_info_v2 != 1 ||
+        has_object_release_buffer != 1 ||
         has_capsule_new != 1 || has_capsule_get_pointer != 1 || has_capsule_set_pointer != 1 ||
         has_capsule_get_name != 1 ||
         has_capsule_set_context != 1 || has_capsule_get_context != 1 ||
@@ -4221,6 +4287,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->module_set_bool(module_ctx, "HAS_OBJECT_GET_BUFFER_INFO", has_object_get_buffer_info) != 0) {
         return -64;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_OBJECT_GET_BUFFER_INFO_V2", has_object_get_buffer_info_v2) != 0) {
+        return -65;
     }
     if (api->module_set_bool(module_ctx, "HAS_OBJECT_RELEASE_BUFFER", has_object_release_buffer) != 0) {
         return -36;
@@ -4335,7 +4404,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_OBJECT_NEW_BYTEARRAY is True\nassert native_capabilities.HAS_OBJECT_NEW_MEMORYVIEW is True\nassert native_capabilities.HAS_MODULE_SET_STATE is True\nassert native_capabilities.HAS_MODULE_GET_STATE is True\nassert native_capabilities.HAS_MODULE_SET_FINALIZE is True\nassert native_capabilities.HAS_MODULE_SET_ATTR is True\nassert native_capabilities.HAS_MODULE_DEL_ATTR is True\nassert native_capabilities.HAS_MODULE_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_LEN is True\nassert native_capabilities.HAS_OBJECT_GET_ITEM is True\nassert native_capabilities.HAS_OBJECT_SET_ITEM is True\nassert native_capabilities.HAS_OBJECT_DEL_ITEM is True\nassert native_capabilities.HAS_OBJECT_CONTAINS is True\nassert native_capabilities.HAS_OBJECT_DICT_KEYS is True\nassert native_capabilities.HAS_OBJECT_DICT_ITEMS is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER is True\nassert native_capabilities.HAS_OBJECT_GET_WRITABLE_BUFFER is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER_INFO is True\nassert native_capabilities.HAS_OBJECT_RELEASE_BUFFER is True\nassert native_capabilities.HAS_CAPSULE_NEW is True\nassert native_capabilities.HAS_CAPSULE_GET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_SET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_GET_NAME is True\nassert native_capabilities.HAS_CAPSULE_SET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_GET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_SET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_GET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_SET_NAME is True\nassert native_capabilities.HAS_CAPSULE_IS_VALID is True\nassert native_capabilities.HAS_CAPSULE_EXPORT is True\nassert native_capabilities.HAS_CAPSULE_IMPORT is True\nassert native_capabilities.HAS_GET_ITER is True\nassert native_capabilities.HAS_ITER_NEXT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_CALL_NOARGS is True\nassert native_capabilities.HAS_CALL_ONEARG is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_ERROR_GET_MESSAGE is True\nassert native_capabilities.HAS_MISSING is False",
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_OBJECT_NEW_BYTEARRAY is True\nassert native_capabilities.HAS_OBJECT_NEW_MEMORYVIEW is True\nassert native_capabilities.HAS_MODULE_SET_STATE is True\nassert native_capabilities.HAS_MODULE_GET_STATE is True\nassert native_capabilities.HAS_MODULE_SET_FINALIZE is True\nassert native_capabilities.HAS_MODULE_SET_ATTR is True\nassert native_capabilities.HAS_MODULE_DEL_ATTR is True\nassert native_capabilities.HAS_MODULE_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_LEN is True\nassert native_capabilities.HAS_OBJECT_GET_ITEM is True\nassert native_capabilities.HAS_OBJECT_SET_ITEM is True\nassert native_capabilities.HAS_OBJECT_DEL_ITEM is True\nassert native_capabilities.HAS_OBJECT_CONTAINS is True\nassert native_capabilities.HAS_OBJECT_DICT_KEYS is True\nassert native_capabilities.HAS_OBJECT_DICT_ITEMS is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER is True\nassert native_capabilities.HAS_OBJECT_GET_WRITABLE_BUFFER is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER_INFO is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER_INFO_V2 is True\nassert native_capabilities.HAS_OBJECT_RELEASE_BUFFER is True\nassert native_capabilities.HAS_CAPSULE_NEW is True\nassert native_capabilities.HAS_CAPSULE_GET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_SET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_GET_NAME is True\nassert native_capabilities.HAS_CAPSULE_SET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_GET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_SET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_GET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_SET_NAME is True\nassert native_capabilities.HAS_CAPSULE_IS_VALID is True\nassert native_capabilities.HAS_CAPSULE_EXPORT is True\nassert native_capabilities.HAS_CAPSULE_IMPORT is True\nassert native_capabilities.HAS_GET_ITER is True\nassert native_capabilities.HAS_ITER_NEXT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_CALL_NOARGS is True\nassert native_capabilities.HAS_CALL_ONEARG is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_ERROR_GET_MESSAGE is True\nassert native_capabilities.HAS_MISSING is False",
     )
     .expect("capability-query extension import should succeed");
 
