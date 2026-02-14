@@ -60,6 +60,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_release_buffer(void* module_ctx, PyrsObjectHandle object_handle)`
 - `capsule_new(void* module_ctx, void* pointer, const char* name)`
 - `capsule_get_pointer(void* module_ctx, PyrsObjectHandle capsule_handle, const char* name)`
+- `capsule_set_pointer(void* module_ctx, PyrsObjectHandle capsule_handle, void* pointer)`
 - `capsule_get_name(void* module_ctx, PyrsObjectHandle capsule_handle)`
 - `capsule_set_context(void* module_ctx, PyrsObjectHandle capsule_handle, void* context)`
 - `capsule_get_context(void* module_ctx, PyrsObjectHandle capsule_handle)`
@@ -124,6 +125,7 @@ Return semantics:
 - capsule context helpers are available through `capsule_set_context(...)` and `capsule_get_context(...)`.
 - capsule destructor helpers are available through `capsule_set_destructor(...)`; destructor callbacks are invoked when the capsule handle refcount reaches zero or the module C-API context is dropped, and receive `(pointer, context)`.
 - capsule metadata helpers are available through `capsule_get_destructor(...)`, `capsule_set_name(...)`, and `capsule_is_valid(...)`.
+- capsule pointer mutation is available through `capsule_set_pointer(...)` (non-null pointer required).
 - capsule export/import helpers are available through `capsule_export(...)` and `capsule_import(...)` for cross-extension named-capsule interop.
 - `capsule_import(...)` now includes CPython-style module/attribute traversal fallback for diagnostics (`module.attr` chain import + lookup) before returning invalid-capsule errors.
 - capsule handles are C-API-only handles (not Python object values) and follow handle `incref`/`decref` semantics.
@@ -160,7 +162,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items`, `dynamic_extension_item_mutation_falls_back_to_special_methods` |
 | membership + dict-view helpers (`contains`/`dict_keys`/`dict_items`) | `dynamic_extension_can_use_contains_and_dict_view_apis` |
 | buffer helpers (`get_buffer`/`release_buffer`) | `dynamic_extension_can_use_buffer_apis`, `dynamic_extension_buffer_api_handles_memoryview_slices_and_release`, `dynamic_extension_can_bridge_buffer_pointer_through_capsule` |
-| capsule helpers (`capsule_new`/`capsule_get_pointer`/`capsule_get_name`/`capsule_set_context`/`capsule_get_context`/`capsule_set_destructor`/`capsule_get_destructor`/`capsule_set_name`/`capsule_is_valid`/`capsule_export`/`capsule_import`) | `dynamic_extension_can_use_capsule_apis`, `dynamic_extension_runs_capsule_destructor_on_context_drop`, `dynamic_extension_can_import_exported_capsule_by_name`, `dynamic_extension_can_bridge_buffer_pointer_through_capsule` |
+| capsule helpers (`capsule_new`/`capsule_get_pointer`/`capsule_set_pointer`/`capsule_get_name`/`capsule_set_context`/`capsule_get_context`/`capsule_set_destructor`/`capsule_get_destructor`/`capsule_set_name`/`capsule_is_valid`/`capsule_export`/`capsule_import`) | `dynamic_extension_can_use_capsule_apis`, `dynamic_extension_runs_capsule_destructor_on_context_drop`, `dynamic_extension_can_import_exported_capsule_by_name`, `dynamic_extension_can_bridge_buffer_pointer_through_capsule` |
 | iterator helpers (`get_iter`/`iter_next`) | `dynamic_extension_can_iterate_with_iterator_apis` |
 | list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |
 | object attribute helpers (`get`/`set`/`del`/`has`) | `dynamic_extension_can_get_set_and_del_object_attributes` |
