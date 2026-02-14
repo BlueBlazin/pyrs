@@ -22,6 +22,7 @@ typedef uint64_t PyrsObjectHandle;
 typedef struct PyrsApiV1 PyrsApiV1;
 typedef struct PyrsBufferViewV1 PyrsBufferViewV1;
 typedef struct PyrsWritableBufferViewV1 PyrsWritableBufferViewV1;
+typedef struct PyrsBufferInfoV1 PyrsBufferInfoV1;
 
 typedef int (*PyrsCFunctionV1)(
     const PyrsApiV1* api,
@@ -53,6 +54,18 @@ struct PyrsBufferViewV1 {
 struct PyrsWritableBufferViewV1 {
     uint8_t* data;
     uintptr_t len;
+};
+
+struct PyrsBufferInfoV1 {
+    const uint8_t* data;
+    uintptr_t len;
+    int readonly;
+    uintptr_t itemsize;
+    uintptr_t ndim;
+    intptr_t shape0;
+    intptr_t stride0;
+    const char* format;
+    int contiguous;
 };
 
 struct PyrsApiV1 {
@@ -151,6 +164,7 @@ struct PyrsApiV1 {
     int (*capsule_is_valid)(void* module_ctx, PyrsObjectHandle capsule_handle, const char* name);
     int (*capsule_export)(void* module_ctx, PyrsObjectHandle capsule_handle);
     void* (*capsule_import)(void* module_ctx, const char* name, int no_block);
+    int (*object_get_buffer_info)(void* module_ctx, PyrsObjectHandle object_handle, PyrsBufferInfoV1* out_info);
 };
 
 typedef int (*PyrsExtensionInitV1)(const PyrsApiV1* api, void* module_ctx);

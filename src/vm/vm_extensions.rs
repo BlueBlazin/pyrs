@@ -6,9 +6,9 @@ use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
     PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
-    PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferViewV1, PyrsCFunctionKwV1, PyrsCFunctionV1,
-    PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1, PyrsModuleStateFreeV1, PyrsObjectHandle,
-    PyrsWritableBufferViewV1, load_dynamic_initializer, parse_extension_manifest,
+    PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferInfoV1, PyrsBufferViewV1, PyrsCFunctionKwV1,
+    PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1, PyrsModuleStateFreeV1,
+    PyrsObjectHandle, PyrsWritableBufferViewV1, load_dynamic_initializer, parse_extension_manifest,
     path_is_shared_library,
 };
 use crate::runtime::{
@@ -17,9 +17,8 @@ use crate::runtime::{
 
 use super::{
     ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome, NativeCallResult, ObjRef,
-    Vm, bytes_like_source_is_readonly, dict_contains_key_checked, dict_get_value,
-    dict_remove_value, dict_set_value_checked, memoryview_bounds, value_to_int,
-    with_bytes_like_source,
+    Vm, dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value_checked,
+    memoryview_bounds, value_to_int,
 };
 
 struct CapiObjectSlot {
@@ -1209,6 +1208,41 @@ impl ModuleCapiContext {
         }
     }
 
+    fn readable_buffer_from_source(
+        source: &ObjRef,
+        start: usize,
+        length: Option<usize>,
+    ) -> Result<(*const u8, usize, bool), String> {
+        match &*source.kind() {
+            Object::Bytes(values) => {
+                let (start, end) = memoryview_bounds(start, length, values.len());
+                Ok((
+                    values.as_ptr().wrapping_add(start),
+                    end.saturating_sub(start),
+                    true,
+                ))
+            }
+            Object::ByteArray(values) => {
+                let (start, end) = memoryview_bounds(start, length, values.len());
+                Ok((
+                    values.as_ptr().wrapping_add(start),
+                    end.saturating_sub(start),
+                    false,
+                ))
+            }
+            Object::MemoryView(view) => {
+                if view.released {
+                    return Err("memoryview is released".to_string());
+                }
+                let (ptr, len, readonly) =
+                    Self::readable_buffer_from_source(&view.source, view.start, view.length)?;
+                let (start, end) = memoryview_bounds(start, length, len);
+                Ok((ptr.wrapping_add(start), end.saturating_sub(start), readonly))
+            }
+            _ => Err("memoryview source is not bytes-like".to_string()),
+        }
+    }
+
     fn writable_buffer_from_source(
         source: &ObjRef,
         start: usize,
@@ -1272,16 +1306,8 @@ impl ModuleCapiContext {
                     if view.released {
                         return Err("memoryview is released".to_string());
                     }
-                    let readonly = bytes_like_source_is_readonly(&view.source).unwrap_or(true);
-                    let Some((ptr, len)) = with_bytes_like_source(&view.source, |values| {
-                        let (start, end) = memoryview_bounds(view.start, view.length, values.len());
-                        (
-                            values.as_ptr().wrapping_add(start),
-                            end.saturating_sub(start),
-                        )
-                    }) else {
-                        return Err("memoryview source is not bytes-like".to_string());
-                    };
+                    let (ptr, len, readonly) =
+                        Self::readable_buffer_from_source(&view.source, view.start, view.length)?;
                     (ptr, len, readonly)
                 }
                 _ => {
@@ -1354,6 +1380,120 @@ impl ModuleCapiContext {
         self.incref(object_handle)?;
         *self.buffer_pins.entry(object_handle).or_insert(0) += 1;
         Ok(PyrsWritableBufferViewV1 { data, len })
+    }
+
+    fn object_get_buffer_info(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+    ) -> Result<PyrsBufferInfoV1, String> {
+        let value = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let (data, len, readonly, itemsize, shape0, stride0, contiguous, format_text) = match &value
+        {
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) => (
+                    values.as_ptr(),
+                    values.len(),
+                    true,
+                    1usize,
+                    values.len() as isize,
+                    1isize,
+                    true,
+                    "B".to_string(),
+                ),
+                _ => {
+                    return Err(format!(
+                        "object handle {} has invalid bytes storage",
+                        object_handle
+                    ));
+                }
+            },
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => (
+                    values.as_ptr(),
+                    values.len(),
+                    false,
+                    1usize,
+                    values.len() as isize,
+                    1isize,
+                    true,
+                    "B".to_string(),
+                ),
+                _ => {
+                    return Err(format!(
+                        "object handle {} has invalid bytearray storage",
+                        object_handle
+                    ));
+                }
+            },
+            Value::MemoryView(obj) => {
+                let (source, start, length, itemsize, contiguous, format, released) =
+                    match &*obj.kind() {
+                        Object::MemoryView(view) => (
+                            view.source.clone(),
+                            view.start,
+                            view.length,
+                            view.itemsize,
+                            view.contiguous,
+                            view.format.clone(),
+                            view.released,
+                        ),
+                        _ => {
+                            return Err(format!(
+                                "object handle {} has invalid memoryview storage",
+                                object_handle
+                            ));
+                        }
+                    };
+                if released {
+                    return Err("memoryview is released".to_string());
+                }
+                let (data, len, readonly) =
+                    Self::readable_buffer_from_source(&source, start, length)?;
+                let itemsize = itemsize.max(1);
+                let shape0 = if len % itemsize == 0 {
+                    (len / itemsize) as isize
+                } else {
+                    len as isize
+                };
+                (
+                    data,
+                    len,
+                    readonly,
+                    itemsize,
+                    shape0,
+                    itemsize as isize,
+                    contiguous,
+                    format.unwrap_or_else(|| "B".to_string()),
+                )
+            }
+            _ => {
+                return Err(format!(
+                    "object handle {} does not support buffer info access",
+                    object_handle
+                ));
+            }
+        };
+        let format_ptr = self.scratch_c_string_ptr(&format_text)?;
+        if let Some(source) = Self::mutable_buffer_source_from_value(&value) {
+            // SAFETY: the VM pointer is initialized for the extension context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.heap.pin_external_buffer_source(&source);
+        }
+        self.incref(object_handle)?;
+        *self.buffer_pins.entry(object_handle).or_insert(0) += 1;
+        Ok(PyrsBufferInfoV1 {
+            data,
+            len,
+            readonly: if readonly { 1 } else { 0 },
+            itemsize,
+            ndim: 1,
+            shape0,
+            stride0,
+            format: format_ptr,
+            contiguous: if contiguous { 1 } else { 0 },
+        })
     }
 
     fn object_release_buffer(&mut self, object_handle: PyrsObjectHandle) -> Result<(), String> {
@@ -1755,19 +1895,25 @@ impl ModuleCapiContext {
     }
 
     fn error_get_message_ptr(&mut self) -> *const c_char {
-        let Some(message) = self.last_error.as_deref() else {
+        let Some(message) = self.last_error.clone() else {
             return std::ptr::null();
         };
-        let cstring = match CString::new(message) {
-            Ok(value) => value,
-            Err(_) => CString::new("error message contains interior NUL")
-                .expect("fallback error message has no interior NUL"),
-        };
+        match self.scratch_c_string_ptr(&message) {
+            Ok(ptr) => ptr,
+            Err(_) => self
+                .scratch_c_string_ptr("error message contains interior NUL")
+                .unwrap_or(std::ptr::null()),
+        }
+    }
+
+    fn scratch_c_string_ptr(&mut self, text: &str) -> Result<*const c_char, String> {
+        let cstring =
+            CString::new(text).map_err(|_| "string contains interior NUL byte".to_string())?;
         self.scratch_strings.push(cstring);
         self.scratch_strings
             .last()
             .map(|value| value.as_ptr())
-            .unwrap_or(std::ptr::null())
+            .ok_or_else(|| "failed to materialize string pointer".to_string())
     }
 
     fn object_get_string_ptr(&mut self, handle: PyrsObjectHandle) -> Result<*const c_char, String> {
@@ -1777,19 +1923,8 @@ impl ModuleCapiContext {
         let Value::Str(text) = &slot.value else {
             return Err(format!("object handle {} is not a str", handle));
         };
-        let cstring = CString::new(text.as_str())
-            .map_err(|_| "string contains interior NUL byte".to_string())?;
-        self.scratch_strings.push(cstring);
-        let ptr = self
-            .scratch_strings
-            .last()
-            .map(|value| value.as_ptr())
-            .unwrap_or(std::ptr::null());
-        if ptr.is_null() {
-            Err("failed to materialize string pointer".to_string())
-        } else {
-            Ok(ptr)
-        }
+        let text = text.clone();
+        self.scratch_c_string_ptr(&text)
     }
 }
 
@@ -1874,6 +2009,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_dict_items"
             | "object_get_buffer"
             | "object_get_writable_buffer"
+            | "object_get_buffer_info"
             | "object_release_buffer"
             | "capsule_new"
             | "capsule_get_pointer"
@@ -2900,6 +3036,33 @@ unsafe extern "C" fn capi_object_get_writable_buffer(
     }
 }
 
+unsafe extern "C" fn capi_object_get_buffer_info(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    out_info: *mut PyrsBufferInfoV1,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_info.is_null() {
+        context.set_error("object_get_buffer_info received null output pointer");
+        return -1;
+    }
+    match context.object_get_buffer_info(object_handle) {
+        Ok(info) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_info = info;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_release_buffer(
     module_ctx: *mut c_void,
     object_handle: PyrsObjectHandle,
@@ -3783,6 +3946,7 @@ impl Vm {
             capsule_is_valid: capi_capsule_is_valid,
             capsule_export: capi_capsule_export,
             capsule_import: capi_capsule_import,
+            object_get_buffer_info: capi_object_get_buffer_info,
         }
     }
 
