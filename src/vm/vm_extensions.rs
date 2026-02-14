@@ -429,6 +429,32 @@ impl ModuleCapiContext {
         Ok(())
     }
 
+    fn object_has_attr(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+        attr_name: &str,
+    ) -> Result<i32, String> {
+        if self.vm.is_null() {
+            return Err("object_has_attr missing VM context".to_string());
+        }
+        let target = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let value = vm
+            .builtin_hasattr(
+                vec![target, Value::Str(attr_name.to_string())],
+                HashMap::new(),
+            )
+            .map_err(|err| err.message)?;
+        match value {
+            Value::Bool(true) => Ok(1),
+            Value::Bool(false) => Ok(0),
+            other => Err(format!("hasattr returned non-bool value: {other:?}")),
+        }
+    }
+
     fn object_call(
         &mut self,
         callable_handle: PyrsObjectHandle,
@@ -573,6 +599,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_get_attr"
             | "object_set_attr"
             | "object_del_attr"
+            | "object_has_attr"
             | "object_call"
             | "error_state"
             | "extension_symbol_metadata"
@@ -1344,6 +1371,30 @@ unsafe extern "C" fn capi_object_del_attr(
     }
 }
 
+unsafe extern "C" fn capi_object_has_attr(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    attr_name: *const c_char,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    let attr_name = match unsafe { c_name_to_string(attr_name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    match context.object_has_attr(object_handle, &attr_name) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_call(
     module_ctx: *mut c_void,
     callable_handle: PyrsObjectHandle,
@@ -1514,6 +1565,7 @@ impl Vm {
             object_get_attr: capi_object_get_attr,
             object_set_attr: capi_object_set_attr,
             object_del_attr: capi_object_del_attr,
+            object_has_attr: capi_object_has_attr,
             object_call: capi_object_call,
             object_get_string: capi_object_get_string,
             error_set: capi_error_set,

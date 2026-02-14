@@ -1198,6 +1198,9 @@ int native_touch(
         api->error_set(module_ctx, "touch expects one argument");
         return -2;
     }
+    if (api->object_has_attr(module_ctx, argv[0], "ext_value") != 0) {
+        return -13;
+    }
 
     PyrsObjectHandle marker = api->object_new_int(module_ctx, 123);
     if (!marker) {
@@ -1205,6 +1208,9 @@ int native_touch(
     }
     if (api->object_set_attr(module_ctx, argv[0], "ext_value", marker) != 0) {
         return -4;
+    }
+    if (api->object_has_attr(module_ctx, argv[0], "ext_value") != 1) {
+        return -14;
     }
     if (api->object_decref(module_ctx, marker) != 0) {
         return -5;
@@ -1224,6 +1230,9 @@ int native_touch(
 
     if (api->object_del_attr(module_ctx, argv[0], "ext_value") != 0) {
         return -9;
+    }
+    if (api->object_has_attr(module_ctx, argv[0], "ext_value") != 0) {
+        return -15;
     }
     if (api->object_get_attr(module_ctx, argv[0], "ext_value", &fetched) == 0) {
         return -10;
@@ -1312,12 +1321,13 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_get_attr = api->api_has_capability(module_ctx, "object_get_attr");
     int has_set_attr = api->api_has_capability(module_ctx, "object_set_attr");
     int has_del_attr = api->api_has_capability(module_ctx, "object_del_attr");
+    int has_has_attr = api->api_has_capability(module_ctx, "object_has_attr");
     int has_object_call = api->api_has_capability(module_ctx, "object_call");
     int has_missing = api->api_has_capability(module_ctx, "does_not_exist");
     if (has_dict != 1 || has_kw != 1 || has_module_get_object != 1 ||
         has_list_append != 1 || has_list_set_item != 1 ||
         has_dict_contains != 1 || has_dict_del_item != 1 ||
-        has_get_attr != 1 || has_set_attr != 1 || has_del_attr != 1 ||
+        has_get_attr != 1 || has_set_attr != 1 || has_del_attr != 1 || has_has_attr != 1 ||
         has_object_call != 1 || has_missing != 0) {
         return -2;
     }
@@ -1351,6 +1361,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->module_set_bool(module_ctx, "HAS_DEL_ATTR", has_del_attr) != 0) {
         return -13;
     }
+    if (api->module_set_bool(module_ctx, "HAS_HAS_ATTR", has_has_attr) != 0) {
+        return -15;
+    }
     if (api->module_set_bool(module_ctx, "HAS_OBJECT_CALL", has_object_call) != 0) {
         return -10;
     }
@@ -1380,7 +1393,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_MISSING is False",
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_MISSING is False",
     )
     .expect("capability-query extension import should succeed");
 
