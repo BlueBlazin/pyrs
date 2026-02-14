@@ -202,6 +202,16 @@ fn type_str_matches_cpython_for_builtin_type_objects() {
 }
 
 #[test]
+fn builtin_function_repr_and_str_match_cpython_shape() {
+    let source = "ok = (\n    repr(len) == \"<built-in function len>\"\n    and str(len) == \"<built-in function len>\"\n    and repr(print) == \"<built-in function print>\"\n    and str(print) == \"<built-in function print>\"\n    and repr(isinstance) == \"<built-in function isinstance>\"\n    and repr(callable) == \"<built-in function callable>\"\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn iterator_count_exposes_iter_and_next_attributes() {
     let source = "import itertools\nit = itertools.count(2, 3)\na = it.__next__()\nb = (it.__iter__() is it)\nc = next(it)\nok = (a == 2 and b and c == 5)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -2265,9 +2265,7 @@ impl Vm {
 
         let object = object.unwrap_or_else(|| Value::Str(String::new()));
         if encoding.is_none() && errors.is_none() {
-            if let Value::Builtin(builtin) = &object
-                && self.builtin_is_type_object(*builtin)
-            {
+            if matches!(object, Value::Builtin(_)) {
                 return Ok(Value::Str(format_value(&object)));
             }
             if let Value::Instance(instance) = &object

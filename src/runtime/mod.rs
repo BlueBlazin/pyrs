@@ -7171,7 +7171,12 @@ pub fn format_value(value: &Value) -> String {
         Value::Function(_) => "<function>".to_string(),
         Value::Builtin(builtin) => builtin_type_object_name(*builtin)
             .map(|name| format!("<class '{name}'>"))
-            .unwrap_or_else(|| "<builtin>".to_string()),
+            .unwrap_or_else(|| {
+                format!(
+                    "<built-in function {}>",
+                    builtin_function_display_name(*builtin)
+                )
+            }),
     }
 }
 
@@ -7323,6 +7328,71 @@ fn builtin_type_object_name(builtin: BuiltinFunction) -> Option<&'static str> {
         BuiltinFunction::TypesModuleType => Some("module"),
         BuiltinFunction::TypesMethodType => Some("method"),
         _ => None,
+    }
+}
+
+fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
+    match builtin {
+        BuiltinFunction::Print => "print".to_string(),
+        BuiltinFunction::Input => "input".to_string(),
+        BuiltinFunction::Repr => "repr".to_string(),
+        BuiltinFunction::Ascii => "ascii".to_string(),
+        BuiltinFunction::Len => "len".to_string(),
+        BuiltinFunction::Range => "range".to_string(),
+        BuiltinFunction::Slice => "slice".to_string(),
+        BuiltinFunction::Bool => "bool".to_string(),
+        BuiltinFunction::Int => "int".to_string(),
+        BuiltinFunction::Float => "float".to_string(),
+        BuiltinFunction::Complex => "complex".to_string(),
+        BuiltinFunction::Str => "str".to_string(),
+        BuiltinFunction::List => "list".to_string(),
+        BuiltinFunction::Tuple => "tuple".to_string(),
+        BuiltinFunction::Dict => "dict".to_string(),
+        BuiltinFunction::Set => "set".to_string(),
+        BuiltinFunction::FrozenSet => "frozenset".to_string(),
+        BuiltinFunction::Bytes => "bytes".to_string(),
+        BuiltinFunction::ByteArray => "bytearray".to_string(),
+        BuiltinFunction::MemoryView => "memoryview".to_string(),
+        BuiltinFunction::Zip => "zip".to_string(),
+        BuiltinFunction::Map => "map".to_string(),
+        BuiltinFunction::Filter => "filter".to_string(),
+        BuiltinFunction::Enumerate => "enumerate".to_string(),
+        BuiltinFunction::Reversed => "reversed".to_string(),
+        BuiltinFunction::Sorted => "sorted".to_string(),
+        BuiltinFunction::Min => "min".to_string(),
+        BuiltinFunction::Max => "max".to_string(),
+        BuiltinFunction::Abs => "abs".to_string(),
+        BuiltinFunction::Round => "round".to_string(),
+        BuiltinFunction::Sum => "sum".to_string(),
+        BuiltinFunction::All => "all".to_string(),
+        BuiltinFunction::Any => "any".to_string(),
+        BuiltinFunction::Chr => "chr".to_string(),
+        BuiltinFunction::Ord => "ord".to_string(),
+        BuiltinFunction::Hex => "hex".to_string(),
+        BuiltinFunction::Oct => "oct".to_string(),
+        BuiltinFunction::Bin => "bin".to_string(),
+        BuiltinFunction::Pow => "pow".to_string(),
+        BuiltinFunction::DivMod => "divmod".to_string(),
+        BuiltinFunction::Hash => "hash".to_string(),
+        BuiltinFunction::Id => "id".to_string(),
+        BuiltinFunction::Callable => "callable".to_string(),
+        BuiltinFunction::IsInstance => "isinstance".to_string(),
+        BuiltinFunction::IsSubclass => "issubclass".to_string(),
+        BuiltinFunction::GetAttr => "getattr".to_string(),
+        BuiltinFunction::SetAttr => "setattr".to_string(),
+        BuiltinFunction::DelAttr => "delattr".to_string(),
+        BuiltinFunction::HasAttr => "hasattr".to_string(),
+        BuiltinFunction::Iter => "iter".to_string(),
+        BuiltinFunction::Next => "next".to_string(),
+        BuiltinFunction::Type => "type".to_string(),
+        BuiltinFunction::ClassMethod => "classmethod".to_string(),
+        BuiltinFunction::StaticMethod => "staticmethod".to_string(),
+        BuiltinFunction::Property => "property".to_string(),
+        BuiltinFunction::Super => "super".to_string(),
+        BuiltinFunction::TypesModuleType => "ModuleType".to_string(),
+        BuiltinFunction::TypesMethodType => "MethodType".to_string(),
+        BuiltinFunction::TypeAnnotationsGet => "__annotations__.__get__".to_string(),
+        _ => format!("{builtin:?}").to_ascii_lowercase(),
     }
 }
 
