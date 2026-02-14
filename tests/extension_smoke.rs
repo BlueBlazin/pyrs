@@ -3106,6 +3106,125 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_buffer_info_reflects_memoryview_cast_itemsize() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping memoryview-cast buffer-info smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping memoryview-cast buffer-info smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_buffer_info_cast_itemsize");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_buffer_info_cast_itemsize.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <string.h>
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    const uint8_t payload[] = {1, 2, 3, 4, 5, 6, 7, 8};
+    PyrsObjectHandle bytearray_obj = api->object_new_bytearray(module_ctx, payload, 8);
+    if (!bytearray_obj) {
+        return -2;
+    }
+    PyrsObjectHandle view_obj = api->object_new_memoryview(module_ctx, bytearray_obj);
+    if (!view_obj) {
+        return -3;
+    }
+
+    PyrsObjectHandle cast_fn = 0;
+    if (api->object_get_attr(module_ctx, view_obj, "cast", &cast_fn) != 0 || !cast_fn) {
+        return -4;
+    }
+    PyrsObjectHandle fmt = api->object_new_string(module_ctx, "I");
+    if (!fmt) {
+        return -5;
+    }
+    PyrsObjectHandle casted = 0;
+    if (api->object_call_onearg(module_ctx, cast_fn, fmt, &casted) != 0 || !casted) {
+        return -6;
+    }
+
+    PyrsBufferInfoV1 info;
+    if (api->object_get_buffer_info(module_ctx, casted, &info) != 0) {
+        return -7;
+    }
+    if (!info.data || info.len != 8 || info.readonly != 0 || info.itemsize != 4 ||
+        info.ndim != 1 || info.shape0 != 2 || info.stride0 != 4 || info.contiguous != 1 ||
+        !info.format || strcmp(info.format, "I") != 0) {
+        return -8;
+    }
+    if (api->object_release_buffer(module_ctx, casted) != 0) {
+        return -9;
+    }
+
+    PyrsWritableBufferViewV1 writable;
+    if (api->object_get_writable_buffer(module_ctx, casted, &writable) != 0) {
+        return -10;
+    }
+    if (!writable.data || writable.len != 8) {
+        return -11;
+    }
+    writable.data[0] = 42;
+    if (api->object_release_buffer(module_ctx, casted) != 0) {
+        return -12;
+    }
+
+    PyrsBufferViewV1 readonly;
+    if (api->object_get_buffer(module_ctx, bytearray_obj, &readonly) != 0) {
+        return -13;
+    }
+    if (!readonly.data || readonly.len != 8 || readonly.data[0] != 42) {
+        return -14;
+    }
+    if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
+        return -15;
+    }
+
+    if (api->module_set_bool(module_ctx, "BUFFER_INFO_CAST_ITEMSIZE_OK", 1) != 0) {
+        return -16;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_buffer_info_cast_itemsize");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_buffer_info_cast_itemsize.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_buffer_info_cast_itemsize\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_buffer_info_cast_itemsize\nassert native_buffer_info_cast_itemsize.BUFFER_INFO_CAST_ITEMSIZE_OK is True",
+    )
+    .expect("memoryview-cast buffer-info extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping buffer-pin resize-block smoke (pyrs binary not found)");
