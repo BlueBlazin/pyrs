@@ -45,7 +45,7 @@ Supported dynamic init symbol contract (v1):
 - can set module globals directly or via init-scoped object handles.
 - can import modules during init/call paths via `module_import`.
 - can load imported-module attributes via `module_get_attr`.
-- can persist module-owned native state via `module_set_state` / `module_get_state` with free-callback teardown.
+- can persist module-owned native state via `module_set_state` / `module_get_state`, and configure finalize hooks via `module_set_finalize`, with finalize+free teardown on replacement/clear/churn/drop paths.
 - can register positional/keyword native callables via `module_add_function` / `module_add_function_kw`.
 - can query generic object length and subscript semantics via `object_len` / `object_get_item`.
 - can iterate from native code via `object_get_iter` / `object_iter_next`.

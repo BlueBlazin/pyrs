@@ -43,7 +43,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 now includes `module_get_object(...)` for handle-based reads of module globals during extension init/call paths.
   - C-API v1 now includes `module_import(...)` for native-side module loading during extension init/call paths.
   - C-API v1 now includes `module_get_attr(...)` for module-handle attribute extraction with explicit module-type checks.
-  - C-API v1 now includes module-state lifecycle hooks (`module_set_state`, `module_get_state`) with replacement/clear free-callback semantics and VM-teardown cleanup.
+  - C-API v1 now includes module-state lifecycle hooks (`module_set_state`, `module_get_state`, `module_set_finalize`) with replacement/clear/stale-prune/VM-drop finalize+free semantics.
   - C-API v1 now includes module-handle attribute mutation helpers (`module_set_attr`, `module_del_attr`, `module_has_attr`) for native-side module mutation/probe flows without Python-level glue.
   - C-API handle constructors/getters now include `None`/`float`/`bytes`/`tuple`/`list`/`dict` in addition to `bool`/`int`/`str`, with smoke coverage through native handle and sequence+mapping round-trip.
   - C-API v1 now includes native iterator helpers (`object_get_iter`, `object_iter_next`) for extension-side iteration without Python-level dispatch glue.
@@ -76,7 +76,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes cross-extension named capsule export/import coverage (`dynamic_extension_can_import_exported_capsule_by_name`).
   - `capsule_import` now performs CPython-style module/attribute traversal fallback for diagnostics on non-registry names before invalid-capsule failure.
   - extension smoke now includes module-state lifecycle coverage (`dynamic_extension_can_manage_module_state_lifecycle`).
-  - module-state registry now prunes stale module entries during `sys.modules` churn and executes associated free callbacks (covered by module-state smoke reimport path).
+  - module-state registry now prunes stale module entries during `sys.modules` churn and executes associated finalize+free callbacks (covered by module-state smoke reimport path).
   - extension smoke now includes buffer/capsule interop bridge coverage (`dynamic_extension_can_bridge_buffer_pointer_through_capsule`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
