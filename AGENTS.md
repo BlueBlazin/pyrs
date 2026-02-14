@@ -80,6 +80,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes non-contiguous metadata coverage (`dynamic_extension_buffer_info_marks_noncontiguous_slice_views`) for stepped memoryview slice behavior.
   - extension smoke now includes memoryview-cast metadata coverage (`dynamic_extension_buffer_info_reflects_memoryview_cast_itemsize`) for format/itemsize propagation (`cast('I')`) and shaped cast layout propagation (`cast('B', [2, 4])`).
   - extension smoke now includes `object_get_buffer_info_v2` negative-path coverage (`dynamic_extension_buffer_info_v2_reports_invalid_and_null_output_errors`) for invalid handle + null-output pointer errors.
+  - memoryview cast now accepts `shape` through positional or keyword call forms (`cast("B", shape=[...])`, `cast(format="B", shape=[...])`), and memoryview layout attrs now expose shaped metadata (`ndim`, `shape`, `strides`, `format`, `c_contiguous`, `f_contiguous`).
   - extension smoke now includes resize-blocking export-pin coverage (`dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release`).
   - extension smoke now includes leaked-pin cleanup coverage (`dynamic_extension_unreleased_buffer_pin_is_cleared_on_context_drop`) for context-drop unpin behavior.
   - extension smoke now includes memoryview-slice + release failure-path coverage for buffer APIs (`dynamic_extension_buffer_api_handles_memoryview_slices_and_release`).

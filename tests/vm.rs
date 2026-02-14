@@ -4926,6 +4926,48 @@ ok = err_type and err_value and err_product
 }
 
 #[test]
+fn memoryview_cast_accepts_keyword_arguments() {
+    let source = r#"buf = memoryview(bytearray(b"abcdefgh"))
+a = buf.cast("B", shape=[2, 4])
+b = buf.cast(format="B", shape=[4, 2])
+c = buf.cast(shape=[2, 4], format="B")
+ok = (a.shape == (2, 4) and b.shape == (4, 2) and c.shape == (2, 4))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn memoryview_cast_keyword_validation_reports_argument_errors() {
+    let source = r#"buf = memoryview(bytearray(b"abcd"))
+missing = False
+multi = False
+unknown = False
+try:
+    buf.cast(shape=[2, 2])
+except Exception as exc:
+    missing = "missing required argument 'format'" in str(exc)
+try:
+    buf.cast("B", format="B")
+except Exception as exc:
+    multi = "multiple values for argument 'format'" in str(exc)
+try:
+    buf.cast("B", nope=[2, 2])
+except Exception as exc:
+    unknown = "unexpected keyword argument 'nope'" in str(exc)
+ok = missing and multi and unknown
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn json_loads_accepts_utf8_bytes_and_bytearray() {
     let source = r#"import json
 a = json.loads(b'{"x": 1, "y": [2, 3]}')

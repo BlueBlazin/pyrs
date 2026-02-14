@@ -106,6 +106,7 @@ impl Vm {
                     | NativeMethodKind::BytesCount
                     | NativeMethodKind::BytesTranslate
                     | NativeMethodKind::ListSort
+                    | NativeMethodKind::MemoryViewCast
                     | NativeMethodKind::CodecsIncrementalEncoderFactoryCall
                     | NativeMethodKind::CodecsIncrementalDecoderFactoryCall
                     | NativeMethodKind::CodecsIncrementalEncoderEncode
@@ -2435,15 +2436,47 @@ impl Vm {
                 ))
             }
             NativeMethodKind::MemoryViewCast => {
-                if args.is_empty() || args.len() > 2 {
+                if args.len() > 2 {
                     return Err(RuntimeError::new(
-                        "cast() expects format and optional shape",
+                        "cast() takes at most 2 arguments (3 given)",
                     ));
                 }
-                let format = match &args[0] {
-                    Value::Str(value) => value.clone(),
-                    _ => {
+                let mut format_arg = args.first().cloned();
+                let mut shape_arg = args.get(1).cloned();
+                for (name, value) in kwargs {
+                    match name.as_str() {
+                        "format" => {
+                            if format_arg.is_some() {
+                                return Err(RuntimeError::new(
+                                    "cast() got multiple values for argument 'format'",
+                                ));
+                            }
+                            format_arg = Some(value);
+                        }
+                        "shape" => {
+                            if shape_arg.is_some() {
+                                return Err(RuntimeError::new(
+                                    "cast() got multiple values for argument 'shape'",
+                                ));
+                            }
+                            shape_arg = Some(value);
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "cast() got an unexpected keyword argument '{name}'"
+                            )));
+                        }
+                    }
+                }
+                let format = match format_arg {
+                    Some(Value::Str(value)) => value,
+                    Some(_) => {
                         return Err(RuntimeError::new("memoryview.cast() format must be str"));
+                    }
+                    None => {
+                        return Err(RuntimeError::new(
+                            "cast() missing required argument 'format' (pos 1)",
+                        ));
                     }
                 };
                 let itemsize = match format.as_str() {
@@ -2472,8 +2505,8 @@ impl Vm {
                     end.saturating_sub(start)
                 })
                 .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
-                let shape_override = if args.len() == 2 {
-                    let shape_dims = parse_memoryview_cast_shape(&args[1])?;
+                let shape_override = if let Some(shape_value) = shape_arg {
+                    let shape_dims = parse_memoryview_cast_shape(&shape_value)?;
                     if shape_dims.is_empty() {
                         return Err(RuntimeError::new(
                             "memoryview: product(shape) * itemsize != buffer size",
