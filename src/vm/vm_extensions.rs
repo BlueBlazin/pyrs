@@ -71,6 +71,22 @@ impl ModuleCapiContext {
         self.object_slot(handle).map(|slot| slot.value.clone())
     }
 
+    fn module_get_value(&self, name: &str) -> Result<Value, String> {
+        let Object::Module(module_data) = &*self.module.kind() else {
+            return Err("module context no longer points to a module".to_string());
+        };
+        module_data
+            .globals
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("module attribute '{}' not found", name))
+    }
+
+    fn module_get_object(&mut self, name: &str) -> Result<PyrsObjectHandle, String> {
+        let value = self.module_get_value(name)?;
+        Ok(self.alloc_object(value))
+    }
+
     fn incref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
         let Some(slot) = self.objects.get_mut(&handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -533,6 +549,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
         name.as_str(),
         "module_add_function"
             | "module_add_function_kw"
+            | "module_get_object"
             | "object_new_none"
             | "object_new_float"
             | "object_new_bytes"
@@ -881,6 +898,40 @@ unsafe extern "C" fn capi_module_set_object(
         return -1;
     };
     unsafe { capi_module_insert_value(context, name, value) }
+}
+
+unsafe extern "C" fn capi_module_get_object(
+    module_ctx: *mut c_void,
+    name: *const c_char,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("module_get_object received null output pointer");
+        return -1;
+    }
+    let name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    match context.module_get_object(&name) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
 }
 
 unsafe extern "C" fn capi_object_type(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> i32 {
@@ -1440,6 +1491,7 @@ impl Vm {
             object_incref: capi_object_incref,
             object_decref: capi_object_decref,
             module_set_object: capi_module_set_object,
+            module_get_object: capi_module_get_object,
             object_type: capi_object_type,
             object_get_int: capi_object_get_int,
             object_get_float: capi_object_get_float,

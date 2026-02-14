@@ -62,6 +62,7 @@ struct PyrsApiV1 {
     int (*object_incref)(void* module_ctx, PyrsObjectHandle handle);
     int (*object_decref)(void* module_ctx, PyrsObjectHandle handle);
     int (*module_set_object)(void* module_ctx, const char* name, PyrsObjectHandle handle);
+    int (*module_get_object)(void* module_ctx, const char* name, PyrsObjectHandle* out_handle);
     int (*object_type)(void* module_ctx, PyrsObjectHandle handle);
     int (*object_get_int)(void* module_ctx, PyrsObjectHandle handle, int64_t* out);
     int (*object_get_float)(void* module_ctx, PyrsObjectHandle handle, double* out);

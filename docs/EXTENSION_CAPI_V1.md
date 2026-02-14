@@ -32,6 +32,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_incref(void* module_ctx, PyrsObjectHandle handle)`
 - `object_decref(void* module_ctx, PyrsObjectHandle handle)`
 - `module_set_object(void* module_ctx, const char* name, PyrsObjectHandle handle)`
+- `module_get_object(void* module_ctx, const char* name, PyrsObjectHandle* out_handle)`
 - `object_type(void* module_ctx, PyrsObjectHandle handle)`
 - `object_get_int(void* module_ctx, PyrsObjectHandle handle, int64_t* out)`
 - `object_get_float(void* module_ctx, PyrsObjectHandle handle, double* out)`
@@ -71,6 +72,7 @@ Return semantics:
 - API table pointers are valid only during init call.
 - `module_ctx` points to the target Python module object context.
 - object handles are init-call scoped; module globals retain values after handle release.
+- extension code can re-read module globals as handles via `module_get_object(...)`.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
 - callable registration via `module_add_function_kw(...)` is supported for callbacks receiving keyword-name/value arrays.
