@@ -77,6 +77,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `capsule_import` now performs CPython-style module/attribute traversal fallback for diagnostics on non-registry names before invalid-capsule failure.
   - extension smoke now includes module-state lifecycle coverage (`dynamic_extension_can_manage_module_state_lifecycle`).
   - extension smoke now includes module-state drop ordering coverage (`dynamic_extension_module_state_drop_runs_finalize_before_free`), asserting finalize callbacks run before free callbacks on VM teardown.
+  - extension smoke now includes finalize-disable coverage (`dynamic_extension_can_disable_module_state_finalize_callback`), asserting `module_set_finalize(..., NULL)` suppresses finalize callbacks while preserving free callbacks.
   - module-state registry now prunes stale module entries during `sys.modules` churn and executes associated finalize+free callbacks (covered by module-state smoke reimport path).
   - extension smoke now includes buffer/capsule interop bridge coverage (`dynamic_extension_can_bridge_buffer_pointer_through_capsule`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
