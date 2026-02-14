@@ -29,7 +29,7 @@ Legend:
 |---|---|---|---|---|
 | Exported C ABI artifact (`libpyrs-capi`) | IN PROGRESS | runtime/ffi | `include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md` | Header/symbol slice is landed and consumed by compiled-extension smoke; distributable ABI artifact packaging is pending. |
 | Header surface + versioned symbol manifest | IN PROGRESS | runtime/ffi | `include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md` | v1 includes module-global setters, callable registration, init-scoped object handles/refcount ops, object type/introspection getters, and error-state hooks. |
-| `PyObject`/refcount ownership APIs | IN PROGRESS | runtime/ffi | `tests/extension_smoke.rs::dynamic_extension_can_set_module_values_via_object_handles` | v1 handle model supports init-scoped object creation (`none`/`bool`/`int`/`float`/`bytes`/`tuple`/`list`/`dict`/`str`) + typed getters/sequence+dict access + `incref`/`decref`; full CPython object surface remains open. |
+| `PyObject`/refcount ownership APIs | IN PROGRESS | runtime/ffi | `tests/extension_smoke.rs::dynamic_extension_can_set_module_values_via_object_handles` | v1 handle model supports init-scoped object creation (`none`/`bool`/`int`/`float`/`bytes`/`tuple`/`list`/`dict`/`str`), typed getters, sequence+dict access, list mutation (`append`/indexed set), dict mutation (`set`/`get`/`contains`/`del`), and `incref`/`decref`; full CPython object surface remains open. |
 | Exception indicator/thread-local error state APIs | IN PROGRESS | runtime/ffi | `tests/extension_smoke.rs::dynamic_extension_error_state_is_propagated_to_import_failure` | Import-time extension error state is now surfaced; broader CPython exception APIs remain open. |
 | Native callable registration/invocation substrate | IN PROGRESS | runtime/ffi + VM | `tests/extension_smoke.rs::dynamic_extension_can_register_callable`, `tests/extension_smoke.rs::dynamic_extension_can_register_kw_callable` | Positional and keyword callback baselines landed via `module_add_function` + `module_add_function_kw`, including keyword validation/error propagation coverage; vectorcall/signature introspection parity is still open. |
 | GIL attach/detach APIs (`PyGILState_*`) | PLANNED | runtime/threading | - | Required for threaded native callers. |
@@ -40,7 +40,7 @@ Legend:
 |---|---|---|---|---|
 | Buffer protocol producer/consumer parity | PLANNED | runtime/object-model | - | High-priority dependency for NumPy. |
 | Capsule/callback interop primitives | PLANNED | runtime/ffi | - | Needed by ecosystem modules that pass opaque handles. |
-| ABI capability introspection API | IN PROGRESS | runtime/ffi | `tests/extension_smoke.rs::dynamic_extension_can_query_capabilities` | Baseline `api_has_capability(...)` probe is landed for key v1 surfaces; richer capability taxonomy/versioning is still open. |
+| ABI capability introspection API | IN PROGRESS | runtime/ffi | `tests/extension_smoke.rs::dynamic_extension_can_query_capabilities` | Baseline `api_has_capability(...)` probe now includes callable registration, dict/list handle mutation, and legacy v1 surfaces; richer capability taxonomy/versioning is still open. |
 
 ## Ecosystem Gates
 

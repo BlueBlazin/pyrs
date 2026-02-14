@@ -555,34 +555,96 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_sequence_len(module_ctx, pair_tuple, &tuple_len) != 0 || tuple_len != 2) {
         return -17;
     }
+    if (api->object_list_append(module_ctx, pair_list, answer) != 0) {
+        return -18;
+    }
+    if (api->object_list_set_item(module_ctx, pair_list, 0, ratio) != 0) {
+        return -19;
+    }
+    if (api->object_list_set_item(module_ctx, pair_list, 99, ratio) == 0) {
+        return -20;
+    }
+    if (api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
+        return -21;
+    }
+    uintptr_t pair_list_len = 0;
+    if (api->object_sequence_len(module_ctx, pair_list, &pair_list_len) != 0 || pair_list_len != 3) {
+        return -22;
+    }
+    PyrsObjectHandle list_first = 0;
+    if (api->object_sequence_get_item(module_ctx, pair_list, 0, &list_first) != 0 || !list_first) {
+        return -23;
+    }
+    double list_first_float = 0.0;
+    if (api->object_get_float(module_ctx, list_first, &list_first_float) != 0 || list_first_float != 3.5) {
+        return -24;
+    }
+    if (api->object_decref(module_ctx, list_first) != 0) {
+        return -25;
+    }
+    PyrsObjectHandle list_third = 0;
+    if (api->object_sequence_get_item(module_ctx, pair_list, 2, &list_third) != 0 || !list_third) {
+        return -26;
+    }
+    int64_t list_third_int = 0;
+    if (api->object_get_int(module_ctx, list_third, &list_third_int) != 0 || list_third_int != 99) {
+        return -27;
+    }
+    if (api->object_decref(module_ctx, list_third) != 0) {
+        return -28;
+    }
     PyrsObjectHandle list_second = 0;
     if (api->object_sequence_get_item(module_ctx, pair_list, 1, &list_second) != 0 || !list_second) {
-        return -18;
+        return -29;
     }
     double list_second_float = 0.0;
     if (api->object_get_float(module_ctx, list_second, &list_second_float) != 0 || list_second_float != 3.5) {
-        return -19;
+        return -30;
     }
     if (api->object_decref(module_ctx, list_second) != 0) {
-        return -20;
+        return -31;
     }
     if (api->object_dict_set_item(module_ctx, mapping, key_ratio, ratio) != 0) {
-        return -25;
+        return -32;
+    }
+    if (api->object_dict_contains(module_ctx, mapping, key_ratio) != 1) {
+        return -33;
+    }
+    if (api->object_dict_del_item(module_ctx, mapping, key_ratio) != 0) {
+        return -34;
+    }
+    if (api->object_dict_del_item(module_ctx, mapping, key_ratio) == 0) {
+        return -35;
+    }
+    if (api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
+        return -36;
+    }
+    if (api->object_dict_contains(module_ctx, mapping, key_ratio) != 0) {
+        return -37;
     }
     uintptr_t mapping_len = 0;
+    if (api->object_dict_len(module_ctx, mapping, &mapping_len) != 0 || mapping_len != 0) {
+        return -38;
+    }
+    if (api->object_dict_set_item(module_ctx, mapping, key_ratio, ratio) != 0) {
+        return -39;
+    }
+    if (api->object_dict_contains(module_ctx, mapping, key_ratio) != 1) {
+        return -40;
+    }
     if (api->object_dict_len(module_ctx, mapping, &mapping_len) != 0 || mapping_len != 1) {
-        return -26;
+        return -41;
     }
     PyrsObjectHandle fetched_ratio = 0;
     if (api->object_dict_get_item(module_ctx, mapping, key_ratio, &fetched_ratio) != 0 || !fetched_ratio) {
-        return -27;
+        return -42;
     }
     double fetched_ratio_value = 0.0;
     if (api->object_get_float(module_ctx, fetched_ratio, &fetched_ratio_value) != 0 || fetched_ratio_value != 3.5) {
-        return -28;
+        return -43;
     }
     if (api->object_decref(module_ctx, fetched_ratio) != 0) {
-        return -29;
+        return -44;
     }
     if (api->module_set_object(module_ctx, "ANSWER", answer) != 0) {
         return -3;
@@ -603,7 +665,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
         return -22;
     }
     if (api->module_set_object(module_ctx, "MAPPING", mapping) != 0) {
-        return -30;
+        return -45;
     }
     if (api->module_set_object(module_ctx, "TEXT", text) != 0) {
         return -4;
@@ -633,10 +695,10 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
         return -24;
     }
     if (api->object_decref(module_ctx, mapping) != 0) {
-        return -31;
+        return -46;
     }
     if (api->object_decref(module_ctx, key_ratio) != 0) {
-        return -32;
+        return -47;
     }
     if (api->object_decref(module_ctx, text) != 0) {
         return -8;
@@ -664,7 +726,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.NONE_VALUE is None\nassert abs(native_handles.RATIO - 3.5) < 1e-12\nassert native_handles.BLOB == b'hi'\nassert native_handles.PAIR_TUPLE == (99, 3.5)\nassert native_handles.PAIR_LIST == [99, 3.5]\nassert native_handles.MAPPING['ratio'] == 3.5\nassert native_handles.TEXT == 'from-object-handle'",
+        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.NONE_VALUE is None\nassert abs(native_handles.RATIO - 3.5) < 1e-12\nassert native_handles.BLOB == b'hi'\nassert native_handles.PAIR_TUPLE == (99, 3.5)\nassert native_handles.PAIR_LIST == [3.5, 3.5, 99]\nassert native_handles.MAPPING['ratio'] == 3.5\nassert native_handles.TEXT == 'from-object-handle'",
     )
     .expect("object-handle dynamic extension import should succeed");
 
@@ -1025,8 +1087,13 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     int has_dict = api->api_has_capability(module_ctx, "object_new_dict");
     int has_kw = api->api_has_capability(module_ctx, "module_add_function_kw");
+    int has_list_append = api->api_has_capability(module_ctx, "object_list_append");
+    int has_list_set_item = api->api_has_capability(module_ctx, "object_list_set_item");
+    int has_dict_contains = api->api_has_capability(module_ctx, "object_dict_contains");
+    int has_dict_del_item = api->api_has_capability(module_ctx, "object_dict_del_item");
     int has_missing = api->api_has_capability(module_ctx, "does_not_exist");
-    if (has_dict != 1 || has_kw != 1 || has_missing != 0) {
+    if (has_dict != 1 || has_kw != 1 || has_list_append != 1 || has_list_set_item != 1 ||
+        has_dict_contains != 1 || has_dict_del_item != 1 || has_missing != 0) {
         return -2;
     }
     if (api->module_set_bool(module_ctx, "HAS_DICT", has_dict) != 0) {
@@ -1034,6 +1101,18 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->module_set_bool(module_ctx, "HAS_KW", has_kw) != 0) {
         return -4;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_LIST_APPEND", has_list_append) != 0) {
+        return -6;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_LIST_SET_ITEM", has_list_set_item) != 0) {
+        return -7;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_DICT_CONTAINS", has_dict_contains) != 0) {
+        return -8;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_DICT_DEL_ITEM", has_dict_del_item) != 0) {
+        return -9;
     }
     if (api->module_set_bool(module_ctx, "HAS_MISSING", has_missing) != 0) {
         return -5;
@@ -1061,7 +1140,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MISSING is False",
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_MISSING is False",
     )
     .expect("capability-query extension import should succeed");
 

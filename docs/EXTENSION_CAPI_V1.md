@@ -39,9 +39,13 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_get_bytes(void* module_ctx, PyrsObjectHandle handle, const uint8_t** out_data, uintptr_t* out_len)`
 - `object_sequence_len(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len)`
 - `object_sequence_get_item(void* module_ctx, PyrsObjectHandle handle, uintptr_t index, PyrsObjectHandle* out_handle)`
+- `object_list_append(void* module_ctx, PyrsObjectHandle list_handle, PyrsObjectHandle item_handle)`
+- `object_list_set_item(void* module_ctx, PyrsObjectHandle list_handle, uintptr_t index, PyrsObjectHandle item_handle)`
 - `object_dict_len(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len)`
 - `object_dict_set_item(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle, PyrsObjectHandle value_handle)`
 - `object_dict_get_item(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle, PyrsObjectHandle* out_handle)`
+- `object_dict_contains(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle)` (`1`/`0` on success, `-1` on error)
+- `object_dict_del_item(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle)`
 - `object_get_string(void* module_ctx, PyrsObjectHandle handle)`
 - `error_set(void* module_ctx, const char* message)`
 - `error_clear(void* module_ctx)`
@@ -66,6 +70,7 @@ Return semantics:
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
 - callable registration via `module_add_function_kw(...)` is supported for callbacks receiving keyword-name/value arrays.
+- list/dict mutation through handles is available (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`).
 - capability checks are available via `api_has_capability(...)` for runtime feature probing.
 - ABI mismatch must be handled by extension code and reflected via non-zero return.
 

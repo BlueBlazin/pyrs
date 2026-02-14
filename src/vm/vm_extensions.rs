@@ -14,7 +14,8 @@ use crate::runtime::{
 };
 
 use super::{
-    ExtensionCallableKind, NativeCallResult, ObjRef, Vm, dict_get_value, dict_set_value_checked,
+    ExtensionCallableKind, NativeCallResult, ObjRef, Vm, dict_contains_key_checked, dict_get_value,
+    dict_remove_value, dict_set_value_checked,
 };
 
 struct CapiObjectSlot {
@@ -213,6 +214,60 @@ impl ModuleCapiContext {
         }
     }
 
+    fn object_list_obj(&self, handle: PyrsObjectHandle) -> Result<ObjRef, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        match &slot.value {
+            Value::List(obj) => Ok(obj.clone()),
+            _ => Err(format!("object handle {} is not list", handle)),
+        }
+    }
+
+    fn object_list_append(
+        &mut self,
+        list_handle: PyrsObjectHandle,
+        item_handle: PyrsObjectHandle,
+    ) -> Result<(), String> {
+        let list_obj = self.object_list_obj(list_handle)?;
+        let item = self
+            .object_value(item_handle)
+            .ok_or_else(|| format!("invalid item handle {}", item_handle))?;
+        let mut list_kind = list_obj.kind_mut();
+        let Object::List(values) = &mut *list_kind else {
+            return Err(format!(
+                "object handle {} has invalid list storage",
+                list_handle
+            ));
+        };
+        values.push(item);
+        Ok(())
+    }
+
+    fn object_list_set_item(
+        &mut self,
+        list_handle: PyrsObjectHandle,
+        index: usize,
+        item_handle: PyrsObjectHandle,
+    ) -> Result<(), String> {
+        let list_obj = self.object_list_obj(list_handle)?;
+        let item = self
+            .object_value(item_handle)
+            .ok_or_else(|| format!("invalid item handle {}", item_handle))?;
+        let mut list_kind = list_obj.kind_mut();
+        let Object::List(values) = &mut *list_kind else {
+            return Err(format!(
+                "object handle {} has invalid list storage",
+                list_handle
+            ));
+        };
+        let Some(slot) = values.get_mut(index) else {
+            return Err(format!("list index {} out of range", index));
+        };
+        *slot = item;
+        Ok(())
+    }
+
     fn object_dict_obj(&self, handle: PyrsObjectHandle) -> Result<ObjRef, String> {
         let Some(slot) = self.object_slot(handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -259,6 +314,35 @@ impl ModuleCapiContext {
         let value =
             dict_get_value(&dict_obj, &key).ok_or_else(|| "dict key not found".to_string())?;
         Ok(self.alloc_object(value))
+    }
+
+    fn object_dict_contains(
+        &mut self,
+        dict_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+    ) -> Result<i32, String> {
+        let dict_obj = self.object_dict_obj(dict_handle)?;
+        let key = self
+            .object_value(key_handle)
+            .ok_or_else(|| format!("invalid key handle {}", key_handle))?;
+        let contains = dict_contains_key_checked(&dict_obj, &key).map_err(|err| err.message)?;
+        Ok(if contains { 1 } else { 0 })
+    }
+
+    fn object_dict_del_item(
+        &mut self,
+        dict_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+    ) -> Result<(), String> {
+        let dict_obj = self.object_dict_obj(dict_handle)?;
+        let key = self
+            .object_value(key_handle)
+            .ok_or_else(|| format!("invalid key handle {}", key_handle))?;
+        let removed = dict_remove_value(&dict_obj, &key);
+        if removed.is_none() {
+            return Err("dict key not found".to_string());
+        }
+        Ok(())
     }
 
     fn object_get_string_ptr(&mut self, handle: PyrsObjectHandle) -> Result<*const c_char, String> {
@@ -347,9 +431,13 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_new_dict"
             | "object_sequence_len"
             | "object_sequence_get_item"
+            | "object_list_append"
+            | "object_list_set_item"
             | "object_dict_len"
             | "object_dict_set_item"
             | "object_dict_get_item"
+            | "object_dict_contains"
+            | "object_dict_del_item"
             | "error_state"
             | "extension_symbol_metadata"
     );
@@ -860,6 +948,41 @@ unsafe extern "C" fn capi_object_sequence_get_item(
     }
 }
 
+unsafe extern "C" fn capi_object_list_append(
+    module_ctx: *mut c_void,
+    list_handle: PyrsObjectHandle,
+    item_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_list_append(list_handle, item_handle) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_list_set_item(
+    module_ctx: *mut c_void,
+    list_handle: PyrsObjectHandle,
+    index: usize,
+    item_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_list_set_item(list_handle, index, item_handle) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_dict_len(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -926,6 +1049,40 @@ unsafe extern "C" fn capi_object_dict_get_item(
             }
             0
         }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_dict_contains(
+    module_ctx: *mut c_void,
+    dict_handle: PyrsObjectHandle,
+    key_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_dict_contains(dict_handle, key_handle) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_dict_del_item(
+    module_ctx: *mut c_void,
+    dict_handle: PyrsObjectHandle,
+    key_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_dict_del_item(dict_handle, key_handle) {
+        Ok(()) => 0,
         Err(err) => {
             context.set_error(err);
             -1
@@ -1026,9 +1183,13 @@ impl Vm {
             object_get_bytes: capi_object_get_bytes,
             object_sequence_len: capi_object_sequence_len,
             object_sequence_get_item: capi_object_sequence_get_item,
+            object_list_append: capi_object_list_append,
+            object_list_set_item: capi_object_list_set_item,
             object_dict_len: capi_object_dict_len,
             object_dict_set_item: capi_object_dict_set_item,
             object_dict_get_item: capi_object_dict_get_item,
+            object_dict_contains: capi_object_dict_contains,
+            object_dict_del_item: capi_object_dict_del_item,
             object_get_string: capi_object_get_string,
             error_set: capi_error_set,
             error_clear: capi_error_clear,

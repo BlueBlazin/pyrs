@@ -377,6 +377,17 @@ pub struct PyrsApiV1 {
         index: usize,
         out_handle: *mut PyrsObjectHandle,
     ) -> i32,
+    pub object_list_append: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        list_handle: PyrsObjectHandle,
+        item_handle: PyrsObjectHandle,
+    ) -> i32,
+    pub object_list_set_item: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        list_handle: PyrsObjectHandle,
+        index: usize,
+        item_handle: PyrsObjectHandle,
+    ) -> i32,
     pub object_dict_len: unsafe extern "C" fn(
         module_ctx: *mut c_void,
         handle: PyrsObjectHandle,
@@ -393,6 +404,16 @@ pub struct PyrsApiV1 {
         dict_handle: PyrsObjectHandle,
         key_handle: PyrsObjectHandle,
         out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
+    pub object_dict_contains: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        dict_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+    ) -> i32,
+    pub object_dict_del_item: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        dict_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
     ) -> i32,
     pub object_get_string:
         unsafe extern "C" fn(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> *const c_char,
