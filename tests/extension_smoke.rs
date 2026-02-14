@@ -2959,6 +2959,108 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_can_bridge_buffer_pointer_through_capsule() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping buffer/capsule bridge extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping buffer/capsule bridge extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_buffer_capsule_bridge");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_buffer_capsule_bridge.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <stdint.h>
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    const uint8_t payload[] = {10, 20, 30, 40};
+    PyrsObjectHandle bytes_obj = api->object_new_bytes(module_ctx, payload, 4);
+    if (!bytes_obj) {
+        return -2;
+    }
+    PyrsObjectHandle builtins_mod = 0;
+    if (api->module_import(module_ctx, "builtins", &builtins_mod) != 0 || !builtins_mod) {
+        return -3;
+    }
+    PyrsObjectHandle bytearray_cls = 0;
+    if (api->module_get_attr(module_ctx, builtins_mod, "bytearray", &bytearray_cls) != 0 || !bytearray_cls) {
+        return -4;
+    }
+    PyrsObjectHandle bytearray_obj = 0;
+    if (api->object_call_onearg(module_ctx, bytearray_cls, bytes_obj, &bytearray_obj) != 0 || !bytearray_obj) {
+        return -5;
+    }
+    PyrsBufferViewV1 view;
+    if (api->object_get_buffer(module_ctx, bytearray_obj, &view) != 0) {
+        return -6;
+    }
+    if (!view.data || view.len != 4 || view.readonly != 0) {
+        return -7;
+    }
+    PyrsObjectHandle cap = api->capsule_new(module_ctx, (void*)view.data, "bridge.buf");
+    if (!cap) {
+        return -8;
+    }
+    if (api->capsule_set_context(module_ctx, cap, (void*)(uintptr_t)view.len) != 0) {
+        return -9;
+    }
+    void* got_ptr = api->capsule_get_pointer(module_ctx, cap, "bridge.buf");
+    if (got_ptr != (void*)view.data) {
+        return -10;
+    }
+    void* got_len = api->capsule_get_context(module_ctx, cap);
+    if ((uintptr_t)got_len != (uintptr_t)view.len) {
+        return -11;
+    }
+    if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
+        return -12;
+    }
+    if (api->module_set_bool(module_ctx, "BUFFER_CAPSULE_BRIDGE_OK", 1) != 0) {
+        return -13;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_buffer_capsule_bridge");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_buffer_capsule_bridge.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_buffer_capsule_bridge\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_buffer_capsule_bridge\nassert native_buffer_capsule_bridge.BUFFER_CAPSULE_BRIDGE_OK is True",
+    )
+    .expect("buffer/capsule bridge extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_query_capabilities() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping capability-query extension smoke (pyrs binary not found)");
