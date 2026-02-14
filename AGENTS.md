@@ -50,6 +50,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 generic item helpers now include mutation (`object_set_item`, `object_del_item`) with dict/list/bytearray direct semantics and special-method fallback for custom containers.
   - C-API v1 now includes generic membership and dict-view helpers (`object_contains`, `object_dict_keys`, `object_dict_items`) for native-side probe/inspection paths.
   - C-API v1 now includes bytes-like buffer helpers (`object_get_buffer`, `object_release_buffer`) exposing pointer/len/readonly buffer views for `bytes`/`bytearray`/`memoryview` handles.
+  - C-API v1 now includes capsule baseline helpers (`capsule_new`, `capsule_get_pointer`, `capsule_get_name`) for opaque native-pointer interop in extension handle space.
   - C-API v1 now includes list/dict mutation helpers (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`) with positive/negative-path smoke coverage.
   - C-API v1 now includes handle-based object attribute access (`object_get_attr`, `object_set_attr`, `object_del_attr`) with native extension smoke coverage.
   - C-API v1 attribute helpers now include presence checks (`object_has_attr`) for exception-free attr probes in native code.
@@ -68,6 +69,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes a special-method fallback fixture proving `object_set_item`/`object_del_item` dispatch on custom `__setitem__`/`__delitem__` containers (`dynamic_extension_item_mutation_falls_back_to_special_methods`).
   - extension smoke now includes membership + dict-view fixture coverage for `object_contains` + `object_dict_keys`/`object_dict_items` APIs (`dynamic_extension_can_use_contains_and_dict_view_apis`).
   - extension smoke now includes buffer API coverage for pointer/len/readonly views and release semantics (`dynamic_extension_can_use_buffer_apis`).
+  - extension smoke now includes capsule API coverage for create/name/pointer/mismatch/refcount paths (`dynamic_extension_can_use_capsule_apis`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
