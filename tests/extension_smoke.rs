@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -71,6 +72,95 @@ fn compile_shared_extension(source_path: &Path, output_path: &Path) -> Result<()
     if !output.status.success() {
         return Err(format!(
             "C compiler failed (status={}):\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+fn query_pyrs_build_vars(bin: &Path) -> Result<HashMap<String, String>, String> {
+    let snippet = r#"import sys
+name = f"_sysconfigdata_{sys.abiflags}_{sys.platform}_{getattr(sys.implementation, '_multiarch', '')}"
+mod = __import__(name)
+keys = ["CC", "CFLAGS", "LDSHARED", "EXT_SUFFIX"]
+for key in keys:
+    value = mod.build_time_vars.get(key, "")
+    print(f"{key}={value}")
+"#;
+    let output = Command::new(bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(snippet)
+        .output()
+        .map_err(|err| format!("failed to query pyrs build vars: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to query pyrs build vars (status={}):\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let mut vars = HashMap::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        vars.insert(key.to_string(), value.to_string());
+    }
+    Ok(vars)
+}
+
+fn compile_shared_extension_with_build_vars(
+    source_path: &Path,
+    output_path: &Path,
+    build_vars: &HashMap<String, String>,
+) -> Result<(), String> {
+    let include_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include");
+    let compiler_cmd = build_vars
+        .get("CC")
+        .cloned()
+        .unwrap_or_else(|| "cc".to_string());
+    let mut compiler_parts = compiler_cmd.split_whitespace();
+    let compiler = compiler_parts.next().unwrap_or("cc");
+    let mut cmd = Command::new(compiler);
+    for part in compiler_parts {
+        cmd.arg(part);
+    }
+    for part in build_vars
+        .get("CFLAGS")
+        .map(String::as_str)
+        .unwrap_or("")
+        .split_whitespace()
+    {
+        cmd.arg(part);
+    }
+    cmd.arg("-fPIC");
+    #[cfg(target_os = "macos")]
+    {
+        cmd.arg("-dynamiclib");
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        cmd.arg("-shared");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        cmd.arg("-shared");
+    }
+    cmd.arg("-I")
+        .arg(include_dir)
+        .arg(source_path)
+        .arg("-o")
+        .arg(output_path);
+    let output = cmd
+        .output()
+        .map_err(|err| format!("failed to invoke configured C compiler: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "configured C compiler failed (status={}):\nstdout:\n{}\nstderr:\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -194,6 +284,62 @@ fn sysconfigdata_builtin_exposes_extension_build_keys() {
     )
     .expect("sysconfigdata build vars should expose extension keys");
 
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn sysconfig_build_vars_can_compile_and_import_extension() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping sysconfig build-vars compile smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping sysconfig build-vars compile smoke (cc not available)");
+        return;
+    }
+
+    let build_vars =
+        query_pyrs_build_vars(&bin).expect("pyrs should expose baseline extension build vars");
+    let ext_suffix = build_vars
+        .get("EXT_SUFFIX")
+        .cloned()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| ".so".to_string());
+
+    let temp_root = unique_temp_dir("ext_smoke_sysconfig_compile");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("syscfg_native.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    if (api->module_set_bool(module_ctx, "COMPILED_WITH_SYSCONFIG", 1) != 0) {
+        return -2;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let output_library = temp_root.join(format!("syscfg_native{ext_suffix}"));
+    compile_shared_extension_with_build_vars(&source_path, &output_library, &build_vars)
+        .expect("configured compiler should build extension");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import syscfg_native\nassert syscfg_native.COMPILED_WITH_SYSCONFIG is True",
+    )
+    .expect("extension built with sysconfig vars should import");
+
+    let _ = fs::remove_file(output_library);
+    let _ = fs::remove_file(source_path);
     let _ = fs::remove_dir_all(temp_root);
 }
 
