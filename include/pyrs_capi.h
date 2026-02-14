@@ -131,6 +131,9 @@ struct PyrsApiV1 {
     int (*capsule_set_context)(void* module_ctx, PyrsObjectHandle capsule_handle, void* context);
     void* (*capsule_get_context)(void* module_ctx, PyrsObjectHandle capsule_handle);
     int (*capsule_set_destructor)(void* module_ctx, PyrsObjectHandle capsule_handle, PyrsCapsuleDestructorV1 destructor);
+    PyrsCapsuleDestructorV1 (*capsule_get_destructor)(void* module_ctx, PyrsObjectHandle capsule_handle);
+    int (*capsule_set_name)(void* module_ctx, PyrsObjectHandle capsule_handle, const char* name);
+    int (*capsule_is_valid)(void* module_ctx, PyrsObjectHandle capsule_handle, const char* name);
 };
 
 typedef int (*PyrsExtensionInitV1)(const PyrsApiV1* api, void* module_ctx);

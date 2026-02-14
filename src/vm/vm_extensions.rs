@@ -327,6 +327,17 @@ impl ModuleCapiContext {
         let Some(slot) = self.capsules.get(&capsule_handle) else {
             return Err(format!("invalid capsule handle {}", capsule_handle));
         };
+        if !self.capsule_name_matches(slot, name)? {
+            return Err("capsule name mismatch".to_string());
+        }
+        Ok(slot.pointer as *mut c_void)
+    }
+
+    fn capsule_name_matches(
+        &self,
+        slot: &CapiCapsuleSlot,
+        name: *const c_char,
+    ) -> Result<bool, String> {
         let requested_name = if name.is_null() {
             None
         } else {
@@ -338,15 +349,11 @@ impl ModuleCapiContext {
             )
         };
         let expected_name = slot.name.as_ref().map(|value| value.to_string_lossy());
-        let matched = match (expected_name.as_ref(), requested_name) {
+        Ok(match (expected_name.as_ref(), requested_name) {
             (None, None) => true,
             (Some(expected), Some(requested)) => expected.as_ref() == requested,
             _ => false,
-        };
-        if !matched {
-            return Err("capsule name mismatch".to_string());
-        }
-        Ok(slot.pointer as *mut c_void)
+        })
     }
 
     fn capsule_get_name_ptr(
@@ -394,6 +401,54 @@ impl ModuleCapiContext {
         };
         slot.destructor = destructor;
         Ok(())
+    }
+
+    fn capsule_get_destructor(
+        &mut self,
+        capsule_handle: PyrsObjectHandle,
+    ) -> Result<Option<PyrsCapsuleDestructorV1>, String> {
+        let Some(slot) = self.capsules.get(&capsule_handle) else {
+            return Err(format!("invalid capsule handle {}", capsule_handle));
+        };
+        Ok(slot.destructor)
+    }
+
+    fn capsule_set_name(
+        &mut self,
+        capsule_handle: PyrsObjectHandle,
+        name: *const c_char,
+    ) -> Result<(), String> {
+        let Some(slot) = self.capsules.get_mut(&capsule_handle) else {
+            return Err(format!("invalid capsule handle {}", capsule_handle));
+        };
+        if name.is_null() {
+            slot.name = None;
+            return Ok(());
+        }
+        // SAFETY: caller provides valid NUL-terminated string pointer.
+        let raw = unsafe { CStr::from_ptr(name) };
+        let text = raw
+            .to_str()
+            .map_err(|_| "capsule name must be utf-8".to_string())?;
+        let value =
+            CString::new(text).map_err(|_| "capsule name contains interior NUL".to_string())?;
+        slot.name = Some(value);
+        Ok(())
+    }
+
+    fn capsule_is_valid(
+        &mut self,
+        capsule_handle: PyrsObjectHandle,
+        name: *const c_char,
+    ) -> Result<i32, String> {
+        let Some(slot) = self.capsules.get(&capsule_handle) else {
+            return Err(format!("invalid capsule handle {}", capsule_handle));
+        };
+        if self.capsule_name_matches(slot, name)? {
+            Ok(1)
+        } else {
+            Ok(0)
+        }
     }
 
     fn object_type(&self, handle: PyrsObjectHandle) -> Result<i32, String> {
@@ -1377,6 +1432,9 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "capsule_set_context"
             | "capsule_get_context"
             | "capsule_set_destructor"
+            | "capsule_get_destructor"
+            | "capsule_set_name"
+            | "capsule_is_valid"
             | "object_sequence_len"
             | "object_sequence_get_item"
             | "object_get_iter"
@@ -2366,6 +2424,56 @@ unsafe extern "C" fn capi_capsule_set_destructor(
     }
 }
 
+unsafe extern "C" fn capi_capsule_get_destructor(
+    module_ctx: *mut c_void,
+    capsule_handle: PyrsObjectHandle,
+) -> Option<PyrsCapsuleDestructorV1> {
+    let Some(context_obj) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return None;
+    };
+    match context_obj.capsule_get_destructor(capsule_handle) {
+        Ok(destructor) => destructor,
+        Err(err) => {
+            context_obj.set_error(err);
+            None
+        }
+    }
+}
+
+unsafe extern "C" fn capi_capsule_set_name(
+    module_ctx: *mut c_void,
+    capsule_handle: PyrsObjectHandle,
+    name: *const c_char,
+) -> i32 {
+    let Some(context_obj) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context_obj.capsule_set_name(capsule_handle, name) {
+        Ok(()) => 0,
+        Err(err) => {
+            context_obj.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_capsule_is_valid(
+    module_ctx: *mut c_void,
+    capsule_handle: PyrsObjectHandle,
+    name: *const c_char,
+) -> i32 {
+    let Some(context_obj) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context_obj.capsule_is_valid(capsule_handle, name) {
+        Ok(value) => value,
+        Err(err) => {
+            context_obj.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_sequence_len(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -2992,6 +3100,9 @@ impl Vm {
             capsule_set_context: capi_capsule_set_context,
             capsule_get_context: capi_capsule_get_context,
             capsule_set_destructor: capi_capsule_set_destructor,
+            capsule_get_destructor: capi_capsule_get_destructor,
+            capsule_set_name: capi_capsule_set_name,
+            capsule_is_valid: capi_capsule_is_valid,
         }
     }
 
