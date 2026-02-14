@@ -7,6 +7,8 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 ## Header
 
 - `/Users/$USER/pyrs/include/pyrs_capi.h`
+- Buffer view struct:
+  - `PyrsBufferViewV1 { const uint8_t* data; uintptr_t len; int readonly; }`
 
 ## ABI Version
 
@@ -52,6 +54,8 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_contains(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle needle_handle)` (`1`/`0` on success, `-1` on error)
 - `object_dict_keys(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle* out_handle)`
 - `object_dict_items(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle* out_handle)`
+- `object_get_buffer(void* module_ctx, PyrsObjectHandle object_handle, PyrsBufferViewV1* out_view)`
+- `object_release_buffer(void* module_ctx, PyrsObjectHandle object_handle)`
 - `object_sequence_len(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len)`
 - `object_sequence_get_item(void* module_ctx, PyrsObjectHandle handle, uintptr_t index, PyrsObjectHandle* out_handle)`
 - `object_get_iter(void* module_ctx, PyrsObjectHandle handle, PyrsObjectHandle* out_handle)`
@@ -99,6 +103,7 @@ Return semantics:
 - generic length/subscript helpers are available through `object_len(...)`, `object_get_item(...)`, `object_set_item(...)`, and `object_del_item(...)`.
 - generic membership probes are available through `object_contains(...)`.
 - dict-view helpers are available through `object_dict_keys(...)` and `object_dict_items(...)`.
+- buffer access helpers are available through `object_get_buffer(...)` and `object_release_buffer(...)`.
 - iterator helpers are available through `object_get_iter(...)` and `object_iter_next(...)`.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
@@ -130,6 +135,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | module attr mutation helpers (`set`/`del`/`has`) | `dynamic_extension_can_set_module_attrs_and_items` |
 | generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items`, `dynamic_extension_item_mutation_falls_back_to_special_methods` |
 | membership + dict-view helpers (`contains`/`dict_keys`/`dict_items`) | `dynamic_extension_can_use_contains_and_dict_view_apis` |
+| buffer helpers (`get_buffer`/`release_buffer`) | `dynamic_extension_can_use_buffer_apis` |
 | iterator helpers (`get_iter`/`iter_next`) | `dynamic_extension_can_iterate_with_iterator_apis` |
 | list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |
 | object attribute helpers (`get`/`set`/`del`/`has`) | `dynamic_extension_can_get_set_and_del_object_attributes` |
