@@ -25,11 +25,18 @@ struct CapiObjectSlot {
     refcount: usize,
 }
 
+struct CapiCapsuleSlot {
+    pointer: usize,
+    name: Option<CString>,
+    refcount: usize,
+}
+
 struct ModuleCapiContext {
     vm: *mut Vm,
     module: ObjRef,
     next_object_handle: PyrsObjectHandle,
     objects: HashMap<PyrsObjectHandle, CapiObjectSlot>,
+    capsules: HashMap<PyrsObjectHandle, CapiCapsuleSlot>,
     last_error: Option<String>,
     scratch_strings: Vec<CString>,
     buffer_pins: HashMap<PyrsObjectHandle, usize>,
@@ -42,6 +49,7 @@ impl ModuleCapiContext {
             module,
             next_object_handle: 1,
             objects: HashMap::new(),
+            capsules: HashMap::new(),
             last_error: None,
             scratch_strings: Vec::new(),
             buffer_pins: HashMap::new(),
@@ -56,15 +64,53 @@ impl ModuleCapiContext {
         self.last_error = None;
     }
 
-    fn alloc_object(&mut self, value: Value) -> PyrsObjectHandle {
+    fn allocate_handle(&mut self) -> PyrsObjectHandle {
         let handle = self.next_object_handle;
         self.next_object_handle = self.next_object_handle.wrapping_add(1);
         if self.next_object_handle == 0 {
             self.next_object_handle = 1;
         }
+        handle
+    }
+
+    fn alloc_object(&mut self, value: Value) -> PyrsObjectHandle {
+        let handle = self.allocate_handle();
         self.objects
             .insert(handle, CapiObjectSlot { value, refcount: 1 });
         handle
+    }
+
+    fn alloc_capsule(
+        &mut self,
+        pointer: *mut c_void,
+        name: *const c_char,
+    ) -> Result<PyrsObjectHandle, String> {
+        if pointer.is_null() {
+            return Err("capsule_new requires non-null pointer".to_string());
+        }
+        let name = if name.is_null() {
+            None
+        } else {
+            // SAFETY: pointer is validated by caller as NUL-terminated C string.
+            let raw = unsafe { CStr::from_ptr(name) };
+            Some(
+                CString::new(
+                    raw.to_str()
+                        .map_err(|_| "capsule name must be utf-8".to_string())?,
+                )
+                .map_err(|_| "capsule name contains interior NUL".to_string())?,
+            )
+        };
+        let handle = self.allocate_handle();
+        self.capsules.insert(
+            handle,
+            CapiCapsuleSlot {
+                pointer: pointer as usize,
+                name,
+                refcount: 1,
+            },
+        );
+        Ok(handle)
     }
 
     fn object_slot(&self, handle: PyrsObjectHandle) -> Option<&CapiObjectSlot> {
@@ -199,26 +245,89 @@ impl ModuleCapiContext {
     }
 
     fn incref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
-        let Some(slot) = self.objects.get_mut(&handle) else {
-            return Err(format!("invalid object handle {}", handle));
-        };
-        slot.refcount = slot.refcount.saturating_add(1);
-        Ok(())
+        if let Some(slot) = self.objects.get_mut(&handle) {
+            slot.refcount = slot.refcount.saturating_add(1);
+            return Ok(());
+        }
+        if let Some(slot) = self.capsules.get_mut(&handle) {
+            slot.refcount = slot.refcount.saturating_add(1);
+            return Ok(());
+        }
+        Err(format!("invalid object handle {}", handle))
     }
 
     fn decref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
-        let Some(slot) = self.objects.get_mut(&handle) else {
-            return Err(format!("invalid object handle {}", handle));
-        };
-        if slot.refcount == 0 {
-            self.objects.remove(&handle);
+        if let Some(slot) = self.objects.get_mut(&handle) {
+            if slot.refcount == 0 {
+                self.objects.remove(&handle);
+                return Ok(());
+            }
+            slot.refcount -= 1;
+            if slot.refcount == 0 {
+                self.objects.remove(&handle);
+            }
             return Ok(());
         }
-        slot.refcount -= 1;
-        if slot.refcount == 0 {
-            self.objects.remove(&handle);
+        if let Some(slot) = self.capsules.get_mut(&handle) {
+            if slot.refcount == 0 {
+                self.capsules.remove(&handle);
+                return Ok(());
+            }
+            slot.refcount -= 1;
+            if slot.refcount == 0 {
+                self.capsules.remove(&handle);
+            }
+            return Ok(());
         }
-        Ok(())
+        Err(format!("invalid object handle {}", handle))
+    }
+
+    fn capsule_new(
+        &mut self,
+        pointer: *mut c_void,
+        name: *const c_char,
+    ) -> Result<PyrsObjectHandle, String> {
+        self.alloc_capsule(pointer, name)
+    }
+
+    fn capsule_get_pointer(
+        &mut self,
+        capsule_handle: PyrsObjectHandle,
+        name: *const c_char,
+    ) -> Result<*mut c_void, String> {
+        let Some(slot) = self.capsules.get(&capsule_handle) else {
+            return Err(format!("invalid capsule handle {}", capsule_handle));
+        };
+        let requested_name = if name.is_null() {
+            None
+        } else {
+            // SAFETY: caller provides a valid NUL-terminated C string.
+            let raw = unsafe { CStr::from_ptr(name) };
+            Some(
+                raw.to_str()
+                    .map_err(|_| "capsule name must be utf-8".to_string())?,
+            )
+        };
+        let expected_name = slot.name.as_ref().map(|value| value.to_string_lossy());
+        let matched = match (expected_name.as_ref(), requested_name) {
+            (None, None) => true,
+            (Some(expected), Some(requested)) => expected.as_ref() == requested,
+            _ => false,
+        };
+        if !matched {
+            return Err("capsule name mismatch".to_string());
+        }
+        Ok(slot.pointer as *mut c_void)
+    }
+
+    fn capsule_get_name_ptr(&mut self, capsule_handle: PyrsObjectHandle) -> Result<*const c_char, String> {
+        let Some(slot) = self.capsules.get(&capsule_handle) else {
+            return Err(format!("invalid capsule handle {}", capsule_handle));
+        };
+        Ok(slot
+            .name
+            .as_ref()
+            .map_or(std::ptr::null(), |value| value.as_ptr()))
     }
 
     fn object_type(&self, handle: PyrsObjectHandle) -> Result<i32, String> {
@@ -1196,6 +1305,9 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_dict_items"
             | "object_get_buffer"
             | "object_release_buffer"
+            | "capsule_new"
+            | "capsule_get_pointer"
+            | "capsule_get_name"
             | "object_sequence_len"
             | "object_sequence_get_item"
             | "object_get_iter"
@@ -2085,6 +2197,56 @@ unsafe extern "C" fn capi_object_release_buffer(
     }
 }
 
+unsafe extern "C" fn capi_capsule_new(
+    module_ctx: *mut c_void,
+    pointer: *mut c_void,
+    name: *const c_char,
+) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    match context.capsule_new(pointer, name) {
+        Ok(handle) => handle,
+        Err(err) => {
+            context.set_error(err);
+            0
+        }
+    }
+}
+
+unsafe extern "C" fn capi_capsule_get_pointer(
+    module_ctx: *mut c_void,
+    capsule_handle: PyrsObjectHandle,
+    name: *const c_char,
+) -> *mut c_void {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return std::ptr::null_mut();
+    };
+    match context.capsule_get_pointer(capsule_handle, name) {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            context.set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+unsafe extern "C" fn capi_capsule_get_name(
+    module_ctx: *mut c_void,
+    capsule_handle: PyrsObjectHandle,
+) -> *const c_char {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return std::ptr::null();
+    };
+    match context.capsule_get_name_ptr(capsule_handle) {
+        Ok(name_ptr) => name_ptr,
+        Err(err) => {
+            context.set_error(err);
+            std::ptr::null()
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_sequence_len(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -2705,6 +2867,9 @@ impl Vm {
             object_dict_items: capi_object_dict_items,
             object_get_buffer: capi_object_get_buffer,
             object_release_buffer: capi_object_release_buffer,
+            capsule_new: capi_capsule_new,
+            capsule_get_pointer: capi_capsule_get_pointer,
+            capsule_get_name: capi_capsule_get_name,
         }
     }
 
