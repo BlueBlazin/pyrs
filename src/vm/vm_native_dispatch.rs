@@ -743,16 +743,15 @@ impl Vm {
                 }
             }
             NativeMethodKind::TupleIndex => {
-                if !(1..=3).contains(&args.len()) {
-                    return Err(RuntimeError::new(
-                        "tuple.index() expects one to three arguments",
-                    ));
-                }
-                let target = args.remove(0);
                 let find_index = |values: &[Value],
-                                  target: &Value,
                                   remaining_args: &mut Vec<Value>|
                  -> Result<Option<i64>, RuntimeError> {
+                    if !(1..=3).contains(&remaining_args.len()) {
+                        return Err(RuntimeError::new(
+                            "tuple.index() expects one to three arguments",
+                        ));
+                    }
+                    let target = remaining_args.remove(0);
                     let len = values.len() as i64;
                     let mut start = if remaining_args.is_empty() {
                         0
@@ -781,7 +780,7 @@ impl Vm {
                         .take(stop as usize)
                         .skip(start as usize)
                     {
-                        if value == target {
+                        if *value == target {
                             return Ok(Some(idx as i64));
                         }
                     }
@@ -790,7 +789,7 @@ impl Vm {
                 match &*receiver.kind() {
                     Object::Tuple(values) => {
                         let mut remaining_args = args;
-                        if let Some(index) = find_index(values, &target, &mut remaining_args)? {
+                        if let Some(index) = find_index(values, &mut remaining_args)? {
                             Ok(NativeCallResult::Value(Value::Int(index)))
                         } else {
                             Err(RuntimeError::new("tuple.index(x): x not in tuple"))
@@ -826,7 +825,7 @@ impl Vm {
                         let Object::Tuple(values) = &*tuple_kind else {
                             return Err(RuntimeError::new("tuple.index() receiver must be tuple"));
                         };
-                        if let Some(index) = find_index(values, &target, &mut remaining_args)? {
+                        if let Some(index) = find_index(values, &mut remaining_args)? {
                             Ok(NativeCallResult::Value(Value::Int(index)))
                         } else {
                             Err(RuntimeError::new("tuple.index(x): x not in tuple"))

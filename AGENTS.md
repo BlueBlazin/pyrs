@@ -128,6 +128,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `scripts/bench_fib_gate.sh 5`
   - `scripts/bench_dispatch_hotpath.sh 5`
   - `scripts/bench_dict_backend.sh 5`
+  - `scripts/bench_startup_gate.sh 7`
 - All optimization work must update `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint.
 
 ## Canonical Documents

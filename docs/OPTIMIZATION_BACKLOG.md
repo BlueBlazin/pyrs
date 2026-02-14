@@ -19,6 +19,7 @@ Last updated: 2026-02-14
 - `scripts/bench_fib_gate.sh 5`
 - `scripts/bench_dispatch_hotpath.sh 5`
 - `scripts/bench_dict_backend.sh 5`
+- `scripts/bench_startup_gate.sh 7`
 
 Use benchmark artifacts in `perf/` as current truth for deltas.
 Do not rely on stale point-in-time numbers in this document.

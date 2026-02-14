@@ -12625,16 +12625,24 @@ t = (1, 2, 3, 2, 4, 2)
 u = T((1, 2, 1, 3))
 
 bound_count = t.count(2)
+unbound_count = tuple.count(t, 2)
 sub_count = u.count(1)
+sub_unbound_count = tuple.count(u, 1)
 
 bound_index = t.index(2, 2, 5)
+unbound_index = tuple.index(t, 2, 2, 5)
 sub_index = u.index(1, 1)
+sub_unbound_index = tuple.index(u, 1, 1)
 
 ok = (
     bound_count == 3 and
+    unbound_count == 3 and
     sub_count == 2 and
+    sub_unbound_count == 2 and
     bound_index == 3 and
-    sub_index == 2
+    unbound_index == 3 and
+    sub_index == 2 and
+    sub_unbound_index == 2
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");

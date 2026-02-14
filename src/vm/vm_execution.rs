@@ -7630,15 +7630,29 @@ impl Vm {
         arg0: Value,
         arg1: Value,
     ) -> Result<(), RuntimeError> {
-        let simple_positional_path = {
+        let (simple_positional_path, no_cells_hot) = {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
-            func_data.plain_positional_call_arity == Some(2)
+            let code = &func_data.code;
+            let simple_positional_path = func_data.plain_positional_call_arity == Some(2);
+            let no_cells_hot = simple_positional_path
+                && code.plain_positional_arg0_cell.is_none()
+                && code.plain_positional_arg1_cell.is_none()
+                && code.cellvars.is_empty()
+                && func_data.closure.is_empty()
+                && !code.is_generator
+                && !code.is_comprehension;
+            (simple_positional_path, no_cells_hot)
         };
         if simple_positional_path {
+            if no_cells_hot {
+                return self.push_simple_positional_function_frame_two_args_no_cells_from_func(
+                    func, arg0, arg1,
+                );
+            }
             let (code, module, closure, owner_class) = {
                 let func_kind = func.kind();
                 let func_data = match &*func_kind {
@@ -7671,15 +7685,30 @@ impl Vm {
         arg1: Value,
         arg2: Value,
     ) -> Result<(), RuntimeError> {
-        let simple_positional_path = {
+        let (simple_positional_path, no_cells_hot) = {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
                 _ => return Err(RuntimeError::new("attempted to call non-function")),
             };
-            func_data.plain_positional_call_arity == Some(3)
+            let code = &func_data.code;
+            let simple_positional_path = func_data.plain_positional_call_arity == Some(3);
+            let no_cells_hot = simple_positional_path
+                && code.plain_positional_arg0_cell.is_none()
+                && code.plain_positional_arg1_cell.is_none()
+                && code.plain_positional_arg2_cell.is_none()
+                && code.cellvars.is_empty()
+                && func_data.closure.is_empty()
+                && !code.is_generator
+                && !code.is_comprehension;
+            (simple_positional_path, no_cells_hot)
         };
         if simple_positional_path {
+            if no_cells_hot {
+                return self.push_simple_positional_function_frame_three_args_no_cells_from_func(
+                    func, arg0, arg1, arg2,
+                );
+            }
             let (code, module, closure, owner_class) = {
                 let func_kind = func.kind();
                 let func_data = match &*func_kind {
@@ -7704,6 +7733,118 @@ impl Vm {
             );
         }
         self.push_function_call_from_obj(func, vec![arg0, arg1, arg2], HashMap::new())
+    }
+
+    #[inline]
+    fn push_simple_positional_function_frame_two_args_no_cells_from_func(
+        &mut self,
+        func: &ObjRef,
+        arg0: Value,
+        arg1: Value,
+    ) -> Result<(), RuntimeError> {
+        let func_kind = func.kind();
+        let func_data = match &*func_kind {
+            Object::Function(data) => data,
+            _ => return Err(RuntimeError::new("attempted to call non-function")),
+        };
+        self.push_simple_positional_function_frame_two_args_no_cells_ref(
+            &func_data.code,
+            &func_data.module,
+            func_data.owner_class.as_ref(),
+            arg0,
+            arg1,
+        )
+    }
+
+    #[inline]
+    fn push_simple_positional_function_frame_three_args_no_cells_from_func(
+        &mut self,
+        func: &ObjRef,
+        arg0: Value,
+        arg1: Value,
+        arg2: Value,
+    ) -> Result<(), RuntimeError> {
+        let func_kind = func.kind();
+        let func_data = match &*func_kind {
+            Object::Function(data) => data,
+            _ => return Err(RuntimeError::new("attempted to call non-function")),
+        };
+        self.push_simple_positional_function_frame_three_args_no_cells_ref(
+            &func_data.code,
+            &func_data.module,
+            func_data.owner_class.as_ref(),
+            arg0,
+            arg1,
+            arg2,
+        )
+    }
+
+    #[inline]
+    fn push_simple_positional_function_frame_two_args_no_cells_ref(
+        &mut self,
+        code: &Rc<CodeObject>,
+        module: &ObjRef,
+        owner_class: Option<&ObjRef>,
+        arg0: Value,
+        arg1: Value,
+    ) -> Result<(), RuntimeError> {
+        debug_assert!(!code.is_generator);
+        debug_assert!(!code.is_comprehension);
+        let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
+        if let Some(caller) = self.frames.last()
+            && let Some(active_exception) = caller.active_exception.as_ref()
+        {
+            frame.active_exception = Some(active_exception.clone());
+        }
+        if frame.fast_locals.len() == 2
+            && code.plain_positional_arg0_slot == Some(0)
+            && code.plain_positional_arg1_slot == Some(1)
+        {
+            frame.fast_locals[0] = Some(arg0);
+            frame.fast_locals[1] = Some(arg1);
+            self.frames.push(frame);
+            return Ok(());
+        }
+        self.store_fast_positional_arg(code, &mut frame, 0, arg0);
+        self.store_fast_positional_arg(code, &mut frame, 1, arg1);
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    #[inline]
+    fn push_simple_positional_function_frame_three_args_no_cells_ref(
+        &mut self,
+        code: &Rc<CodeObject>,
+        module: &ObjRef,
+        owner_class: Option<&ObjRef>,
+        arg0: Value,
+        arg1: Value,
+        arg2: Value,
+    ) -> Result<(), RuntimeError> {
+        debug_assert!(!code.is_generator);
+        debug_assert!(!code.is_comprehension);
+        let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
+        if let Some(caller) = self.frames.last()
+            && let Some(active_exception) = caller.active_exception.as_ref()
+        {
+            frame.active_exception = Some(active_exception.clone());
+        }
+        if frame.fast_locals.len() == 3
+            && code.plain_positional_arg0_slot == Some(0)
+            && code.plain_positional_arg1_slot == Some(1)
+            && code.plain_positional_arg2_slot == Some(2)
+        {
+            frame.fast_locals[0] = Some(arg0);
+            frame.fast_locals[1] = Some(arg1);
+            frame.fast_locals[2] = Some(arg2);
+            self.frames.push(frame);
+            return Ok(());
+        }
+        self.store_fast_positional_arg(code, &mut frame, 0, arg0);
+        self.store_fast_positional_arg(code, &mut frame, 1, arg1);
+        self.store_fast_positional_arg(code, &mut frame, 2, arg2);
+        self.frames.push(frame);
+        Ok(())
     }
 
     fn push_simple_positional_function_frame_one_arg(
