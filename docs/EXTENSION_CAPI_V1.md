@@ -49,6 +49,9 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_get_item(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle, PyrsObjectHandle* out_handle)`
 - `object_set_item(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle, PyrsObjectHandle value_handle)`
 - `object_del_item(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle)`
+- `object_contains(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle needle_handle)` (`1`/`0` on success, `-1` on error)
+- `object_dict_keys(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle* out_handle)`
+- `object_dict_items(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle* out_handle)`
 - `object_sequence_len(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len)`
 - `object_sequence_get_item(void* module_ctx, PyrsObjectHandle handle, uintptr_t index, PyrsObjectHandle* out_handle)`
 - `object_get_iter(void* module_ctx, PyrsObjectHandle handle, PyrsObjectHandle* out_handle)`
@@ -94,6 +97,8 @@ Return semantics:
 - extension code can load/mutate module attributes via `module_get_attr(...)`, `module_set_attr(...)`, `module_del_attr(...)`, and `module_has_attr(...)`.
 - extension code can perform type relation checks via `object_is_instance(...)` and `object_is_subclass(...)`.
 - generic length/subscript helpers are available through `object_len(...)`, `object_get_item(...)`, `object_set_item(...)`, and `object_del_item(...)`.
+- generic membership probes are available through `object_contains(...)`.
+- dict-view helpers are available through `object_dict_keys(...)` and `object_dict_items(...)`.
 - iterator helpers are available through `object_get_iter(...)` and `object_iter_next(...)`.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
@@ -124,6 +129,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | handle constructors + typed getters | `dynamic_extension_can_set_module_values_via_object_handles` |
 | module attr mutation helpers (`set`/`del`/`has`) | `dynamic_extension_can_set_module_attrs_and_items` |
 | generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items`, `dynamic_extension_item_mutation_falls_back_to_special_methods` |
+| membership + dict-view helpers (`contains`/`dict_keys`/`dict_items`) | `dynamic_extension_can_use_contains_and_dict_view_apis` |
 | iterator helpers (`get_iter`/`iter_next`) | `dynamic_extension_can_iterate_with_iterator_apis` |
 | list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |
 | object attribute helpers (`get`/`set`/`del`/`has`) | `dynamic_extension_can_get_set_and_del_object_attributes` |
