@@ -605,6 +605,8 @@ impl Vm {
             }
         });
         let cflags = std::env::var("CFLAGS").unwrap_or_default();
+        let cppflags = std::env::var("CPPFLAGS").unwrap_or_default();
+        let ldflags = std::env::var("LDFLAGS").unwrap_or_default();
         let ldshared = std::env::var("LDSHARED").unwrap_or_else(|_| {
             if cfg!(target_os = "macos") {
                 format!("{cc} -bundle -undefined dynamic_lookup")
@@ -614,6 +616,28 @@ impl Vm {
                 format!("{cc} -shared")
             }
         });
+        let bldshared = std::env::var("BLDSHARED").unwrap_or_else(|_| ldshared.clone());
+        let ar = std::env::var("AR").unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                "lib".to_string()
+            } else {
+                "ar".to_string()
+            }
+        });
+        let arflags = std::env::var("ARFLAGS").unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                "/NOLOGO".to_string()
+            } else {
+                "rcs".to_string()
+            }
+        });
+        let ccshared = std::env::var("CCSHARED").unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                "/LD".to_string()
+            } else {
+                "-fPIC".to_string()
+            }
+        });
         let shlib_suffix = if cfg!(target_os = "windows") {
             ".pyd"
         } else {
@@ -621,6 +645,12 @@ impl Vm {
         };
         let soabi = format!("pyrs-314-{platform}");
         let ext_suffix = format!(".{soabi}{shlib_suffix}");
+        let ldversion = "3.14".to_string();
+        let library = if cfg!(target_os = "windows") {
+            "python314.lib".to_string()
+        } else {
+            "libpython3.14.a".to_string()
+        };
         let includepy = if cfg!(target_os = "windows") {
             format!("{prefix}\\include")
         } else {
@@ -677,13 +707,37 @@ impl Vm {
                 Value::Str(shlib_suffix.to_string()),
             ),
             (Value::Str("CC".to_string()), Value::Str(cc.clone())),
+            (Value::Str("AR".to_string()), Value::Str(ar)),
+            (Value::Str("ARFLAGS".to_string()), Value::Str(arflags)),
+            (Value::Str("CCSHARED".to_string()), Value::Str(ccshared)),
             (Value::Str("LDSHARED".to_string()), Value::Str(ldshared)),
+            (Value::Str("BLDSHARED".to_string()), Value::Str(bldshared)),
             (Value::Str("CFLAGS".to_string()), Value::Str(cflags)),
+            (Value::Str("CPPFLAGS".to_string()), Value::Str(cppflags)),
+            (Value::Str("LDFLAGS".to_string()), Value::Str(ldflags)),
+            (Value::Str("LIBRARY".to_string()), Value::Str(library)),
+            (Value::Str("LDVERSION".to_string()), Value::Str(ldversion)),
             (
                 Value::Str("LDLIBRARY".to_string()),
                 Value::Str(String::new()),
             ),
             (Value::Str("LIBDIR".to_string()), Value::Str(libdir)),
+            (
+                Value::Str("LIBPL".to_string()),
+                Value::Str(if cfg!(target_os = "windows") {
+                    format!("{prefix}\\libs")
+                } else {
+                    format!("{prefix}/lib")
+                }),
+            ),
+            (
+                Value::Str("INCLUDEDIR".to_string()),
+                Value::Str(if cfg!(target_os = "windows") {
+                    format!("{prefix}\\include")
+                } else {
+                    format!("{prefix}/include")
+                }),
+            ),
             (
                 Value::Str("INCLUDEPY".to_string()),
                 Value::Str(includepy.clone()),
@@ -694,6 +748,7 @@ impl Vm {
             ),
             (Value::Str("Py_GIL_DISABLED".to_string()), Value::Int(0)),
             (Value::Str("Py_DEBUG".to_string()), Value::Int(0)),
+            (Value::Str("Py_ENABLE_SHARED".to_string()), Value::Int(1)),
             (
                 Value::Str("VERSION".to_string()),
                 Value::Str("314".to_string()),

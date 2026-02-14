@@ -280,7 +280,7 @@ fn sysconfigdata_builtin_exposes_extension_build_keys() {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import sys\nname = f\"_sysconfigdata_{sys.abiflags}_{sys.platform}_{getattr(sys.implementation, '_multiarch', '')}\"\nm = __import__(name)\nvars = m.build_time_vars\nassert isinstance(vars.get('SOABI'), str) and vars.get('SOABI')\nassert isinstance(vars.get('EXT_SUFFIX'), str) and vars.get('EXT_SUFFIX').endswith(('.so', '.pyd'))\nassert isinstance(vars.get('CC'), str) and vars.get('CC')\nassert vars.get('Py_GIL_DISABLED') in (0, 1)",
+        "import sys\nname = f\"_sysconfigdata_{sys.abiflags}_{sys.platform}_{getattr(sys.implementation, '_multiarch', '')}\"\nm = __import__(name)\nvars = m.build_time_vars\nassert isinstance(vars.get('SOABI'), str) and vars.get('SOABI')\nassert isinstance(vars.get('EXT_SUFFIX'), str) and vars.get('EXT_SUFFIX').endswith(('.so', '.pyd'))\nassert isinstance(vars.get('CC'), str) and vars.get('CC')\nassert isinstance(vars.get('AR'), str) and vars.get('AR')\nassert isinstance(vars.get('CCSHARED'), str) and vars.get('CCSHARED')\nassert isinstance(vars.get('LDSHARED'), str) and vars.get('LDSHARED')\nassert isinstance(vars.get('BLDSHARED'), str) and vars.get('BLDSHARED')\nassert isinstance(vars.get('LIBPL'), str) and vars.get('LIBPL')\nassert isinstance(vars.get('INCLUDEDIR'), str) and vars.get('INCLUDEDIR')\nassert vars.get('Py_GIL_DISABLED') in (0, 1)\nassert vars.get('Py_ENABLE_SHARED') in (0, 1)",
     )
     .expect("sysconfigdata build vars should expose extension keys");
 
