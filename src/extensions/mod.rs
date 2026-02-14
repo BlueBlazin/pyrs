@@ -354,6 +354,12 @@ pub struct PyrsApiV1 {
         module_name: *const c_char,
         out_handle: *mut PyrsObjectHandle,
     ) -> i32,
+    pub module_get_attr: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        module_handle: PyrsObjectHandle,
+        attr_name: *const c_char,
+        out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
     pub object_type: unsafe extern "C" fn(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> i32,
     pub object_is_instance: unsafe extern "C" fn(
         module_ctx: *mut c_void,

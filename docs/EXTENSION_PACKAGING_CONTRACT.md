@@ -44,6 +44,7 @@ Supported dynamic init symbol contract (v1):
 - receives `PyrsApiV1` and `module_ctx`.
 - can set module globals directly or via init-scoped object handles.
 - can import modules during init/call paths via `module_import`.
+- can load imported-module attributes via `module_get_attr`.
 - can register positional/keyword native callables via `module_add_function` / `module_add_function_kw`.
 - can get/set/delete/check object attributes from native code via `object_get_attr` / `object_set_attr` / `object_del_attr` / `object_has_attr`.
 - can perform type relation checks via `object_is_instance` / `object_is_subclass`.

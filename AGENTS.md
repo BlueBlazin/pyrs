@@ -42,6 +42,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - v1 extension C-API header slice is landed (`include/pyrs_capi.h`; contract in `docs/EXTENSION_CAPI_V1.md`) and now includes module setters, native callable registration (`module_add_function`, `module_add_function_kw`), init-scoped object handles + type/getter introspection (`object_new_*`, `module_set_object`, `object_incref/decref`, `object_type`, `object_get_*`), and import-time error state (`error_set/clear/occurred`).
   - C-API v1 now includes `module_get_object(...)` for handle-based reads of module globals during extension init/call paths.
   - C-API v1 now includes `module_import(...)` for native-side module loading during extension init/call paths.
+  - C-API v1 now includes `module_get_attr(...)` for module-handle attribute extraction with explicit module-type checks.
   - C-API handle constructors/getters now include `None`/`float`/`bytes`/`tuple`/`list`/`dict` in addition to `bool`/`int`/`str`, with smoke coverage through native handle and sequence+mapping round-trip.
   - C-API v1 now includes list/dict mutation helpers (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`) with positive/negative-path smoke coverage.
   - C-API v1 now includes handle-based object attribute access (`object_get_attr`, `object_set_attr`, `object_del_attr`) with native extension smoke coverage.

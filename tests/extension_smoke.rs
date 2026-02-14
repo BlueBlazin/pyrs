@@ -1316,8 +1316,15 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
         return -2;
     }
     PyrsObjectHandle pi_value = 0;
-    if (api->object_get_attr(module_ctx, math_mod, "pi", &pi_value) != 0 || !pi_value) {
+    if (api->module_get_attr(module_ctx, math_mod, "pi", &pi_value) != 0 || !pi_value) {
         return -3;
+    }
+    PyrsObjectHandle bogus = 0;
+    if (api->module_get_attr(module_ctx, pi_value, "pi", &bogus) == 0) {
+        return -8;
+    }
+    if (api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
+        return -9;
     }
     if (api->module_set_object(module_ctx, "PI", pi_value) != 0) {
         return -4;
@@ -1479,6 +1486,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_kw = api->api_has_capability(module_ctx, "module_add_function_kw");
     int has_module_get_object = api->api_has_capability(module_ctx, "module_get_object");
     int has_module_import = api->api_has_capability(module_ctx, "module_import");
+    int has_module_get_attr = api->api_has_capability(module_ctx, "module_get_attr");
     int has_list_append = api->api_has_capability(module_ctx, "object_list_append");
     int has_list_set_item = api->api_has_capability(module_ctx, "object_list_set_item");
     int has_dict_contains = api->api_has_capability(module_ctx, "object_dict_contains");
@@ -1491,7 +1499,8 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_is_subclass = api->api_has_capability(module_ctx, "object_is_subclass");
     int has_object_call = api->api_has_capability(module_ctx, "object_call");
     int has_missing = api->api_has_capability(module_ctx, "does_not_exist");
-    if (has_dict != 1 || has_kw != 1 || has_module_get_object != 1 || has_module_import != 1 ||
+    if (has_dict != 1 || has_kw != 1 || has_module_get_object != 1 ||
+        has_module_import != 1 || has_module_get_attr != 1 ||
         has_list_append != 1 || has_list_set_item != 1 ||
         has_dict_contains != 1 || has_dict_del_item != 1 ||
         has_get_attr != 1 || has_set_attr != 1 || has_del_attr != 1 || has_has_attr != 1 ||
@@ -1510,6 +1519,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->module_set_bool(module_ctx, "HAS_MODULE_IMPORT", has_module_import) != 0) {
         return -16;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_MODULE_GET_ATTR", has_module_get_attr) != 0) {
+        return -19;
     }
     if (api->module_set_bool(module_ctx, "HAS_LIST_APPEND", has_list_append) != 0) {
         return -6;
@@ -1570,7 +1582,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_MISSING is False",
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_MISSING is False",
     )
     .expect("capability-query extension import should succeed");
 

@@ -99,6 +99,31 @@ impl ModuleCapiContext {
         Ok(self.alloc_object(value))
     }
 
+    fn module_get_attr(
+        &mut self,
+        module_handle: PyrsObjectHandle,
+        attr_name: &str,
+    ) -> Result<PyrsObjectHandle, String> {
+        if self.vm.is_null() {
+            return Err("module_get_attr missing VM context".to_string());
+        }
+        let module = self
+            .object_value(module_handle)
+            .ok_or_else(|| format!("invalid module handle {}", module_handle))?;
+        let module_obj = match module {
+            Value::Module(module_obj) => module_obj,
+            _ => {
+                return Err(format!("object handle {} is not a module", module_handle));
+            }
+        };
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let value = vm
+            .load_attr_module(&module_obj, attr_name)
+            .map_err(|err| err.message)?;
+        Ok(self.alloc_object(value))
+    }
+
     fn incref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
         let Some(slot) = self.objects.get_mut(&handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -646,6 +671,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "module_add_function_kw"
             | "module_get_object"
             | "module_import"
+            | "module_get_attr"
             | "object_new_none"
             | "object_new_float"
             | "object_new_bytes"
@@ -1053,6 +1079,41 @@ unsafe extern "C" fn capi_module_import(
         }
     };
     match context.module_import(&module_name) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_module_get_attr(
+    module_ctx: *mut c_void,
+    module_handle: PyrsObjectHandle,
+    attr_name: *const c_char,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("module_get_attr received null output pointer");
+        return -1;
+    }
+    let attr_name = match unsafe { c_name_to_string(attr_name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    match context.module_get_attr(module_handle, &attr_name) {
         Ok(handle) => {
             // SAFETY: caller provided non-null output pointer.
             unsafe {
@@ -1684,6 +1745,7 @@ impl Vm {
             module_set_object: capi_module_set_object,
             module_get_object: capi_module_get_object,
             module_import: capi_module_import,
+            module_get_attr: capi_module_get_attr,
             object_type: capi_object_type,
             object_is_instance: capi_object_is_instance,
             object_is_subclass: capi_object_is_subclass,
