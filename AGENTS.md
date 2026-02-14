@@ -74,6 +74,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes capsule API coverage for create/name/pointer/context/destructor/refcount paths (`dynamic_extension_can_use_capsule_apis`).
   - capsule destructor callbacks now run on final handle decref and on module C-API context drop, with dedicated smoke coverage (`dynamic_extension_runs_capsule_destructor_on_context_drop`).
   - extension smoke now includes cross-extension named capsule export/import coverage (`dynamic_extension_can_import_exported_capsule_by_name`).
+  - `capsule_import` now performs CPython-style module/attribute traversal fallback for diagnostics on non-registry names before invalid-capsule failure.
   - extension smoke now includes module-state lifecycle coverage (`dynamic_extension_can_manage_module_state_lifecycle`).
   - extension smoke now includes buffer/capsule interop bridge coverage (`dynamic_extension_can_bridge_buffer_pointer_through_capsule`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.

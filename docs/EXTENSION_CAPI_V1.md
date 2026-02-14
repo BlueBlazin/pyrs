@@ -124,6 +124,7 @@ Return semantics:
 - capsule destructor helpers are available through `capsule_set_destructor(...)`; destructor callbacks are invoked when the capsule handle refcount reaches zero or the module C-API context is dropped, and receive `(pointer, context)`.
 - capsule metadata helpers are available through `capsule_get_destructor(...)`, `capsule_set_name(...)`, and `capsule_is_valid(...)`.
 - capsule export/import helpers are available through `capsule_export(...)` and `capsule_import(...)` for cross-extension named-capsule interop.
+- `capsule_import(...)` now includes CPython-style module/attribute traversal fallback for diagnostics (`module.attr` chain import + lookup) before returning invalid-capsule errors.
 - capsule handles are C-API-only handles (not Python object values) and follow handle `incref`/`decref` semantics.
 - iterator helpers are available through `object_get_iter(...)` and `object_iter_next(...)`.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
