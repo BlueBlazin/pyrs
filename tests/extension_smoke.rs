@@ -3799,7 +3799,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_module_state as m\nassert m.STATE_READY is True\nassert m.state_ptr() == 0x1111\nassert m.free_calls() == 0\nassert m.replace_state() == 1\nassert m.last_freed() == 0x1111\nassert m.state_ptr() == 0x2222\nassert m.clear_state() == 2\nassert m.last_freed() == 0x2222\nassert m.state_ptr() == 0",
+        "import native_module_state as m\nassert m.STATE_READY is True\nassert m.state_ptr() == 0x1111\nassert m.free_calls() == 0\nassert m.replace_state() == 1\nassert m.last_freed() == 0x1111\nassert m.state_ptr() == 0x2222\nassert m.clear_state() == 2\nassert m.last_freed() == 0x2222\nassert m.state_ptr() == 0\nexpected = 2\nfor _ in range(20):\n    assert m.replace_state() == expected\n    expected += 1\n    assert m.clear_state() == expected\nassert m.free_calls() == expected\nassert m.state_ptr() == 0",
     )
     .expect("module-state extension import should succeed");
 
