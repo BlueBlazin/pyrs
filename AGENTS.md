@@ -52,8 +52,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 now includes generic membership and dict-view helpers (`object_contains`, `object_dict_keys`, `object_dict_items`) for native-side probe/inspection paths.
   - C-API v1 now includes bytes-like buffer helpers (`object_get_buffer`, `object_release_buffer`) exposing pointer/len/readonly buffer views for `bytes`/`bytearray`/`memoryview` handles.
   - C-API v1 now includes writable buffer helper (`object_get_writable_buffer`) for mutable `bytearray` and writable `memoryview` handles, with explicit read-only rejection for `bytes`/readonly-memoryview sources.
-  - C-API v1 now includes buffer metadata helper (`object_get_buffer_info`) exposing baseline 1-D metadata (`itemsize`, `shape0`, `stride0`, `format`, `contiguous`) for `bytes`/`bytearray`/`memoryview`.
-  - C-API v1 now includes buffer metadata pointer helper (`object_get_buffer_info_v2`) exposing `shape[]`/`strides[]` arrays (currently `ndim=1`) for extension consumers that expect pointer-based descriptors.
+  - C-API v1 now includes buffer metadata helper (`object_get_buffer_info`) exposing scalar metadata (`itemsize`, `ndim`, `shape0`, `stride0`, `format`, `contiguous`) for `bytes`/`bytearray`/`memoryview`, including shaped memoryview casts (`ndim > 1`).
+  - C-API v1 now includes buffer metadata pointer helper (`object_get_buffer_info_v2`) exposing `shape[]`/`strides[]` arrays for extension consumers that expect pointer-based descriptors.
   - C-API buffer acquisitions on mutable sources now pin runtime buffer exports and block bytearray resize paths until `object_release_buffer` is called.
   - module C-API context drop now cleans leaked mutable buffer pins so extension-init leaks do not leave stale resize blocks.
   - C-API v1 now includes capsule baseline helpers (`capsule_new`, `capsule_get_pointer`, `capsule_set_pointer`, `capsule_get_name`, `capsule_set_context`, `capsule_get_context`, `capsule_set_destructor`, `capsule_get_destructor`, `capsule_set_name`, `capsule_is_valid`, `capsule_export`, `capsule_import`) for opaque native-pointer interop in extension handle space.
@@ -76,9 +76,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes membership + dict-view fixture coverage for `object_contains` + `object_dict_keys`/`object_dict_items` APIs (`dynamic_extension_can_use_contains_and_dict_view_apis`).
   - extension smoke now includes buffer API coverage for pointer/len/readonly views and release semantics (`dynamic_extension_can_use_buffer_apis`).
   - extension smoke now includes writable buffer API coverage (`dynamic_extension_can_use_writable_buffer_apis`) validating in-place mutation through `bytearray` and writable `memoryview` handles plus read-only rejection paths.
-  - extension smoke now includes buffer metadata coverage (`dynamic_extension_can_read_buffer_info_metadata`) for baseline 1-D buffer descriptor fields across scalar (`_info`) and pointer-array (`_info_v2`) surfaces.
+  - extension smoke now includes buffer metadata coverage (`dynamic_extension_can_read_buffer_info_metadata`) across scalar (`_info`) and pointer-array (`_info_v2`) surfaces.
   - extension smoke now includes non-contiguous metadata coverage (`dynamic_extension_buffer_info_marks_noncontiguous_slice_views`) for stepped memoryview slice behavior.
-  - extension smoke now includes memoryview-cast metadata coverage (`dynamic_extension_buffer_info_reflects_memoryview_cast_itemsize`) for format/itemsize propagation (`cast('I')`).
+  - extension smoke now includes memoryview-cast metadata coverage (`dynamic_extension_buffer_info_reflects_memoryview_cast_itemsize`) for format/itemsize propagation (`cast('I')`) and shaped cast layout propagation (`cast('B', [2, 4])`).
+  - extension smoke now includes `object_get_buffer_info_v2` negative-path coverage (`dynamic_extension_buffer_info_v2_reports_invalid_and_null_output_errors`) for invalid handle + null-output pointer errors.
   - extension smoke now includes resize-blocking export-pin coverage (`dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release`).
   - extension smoke now includes leaked-pin cleanup coverage (`dynamic_extension_unreleased_buffer_pin_is_cleared_on_context_drop`) for context-drop unpin behavior.
   - extension smoke now includes memoryview-slice + release failure-path coverage for buffer APIs (`dynamic_extension_buffer_api_handles_memoryview_slices_and_release`).
