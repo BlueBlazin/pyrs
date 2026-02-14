@@ -79,6 +79,24 @@ fn compile_shared_extension(source_path: &Path, output_path: &Path) -> Result<()
     Ok(())
 }
 
+fn shared_library_filename(stem: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("lib{stem}.dylib")
+    } else if cfg!(target_os = "windows") {
+        format!("{stem}.pyd")
+    } else {
+        format!("lib{stem}.so")
+    }
+}
+
+fn importable_module_library_filename(stem: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("{stem}.pyd")
+    } else {
+        format!("{stem}.so")
+    }
+}
+
 fn run_import_snippet(bin: &Path, temp_root: &Path, snippet_body: &str) -> Result<(), String> {
     let snippet = format!(
         "import sys\nsys.path.insert(0, \"{}\")\n{}",
@@ -97,6 +115,36 @@ fn run_import_snippet(bin: &Path, temp_root: &Path, snippet_body: &str) -> Resul
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+fn run_import_snippet_expect_error(
+    bin: &Path,
+    temp_root: &Path,
+    snippet_body: &str,
+    expected_substring: &str,
+) -> Result<(), String> {
+    let snippet = format!(
+        "import sys\nsys.path.insert(0, \"{}\")\n{}",
+        python_string_literal(temp_root),
+        snippet_body
+    );
+    let output = Command::new(bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(snippet)
+        .output()
+        .map_err(|err| format!("pyrs subprocess failed: {err}"))?;
+    if output.status.success() {
+        return Err("expected import failure but subprocess succeeded".to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !stderr.contains(expected_substring) {
+        return Err(format!(
+            "expected stderr to contain '{}', got:\n{}",
+            expected_substring, stderr
         ));
     }
     Ok(())
@@ -167,14 +215,8 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     )
     .expect("source should be written");
 
-    let library_file = if cfg!(target_os = "macos") {
-        "libnative_manifest_ext.dylib"
-    } else if cfg!(target_os = "windows") {
-        "native_manifest_ext.pyd"
-    } else {
-        "libnative_manifest_ext.so"
-    };
-    let library_path = temp_root.join(library_file);
+    let library_file = shared_library_filename("native_manifest_ext");
+    let library_path = temp_root.join(&library_file);
     compile_shared_extension(&source_path, &library_path)
         .expect("compiled extension library should build");
 
@@ -235,7 +277,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     )
     .expect("source should be written");
 
-    let direct_library = temp_root.join("direct_native.so");
+    let direct_library = temp_root.join(importable_module_library_filename("direct_native"));
     compile_shared_extension(&source_path, &direct_library)
         .expect("direct extension shared object should build");
 
@@ -247,6 +289,198 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     .expect("direct shared object import should succeed");
 
     let _ = fs::remove_file(direct_library);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn dynamic_extension_can_set_module_values_via_object_handles() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping object-handle extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_handles");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_handles.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    PyrsObjectHandle answer = api->object_new_int(module_ctx, 99);
+    PyrsObjectHandle text = api->object_new_string(module_ctx, "from-object-handle");
+    if (!answer || !text) {
+        return -2;
+    }
+    if (api->module_set_object(module_ctx, "ANSWER", answer) != 0) {
+        return -3;
+    }
+    if (api->module_set_object(module_ctx, "TEXT", text) != 0) {
+        return -4;
+    }
+    if (api->object_incref(module_ctx, answer) != 0) {
+        return -5;
+    }
+    if (api->object_decref(module_ctx, answer) != 0) {
+        return -6;
+    }
+    if (api->object_decref(module_ctx, answer) != 0) {
+        return -7;
+    }
+    if (api->object_decref(module_ctx, text) != 0) {
+        return -8;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_handles");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_handles.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_handles\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.TEXT == 'from-object-handle'",
+    )
+    .expect("object-handle dynamic extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn dynamic_extension_error_state_is_propagated_to_import_failure() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping extension error-state smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping extension error-state smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_error_state");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_error_state.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    api->error_set(module_ctx, "native extension requested failure");
+    return -17;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_error_state");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_error_state.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_error_state\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet_expect_error(
+        &bin,
+        &temp_root,
+        "import native_error_state",
+        "native extension requested failure",
+    )
+    .expect("error-state failure should propagate");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn imports_tagged_shared_object_extension_name() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping tagged extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping tagged extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_tagged_name");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("tagged_native.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    if (api->module_set_bool(module_ctx, "TAGGED", 1) != 0) {
+        return -2;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let tagged_suffix = if cfg!(target_os = "macos") {
+        ".cpython-314-darwin.so"
+    } else if cfg!(target_os = "windows") {
+        ".cp314-win_amd64.pyd"
+    } else {
+        ".cpython-314-x86_64-linux-gnu.so"
+    };
+    let tagged_library = temp_root.join(format!("tagged_native{tagged_suffix}"));
+    compile_shared_extension(&source_path, &tagged_library)
+        .expect("tagged extension shared object should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import tagged_native\nassert tagged_native.TAGGED is True",
+    )
+    .expect("tagged shared-object import should succeed");
+
+    let _ = fs::remove_file(tagged_library);
     let _ = fs::remove_file(source_path);
     let _ = fs::remove_dir_all(temp_root);
 }

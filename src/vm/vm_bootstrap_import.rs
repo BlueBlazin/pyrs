@@ -10,8 +10,7 @@ use super::{
     source_path_from_cache_path,
 };
 use crate::extensions::{
-    PYRS_EXTENSION_MANIFEST_SUFFIX, shared_library_module_candidates,
-    shared_library_package_candidates,
+    PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
 };
 
 impl Vm {
@@ -6121,17 +6120,15 @@ impl Vm {
                 is_extension: false,
             });
         }
-        for library_candidate in shared_library_module_candidates(root, &rel_name) {
-            if library_candidate.exists() {
-                return cache_positive(ModuleSourceInfo {
-                    path: library_candidate,
-                    is_package: false,
-                    package_dirs: Vec::new(),
-                    is_namespace: false,
-                    is_bytecode: false,
-                    is_extension: true,
-                });
-            }
+        if let Some(library_candidate) = find_shared_library_for_module(root, &rel_name) {
+            return cache_positive(ModuleSourceInfo {
+                path: library_candidate,
+                is_package: false,
+                package_dirs: Vec::new(),
+                is_namespace: false,
+                is_bytecode: false,
+                is_extension: true,
+            });
         }
         let extension_manifest = root.join(format!("{rel_name}{PYRS_EXTENSION_MANIFEST_SUFFIX}"));
         if extension_manifest.exists() {
@@ -6197,17 +6194,15 @@ impl Vm {
                 is_extension: false,
             });
         }
-        for library_candidate in shared_library_package_candidates(&package_dir) {
-            if library_candidate.exists() {
-                return cache_positive(ModuleSourceInfo {
-                    path: library_candidate,
-                    is_package: true,
-                    package_dirs: vec![package_dir],
-                    is_namespace: false,
-                    is_bytecode: false,
-                    is_extension: true,
-                });
-            }
+        if let Some(library_candidate) = find_shared_library_for_package(&package_dir) {
+            return cache_positive(ModuleSourceInfo {
+                path: library_candidate,
+                is_package: true,
+                package_dirs: vec![package_dir],
+                is_namespace: false,
+                is_bytecode: false,
+                is_extension: true,
+            });
         }
         let package_extension_manifest =
             package_dir.join(format!("__init__{PYRS_EXTENSION_MANIFEST_SUFFIX}"));

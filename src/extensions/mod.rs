@@ -6,6 +6,7 @@ pub const PYRS_EXTENSION_MANIFEST_SUFFIX: &str = ".pyrs-ext";
 pub const PYRS_EXTENSION_ABI_TAG: &str = "pyrs314";
 pub const PYRS_CAPI_ABI_VERSION: u32 = 1;
 pub const PYRS_DYNAMIC_INIT_SYMBOL_V1: &str = "pyrs_extension_init_v1";
+pub type PyrsObjectHandle = u64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionEntrypoint {
@@ -203,6 +204,69 @@ pub fn shared_library_package_candidates(package_dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+fn file_matches_shared_library_stem(file_name: &str, stem: &str) -> bool {
+    for suffix in shared_library_suffixes() {
+        if file_name == format!("{stem}{suffix}") {
+            return true;
+        }
+        if file_name.starts_with(&format!("{stem}."))
+            && file_name.ends_with(suffix)
+            && file_name.len() > stem.len() + suffix.len() + 1
+        {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn find_shared_library_for_module(root: &Path, rel_module_name: &str) -> Option<PathBuf> {
+    let rel = Path::new(rel_module_name);
+    let stem = rel.file_name()?.to_str()?;
+    let parent = rel.parent().unwrap_or_else(|| Path::new(""));
+    let search_dir = root.join(parent);
+    if !search_dir.is_dir() {
+        return None;
+    }
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(&search_dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if file_matches_shared_library_stem(file_name, stem) {
+            candidates.push(path);
+        }
+    }
+    candidates.sort();
+    candidates.into_iter().next()
+}
+
+pub fn find_shared_library_for_package(package_dir: &Path) -> Option<PathBuf> {
+    if !package_dir.is_dir() {
+        return None;
+    }
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(package_dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if file_matches_shared_library_stem(file_name, "__init__") {
+            candidates.push(path);
+        }
+    }
+    candidates.sort();
+    candidates.into_iter().next()
+}
+
 pub fn path_is_shared_library(path: &Path) -> bool {
     let text = path.to_string_lossy();
     for suffix in shared_library_suffixes() {
@@ -225,6 +289,24 @@ pub struct PyrsApiV1 {
         name: *const c_char,
         value: *const c_char,
     ) -> i32,
+    pub object_new_int:
+        unsafe extern "C" fn(module_ctx: *mut c_void, value: i64) -> PyrsObjectHandle,
+    pub object_new_bool:
+        unsafe extern "C" fn(module_ctx: *mut c_void, value: i32) -> PyrsObjectHandle,
+    pub object_new_string:
+        unsafe extern "C" fn(module_ctx: *mut c_void, value: *const c_char) -> PyrsObjectHandle,
+    pub object_incref:
+        unsafe extern "C" fn(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> i32,
+    pub object_decref:
+        unsafe extern "C" fn(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> i32,
+    pub module_set_object: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        name: *const c_char,
+        handle: PyrsObjectHandle,
+    ) -> i32,
+    pub error_set: unsafe extern "C" fn(module_ctx: *mut c_void, message: *const c_char) -> i32,
+    pub error_clear: unsafe extern "C" fn(module_ctx: *mut c_void) -> i32,
+    pub error_occurred: unsafe extern "C" fn(module_ctx: *mut c_void) -> i32,
 }
 
 pub type PyrsExtensionInitV1 =
@@ -350,8 +432,8 @@ pub fn load_dynamic_initializer(
 #[cfg(test)]
 mod tests {
     use super::{
-        ExtensionEntrypoint, PYRS_EXTENSION_ABI_TAG, parse_extension_manifest,
-        shared_library_suffixes,
+        ExtensionEntrypoint, PYRS_EXTENSION_ABI_TAG, find_shared_library_for_module,
+        find_shared_library_for_package, parse_extension_manifest, shared_library_suffixes,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -441,5 +523,55 @@ mod tests {
     #[test]
     fn shared_library_suffixes_are_non_empty() {
         assert!(!shared_library_suffixes().is_empty());
+    }
+
+    #[test]
+    fn finds_tagged_shared_library_for_module() {
+        let root = std::env::temp_dir().join(format!(
+            "pyrs_find_so_module_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("temp root should be created");
+        let tagged = if cfg!(target_os = "macos") {
+            root.join("mymod.cpython-314-darwin.so")
+        } else if cfg!(target_os = "windows") {
+            root.join("mymod.cp314-win_amd64.pyd")
+        } else {
+            root.join("mymod.cpython-314-x86_64-linux-gnu.so")
+        };
+        fs::write(&tagged, b"").expect("tagged artifact should be created");
+        let found = find_shared_library_for_module(&root, "mymod").expect("candidate expected");
+        assert_eq!(found, tagged);
+        let _ = fs::remove_file(&tagged);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn finds_tagged_shared_library_for_package_init() {
+        let root = std::env::temp_dir().join(format!(
+            "pyrs_find_so_pkg_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ));
+        let package_dir = root.join("pkg");
+        fs::create_dir_all(&package_dir).expect("package dir should be created");
+        let tagged = if cfg!(target_os = "macos") {
+            package_dir.join("__init__.cpython-314-darwin.so")
+        } else if cfg!(target_os = "windows") {
+            package_dir.join("__init__.cp314-win_amd64.pyd")
+        } else {
+            package_dir.join("__init__.cpython-314-x86_64-linux-gnu.so")
+        };
+        fs::write(&tagged, b"").expect("tagged artifact should be created");
+        let found =
+            find_shared_library_for_package(&package_dir).expect("package candidate expected");
+        assert_eq!(found, tagged);
+        let _ = fs::remove_file(&tagged);
+        let _ = fs::remove_dir_all(root);
     }
 }

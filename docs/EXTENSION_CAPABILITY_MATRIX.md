@@ -27,9 +27,9 @@ Legend:
 | Surface | Status | Owner | Evidence | Notes |
 |---|---|---|---|---|
 | Exported C ABI artifact (`libpyrs-capi`) | IN PROGRESS | runtime/ffi | `include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md` | Header/symbol slice is landed and consumed by compiled-extension smoke; distributable ABI artifact packaging is pending. |
-| Header surface + versioned symbol manifest | IN PROGRESS | runtime/ffi | `include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md` | v1 includes module-global setters (`int`, `bool`, `string`) and init symbol contract. |
-| `PyObject`/refcount ownership APIs | PLANNED | runtime/ffi | - | Must follow CPython semantics. |
-| Exception indicator/thread-local error state APIs | PLANNED | runtime/ffi | - | Required for extension correctness. |
+| Header surface + versioned symbol manifest | IN PROGRESS | runtime/ffi | `include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md` | v1 includes module-global setters, init-scoped object handles/refcount ops, and error-state hooks. |
+| `PyObject`/refcount ownership APIs | IN PROGRESS | runtime/ffi | `tests/extension_smoke.rs::dynamic_extension_can_set_module_values_via_object_handles` | v1 handle model supports init-scoped object creation + `incref`/`decref`; full CPython object surface remains open. |
+| Exception indicator/thread-local error state APIs | IN PROGRESS | runtime/ffi | `tests/extension_smoke.rs::dynamic_extension_error_state_is_propagated_to_import_failure` | Import-time extension error state is now surfaced; broader CPython exception APIs remain open. |
 | GIL attach/detach APIs (`PyGILState_*`) | PLANNED | runtime/threading | - | Required for threaded native callers. |
 
 ## Interop Protocols
@@ -44,7 +44,7 @@ Legend:
 
 | Gate | Status | Owner | Evidence | Notes |
 |---|---|---|---|---|
-| Extension smoke gate (compiled native fixture + `hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs` + CI `Extension smoke lane` | CI now covers both manifest-only and compiled native extension paths. |
+| Extension smoke gate (compiled native fixture + `hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs` + CI `Extension smoke lane` | CI covers manifest-only, compiled-manifest, direct shared-object, tagged-filename, and error-path fixtures. |
 | NumPy import gate (`import numpy`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` | Probe scaffold is landed; gate currently expected-red until C-extension substrate matures. |
 | NumPy ndarray smoke (`np.array([...]).sum()`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` | Same as above. |
 | Pandas/matplotlib/scipy smoke gates | PLANNED | milestone-15 bring-up | - | Starts after NumPy substrate closure. |

@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,25 @@ CASES: list[tuple[str, str]] = [
         "import numpy as np\na = np.array([1, 2, 3])\nassert int(a.sum()) == 6",
     ),
 ]
+
+
+def classify_failure(stderr: str) -> dict[str, str]:
+    diagnostics: dict[str, str] = {}
+    symbol_match = re.search(r"failed to resolve symbol '([^']+)'", stderr)
+    if symbol_match:
+        diagnostics["missing_symbol"] = symbol_match.group(1)
+        diagnostics["kind"] = "missing-symbol"
+        return diagnostics
+    if "unsupported extension ABI" in stderr:
+        diagnostics["kind"] = "abi-mismatch"
+        return diagnostics
+    if "initializer" in stderr and "failed with status" in stderr:
+        diagnostics["kind"] = "init-failure"
+        return diagnostics
+    if "ModuleNotFoundError: module 'numpy' not found" in stderr:
+        diagnostics["kind"] = "module-not-found"
+        return diagnostics
+    return diagnostics
 
 
 def run_case(
@@ -243,6 +263,9 @@ def main() -> int:
             report["summary"]["passed"] += 1
         else:
             report["summary"]["failed"] += 1
+            diagnostics = classify_failure(result.get("stderr", ""))
+            if diagnostics:
+                result["diagnostics"] = diagnostics
         report["cases"].append({"name": case_name, "status": status, **result})
         print(f"[numpy-gate] {case_name}: {status}")
 

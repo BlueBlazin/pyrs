@@ -36,9 +36,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Extension scaffolding checkpoint:
   - extension manifest parser + suffix baseline (`.pyrs-ext`, ABI `pyrs314`) is landed (`src/extensions/mod.rs`).
-  - import loader now recognizes extension manifests and direct shared objects (`.so`/`.dylib`/`.pyd`) and executes them through `pyrs.ExtensionFileLoader`.
-  - v1 extension C-API header slice is landed (`include/pyrs_capi.h`; contract in `docs/EXTENSION_CAPI_V1.md`).
-  - extension smoke path now includes compiled native fixtures and direct shared-object import coverage in `tests/extension_smoke.rs`.
+  - import loader now recognizes extension manifests and direct shared objects (`.so`/`.dylib`/`.pyd`), including tagged CPython-style filenames (`module.cpython-314-*.so`), and executes them through `pyrs.ExtensionFileLoader`.
+  - v1 extension C-API header slice is landed (`include/pyrs_capi.h`; contract in `docs/EXTENSION_CAPI_V1.md`) and now includes module setters, init-scoped object handles (`object_new_*`, `module_set_object`, `object_incref/decref`), and import-time error state (`error_set/clear/occurred`).
+  - extension smoke path now includes compiled native fixtures for manifest dynamic load, direct shared-object import, tagged filename resolution, object-handle flow, and error-state propagation (`tests/extension_smoke.rs`).
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
 - Newly landed parity checkpoints:
