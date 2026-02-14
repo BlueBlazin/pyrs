@@ -2993,6 +2993,119 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_buffer_info_marks_noncontiguous_slice_views() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping non-contiguous buffer-info smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping non-contiguous buffer-info smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_buffer_info_noncontig");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_buffer_info_noncontig.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <string.h>
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    const uint8_t payload[] = {65, 66, 67, 68}; /* ABCD */
+    PyrsObjectHandle bytearray_obj = api->object_new_bytearray(module_ctx, payload, 4);
+    if (!bytearray_obj) {
+        return -2;
+    }
+    PyrsObjectHandle view_obj = api->object_new_memoryview(module_ctx, bytearray_obj);
+    if (!view_obj) {
+        return -3;
+    }
+
+    PyrsObjectHandle builtins_mod = 0;
+    if (api->module_import(module_ctx, "builtins", &builtins_mod) != 0 || !builtins_mod) {
+        return -4;
+    }
+    PyrsObjectHandle slice_cls = 0;
+    if (api->module_get_attr(module_ctx, builtins_mod, "slice", &slice_cls) != 0 || !slice_cls) {
+        return -5;
+    }
+    PyrsObjectHandle slice_args[3];
+    slice_args[0] = api->object_new_int(module_ctx, 0);
+    slice_args[1] = api->object_new_int(module_ctx, 4);
+    slice_args[2] = api->object_new_int(module_ctx, 2);
+    if (!slice_args[0] || !slice_args[1] || !slice_args[2]) {
+        return -6;
+    }
+    PyrsObjectHandle slice_obj = 0;
+    if (api->object_call(module_ctx, slice_cls, 3, slice_args, 0, 0, 0, &slice_obj) != 0 || !slice_obj) {
+        return -7;
+    }
+    PyrsObjectHandle subview = 0;
+    if (api->object_get_item(module_ctx, view_obj, slice_obj, &subview) != 0 || !subview) {
+        return -8;
+    }
+
+    PyrsBufferInfoV1 info;
+    if (api->object_get_buffer_info(module_ctx, subview, &info) != 0) {
+        return -9;
+    }
+    if (!info.data || info.len != 2 || info.readonly != 1 || info.itemsize != 1 ||
+        info.ndim != 1 || info.shape0 != 2 || info.stride0 != 1 || info.contiguous != 0 ||
+        !info.format || strcmp(info.format, "B") != 0) {
+        return -10;
+    }
+    if (api->object_release_buffer(module_ctx, subview) != 0) {
+        return -11;
+    }
+
+    PyrsWritableBufferViewV1 writable;
+    if (api->object_get_writable_buffer(module_ctx, subview, &writable) == 0 ||
+        api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
+        return -12;
+    }
+
+    if (api->module_set_bool(module_ctx, "BUFFER_INFO_NONCONTIG_OK", 1) != 0) {
+        return -13;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_buffer_info_noncontig");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_buffer_info_noncontig.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_buffer_info_noncontig\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_buffer_info_noncontig\nassert native_buffer_info_noncontig.BUFFER_INFO_NONCONTIG_OK is True",
+    )
+    .expect("non-contiguous buffer-info extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping buffer-pin resize-block smoke (pyrs binary not found)");
